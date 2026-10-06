@@ -1,0 +1,20 @@
+# Local credentials and machine overrides
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.jsonc
+
+# Runtime/build outputs
+node_modules/
+dist/
+coverage/
+*.log
+
+# Operational state belongs outside this repository
+MEMORY.md
+.harness-state/
+
+# OS files
+.DS_Store
+Thumbs.db
