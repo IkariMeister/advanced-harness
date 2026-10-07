@@ -6,7 +6,7 @@ A portable, human-controlled Android engineering workflow for OpenCode, with cus
 
 Specification plus an **experimental enforcement-core prototype** and an **OpenCode V2 approval-boundary spike** in `spike/opencode/`. The globally installable harness, production OpenCode adapter, trusted human approval UI, integrations, Android verification, and production-grade checkout snapshotter are **not implemented**. Cloning this repository does not activate the harness. Do not use the prototype to authorize real code, GitHub, Jira, or other external actions.
 
-The controller demonstrates revision-bound decisions and separate host/agent surfaces. The OpenCode spike includes a context-hook tool filter, role checks, and a separate CLI/TUI confirmation dialog over one-time revision-bound RPC. The combined suite currently has 17 automated tests. In an isolated OpenCode 2.0.24 Linux install, the server plugin loaded and its RPC endpoint responded. **The end-to-end spike is not runtime-validated**: no usable model credential was available to test agent tool catalogs, shell/MCP bypasses, or subagents, and the CLI/TUI approval surface was not launched. A direct authenticated RPC request reached the server handler, confirming RPC is not intrinsically a human-only channel. Do not use it for real actions until the live adversarial checklist passes and RPC bypass resistance is resolved. Never expose the controller's human-decision API as an agent tool.
+The controller demonstrates revision-bound decisions and separate host/agent surfaces. An isolated OpenCode 2.0.24 server plugin loaded, but the plugin-RPC approval design is rejected: the RPC endpoint is an ordinary callable server route, not a human identity boundary. The combined suite currently has 17 automated tests. We have not runtime-validated agent tool filtering, shell/MCP bypasses, subagents, or an interactive approval surface. The chosen direction is an out-of-process trusted controller with a restricted local agent IPC channel and a separate interactive host console; see [`docs/host-controller-boundary.md`](docs/host-controller-boundary.md). This architecture is not yet implemented or proven secure, so do not use it for real actions.
 
 ## Scope
 
@@ -20,7 +20,7 @@ The controller demonstrates revision-bound decisions and separate host/agent sur
 
 ## Architecture
 
-The proposed implementation is a host-independent TypeScript workflow controller with an OpenCode adapter. Agent instructions guide behavior; the controller authorizes actions and persists state.
+The proposed implementation is a host-independent TypeScript workflow controller in a trusted host process with an OpenCode agent adapter. Agent instructions guide behavior; the controller authorizes actions and persists state. Human approvals are collected by a separate interactive host console, not through OpenCode plugin RPC. See [`docs/host-controller-boundary.md`](docs/host-controller-boundary.md) for the accepted boundary and remaining proof obligations.
 
 The portable package will contain agent definitions, workflow rules, adapters, and installation tooling. Machine-local configuration will contain provider/model mappings and machine paths. Authentication stays in the relevant credential stores, outside this repository.
 
@@ -159,7 +159,7 @@ No generated operational harness artifacts should be committed to application re
 
 ## Implementation roadmap
 
-1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. The V2 server plugin is type-checked and loaded in an isolated V2 process, but live OpenCode tool filtering, CLI/TUI approval, and bypass resistance remain unproven.
+1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. Next is the trusted host/agent IPC and interactive approval console; OpenCode tool filtering and host isolation remain proof obligations.
 2. **Portable foundation:** global installation for Windows/macOS, explicit machine profiles, shared local project storage, worktree lifecycle.
 3. **Agent workflow:** eight customizable agents, fixed models, planning, implementation, review/QA findings, and approval flows.
 4. **External integrations:** Jira/GitHub/Figma/Stitch through one owner, state mapping, recoverable publication.
@@ -249,7 +249,7 @@ Do not copy credentials, local feature state, approvals, logs, or evidence throu
 - Private E2E framework API and evidence export contract.
 - Exact Jira/GitHub/design MCP capabilities, especially binary evidence publication.
 - LiteLLM endpoint, deployment IDs, and supported reasoning settings.
-- OpenCode plugin proof that approval controls cannot be invoked as human actions by agents and that all exposed execution paths are covered.
+- Windows/macOS IPC implementation and adversarial proof that agents cannot reach the host channel, console input, or alternate execution routes.
 - Portable runtime/version and packaging choices, to be validated during the prototype.
 
 ## References
