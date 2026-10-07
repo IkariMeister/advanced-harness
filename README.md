@@ -6,7 +6,7 @@ A portable, human-controlled Android engineering workflow for OpenCode, with cus
 
 Specification plus an **experimental enforcement-core prototype**, a **host/agent IPC + human-console prototype**, and an **OpenCode V2 approval-boundary spike** in `spike/opencode/`. The globally installable harness, production OpenCode adapter, hardened IPC/ACLs, integrations, Android verification, and production-grade checkout snapshotter are **not implemented**. Cloning this repository does not activate the harness. Do not use the prototype to authorize real code, GitHub, Jira, or other external actions.
 
-The controller demonstrates revision-bound decisions and separate host/agent surfaces. A prototype now binds role-specific local IPC endpoints to agent ports and collects plan approval only in an interactive host TTY; the endpoints have no human-decision operation. Its socket path is **not** authenticated against other same-user processes, the Windows named-pipe ACL is not hardened, and no OpenCode adapter is connected. The rejected plugin-RPC spike remains under `spike/opencode/`. The combined suite currently has 21 passing tests. The host/agent design is not proven secure or production-ready; do not use it for real actions.
+The controller demonstrates revision-bound decisions and separate host/agent surfaces. A prototype now binds role-specific local IPC endpoints to agent ports, exposes a prototype OpenCode adapter in `spike/opencode/host-adapter.ts`, and collects plan approval only in an interactive host TTY; no human-decision operation is exposed to agents. Its socket path is **not** authenticated against other same-user processes, the Windows named-pipe ACL is not hardened, and the OpenCode adapter has not been exercised in a live model session. The rejected plugin-RPC spike remains in the same directory for comparison. The combined suite currently has 26 passing tests. This is not proven secure or production-ready; do not use it for real actions.
 
 ## Scope
 
@@ -159,7 +159,7 @@ No generated operational harness artifacts should be committed to application re
 
 ## Implementation roadmap
 
-1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. A first host/agent IPC and interactive plan-approval prototype exists; cross-process authentication, Windows ACLs, OpenCode adapter isolation, and full decision console remain proof obligations.
+1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. Host/agent IPC, interactive plan approval, and a first OpenCode adapter prototype exist; cross-process authentication, Windows ACLs, effective live tool isolation, and full decision console remain proof obligations.
 2. **Portable foundation:** global installation for Windows/macOS, explicit machine profiles, shared local project storage, worktree lifecycle.
 3. **Agent workflow:** eight customizable agents, fixed models, planning, implementation, review/QA findings, and approval flows.
 4. **External integrations:** Jira/GitHub/Figma/Stitch through one owner, state mapping, recoverable publication.

@@ -21,7 +21,7 @@ export type AgentIpcHost = Readonly<{
   close(): Promise<void>;
 }>;
 
-function endpointFor(directory: string, role: Role): string {
+export function agentIpcEndpoint(directory: string, role: Role): string {
   if (process.platform === 'win32') {
     const key = createHash('sha256').update(resolve(directory)).digest('hex').slice(0, 24);
     return `\\\\.\\pipe\\advanced-harness-${key}-${role}`;
@@ -93,7 +93,7 @@ export async function startAgentIpcHost(options: {
   const endpoints = {} as Record<Role, string>;
   try {
     for (const role of roles) {
-      const endpoint = endpointFor(directory, role);
+      const endpoint = agentIpcEndpoint(directory, role);
       const boundary = agentBoundary(options.controller.bindAgent(role));
       const server = createServer(socket => serveConnection(socket, boundary));
       await listen(server, endpoint);

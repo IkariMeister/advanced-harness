@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./server.ts",
+    "./rejected-rpc-spike": "./rejected-rpc-server.ts",
     "./tui": "./tui.ts",
     "./rpc": "./rpc.ts"
   },
