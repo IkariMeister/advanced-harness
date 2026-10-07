@@ -1,0 +1,22 @@
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { fixtureHostPaths } from '../src/fixture-host.ts';
+
+const requested = process.argv[2];
+if (!requested) throw new Error('Usage: node examples/configure-host-adapter-test.ts <disposable-project>');
+const project = resolve(requested);
+const marker = `${project}/.harness-test-fixture.json`;
+if (!existsSync(marker)) throw new Error(`Refusing unmarked project: ${marker}`);
+const parsedMarker = JSON.parse(readFileSync(marker, 'utf8')) as { schema?: unknown; kind?: unknown };
+if (parsedMarker.schema !== 1 || parsedMarker.kind !== 'advanced-harness-agent-test') throw new Error('Invalid disposable-project marker');
+const configPath = `${project}/.opencode/opencode.jsonc`;
+const config = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+const adapter = fileURLToPath(new URL('../spike/opencode', import.meta.url)).replaceAll('\\', '/');
+config.plugins = [{ package: adapter, options: { directory: fixtureHostPaths(project).ipc.replaceAll('\\', '/') } }];
+writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+writeFileSync(`${project}/TEST-HOST-PROMPT.txt`, readFileSync(new URL('../spike/opencode/host-smoke-prompt.txt', import.meta.url)));
+console.log(`Configured host-adapter test project: ${project}`);
+console.log(`Adapter: ${adapter}`);
+console.log(`IPC: ${fixtureHostPaths(project).ipc}`);
+console.log('Start the host in a separate interactive terminal before opening a new Desktop session.');

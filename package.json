@@ -10,7 +10,10 @@
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
     "demo": "node examples/enforcement-demo.ts",
-    "host-demo": "node examples/host-controller-demo.ts"
+    "host-demo": "node examples/host-controller-demo.ts",
+    "agent-test:prepare": "node examples/prepare-agent-smoke-test.ts",
+    "host-test:configure": "node examples/configure-host-adapter-test.ts",
+    "host-test:run": "node examples/fixture-host-runner.ts"
   },
   "dependencies": {
     "zod": "4.6.5"
