@@ -8,10 +8,7 @@ import { snapshotDirectory } from '../src/snapshot.ts';
 import { agentBoundary } from '../src/agent-boundary.ts';
 
 // This terminal is the demo's trusted human surface. It is intentionally not an agent tool.
-if (!process.stdin.isTTY || !process.stdout.isTTY) {
-  console.error('Run this demo in an interactive terminal. Piped confirmations are not accepted.');
-  process.exitCode = 1;
-} else {
+{
   const tempRoot = process.platform === 'win32' ? join(homedir(), 'AppData', 'Local', 'Temp', 'opencode') : tmpdir();
   mkdirSync(tempRoot, { recursive: true });
   const root = mkdtempSync(join(tempRoot, 'harness-demo-'));
@@ -33,7 +30,8 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
       },
     },
   });
-  const terminal = createInterface({ input: process.stdin, output: process.stdout });
+  const interactive = process.stdin.isTTY && process.stdout.isTTY;
+  const terminal = interactive ? createInterface({ input: process.stdin, output: process.stdout }) : undefined;
   try {
     controller.bindAgent('planner').proposePlan('Replace the isolated demo greeting. No remote actions.');
     const agent = agentBoundary(controller.bindAgent('implementer'));
@@ -43,11 +41,13 @@ if (!process.stdin.isTTY || !process.stdout.isTTY) {
     const view = controller.human.status();
     console.log(`Plan v${view.plan.revision}: ${view.plan.text}\nRevision: ${view.target}`);
     const expected = `approve ${view.target}`;
-    if (await terminal.question(`Type "${expected}" to approve, or anything else to cancel:\n`) === expected) {
+    if (!terminal) {
+      console.log(`Non-interactive run: approval not performed. To finish safely, run this demo in a terminal and type the exact token: ${expected}`);
+    } else if (await terminal.question(`Type "${expected}" to approve, or anything else to cancel:\n`) === expected) {
       controller.human.decide({ kind: 'approve-plan', target: view.target });
       console.log(await agent.dispatch('harness.action', action));
       console.log(readFileSync(file, 'utf8'));
     } else console.log('Cancelled; no edit executed.');
     console.log(`Local fixture and audit database: ${root}`);
-  } finally { terminal.close(); controller.close(); }
+  } finally { terminal?.close(); controller.close(); }
 }
