@@ -4,9 +4,9 @@ A portable, human-controlled Android engineering workflow for OpenCode, with cus
 
 ## Status
 
-Specification and repository bootstrap. The workflow controller, OpenCode adapter, installer, integrations, and verification tooling are **not implemented yet**. Cloning this repository does not activate the harness.
+Specification plus an **experimental enforcement-core prototype**. The globally installable harness, OpenCode adapter, trusted human approval UI, integrations, Android verification, and production-grade checkout snapshotter are **not implemented**. Cloning this repository does not activate the harness. Do not use the prototype to authorize real code, GitHub, Jira, or other external actions.
 
-The enforcement prototype is the approved first implementation milestone. OpenCode V2 is the initial integration target; actual enforcement capabilities must be validated before claiming the workflow is protected.
+The prototype demonstrates a policy controller, separate host/agent surfaces, revision-bound decisions, and 13 tests over local fixtures. It is not proof of end-to-end enforcement inside OpenCode. OpenCode V2 does not document a human-identity guarantee for a plugin tool invocation; do not expose `human.decide` as an agent-callable tool. Until a trusted human channel and all agent execution paths are covered, approvals remain untrusted in a live OpenCode session.
 
 ## Scope
 
@@ -159,7 +159,7 @@ No generated operational harness artifacts should be committed to application re
 
 ## Implementation roadmap
 
-1. **Enforcement prototype (approved first):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests.
+1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. Fixture-based core only; OpenCode enforcement is still a proof obligation.
 2. **Portable foundation:** global installation for Windows/macOS, explicit machine profiles, shared local project storage, worktree lifecycle.
 3. **Agent workflow:** eight customizable agents, fixed models, planning, implementation, review/QA findings, and approval flows.
 4. **External integrations:** Jira/GitHub/Figma/Stitch through one owner, state mapping, recoverable publication.
@@ -183,11 +183,11 @@ No generated operational harness artifacts should be committed to application re
 
 ### What works today
 
-You can clone and review this specification on either platform. There is not yet a runnable harness or installer. Do not register a nonexistent plugin or assume that approvals are enforced after cloning.
+You can clone and run the experimental controller tests on either platform. There is not yet a runnable integrated harness or installer. Do not register a nonexistent plugin or assume that approvals are enforced after cloning.
 
 ### Prerequisites
 
-1. Install Git, GitHub CLI (`gh`), and OpenCode V2.
+1. Install Git, GitHub CLI (`gh`), OpenCode V2, and Node.js 24.x.
 2. Authenticate GitHub CLI with an account that can access this private repository:
 
    ```text
@@ -215,6 +215,20 @@ cat README.md
 ```
 
 For an existing clean clone, retrieve updates with `git pull --ff-only`.
+
+### Prototype development (not a feature-workflow installer)
+
+From the cloned repository, install locked dependencies and run unit tests/type checks:
+
+```text
+npm ci
+npm test
+npm run typecheck
+```
+
+Run the isolated interactive demo with `npm run demo`. It creates a disposable text fixture and local SQLite database in a temporary directory; it does not touch a real project or connect to external services.
+
+The prototype snapshotter intentionally supports only small fixture directories, rejects `.git` and symlinks, and hashes every file. A real Android adapter must provide a trustworthy manifest of verification inputs, including relevant uncommitted source/configuration and excluding generated outputs. The current local approval surface is a host API, not an authenticated OpenCode UI.
 
 ### Activation checklist once implementation is available
 
