@@ -13,7 +13,7 @@ This spike investigates one narrow question: can the V2 server keep agent action
 
 The server agent permissions template is [`permissions.example.jsonc`](./permissions.example.jsonc). V2 permission rules are ordered, and the last matching rule wins. Configure a deny-by-default policy and only add the documented per-agent exceptions. Keep the server tool-catalog filter as defense in depth; permissions alone are not the gate.
 
-For a disposable local test project, load the server package from its project `opencode.jsonc` using a local plugin path, for example `"plugins": ["../Advanced Harness-worktrees/enforcement-prototype/spike/opencode"]`, and merge the permission example into that test project's config. The package exports the V2 server entry at `.` and CLI entry at `./tui`. To load the approval UI, install/link this local package for the OpenCode CLI and add its package name to the user's CLI plugin configuration (`cli.json`). Back up and merge existing config—do not replace it. See the [V2 plugin loading guide](https://opencode.ai/v2/docs/plugins/) and [CLI plugin guide](https://opencode.ai/v2/docs/build/plugins/cli/) for current path/config rules. The exact local package resolution and client startup must be confirmed in the runtime test below.
+For a disposable local test project, put the package directory under `.opencode/plugins/advanced-harness/` (OpenCode loads package directories there) or configure the package path in `opencode.jsonc`; merge the permission example into that test project's config. The package exports the V2 server entry at `.` and CLI entry at `./tui`. The server entry loaded successfully from a package directory in OpenCode 2.0.24. The CLI entry must be registered separately in the isolated CLI's `cli.json` or exposed as a TUI component through the server plugin; that client/UI loading has not yet been runtime-verified. Back up and merge existing config—do not replace it. See the [V2 plugin loading guide](https://opencode.ai/v2/docs/plugins/) and [CLI plugin guide](https://opencode.ai/v2/docs/cli/plugins/) for current path/config rules.
 
 ## What this proves—and does not
 
@@ -47,3 +47,10 @@ Record the OpenCode version, client, effective tool catalog per role, permission
 ## Local API validation performed
 
 The source was type-checked using TypeScript 7.0.2 against `@opencode/plugin` 2.0.24 plus the matching `@opentui`/Solid type packages in an isolated temporary directory. Those temporary validation dependencies are not part of the harness lockfile. The local role-filter unit tests run with the repository's `npm test` command.
+
+## Live test status (OpenCode 2.0.24, Linux x64)
+
+- Installed the CLI under `/tmp/advanced-harness-v2-spike` with a temporary `HOME` and `XDG_CONFIG_HOME`; no user/global OpenCode config was used.
+- `opencode debug config` parsed the deny-by-default example. `opencode plugin list` plus the authenticated `/api/plugin` endpoint confirmed `advanced-harness.enforcement-spike` loaded as `active` with `server` and `rpc` features. A non-LLM request failed at the provider call (the isolated environment has no usable model credential), but the plugin loaded before that request.
+- An authenticated direct HTTP request to `/api/rpc/advanced-harness-approval-spike/pending` successfully reached the RPC handler. This confirms the RPC is an ordinary callable server endpoint, not intrinsically a human-only channel. This request only read pending state; it did not grant approval.
+- The end-to-end adversarial checklist remains **incomplete**: there is no usable model credential for agent tool-catalog/subagent invocation, and we have not launched an interactive TUI with the approval component. Consequently no claims are made about real model-call filtering, shell/MCP denial, agent RPC access, or human-only dialog approval. Treat the spike as **not production-safe** until those tests run and the RPC identity/bypass question is resolved.

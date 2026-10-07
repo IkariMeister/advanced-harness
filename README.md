@@ -6,7 +6,7 @@ A portable, human-controlled Android engineering workflow for OpenCode, with cus
 
 Specification plus an **experimental enforcement-core prototype** and an **OpenCode V2 approval-boundary spike** in `spike/opencode/`. The globally installable harness, production OpenCode adapter, trusted human approval UI, integrations, Android verification, and production-grade checkout snapshotter are **not implemented**. Cloning this repository does not activate the harness. Do not use the prototype to authorize real code, GitHub, Jira, or other external actions.
 
-The controller demonstrates revision-bound decisions and separate host/agent surfaces. The OpenCode spike includes a context-hook tool filter, role checks, and a separate CLI/TUI confirmation dialog over one-time revision-bound RPC. The combined suite currently has 17 automated tests. **The OpenCode spike has not been runtime-tested**: there is no OpenCode executable available in this environment. Plugin RPC itself does not prove human identity; an agent with any generic shell/HTTP/Code Mode route could bypass the dialog. Do not use it for real actions until the spike's live adversarial checklist passes. Never expose the controller's human-decision API as an agent tool.
+The controller demonstrates revision-bound decisions and separate host/agent surfaces. The OpenCode spike includes a context-hook tool filter, role checks, and a separate CLI/TUI confirmation dialog over one-time revision-bound RPC. The combined suite currently has 17 automated tests. In an isolated OpenCode 2.0.24 Linux install, the server plugin loaded and its RPC endpoint responded. **The end-to-end spike is not runtime-validated**: no usable model credential was available to test agent tool catalogs, shell/MCP bypasses, or subagents, and the CLI/TUI approval surface was not launched. A direct authenticated RPC request reached the server handler, confirming RPC is not intrinsically a human-only channel. Do not use it for real actions until the live adversarial checklist passes and RPC bypass resistance is resolved. Never expose the controller's human-decision API as an agent tool.
 
 ## Scope
 
@@ -159,7 +159,7 @@ No generated operational harness artifacts should be committed to application re
 
 ## Implementation roadmap
 
-1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. The V2 integration spike is type-checked and role-filter unit-tested, but live OpenCode tool/API behavior remains a proof obligation.
+1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. The V2 server plugin is type-checked and loaded in an isolated V2 process, but live OpenCode tool filtering, CLI/TUI approval, and bypass resistance remain unproven.
 2. **Portable foundation:** global installation for Windows/macOS, explicit machine profiles, shared local project storage, worktree lifecycle.
 3. **Agent workflow:** eight customizable agents, fixed models, planning, implementation, review/QA findings, and approval flows.
 4. **External integrations:** Jira/GitHub/Figma/Stitch through one owner, state mapping, recoverable publication.
