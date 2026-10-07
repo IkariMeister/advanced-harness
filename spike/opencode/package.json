@@ -1,0 +1,14 @@
+{
+  "name": "advanced-harness-opencode-spike",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./server.ts",
+    "./tui": "./tui.ts",
+    "./rpc": "./rpc.ts"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.0.24"
+  }
+}

@@ -4,9 +4,9 @@ A portable, human-controlled Android engineering workflow for OpenCode, with cus
 
 ## Status
 
-Specification plus an **experimental enforcement-core prototype**. The globally installable harness, OpenCode adapter, trusted human approval UI, integrations, Android verification, and production-grade checkout snapshotter are **not implemented**. Cloning this repository does not activate the harness. Do not use the prototype to authorize real code, GitHub, Jira, or other external actions.
+Specification plus an **experimental enforcement-core prototype** and an **OpenCode V2 approval-boundary spike** in `spike/opencode/`. The globally installable harness, production OpenCode adapter, trusted human approval UI, integrations, Android verification, and production-grade checkout snapshotter are **not implemented**. Cloning this repository does not activate the harness. Do not use the prototype to authorize real code, GitHub, Jira, or other external actions.
 
-The prototype demonstrates a policy controller, separate host/agent surfaces, revision-bound decisions, and 13 tests over local fixtures. It is not proof of end-to-end enforcement inside OpenCode. OpenCode V2 does not document a human-identity guarantee for a plugin tool invocation; do not expose `human.decide` as an agent-callable tool. Until a trusted human channel and all agent execution paths are covered, approvals remain untrusted in a live OpenCode session.
+The controller demonstrates revision-bound decisions and separate host/agent surfaces. The OpenCode spike includes a context-hook tool filter, role checks, and a separate CLI/TUI confirmation dialog over one-time revision-bound RPC. The combined suite currently has 17 automated tests. **The OpenCode spike has not been runtime-tested**: there is no OpenCode executable available in this environment. Plugin RPC itself does not prove human identity; an agent with any generic shell/HTTP/Code Mode route could bypass the dialog. Do not use it for real actions until the spike's live adversarial checklist passes. Never expose the controller's human-decision API as an agent tool.
 
 ## Scope
 
@@ -159,7 +159,7 @@ No generated operational harness artifacts should be committed to application re
 
 ## Implementation roadmap
 
-1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. Fixture-based core only; OpenCode enforcement is still a proof obligation.
+1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. The V2 integration spike is type-checked and role-filter unit-tested, but live OpenCode tool/API behavior remains a proof obligation.
 2. **Portable foundation:** global installation for Windows/macOS, explicit machine profiles, shared local project storage, worktree lifecycle.
 3. **Agent workflow:** eight customizable agents, fixed models, planning, implementation, review/QA findings, and approval flows.
 4. **External integrations:** Jira/GitHub/Figma/Stitch through one owner, state mapping, recoverable publication.
@@ -232,7 +232,7 @@ The prototype snapshotter intentionally supports only small fixture directories,
 
 ### Activation checklist once implementation is available
 
-The installer and exact commands will be added with milestone 2. It must:
+The installer and exact commands will be added with milestone 2. Before relying on the adapter, run the live adversarial checklist in [`spike/opencode/README.md`](spike/opencode/README.md). The installer must:
 
 1. Install a pinned harness version and register its OpenCode adapter globally, preserving existing configuration. OpenCode V2 global configuration is normally `~/.config/opencode/opencode.json(c)`.
 2. Create machine-local provider/model mappings and project-data paths outside Git. On LiteLLM, require explicit deployment IDs rather than guessing aliases.
