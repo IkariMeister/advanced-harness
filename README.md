@@ -4,9 +4,9 @@ A portable, human-controlled Android engineering workflow for OpenCode, with cus
 
 ## Status
 
-Specification plus an **experimental enforcement-core prototype** and an **OpenCode V2 approval-boundary spike** in `spike/opencode/`. The globally installable harness, production OpenCode adapter, trusted human approval UI, integrations, Android verification, and production-grade checkout snapshotter are **not implemented**. Cloning this repository does not activate the harness. Do not use the prototype to authorize real code, GitHub, Jira, or other external actions.
+Specification plus an **experimental enforcement-core prototype**, a **host/agent IPC + human-console prototype**, and an **OpenCode V2 approval-boundary spike** in `spike/opencode/`. The globally installable harness, production OpenCode adapter, hardened IPC/ACLs, integrations, Android verification, and production-grade checkout snapshotter are **not implemented**. Cloning this repository does not activate the harness. Do not use the prototype to authorize real code, GitHub, Jira, or other external actions.
 
-The controller demonstrates revision-bound decisions and separate host/agent surfaces. An isolated OpenCode 2.0.24 server plugin loaded, but the plugin-RPC approval design is rejected: the RPC endpoint is an ordinary callable server route, not a human identity boundary. The combined suite currently has 17 automated tests. We have not runtime-validated agent tool filtering, shell/MCP bypasses, subagents, or an interactive approval surface. The chosen direction is an out-of-process trusted controller with a restricted local agent IPC channel and a separate interactive host console; see [`docs/host-controller-boundary.md`](docs/host-controller-boundary.md). This architecture is not yet implemented or proven secure, so do not use it for real actions.
+The controller demonstrates revision-bound decisions and separate host/agent surfaces. A prototype now binds role-specific local IPC endpoints to agent ports and collects plan approval only in an interactive host TTY; the endpoints have no human-decision operation. Its socket path is **not** authenticated against other same-user processes, the Windows named-pipe ACL is not hardened, and no OpenCode adapter is connected. The rejected plugin-RPC spike remains under `spike/opencode/`. The combined suite currently has 21 passing tests. The host/agent design is not proven secure or production-ready; do not use it for real actions.
 
 ## Scope
 
@@ -20,7 +20,7 @@ The controller demonstrates revision-bound decisions and separate host/agent sur
 
 ## Architecture
 
-The proposed implementation is a host-independent TypeScript workflow controller in a trusted host process with an OpenCode agent adapter. Agent instructions guide behavior; the controller authorizes actions and persists state. Human approvals are collected by a separate interactive host console, not through OpenCode plugin RPC. See [`docs/host-controller-boundary.md`](docs/host-controller-boundary.md) for the accepted boundary and remaining proof obligations.
+The proposed implementation is a host-independent TypeScript workflow controller in a trusted host process with an OpenCode agent adapter. Agent instructions guide behavior; the controller authorizes actions and persists state. Human approvals are collected by an interactive host console, not through OpenCode plugin RPC. The initial transport/console prototype is in `src/host-ipc.ts` and `src/host-console.ts`; its constraints and proof obligations are in [`docs/host-controller-boundary.md`](docs/host-controller-boundary.md).
 
 The portable package will contain agent definitions, workflow rules, adapters, and installation tooling. Machine-local configuration will contain provider/model mappings and machine paths. Authentication stays in the relevant credential stores, outside this repository.
 
@@ -159,7 +159,7 @@ No generated operational harness artifacts should be committed to application re
 
 ## Implementation roadmap
 
-1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. Next is the trusted host/agent IPC and interactive approval console; OpenCode tool filtering and host isolation remain proof obligations.
+1. **Enforcement prototype (in progress):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests. A first host/agent IPC and interactive plan-approval prototype exists; cross-process authentication, Windows ACLs, OpenCode adapter isolation, and full decision console remain proof obligations.
 2. **Portable foundation:** global installation for Windows/macOS, explicit machine profiles, shared local project storage, worktree lifecycle.
 3. **Agent workflow:** eight customizable agents, fixed models, planning, implementation, review/QA findings, and approval flows.
 4. **External integrations:** Jira/GitHub/Figma/Stitch through one owner, state mapping, recoverable publication.
@@ -226,7 +226,7 @@ npm test
 npm run typecheck
 ```
 
-Run the isolated interactive demo with `npm run demo`. It creates a disposable text fixture and local SQLite database in a temporary directory; it does not touch a real project or connect to external services.
+Run the isolated demos with `npm run demo` (direct controller boundary) or `npm run host-demo` (role-specific IPC plus host-console plan approval). Each creates a disposable text fixture and local SQLite database in a temporary directory; neither touches a real project or connects to external services. `host-demo` requires an interactive terminal; in non-interactive mode it refuses to approve and exits without editing the fixture.
 
 The prototype snapshotter intentionally supports only small fixture directories, rejects `.git` and symlinks, and hashes every file. A real Android adapter must provide a trustworthy manifest of verification inputs, including relevant uncommitted source/configuration and excluding generated outputs. The current local approval surface is a host API, not an authenticated OpenCode UI.
 

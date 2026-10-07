@@ -28,9 +28,9 @@ OpenCode server/plugin
 
 ## Local transport
 
-The initial transport is a local, private IPC channel: a Unix-domain socket on macOS and an owner-restricted named pipe on Windows (or a platform library that provides equivalent ACLs). Do not bind the agent protocol to a TCP listener. The channel carries only the constrained agent protocol; it has no generic RPC dispatch and no human-decision method.
+The prototype transport is a local IPC channel: a Unix-domain socket on macOS and a named pipe on Windows. It does not bind TCP. A per-directory exclusive lock prevents two host instances from claiming the same IPC namespace. Unix socket directories/files are created with owner-only permissions (0700/0600). The Windows pipe ACL is not hardened or validated yet. The endpoint map is currently returned to the trusted host caller; a production adapter must receive only the specific role capability it needs. The channel carries only the constrained agent protocol; it has no generic RPC dispatch and no human-decision method.
 
-OS-local IPC access control prevents unrelated users/processes from casually attaching; it does **not** prove that a caller is human. The trust boundary still depends on OpenCode agent sessions receiving no shell, arbitrary HTTP, raw IPC, unrestricted MCP/Code Mode, or alternate process-launch path to reach the controller or drive the human console. A generic executor tool must not be provided. If any such capability is available, assume a hostile agent can attempt to reach every local resource available to that process.
+OS-local IPC access control prevents unrelated users/processes from casually attaching; it does **not** prove that a caller is human. The current prototype has no per-client secret or caller authentication: any same-user process able to reach the socket/pipe can choose an endpoint and invoke that role's restricted surface. The trust boundary still depends on OpenCode agent sessions receiving no shell, arbitrary HTTP, raw IPC, unrestricted MCP/Code Mode, or alternate process-launch path to reach the controller or drive the human console. A generic executor tool must not be provided. If any such capability is available, assume a hostile agent can attempt to reach every local resource available to that process.
 
 For V1, run the controller and its human console in the same process so the approval path is not a second network API. A local OpenCode adapter may communicate over the restricted agent IPC channel. If a separate human UI is added later, it requires a distinct authenticated protocol and a fresh threat-model review; it must not reuse the agent channel.
 
@@ -49,8 +49,12 @@ No real project actions may be enabled until adversarial integration tests demon
 3. Add a host process with persistent state, local IPC, project lock/recovery, and an interactive TTY approval console.
 4. Add an OpenCode adapter that binds a session to a controller-issued role port and exposes only mapped operations.
 5. Add adversarial tests for forged roles, replayed requests, direct socket/pipe access from agent tools, shell/HTTP/MCP/Code Mode, child agents, and restarts.
-6. Keep real execution handlers disabled until every required bypass test passes on Windows and macOS.
+6. Harden and validate Windows named-pipe ACLs and macOS socket ownership, add client capability authentication and lifecycle/recovery, and keep real execution handlers disabled until every required bypass test passes on Windows and macOS.
 
 ## Rejected approach
 
 Do not use OpenCode plugin RPC as the trusted human approval channel. V2 exposes plugin RPC as an ordinary server endpoint. A separate CLI/TUI dialog calling that endpoint does not, by itself, prove that the caller was a human; an agent with a route to the server endpoint could submit the same request.
+
+## Prototype status
+
+`src/host-ipc.ts` creates one endpoint per role and binds each endpoint to that role's controller port; role/action payloads are rejected by the existing controller schemas. It enforces an exclusive host lock and bounds newline-delimited JSON frames. `src/host-console.ts` permits plan approval only when standard input/output are interactive TTYs and confirms the exact displayed state target. `npm run host-demo` exercises the socket/pipe round trip with an isolated fixture. The demo's mock agent and host are in one process, and the Windows pipe ACL, real separate-process OpenCode client, raw IPC bypass resistance, and end-to-end install are not yet tested. A stale IPC lock requires manual cleanup/recovery and is not automatically stolen. It is a transport/flow prototype, not a security validation.

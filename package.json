@@ -9,7 +9,8 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "demo": "node examples/enforcement-demo.ts"
+    "demo": "node examples/enforcement-demo.ts",
+    "host-demo": "node examples/host-controller-demo.ts"
   },
   "dependencies": {
     "zod": "4.6.5"
