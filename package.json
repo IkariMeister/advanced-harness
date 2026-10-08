@@ -9,15 +9,11 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "demo": "node examples/enforcement-demo.ts",
-    "host-demo": "node examples/host-controller-demo.ts",
-    "host-test:run": "node examples/fixture-host-runner.ts",
     "harness:install": "node examples/install-native-harness.ts"
   },
   "dependencies": {
     "jsonc-parser": "3.3.1",
-    "yaml": "2.9.1",
-    "zod": "4.6.5"
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

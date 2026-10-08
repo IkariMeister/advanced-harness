@@ -1,12 +1,12 @@
 # Decision: an OpenCode-native, instruction-driven workflow
 
-**Status:** approved direction, 2026-10-08. Supersedes the host-controller approval design. Native template configuration and a real-project pilot still need validation.
+**Status:** approved direction, 2026-10-08. Native template configuration and a real-project pilot still need validation.
 
 ## What we are building
 
 An agent workflow inside OpenCode V2, not another execution platform. Lead coordinates the specialized roles using native tools, shell, Git, and MCP integrations. The human approves plans, findings/fixes, exceptions, and final publishing in the Lead conversation. No separate harness terminal, host service, custom plugin approval API, IPC, revision-token UI, or SQLite state engine is required.
 
-The historical controller/spike remains for comparison. It is not loaded by the native configuration and its restrictions are not inherited by the new templates.
+The obsolete approval controller and integration spike have been removed. Native agents run through OpenCode without a custom harness service.
 
 ## Approval rules
 
@@ -38,7 +38,7 @@ Default-deny tool policies are followed by explicit role exceptions. Native temp
 
 Operator/Implementer/Reviewer/QA shell access is not cryptographic ownership enforcement. Narrow allowlists and explicit deny rules for obvious remote Git/GitHub commands support the convention; indirect commands, scripts, aliases, and network access remain user-authority capabilities. Do not build another host layer to imply stronger guarantees.
 
-Keep customizable role prompts and the agreed model/reasoning table. Validate model access before delegation, stop on errors, and ask for replacement mappings. Spark is currently unsupported on the tested ChatGPT connection; no product replacement has been approved. Machine setup must resolve that before a complete pilot. The historical fixture-only Luna substitution did not change the product assignments.
+Keep customizable role prompts and the agreed model/reasoning table. Validate model access before delegation, stop on errors, and ask for replacement mappings. Spark is currently unsupported on the tested ChatGPT connection; machine setup must explicitly select a supported model or connection before a complete pilot.
 
 ## Required workflow, optional extras
 
@@ -71,6 +71,6 @@ No cross-machine unfinished-state synchronization or concurrent-feature coordina
 - In a pilot, Lead waits for chat plan approval, presents material changes/findings, and asks before publishing or resuming.
 - One real Android issue reaches PR creation, human merge verification, and safe cleanup with the configured checks.
 - Optional evidence cannot silently become a mandatory gate; required missing checks are disclosed and waived only explicitly.
-- Existing configuration, credentials, application changes, and historical experiments are preserved.
+- Installation preserves existing unrelated configuration, credentials, and application changes.
 
-Static template tests verify configuration intent, not compliance by a live agent. The [interactive native installer](installation.md) implements project/global config merging and explicit model/variant assignment per agent, with backups and final confirmation. Model access validation, project command/memory setup, integrations, and the real pilot remain. IPC hardening and adversarial wrapper proof are not prerequisites for this instruction-driven product.
+Static template tests verify configuration intent, not compliance by a live agent. The [interactive native installer](installation.md) implements project/global config merging and explicit model/variant assignment per agent, with backups and final confirmation. Model access validation, project command/memory setup, integrations, and the real pilot remain.

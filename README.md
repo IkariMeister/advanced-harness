@@ -10,7 +10,7 @@ The workflow specification is in [`docs/opencode-native-workflow.md`](docs/openc
 
 **Approval is a conversational workflow rule followed by Lead, not an independently enforced security gate.** OpenCode permissions control tool access; they do not prove that a particular plan was approved. Shell runs with the user's authority, and shell command patterns are not a sandbox. Do not claim deterministic approval enforcement, cross-process isolation, or exactly-once external operations.
 
-The standalone enforcement controller and host console are retained as **historical experiments** under `src/` and `examples/`; the native installer in `src/native-installer.ts` and `examples/install-native-harness.ts` is product tooling. The obsolete OpenCode integration spike, fixture agents, and runtime probes have been removed. Historical experiments are not the product foundation. Their remaining tests still run; historical security proof obligations are not release prerequisites for the simplified workflow.
+The TypeScript code is limited to native installation tooling and reference model assignments, with tests for the installer and agent templates. The obsolete approval controller, host/IPC system, integration spike, demos, and prototype tests have been removed; they remain available in Git history only. Once installed, agents run through OpenCode without a custom harness service.
 
 ## Scope
 
@@ -95,7 +95,7 @@ One canonical local `MEMORY.md` per project is shared across worktrees, for exam
 4. **Real Android pilot:** one issue through plan approval, changes, review/QA, approved fixes, PR creation, human merge, and cleanup. Test an interruption and ask-to-resume behavior.
 5. **Optional improvements:** evidence capture/publication and practical artifact reuse, driven by pilot needs.
 
-No IPC-hardening or forged-wrapper security campaign is required before delivering this instruction-driven workflow. Do not promote the historical prototype's security claims into the new product.
+This instruction-driven workflow does not provide an independent approval-enforcement layer.
 
 ## Development and setup
 
@@ -107,9 +107,7 @@ npm run typecheck
 npm test
 ```
 
-These commands check repository code and template contracts; they do not install the harness, authenticate MCP, or prove agents follow approval instructions. To install deliberately, run `npm run harness:install` and review the [installation guide](docs/installation.md). The installer asks scope/destination and every agent's model/variant, preserves unrelated config, and writes only after confirmation. See [`agents/README.md`](agents/README.md) for the native starting point. Do not install historical spike plugins or copy credentials between machines.
-
-Historical standalone controller demos remain available for comparison only; their separate-terminal approval requirement does not apply to the native workflow. See the superseded [`docs/host-controller-boundary.md`](docs/host-controller-boundary.md). The removed OpenCode integration spike remains available in Git history, not as installable product tooling.
+These commands check repository code and template contracts; they do not install the harness, authenticate MCP, or prove agents follow approval instructions. To install deliberately, run `npm run harness:install` and review the [installation guide](docs/installation.md). The installer asks scope/destination and every agent's model/variant, preserves unrelated config, and writes only after confirmation. See [`agents/README.md`](agents/README.md) for the native starting point. Do not copy credentials between machines.
 
 ## Open setup questions
 
