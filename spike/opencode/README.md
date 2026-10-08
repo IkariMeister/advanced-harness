@@ -62,6 +62,24 @@ The human left the confirmed revision-five approval prompt open while Planner su
 
 Lead reported callable `functions.harness_status`, `functions.subagent`, and `multi_tool_use.parallel`, but refused the requested hidden-shell batch probe because its developer-defined wrapper scope permits only defined tools. No wrapper request was emitted, no raw rejection was observed, and no command executed. This is instruction-based refusal, not runtime dispatch-enforcement evidence. User prompts cannot override that higher-priority restriction. Verifying forged hidden-recipient rejection requires a trusted runtime test driver capable of injecting the malformed call at the actual dispatch boundary; the model refusal and catalog filter unit tests do not establish that result. Direct-IPC identity/ACL isolation and broader client/session coverage also remain unresolved.
 
+### Trusted scripted-provider runtime driver (2026-10-08)
+
+`examples/forged-tool-runtime-probe.ts` launches a real standalone OpenCode CLI against a loopback OpenAI-compatible Chat Completions server that emits deterministic tool calls. It copies the actual adapter into a new project under `$HOME/Projects`, overrides status and shell with harmless recording canaries, and observes the post-filter catalog. The test deliberately allows the shell permission: catalog-bound dispatch must still reject a filtered-out shell implementation. No real host approval or account/model assignment is changed. The driver strips inherited OpenCode session variables and redirects child runtime state into the test directory; a failed status/registry/catalog preflight stops adversarial injection. Synthetic provider models and permissions are test fixtures only, not replacements for production role assignments.
+
+Run explicitly with the CLI executable (this opt-in experiment is not part of `npm test`):
+
+```powershell
+npm run runtime-probe -- "C:\path\to\opencode-cli.exe"
+```
+
+The optional second argument selects the parent directory; the default is `$HOME/Projects`. The driver installs the pinned plugin dependency only in its disposable project and retains `manifest.json`, `results.json`, `provider-exchanges.json`, and `canary-events.jsonl` there. Those files contain local test/session data and are not committed. Unit tests cover the payloads, verdict classification, and fail-closed preflight; they do not substitute for a runtime run.
+
+**Observed on Windows, bundled OpenCode 2.0.25:** the status control executed; the registry contained the shell canary while the outgoing catalog contained only `harness_status`. A forged direct `shell` call produced `Tool is not available for this request: shell`, with no shell-canary execution. Both an allowed-status wrapper control and a hidden-shell wrapper call produced `No tool named "multi_tool_use.parallel" is currently available`. Therefore this route establishes narrow direct hidden-tool dispatch rejection, but **wrapper recipient enforcement remains untested** because the wrapper control cannot execute. It is not evidence about the ChatGPT/OpenAI wrapper, Desktop, every role, resumed/delegated sessions, IPC ACLs, or OS isolation. Evidence from the completed run is retained under `$HOME/Projects/harness-runtime-probe-vCW2u4`.
+
+An initial setup attempt inherited this coding harness's session identity: the adapter/canaries did not load, the status control failed, and a harmless echo used the native shell. That run is invalid as an adapter test, not an adapter bypass. The driver was corrected to strip inherited session variables and refuse adversarial injection without verified canaries and the filtered catalog; only subsequent isolated control-passing runs count toward the result above.
+
+The final driver rerun reproduced those outcomes with per-case catalog preflight; its evidence is retained under `$HOME/Projects/harness-runtime-probe-hrGGZE`. The inherited-session isolation fix also has a unit regression test.
+
 ## Why the rejected plugin-RPC split failed
 
 V2 server plugins can register agent tools and use session hooks to modify the model-call tool catalog. CLI plugins are a distinct client-side extension surface with user dialogs and keymap/palette commands. Plugin RPC lets the CLI surface call server-side code.
