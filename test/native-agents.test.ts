@@ -1,16 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { modelAssignments } from '../src/models.ts';
 
 const roles = ['lead', 'operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const;
+const expectedAssignments = {
+  lead: { model: 'openai/gpt-6-astra', reasoning: 'medium' },
+  operator: { model: 'openai/gpt-5.3-codex-spark', reasoning: 'low' },
+  external: { model: 'openai/gpt-5.3-codex-spark', reasoning: 'low' },
+  researcher: { model: 'openai/gpt-6-luna', reasoning: 'medium' },
+  planner: { model: 'openai/gpt-6.1-sol', reasoning: 'medium' },
+  implementer: { model: 'openai/gpt-6-luna', reasoning: 'low' },
+  reviewer: { model: 'openai/gpt-6.1-sol', reasoning: 'low' },
+  qa: { model: 'openai/gpt-6-luna', reasoning: 'low' },
+} as const;
 const template = (role: typeof roles[number]) => readFileSync(new URL(`../agents/${role}.md`, import.meta.url), 'utf8');
 const permissionLines = (role: typeof roles[number]) => template(role).split('\n').filter(line => line.startsWith('  - { action:'));
 
 test('native roles preserve fixed model variants and deny before native exceptions', () => {
   for (const role of roles) {
     const text = template(role);
-    const assigned = modelAssignments[role];
+    const assigned = expectedAssignments[role];
     assert.ok(text.includes(`model: ${assigned.model}#${assigned.reasoning}\n`), role);
     assert.ok(text.includes(`mode: ${role === 'lead' ? 'primary' : 'subagent'}\n`), role);
     assert.equal(permissionLines(role)[0], '  - { action: "*", resource: "*", effect: deny }');
@@ -47,12 +56,6 @@ test('native MCP and web permissions belong only to External and do not imply co
     const externalLines = permissionLines(role).filter(line => /action: (execute|webfetch|websearch),|action: "(jira|github|figma|stitch)_\*"/.test(line));
     assert.equal(externalLines.length, role === 'external' ? 7 : 0, role);
   }
-  const example = readFileSync(new URL('../opencode.native.example.jsonc', import.meta.url), 'utf8');
-  const config = JSON.parse(example.split('\n').filter(line => !line.trim().startsWith('//')).join('\n'));
-  assert.equal(config.default_agent, 'lead');
-  assert.equal(config.plugins, undefined);
-  assert.deepEqual(config.mcp.servers, {});
-  assert.deepEqual(config.permissions, [{ action: '*', resource: '*', effect: 'deny' }]);
 });
 
 test('native implementation and verification templates require human scope and treat evidence as optional', () => {

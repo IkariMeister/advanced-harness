@@ -1,6 +1,6 @@
 # Interactive native-agent installer
 
-Run from the Advanced Harness checkout with Node.js 24:
+Run from the Advanced Harness checkout with Node.js 24. The installer CLI is [`scripts/install-native-harness.ts`](../scripts/install-native-harness.ts):
 
 ```text
 npm ci

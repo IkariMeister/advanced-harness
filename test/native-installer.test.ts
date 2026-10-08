@@ -170,7 +170,7 @@ test('non-regular config targets are rejected before backups or replacement', t 
 
 test('installer help is noninteractive and normal installation refuses piped input without writes', t => {
   const root = fixture(t);
-  const script = fileURLToPath(new URL('../examples/install-native-harness.ts', import.meta.url));
+  const script = fileURLToPath(new URL('../scripts/install-native-harness.ts', import.meta.url));
   assert.match(execFileSync(process.execPath, [script, '--help'], { encoding: 'utf8' }), /harness:install/);
   assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'project', '--project', root], { stdio: 'pipe', input: 'install\n' }), /interactive terminal/);
   assert.equal(existsSync(join(root, 'opencode.jsonc')), false);
