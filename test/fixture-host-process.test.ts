@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { agentIpcDispatch, agentIpcEndpoint } from '../spike/opencode/host-ipc-client.ts';
+import { agentIpcDispatch, agentIpcEndpoint, agentToolIpcDispatch } from '../spike/opencode/host-ipc-client.ts';
+import { hostToolNames } from '../spike/opencode/host-adapter-policy.ts';
 import { fixtureApprovedContent, fixtureHostPaths } from '../src/fixture-host.ts';
 
 test('separate headless host binds roles and cannot approve its fixture action', async t => {
@@ -43,6 +44,13 @@ test('separate headless host binds roles and cannot approve its fixture action',
   const implementer = agentIpcEndpoint(paths.ipc, 'implementer');
   const external = agentIpcEndpoint(paths.ipc, 'external');
   await agentIpcDispatch(planner, 'harness.propose-plan', 'Replace only the marked disposable greeting.');
+  await t.test('plugin IPC client maps harness_status to the host status method', async () => {
+    const status = await agentToolIpcDispatch(implementer, hostToolNames.status, null) as { plan: { text: string; revision: number }; planTarget: string };
+    assert.equal(status.plan.text, 'Replace only the marked disposable greeting.');
+    assert.equal(status.plan.revision, 1);
+    assert.equal(typeof status.planTarget, 'string');
+    await assert.rejects(agentToolIpcDispatch(implementer, hostToolNames.status, {}), /Status takes no input/);
+  });
   const action = { id: 'process-edit', action: 'edit-code', input: { file: 'greeting.txt', content: fixtureApprovedContent }, findings: [] };
   await assert.rejects(agentIpcDispatch(implementer, 'harness.action', action), /Plan approval required/);
   await assert.rejects(agentIpcDispatch(external, 'harness.action', { ...action, id: 'wrong-role' }), /different agent/);

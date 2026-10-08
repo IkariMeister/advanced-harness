@@ -1,5 +1,5 @@
 import { Plugin } from '@opencode/plugin';
-import { agentIpcDispatch, agentIpcEndpoint, defaultAgentIpcDirectory } from './host-ipc-client.ts';
+import { agentToolIpcDispatch, agentIpcEndpoint, defaultAgentIpcDirectory } from './host-ipc-client.ts';
 import { filterHostTools, hostAgentRoles, hostToolNames, hostToolOptions, isHostAgentRole } from './host-adapter-policy.ts';
 
 const actionInput = {
@@ -43,7 +43,7 @@ export default Plugin.define({
         options: hostToolOptions(hostToolNames.status),
         async execute(_input, toolContext) {
           const endpoint = endpointForAgent(directory, toolContext.agent);
-          const result = await agentIpcDispatch(endpoint, hostToolNames.status, null);
+          const result = await agentToolIpcDispatch(endpoint, hostToolNames.status, null);
           return { content: JSON.stringify(result) };
         },
       });
@@ -54,7 +54,7 @@ export default Plugin.define({
         options: hostToolOptions(hostToolNames.action),
         async execute(input, toolContext) {
           const endpoint = endpointForAgent(directory, toolContext.agent);
-          const result = await agentIpcDispatch(endpoint, 'harness.action', input);
+          const result = await agentToolIpcDispatch(endpoint, hostToolNames.action, input);
           return { content: JSON.stringify(result) };
         },
       });
@@ -69,7 +69,7 @@ export default Plugin.define({
         async execute(input, toolContext) {
           const { plan } = input as { plan: string };
           const endpoint = endpointForAgent(directory, toolContext.agent);
-          const result = await agentIpcDispatch(endpoint, 'harness.propose-plan', plan);
+          const result = await agentToolIpcDispatch(endpoint, hostToolNames.proposePlan, plan);
           return { content: JSON.stringify(result) };
         },
       });
@@ -84,7 +84,7 @@ export default Plugin.define({
         async execute(input, toolContext) {
           const finding = input as { id: string; text: string };
           const endpoint = endpointForAgent(directory, toolContext.agent);
-          const result = await agentIpcDispatch(endpoint, 'harness.report-finding', finding);
+          const result = await agentToolIpcDispatch(endpoint, hostToolNames.reportFinding, finding);
           return { content: JSON.stringify(result) };
         },
       });

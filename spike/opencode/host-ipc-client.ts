@@ -2,9 +2,21 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { createConnection } from 'node:net';
 import { join, resolve } from 'node:path';
-import type { HostAgentRole } from './host-adapter-policy.ts';
+import { hostToolNames, type HostAgentRole, type HostToolName } from './host-adapter-policy.ts';
 
 const maxFrameBytes = 1024 * 1024;
+
+/** OpenCode function names are distinct from the host boundary's IPC methods. */
+const hostIpcMethods: Readonly<Record<HostToolName, string>> = Object.freeze({
+  [hostToolNames.status]: 'harness.status',
+  [hostToolNames.action]: 'harness.action',
+  [hostToolNames.proposePlan]: 'harness.propose-plan',
+  [hostToolNames.reportFinding]: 'harness.report-finding',
+});
+
+export function agentToolIpcDispatch(endpoint: string, tool: HostToolName, input: unknown): Promise<unknown> {
+  return agentIpcDispatch(endpoint, hostIpcMethods[tool], input);
+}
 
 export function agentIpcEndpoint(directory: string, role: HostAgentRole): string {
   if (process.platform === 'win32') {
