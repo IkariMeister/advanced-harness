@@ -10,7 +10,7 @@ The workflow specification is in [`docs/opencode-native-workflow.md`](docs/openc
 
 **Approval is a conversational workflow rule followed by Lead, not an independently enforced security gate.** OpenCode permissions control tool access; they do not prove that a particular plan was approved. Shell runs with the user's authority, and shell command patterns are not a sandbox. Do not claim deterministic approval enforcement, cross-process isolation, or exactly-once external operations.
 
-The existing enforcement controller, host console, adapter, and runtime probes are retained as **historical experiments** under `src/`, `examples/`, and `spike/opencode/`; the new native installer in `src/native-installer.ts` and `examples/install-native-harness.ts` is product tooling. Historical experiments are not the product foundation and must not be loaded alongside the native templates. Their tests still run; historical security proof obligations are not release prerequisites for the simplified workflow.
+The standalone enforcement controller and host console are retained as **historical experiments** under `src/` and `examples/`; the native installer in `src/native-installer.ts` and `examples/install-native-harness.ts` is product tooling. The obsolete OpenCode integration spike, fixture agents, and runtime probes have been removed. Historical experiments are not the product foundation. Their remaining tests still run; historical security proof obligations are not release prerequisites for the simplified workflow.
 
 ## Scope
 
@@ -109,7 +109,7 @@ npm test
 
 These commands check repository code and template contracts; they do not install the harness, authenticate MCP, or prove agents follow approval instructions. To install deliberately, run `npm run harness:install` and review the [installation guide](docs/installation.md). The installer asks scope/destination and every agent's model/variant, preserves unrelated config, and writes only after confirmation. See [`agents/README.md`](agents/README.md) for the native starting point. Do not install historical spike plugins or copy credentials between machines.
 
-Historical demos and probes remain available for comparison only; their separate-terminal approval requirement does not apply to the native workflow. See [`spike/opencode/README.md`](spike/opencode/README.md) and the superseded [`docs/host-controller-boundary.md`](docs/host-controller-boundary.md).
+Historical standalone controller demos remain available for comparison only; their separate-terminal approval requirement does not apply to the native workflow. See the superseded [`docs/host-controller-boundary.md`](docs/host-controller-boundary.md). The removed OpenCode integration spike remains available in Git history, not as installable product tooling.
 
 ## Open setup questions
 

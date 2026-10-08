@@ -1,6 +1,6 @@
 # Native OpenCode workflow agents
 
-These are the source templates for the approved [conversational workflow](../docs/opencode-native-workflow.md), not the historical `spike/opencode/agents/` fixture roles. They use native filesystem/shell/Git/MCP capabilities; they never invoke `harness_*` tools or a separate approval host.
+These are the source templates for the approved [conversational workflow](../docs/opencode-native-workflow.md). They use native filesystem/shell/Git/MCP capabilities; they never invoke `harness_*` tools or a separate approval host.
 
 ## Configuration intent
 
