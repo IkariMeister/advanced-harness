@@ -1,5 +1,7 @@
 # OpenCode V2 approval-boundary spike
 
+> **Historical experiments, not the product foundation.** On 2026-10-08 the human approved an [OpenCode-native conversational workflow](../../docs/opencode-native-workflow.md) with required shell/Git/MCP and optional evidence. Keep these results for comparison; do not install the spike adapter for that workflow or make its IPC/wrapper security checklist a release prerequisite. Native templates live in [`../../agents/`](../../agents/README.md).
+
 This directory contains two experiments. `rejected-rpc-server.ts`/`tui.ts` preserve the rejected plugin-RPC approval experiment. The package entrypoint `server.ts` re-exports `host-adapter.ts`: OpenCode tools call the separate host process over its role-bound local IPC. Human decisions stay in the host console (`src/host-console.ts`), not in OpenCode.
 
 ## Rejected: plugin-RPC approval design

@@ -1,6 +1,6 @@
-# Decision: keep human approval outside OpenCode
+# Historical decision: keep human approval outside OpenCode
 
-**Status:** accepted direction; implementation and adversarial validation are pending.
+**Status:** superseded on 2026-10-08 by the approved [OpenCode-native conversational workflow](opencode-native-workflow.md). Retained as historical prototype documentation, not the product plan. The native workflow requires shell/Git/MCP and accepts human approval in the Lead conversation; none of this document's separate-host requirements apply to it.
 
 ## Decision
 

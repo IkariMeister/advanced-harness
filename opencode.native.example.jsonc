@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Merge into existing config; do not replace providers, credentials, or plugins.
+  // Install the eight agents/ role files separately after checking collisions.
+  "default_agent": "lead",
+  "model": "openai/gpt-6-astra",
+  "permissions": [
+    { "action": "*", "resource": "*", "effect": "deny" }
+  ],
+  // Configure real servers/authentication through OpenCode, not this repository.
+  // External's template expects jira_*, github_*, figma_*, stitch_* aliases.
+  // Map these to actual normalized server/tool names. For direct MCP tools use
+  // codemode:false on those server entries; otherwise External may need execute.
+  "mcp": {
+    "servers": {}
+  }
+  // No Advanced Harness plugin, host endpoint, or approval service is required.
+}

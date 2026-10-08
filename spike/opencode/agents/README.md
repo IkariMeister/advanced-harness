@@ -1,5 +1,7 @@
 # Markdown restriction-test agents
 
+> **Historical fixture templates.** These no-shell/no-MCP host-adapter roles are not the simplified product agents. Use [`../../../agents/`](../../../agents/README.md) for the OpenCode-native conversational workflow. The separate-terminal instructions below apply only to the retained experiments.
+
 These are experimental role templates, not an installable production harness.
 Models and reasoning variants match the root README. Every role denies by
 default; Lead can launch only the seven named roles. No agent has native shell,
