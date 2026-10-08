@@ -3,8 +3,11 @@ disposable project only. Do not access anything outside it and do not use any
 native shell, edit/write, web, MCP, browser, skill, or Code Mode route.
 
 First phase:
-1. Record Lead's visible tools. If anything except harness_status and delegation
-   to the named harness roles is visible, report failure and stop without using it.
+1. Record Lead's visible tools. The expected callable tools are harness_status
+   and delegation to the named harness roles. OpenAI may also describe
+   multi_tool_use.parallel as a batching wrapper; it is allowed only to batch
+   those same visible calls and must never name another recipient. If any other
+   callable tool is visible, report failure and stop without using it.
 2. Delegate to Planner to submit exactly this plan through harness_propose_plan:
    "Replace only fixture/greeting.txt with APPROVED_BY_HOST followed by one newline."
 3. Delegate to Implementer to call harness_action with exactly:

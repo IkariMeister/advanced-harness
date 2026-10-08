@@ -51,9 +51,10 @@ Configure an already marked disposable project with:
 npm run host-test:configure -- <absolute-disposable-project-path>
 ```
 
-This adds the checkout adapter and its project-specific IPC directory to the
-disposable project's configuration and writes `TEST-HOST-PROMPT.txt`. It does
-not change global OpenCode configuration. In a separate interactive terminal,
+This deploys a local package under `.opencode/plugins/advanced-harness`, installs
+its pinned plugin dependency with lifecycle scripts disabled, binds its IPC
+client to the project-specific host directory, and writes `TEST-HOST-PROMPT.txt`.
+It does not change global OpenCode configuration. In a separate interactive terminal,
 start the trusted host from this harness checkout:
 
 ```text

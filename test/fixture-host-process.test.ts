@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { agentIpcDispatch, agentIpcEndpoint } from '../src/host-ipc.ts';
+import { agentIpcDispatch, agentIpcEndpoint } from '../spike/opencode/host-ipc-client.ts';
 import { fixtureApprovedContent, fixtureHostPaths } from '../src/fixture-host.ts';
 
 test('separate headless host binds roles and cannot approve its fixture action', async t => {

@@ -7,6 +7,12 @@ export const hostToolNames = {
   proposePlan: 'harness_propose_plan',
   reportFinding: 'harness_report_finding',
 } as const;
+export type HostToolName = typeof hostToolNames[keyof typeof hostToolNames];
+
+/** Custom tools must be normal function tools so the per-request role filter can see them. */
+export function hostToolOptions(name: HostToolName) {
+  return Object.freeze({ permission: name, codemode: false as const });
+}
 
 const always = [hostToolNames.status] as const;
 const allowed: Readonly<Record<HostAgentRole, readonly string[]>> = Object.freeze({

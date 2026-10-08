@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterHostTools, hostAgentRoles, hostToolNames, isHostAgentRole } from '../spike/opencode/host-adapter-policy.ts';
+import { filterHostTools, hostAgentRoles, hostToolNames, hostToolOptions, isHostAgentRole } from '../spike/opencode/host-adapter-policy.ts';
 import { roles } from '../src/protocol.ts';
 
 const adversarialCatalog = () => Object.fromEntries([
@@ -39,4 +39,10 @@ test('review and external roles get finding reporting; unknown roles fail closed
 
 test('OpenCode adapter role IDs stay aligned with the controller role map', () => {
   assert.deepEqual([...hostAgentRoles], [...roles]);
+});
+
+test('host tools use ordinary function mode so context filtering can enforce roles', () => {
+  for (const name of Object.values(hostToolNames)) {
+    assert.deepEqual(hostToolOptions(name), { permission: name, codemode: false });
+  }
 });
