@@ -1,246 +1,124 @@
 # Advanced Harness
 
-A portable, human-controlled Android engineering workflow for OpenCode, with customizable agents, fixed models, deterministic approval gates, and local project memory.
+An **OpenCode-native Android engineering workflow**: Lead coordinates specialized agents, you approve plans and publishing in the conversation, and agents use OpenCode's shell, Git, filesystem, and MCP tools.
 
-## Status
+## Current direction and status
 
-Specification and repository bootstrap. The workflow controller, OpenCode adapter, installer, integrations, and verification tooling are **not implemented yet**. Cloning this repository does not activate the harness.
+The simplified direction was approved on 2026-10-08. There is **no separate harness host, approval terminal, custom IPC, approval-token system, or SQLite workflow engine in the product plan**. Shell, Git, and MCP integrations are required; screenshots, videos, and other evidence are useful but optional unless explicitly requested.
 
-The enforcement prototype is the approved first implementation milestone. OpenCode V2 is the initial integration target; actual enforcement capabilities must be validated before claiming the workflow is protected.
+The workflow specification is in [`docs/opencode-native-workflow.md`](docs/opencode-native-workflow.md). Native agent templates are in [`agents/`](agents/README.md). An [interactive installer](docs/installation.md) now reads OpenCode JSON/JSONC config and asks for each role's model/variant before installing inline agent definitions at project/global scope. They are a starting point, not an end-to-end validated product. Cloning this repository does not activate agents or configure MCP connections. Model access validation, project setup, integrations, and a real Android pilot remain to be delivered.
+
+**Approval is a conversational workflow rule followed by Lead, not an independently enforced security gate.** OpenCode permissions control tool access; they do not prove that a particular plan was approved. Shell runs with the user's authority, and shell command patterns are not a sandbox. Do not claim deterministic approval enforcement, cross-process isolation, or exactly-once external operations.
+
+The TypeScript code is limited to native installation tooling, with tests for the installer and agent templates. The obsolete approval controller, host/IPC system, integration spike, demos, and prototype tests have been removed; they remain available in Git history only. Once installed, agents run through OpenCode without a custom harness service.
 
 ## Scope
 
-- V1: OpenCode on Windows and macOS, one active feature per project.
-- Available globally across projects through a future global installation.
-- Harness installation and configuration are portable; unfinished feature state does not need to move between computers in V1.
-- Future: concurrent features and sharing with teammates using OpenCode or Claude Code.
-- Initial stack: Android, Jetpack Compose, Roborazzi, and a private E2E framework.
-- Services: Jira Issues, Figma or Stitch, and GitHub.
-- Windows provider: ChatGPT sign-in within OpenCode. Mac provider: LiteLLM, with explicit machine-specific mappings.
-
-## Architecture
-
-The proposed implementation is a host-independent TypeScript workflow controller with an OpenCode adapter. Agent instructions guide behavior; the controller authorizes actions and persists state.
-
-The portable package will contain agent definitions, workflow rules, adapters, and installation tooling. Machine-local configuration will contain provider/model mappings and machine paths. Authentication stays in the relevant credential stores, outside this repository.
-
-Each project has local storage outside its Git checkouts for workflow state, revision-bound approvals, memory, evidence, and build manifests. Stable project and feature identifiers should permit concurrency later; V1 enforces a single active feature per project.
+- OpenCode V2 on Windows and macOS; product V1 means the first harness release, not OpenCode V1.
+- Interactive project/global installation across projects, preserving unrelated OpenCode configuration.
+- Customizable agents, explicit model/reasoning assignments, and machine-local provider mappings.
+- One active feature per project as an operational convention; no custom locking service.
+- Local memory shared across a project's worktrees; no cross-machine unfinished-state synchronization required.
+- Initial stack: Android, Jetpack Compose, Gradle, Roborazzi, and the existing private E2E framework.
+- Required integrations: Jira, GitHub, and Figma first, otherwise Stitch, otherwise Jira alone. Do not combine Figma and Stitch silently.
+- Windows connection: ChatGPT sign-in in OpenCode. Mac connection: LiteLLM with explicit deployment mappings.
+- Future concurrency, team sharing, and other agent hosts are deferred.
 
 ## Agents and fixed models
 
-Agents and subagents must be customizable. A lead agent selects subagents automatically, but cannot bypass human approval gates. Model and reasoning assignments are requirements, not suggestions; there is no silent fallback.
-
 | Agent | Responsibility | OpenAI model | Reasoning |
 | --- | --- | --- | --- |
-| Lead | Coordinate stages, delegation, approvals, and progress | `openai/gpt-6-astra` | `medium` |
-| Operator | Local Git, worktrees, shared memory, artifact manifests, cleanup | `openai/gpt-5.3-codex-spark` | `low` |
-| External interactions | All MCP, service APIs, remote Git, ticket updates, PR operations, evidence publication | `openai/gpt-5.3-codex-spark` | `low` |
-| Researcher | Inspect related code and investigate implementation context | `openai/gpt-6-luna` | `medium` |
+| Lead | Coordinate the workflow, approvals, and progress | `openai/gpt-6-astra` | `medium` |
+| Operator | Local Git, worktrees, shared memory, cleanup | `openai/gpt-5.3-codex-spark` | `low` |
+| External | MCP, service APIs, remote Git, Jira, GitHub, design services | `openai/gpt-5.3-codex-spark` | `low` |
+| Researcher | Inspect the codebase and relevant local context | `openai/gpt-6-luna` | `medium` |
 | Planner | Prepare and revise the implementation plan | `openai/gpt-6.1-sol` | `medium` |
-| Implementer | Write application code, tests, and approved fixes | `openai/gpt-6-luna` | `low` |
-| Reviewer | Code review, Gradle build, lint, unit tests, Roborazzi | `openai/gpt-6.1-sol` | `low` |
-| QA | Runtime verification, design comparison, E2E and evidence | `openai/gpt-6-luna` | `low` |
+| Implementer | Write approved code, tests, and fixes | `openai/gpt-6-luna` | `low` |
+| Reviewer | Code review, Gradle build/lint/tests, Roborazzi | `openai/gpt-6.1-sol` | `low` |
+| QA | Runtime/design/E2E verification | `openai/gpt-6-luna` | `low` |
 
-Model IDs and variants were found in the OpenCode catalog during planning. Catalog presence does not prove account access; validate each assignment against the selected connection. LiteLLM deployment IDs must be mapped explicitly on the Mac. If a model is unavailable, pause and ask rather than substituting it.
+These assignments are preferences to validate against the active connection, not evidence of access. Spark was rejected by the tested ChatGPT connection. Setup must ask for an explicitly approved replacement or supported connection before Operator/External can be used; no silent fallback. LiteLLM endpoints, deployment IDs, and reasoning mappings must be supplied explicitly. Selecting a primary agent does not necessarily change the session's selected model; verify both.
 
-### Responsibility boundaries
+## Human control in the Lead conversation
 
-- Only the external-interactions agent may use MCP, service APIs, GitHub/Jira tooling, or remote Git operations.
-- Operator owns local Git commands. Reviewer can request diffs/history from Operator; QA does not need general Git access.
-- Build/test agents may run Gradle dependency resolution. This is an explicit exception to the external-service boundary.
-- Reuse matching build artifacts rather than rebuilding unnecessarily.
-- Operator owns shared memory writes and deduplication; other agents submit observed facts.
-- Application tests are written by Implementer. Reviewer and QA identify gaps and run checks; fixes arising from findings require approval.
-- Provider connections used by OpenCode itself are runtime infrastructure, not delegated external-service actions.
+1. Lead presents the latest plan and **waits until you explicitly approve it**. For example: “I approve this plan.” No terminal token or separate approval UI is required.
+2. Lead passes the approved scope and your decision to Implementer. Child agents cannot approve a plan themselves; a child's claim of approval is not a human decision.
+3. A material scope/approach change returns to you for approval before more implementation. Ambiguous approval or competing plan versions require clarification.
+4. Lead presents review/QA findings. You accept or discard findings individually or as a clearly listed batch; accepted fixes stay within their approved scope.
+5. Lead presents verification results and asks for final approval before External pushes and opens the PR. New material changes after final approval require renewed approval.
+6. Only a human merges. After you ask to verify the merge, Operator may clean up the feature worktree/branch once merged state is confirmed. Ask before handling uncommitted or unpushed work.
+7. On interruption, Lead summarizes the current state and asks before resuming. Inspect Git/service state before retrying an uncertain external action; do not claim an automatic recovery engine.
+8. Explicit conversational exceptions are allowed for specific steps. Mark waived checks as waived, never passed. Blanket “approve everything,” agent-generated approvals, and bypassing GitHub requirements are not supported.
 
-## Human control and deterministic approvals
-
-1. Use explicit human confirmation controls tied to a displayed revision. An agent interpreting conversational text such as “looks good” cannot unlock execution.
-2. Approve the plan before implementation. **Every change to the plan returns to the human.**
-3. Review and QA run after coding, before PR creation.
-4. Findings can be accepted/discarded individually or as an explicitly enumerated batch. This applies to internal findings and later PR feedback.
-5. Accepted findings authorize their corresponding fixes. A resulting plan change still needs separate plan approval.
-6. Review/QA can rerun automatically after approved fixes. Fresh findings return to the human.
-7. Final implementation approval authorizes pushing the approved revision and opening its PR. Later changes require fresh approval before pushing.
-8. Approvals must not remain valid when their bound content changes. Code changes invalidate affected verification and implementation approval.
-9. Always ask before resuming interrupted work, on ambiguity, on conflicting instructions, on missing configuration, and on synchronization failure.
-10. Humans may override individual harness steps through explicit, revision-bound controls. Record what was overridden locally; a waived check is never reported as passed.
-11. **Blanket “approve everything” is forbidden.** Agents cannot manufacture human approvals or overrides.
-12. Human overrides do not bypass GitHub requirements and do not authorize the harness to merge. PRs are always merged explicitly by a human.
-
-The controller must enforce gates at action execution, not merely when an agent proposes a transition. Broad shell or delegated tool access must not provide a bypass. Semantic deviation from a plan still requires review; a revision check alone cannot prove compliance.
+Ordinary OpenCode tool-permission prompts may still appear for shell, filesystem, or MCP operations. They are not plan approval and need no separate terminal. Lead must still follow the conversational workflow even when a tool is allowed.
 
 ## Feature lifecycle
 
-### 1. Bootstrap and isolate
+1. **Bootstrap:** Operator inspects the repository, `AGENTS.md`, base branch, and existing worktrees. Ask for missing/conflicting settings. Create a feature worktree under a visible location such as `$HOME/Projects` before feature changes; never discard unrelated work.
+2. **Context:** External retrieves Jira requirements and the selected design source through MCP/API tools. Researcher inspects related code. Jira remains the source of acceptance criteria; ask on ambiguity.
+3. **Plan:** Planner proposes scope, acceptance criteria, changes, tests, and affected areas. Lead presents the plan and waits for your conversational approval.
+4. **Implement:** Implementer writes the approved changes and tests using native OpenCode tools. Report any material deviation instead of silently expanding scope.
+5. **Review and verify:** Reviewer runs configured build/lint/unit/Roborazzi checks; QA checks runtime behavior, design, and configured E2E tests. Lead presents findings and obtains your fix/discard decisions; rerun affected checks after fixes.
+6. **Publish:** Lead obtains final implementation approval. External pushes and opens the PR, updates Jira, and handles later feedback through the same finding/fix loop. Do not merge.
+7. **Consolidate and clean up:** Ask which observed learnings should become confirmed `AGENTS.md` rules; approve resulting changes before publishing. After human merge and a human-triggered verification, Operator cleans up safely.
 
-- Operator may inspect local Git and project `AGENTS.md` to identify the repository and base branch before worktree creation.
-- Base branch is project-specific and comes from `AGENTS.md`. Ask for missing settings and save the answers in local `MEMORY.md`.
-- Create a dedicated feature branch/worktree before feature research.
-- Enforce one active feature per project in V1.
+## Tool and integration ownership
 
-### 2. Retrieve context and plan
+- Only External owns MCP, web/service API access, remote Git, GitHub/Jira, and design services.
+- Operator owns local Git/worktree operations and shared memory writes. Other agents request Git information from Operator instead of taking over the Git lifecycle.
+- Implementer owns source/test changes; Reviewer and QA report findings rather than silently fixing application code.
+- Reviewer/QA use project-specific shell/test/device commands. Build/test dependency resolution is allowed runtime infrastructure, not authorization for unrelated external-service operations.
+- Lead delegates only to the seven named roles, not generic/explore fallbacks. Agents do not change models or grant themselves tools when a capability is missing.
+- Tool policies and role instructions support workflow ownership, not protection from a hostile same-user process. Validate the effective configuration before a real pilot.
 
-- External-interactions agent retrieves the Jira issue and design context.
-- Select **Figma first, otherwise Stitch, otherwise Jira alone**. Figma and Stitch are mutually exclusive for a feature; never combine them silently.
-- Jira remains the source of requirements and acceptance criteria. Ask about ambiguity or conflicts.
-- Researcher inspects related code inside the worktree.
-- Planner produces scope, acceptance criteria, approach, affected areas, and verification steps.
-- Iterate with the human until the exact plan revision is explicitly approved.
+MCP authentication stays in OpenCode's credential stores. Configure actual server IDs/tool names and validate access; do not invent URLs or commit secrets. Jira lifecycle synchronization is pre-authorized once the project's state mapping is agreed. Ask on synchronization failures rather than silently continuing or guessing a fallback. Final approval authorizes pushing the approved work and creating the PR, not merging it.
 
-### 3. Implement, review, and verify
+## Verification and optional evidence
 
-- Implementer writes approved changes and tests.
-- Reviewer performs code review, Gradle build, lint, unit tests, and Roborazzi screenshot tests.
-- QA compares the running app with the selected designs and runs E2E with mocked backend responses.
-- QA records video, takes screenshots, and captures tracking analytics evidence from Logcat. The existing private E2E framework understands the analytics events; its integration contract will be supplied later.
-- Prefer a usable physical device; otherwise use an emulator. If selection or availability is uncertain, ask.
-- Publish evidence to both Jira and the PR through the external-interactions agent. Jira can receive evidence before PR creation; PR publication follows creation.
-- Present findings for human acceptance/discard. Run approved fixes and repeat affected verification.
+The plan names the required checks and project commands. Review, build, lint, unit tests, relevant Roborazzi coverage, and runtime/E2E checks remain workflow requirements where configured; missing commands or prerequisites require clarification or an explicit waiver.
 
-### 4. Approve and publish
+Prefer a usable physical device, otherwise an emulator; ask when device selection is uncertain. The private E2E framework's invocation contract still needs to be supplied. Screenshot/video/logcat analytics capture and publication are **nice to have** by default. An evidence-capture failure does not block the feature unless you made that evidence an acceptance requirement; report what is missing.
 
-- Obtain explicit implementation approval bound to the current revision.
-- External-interactions agent pushes that revision and opens the GitHub PR.
-- Process subsequent PR feedback through the same individual/batch decision gates.
-- Required checks may only be waived through explicit human override; represent waived status accurately.
+Publish useful captured evidence to Jira and the PR through External when supported, without committing recordings or generated logs to application Git. Reuse clearly matching artifacts when practical, but a sophisticated artifact-manifest/cache system is deferred. Application tests, required Roborazzi baselines, and approved `AGENTS.md` changes belong in Git; local plans/memory/progress notes and optional operational evidence do not.
 
-### 5. Consolidate knowledge
+## Lightweight progress and memory
 
-A PR is ready to merge when CI passes, review threads are resolved, required approvals are granted, and there are no conflicts or other merge blockers.
+Lead maintains a conversation checklist: issue, feature/worktree, current plan and approval, implementation, checks, findings/decisions, final approval, publication, and cleanup. Before compaction/interruption, summarize unresolved decisions and observed results. If approval context is missing on resume, ask again; no custom database is required.
 
-At that point, ask which observed learnings should become confirmed rules in `AGENTS.md`. Approved consolidation belongs in the feature PR, with explicit approval of the resulting diff before pushing. Recheck readiness afterward because the new commit can invalidate checks or approvals.
+One canonical local `MEMORY.md` per project is shared across worktrees, for example under `$HOME/Projects/advanced-harness-data/<project>/`. Agree the path during setup and let Operator serialize updates. Label facts by source, scope, and confirmation; do not store credentials. Ask when memory, project instructions, or user directions conflict. Consider each learning once for approved consolidation into `AGENTS.md`.
 
-Track which learnings were already considered to avoid repeated consolidation prompts for the same entries.
+## Delivery plan
 
-### 6. Merge and clean up
+1. **Specification and native templates:** simplify the product scope; conversational Lead approval instructions, role prompts, and native permission examples. Source templates now exist; runtime validation is pending.
+2. **Installation and project setup:** an interactive merge-preserving project/global installer now assigns models per role. Real model-access validation, visible worktree/data paths, project commands, and shared memory setup remain.
+3. **Required integrations:** configure Jira/GitHub/design MCP access and state mapping without exposing credentials; validate each role's required tools.
+4. **Real Android pilot:** one issue through plan approval, changes, review/QA, approved fixes, PR creation, human merge, and cleanup. Test an interruption and ask-to-resume behavior.
+5. **Optional improvements:** evidence capture/publication and practical artifact reuse, driven by pilot needs.
 
-- A human explicitly merges the PR.
-- Merge verification is **human-triggered**, not a background monitor.
-- Once verified, automatically remove the feature worktree and local feature branch.
-- Pause and ask if uncommitted or unpushed work exists. Do not infer merge completion solely from ancestry: GitHub may use squash/rebase merges.
-- Preserve shared memory and local workflow records outside the removed worktree.
+This instruction-driven workflow does not provide an independent approval-enforcement layer.
 
-## Jira synchronization
+## Development and setup
 
-Update the ticket at lifecycle transitions, including work started, verification, PR opened, and PR merged. Change states where supported by the project's Jira workflow.
+Prerequisites: Git, OpenCode V2, Node.js 24.x, the required model connection, and GitHub/Jira/design access. GitHub CLI is useful for repository setup and External's approved GitHub operations.
 
-Ask for the project's state mapping during setup and save it in local `MEMORY.md`. These lifecycle updates are pre-authorized. **Always ask on synchronization failure**; do not silently continue or invent a fallback state/comment policy.
-
-Record completed external operations so interrupted work can reconcile actual remote state before retrying and avoid duplicate comments, uploads, or PRs.
-
-## Memory and project configuration
-
-- One canonical local `MEMORY.md` per project, outside worktrees, shared by all of that project's worktrees through the harness. No per-worktree copy is required.
-- Operator serializes writes and deduplicates entries.
-- Save observed facts: working commands, project settings, conventions, testing pitfalls, and useful feature learnings. Label source, scope, and confirmation status.
-- Confirmed rules are consolidated into `AGENTS.md` only after human review at the end of the workflow.
-- Always ask when `MEMORY.md`, `AGENTS.md`, or harness instructions conflict.
-- Missing settings are clarified with the human and saved in `MEMORY.md`.
-- Cross-machine feature state/memory synchronization is not required for V1.
-
-## Build-artifact reuse
-
-Operator maintains a manifest linking artifacts to their source snapshot, build variant, relevant configuration, and toolchain inputs. Account for uncommitted changes; a commit SHA alone is insufficient.
-
-Reviewer and QA may reuse an artifact only when its provenance matches the current verification target. Relevant code/configuration changes invalidate reuse and affected results.
-
-## Git and publication policy
-
-| Content | Destination |
-| --- | --- |
-| Application code, tests, required Roborazzi baselines | Project Git history |
-| Explicitly approved consolidated rules | Project `AGENTS.md` in Git |
-| Plans, memory, approvals, workflow state, internal reports, execution logs | Local storage outside project Git |
-| QA evidence and summaries | Jira and PR attachments/comments, not project Git history |
-| Harness source, specification, reusable definitions, installation documentation | This harness repository |
-
-No generated operational harness artifacts should be committed to application repositories. The exceptions above for tests/baselines and approved `AGENTS.md` changes are explicit.
-
-## Implementation roadmap
-
-1. **Enforcement prototype (approved first):** controller, revision-bound human controls, overrides, persistent state, single-feature lock, action boundaries, interruption recovery, and bypass tests.
-2. **Portable foundation:** global installation for Windows/macOS, explicit machine profiles, shared local project storage, worktree lifecycle.
-3. **Agent workflow:** eight customizable agents, fixed models, planning, implementation, review/QA findings, and approval flows.
-4. **External integrations:** Jira/GitHub/Figma/Stitch through one owner, state mapping, recoverable publication.
-5. **Android verification:** Compose/Roborazzi, artifact reuse, physical-device-first selection, private E2E adapter, evidence capture and publication.
-6. **Real-project pilot:** one Jira issue through human merge and cleanup, including interruption recovery and memory consolidation.
-
-### Prototype acceptance checks
-
-- Missing/stale approvals block protected actions.
-- Agent-originated approval requests cannot impersonate human confirmations.
-- Overrides apply only to their named step/revision; blanket approval is rejected.
-- Enumerated finding batches cannot authorize findings added later.
-- Shell, alternative tools, and child sessions cannot bypass protected action boundaries.
-- Concurrent sessions cannot start a second feature for the same project in V1.
-- Restart requires human-confirmed resume; interrupted external actions are reconciled before repetition.
-- State corruption or uncertain approval state blocks progression and asks the human.
-- Changes invalidate the correct approvals, verification results, and cached artifacts.
-- Tests exercise real action boundaries, not just the controller's happy path.
-
-## Add the harness to a new machine
-
-### What works today
-
-You can clone and review this specification on either platform. There is not yet a runnable harness or installer. Do not register a nonexistent plugin or assume that approvals are enforced after cloning.
-
-### Prerequisites
-
-1. Install Git, GitHub CLI (`gh`), and OpenCode V2.
-2. Authenticate GitHub CLI with an account that can access this private repository:
-
-   ```text
-   gh auth login
-   gh auth status
-   ```
-
-3. Configure the machine's model connection through OpenCode: ChatGPT sign-in on Windows, or the appropriate LiteLLM connection on Mac. Never commit credentials.
-
-### Windows (PowerShell)
-
-```powershell
-$destination = Join-Path $HOME 'Documents\Advanced Harness'
-gh repo clone IkariMeister/advanced-harness "$destination"
-Set-Location "$destination"
-Get-Content README.md
+```text
+npm ci
+npm run typecheck
+npm test
 ```
 
-### macOS (Terminal)
+These commands check repository code and template contracts; they do not install the harness, authenticate MCP, or prove agents follow approval instructions. To install deliberately, run `npm run harness:install` and review the [installation guide](docs/installation.md). The installer asks scope/destination and every agent's model/variant, preserves unrelated config, and writes only after confirmation. See [`agents/README.md`](agents/README.md) for the native starting point. Do not copy credentials between machines.
 
-```sh
-gh repo clone IkariMeister/advanced-harness "$HOME/Advanced Harness"
-cd "$HOME/Advanced Harness"
-cat README.md
-```
+## Open setup questions
 
-For an existing clean clone, retrieve updates with `git pull --ff-only`.
+- A supported model/connection choice for Operator and External; explicit LiteLLM mappings on macOS.
+- Project base branch, worktree/memory paths, Jira state mapping, and build/test/device commands.
+- Actual MCP server IDs, authentication, design-source availability, and publication capabilities.
+- Private E2E invocation contract and any evidence explicitly required for acceptance.
 
-### Activation checklist once implementation is available
+## OpenCode V2 references
 
-The installer and exact commands will be added with milestone 2. It must:
-
-1. Install a pinned harness version and register its OpenCode adapter globally, preserving existing configuration. OpenCode V2 global configuration is normally `~/.config/opencode/opencode.json(c)`.
-2. Create machine-local provider/model mappings and project-data paths outside Git. On LiteLLM, require explicit deployment IDs rather than guessing aliases.
-3. Validate every agent's fixed model/variant against the active account; pause on missing access.
-4. Connect Jira, GitHub, and design MCP integrations for the external-interactions agent, using locally configured credentials.
-5. Validate deterministic gates and agent boundaries on that machine before enabling feature execution.
-6. Register an application project; read `AGENTS.md`, ask for missing settings and Jira mappings, and save answers in shared local `MEMORY.md`.
-7. Verify Android SDK/JDK/Gradle prerequisites, Roborazzi commands, physical device or emulator availability, and the private E2E adapter.
-
-Do not copy credentials, local feature state, approvals, logs, or evidence through this repository when setting up another machine.
-
-## Open questions for implementation
-
-- Private E2E framework API and evidence export contract.
-- Exact Jira/GitHub/design MCP capabilities, especially binary evidence publication.
-- LiteLLM endpoint, deployment IDs, and supported reasoning settings.
-- OpenCode plugin proof that approval controls cannot be invoked as human actions by agents and that all exposed execution paths are covered.
-- Portable runtime/version and packaging choices, to be validated during the prototype.
-
-## References
-
-- [OpenCode V2 configuration](https://opencode.ai/v2/docs/config)
-- [OpenCode V2 plugin API](https://opencode.ai/v2/docs/build/plugins)
-
-Documentation describes building blocks; it does not establish that this harness's enforcement is already implemented or validated.
+- [Agents](https://opencode.ai/v2/docs/agents)
+- [Permissions](https://opencode.ai/v2/docs/permissions)
+- [MCP servers](https://opencode.ai/v2/docs/mcp-servers)
+- [Configuration](https://opencode.ai/v2/docs/config)
