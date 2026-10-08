@@ -11,17 +11,12 @@ These are the source templates for the approved [conversational workflow](../doc
 - Implementer writes approved source/test changes. Reviewer/QA may run configured commands, but do not silently fix source. Required verification is independent of optional evidence capture.
 - Explicit models are unchanged. Validate every model/variant before delegation. Spark failed on the tested ChatGPT connection; Operator/External require an explicitly approved mapping or supported connection before a full pilot. No automatic model substitution.
 
-## Installation status
+## Installation
 
-No automatic/global installer or live native-agent pilot is provided yet. Nothing is deployed to your machine by this change. Do not replace existing config, copy credentials, or load the historical spike plugin.
+Run `npm run harness:install` from this checkout. The [interactive installer](../docs/installation.md) reads global/project JSON/JSONC configuration, asks for a model and reasoning variant for every role, and installs the native definitions inline in `agents` after confirmation. It supports project/global scope, preserves unrelated settings/comments, and backs up an existing target under `$HOME/Projects/advanced-harness-backups`. It does not deploy anything merely by cloning or running tests, authenticate models/MCP, or install the historical plugin.
 
-For a future manually configured project pilot:
+Inline installation avoids the earlier `agent/` versus `agents/` directory discrepancy. Existing named Markdown definitions cause an abort so that competing prompts/permissions are resolved deliberately, not overwritten. Review existing inline role collisions in the summary; their owned native fields are replaced only when you type `install`.
 
-1. Agree project/worktree/memory paths (prefer visible directories under `$HOME/Projects`), required commands, model mappings, and MCP server aliases.
-2. Copy these eight role files (not this README) into the project's `.opencode/agents/` directory, preserving any existing definitions and asking about collisions. Current V2 docs specify `agents/`; earlier 2.0.24 spike tests required `agent/`. Validate discovery on the installed version before choosing a compatibility layout; do not silently overwrite either.
-3. Merge only the relevant settings from [`../opencode.native.example.jsonc`](../opencode.native.example.jsonc). Preserve unrelated plugins/providers/MCP settings. The old adapter's context hook removes native tools and is incompatible with this workflow.
-4. Configure the actual Jira/GitHub/design MCP servers and authentication through OpenCode. The example intentionally contains no invented endpoints or credentials. Run `opencode mcp list`; finish required sign-in through `/mcps`.
-5. Inspect effective agents/config and model access. Start a new Lead session and explicitly verify its selected model/variant; a primary-agent switch alone does not reset it.
-6. Pilot a small real issue: verify that Lead plans and waits for your approval, then implements, reviews, asks about fixes, and waits before publishing. Static tests do not prove live behavior.
+After installation, agree visible project/worktree/memory paths, commands, model access, and actual MCP aliases. Configure/authenticate Jira/GitHub/design MCP through OpenCode (`opencode mcp list`, then `/mcps` for sign-in). Inspect effective config and all eight agents, start a new Lead session, and explicitly verify its model/variant. Pilot a small issue with conversational plan approval and final publishing approval; static tests do not prove live behavior.
 
 OpenCode `ask` dialogs authorize a tool operation; they are not approval of a plan. Conversational approval is an instruction followed by the agents, not a deterministic gate. Shared memory location/permissions, exact build/device commands, and integration capability checks remain setup work. See the root README for the delivery order.

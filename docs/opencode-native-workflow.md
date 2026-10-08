@@ -73,4 +73,4 @@ No cross-machine unfinished-state synchronization or concurrent-feature coordina
 - Optional evidence cannot silently become a mandatory gate; required missing checks are disclosed and waived only explicitly.
 - Existing configuration, credentials, application changes, and historical experiments are preserved.
 
-Static template tests verify configuration intent, not compliance by a live agent. Global installation/config merging, machine profiles, integration setup, and the real pilot are the next deliverables. IPC hardening and adversarial wrapper proof are not prerequisites for this instruction-driven product.
+Static template tests verify configuration intent, not compliance by a live agent. The [interactive native installer](installation.md) implements project/global config merging and explicit model/variant assignment per agent, with backups and final confirmation. Model access validation, project command/memory setup, integrations, and the real pilot remain. IPC hardening and adversarial wrapper proof are not prerequisites for this instruction-driven product.

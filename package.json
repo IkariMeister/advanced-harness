@@ -14,9 +14,12 @@
     "agent-test:prepare": "node examples/prepare-agent-smoke-test.ts",
     "host-test:configure": "node examples/configure-host-adapter-test.ts",
     "host-test:run": "node examples/fixture-host-runner.ts",
-    "runtime-probe": "node examples/forged-tool-runtime-probe.ts"
+    "runtime-probe": "node examples/forged-tool-runtime-probe.ts",
+    "harness:install": "node examples/install-native-harness.ts"
   },
   "dependencies": {
+    "jsonc-parser": "3.3.1",
+    "yaml": "2.9.1",
     "zod": "4.6.5"
   },
   "devDependencies": {

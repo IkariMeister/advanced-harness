@@ -6,16 +6,16 @@ An **OpenCode-native Android engineering workflow**: Lead coordinates specialize
 
 The simplified direction was approved on 2026-10-08. There is **no separate harness host, approval terminal, custom IPC, approval-token system, or SQLite workflow engine in the product plan**. Shell, Git, and MCP integrations are required; screenshots, videos, and other evidence are useful but optional unless explicitly requested.
 
-The workflow specification is in [`docs/opencode-native-workflow.md`](docs/opencode-native-workflow.md). Native agent templates are in [`agents/`](agents/README.md), with a merge-only configuration example in [`opencode.native.example.jsonc`](opencode.native.example.jsonc). They are a starting point, not a globally installed or end-to-end validated product. Cloning this repository does not activate agents or configure MCP connections. Global installation, machine profiles, project setup, integrations, and a real Android pilot remain to be delivered.
+The workflow specification is in [`docs/opencode-native-workflow.md`](docs/opencode-native-workflow.md). Native agent templates are in [`agents/`](agents/README.md), with a merge-only configuration example in [`opencode.native.example.jsonc`](opencode.native.example.jsonc). An [interactive installer](docs/installation.md) now reads OpenCode JSON/JSONC config and asks for each role's model/variant before installing inline agent definitions at project/global scope. They are a starting point, not an end-to-end validated product. Cloning this repository does not activate agents or configure MCP connections. Model access validation, project setup, integrations, and a real Android pilot remain to be delivered.
 
 **Approval is a conversational workflow rule followed by Lead, not an independently enforced security gate.** OpenCode permissions control tool access; they do not prove that a particular plan was approved. Shell runs with the user's authority, and shell command patterns are not a sandbox. Do not claim deterministic approval enforcement, cross-process isolation, or exactly-once external operations.
 
-The existing enforcement controller, host console, adapter, and runtime probes are retained as **historical experiments** under `src/`, `examples/`, and `spike/opencode/`. They are not the product foundation and must not be loaded alongside the native templates. Their tests still run; historical security proof obligations are not release prerequisites for the simplified workflow.
+The existing enforcement controller, host console, adapter, and runtime probes are retained as **historical experiments** under `src/`, `examples/`, and `spike/opencode/`; the new native installer in `src/native-installer.ts` and `examples/install-native-harness.ts` is product tooling. Historical experiments are not the product foundation and must not be loaded alongside the native templates. Their tests still run; historical security proof obligations are not release prerequisites for the simplified workflow.
 
 ## Scope
 
 - OpenCode V2 on Windows and macOS; product V1 means the first harness release, not OpenCode V1.
-- Future global installation across projects, preserving existing OpenCode configuration.
+- Interactive project/global installation across projects, preserving unrelated OpenCode configuration.
 - Customizable agents, explicit model/reasoning assignments, and machine-local provider mappings.
 - One active feature per project as an operational convention; no custom locking service.
 - Local memory shared across a project's worktrees; no cross-machine unfinished-state synchronization required.
@@ -90,7 +90,7 @@ One canonical local `MEMORY.md` per project is shared across worktrees, for exam
 ## Delivery plan
 
 1. **Specification and native templates:** simplify the product scope; conversational Lead approval instructions, role prompts, and native permission examples. Source templates now exist; runtime validation is pending.
-2. **Installation and project setup:** portable/global installation, merge-preserving configuration, model access validation, visible worktree/data paths, project commands, and shared memory.
+2. **Installation and project setup:** an interactive merge-preserving project/global installer now assigns models per role. Real model-access validation, visible worktree/data paths, project commands, and shared memory setup remain.
 3. **Required integrations:** configure Jira/GitHub/design MCP access and state mapping without exposing credentials; validate each role's required tools.
 4. **Real Android pilot:** one issue through plan approval, changes, review/QA, approved fixes, PR creation, human merge, and cleanup. Test an interruption and ask-to-resume behavior.
 5. **Optional improvements:** evidence capture/publication and practical artifact reuse, driven by pilot needs.
@@ -107,7 +107,7 @@ npm run typecheck
 npm test
 ```
 
-These commands check repository code and template contracts; they do not install the harness, authenticate MCP, or prove agents follow approval instructions. See [`agents/README.md`](agents/README.md) for the native starting point. Do not automatically replace global/project config, install historical spike plugins, or copy credentials between machines.
+These commands check repository code and template contracts; they do not install the harness, authenticate MCP, or prove agents follow approval instructions. To install deliberately, run `npm run harness:install` and review the [installation guide](docs/installation.md). The installer asks scope/destination and every agent's model/variant, preserves unrelated config, and writes only after confirmation. See [`agents/README.md`](agents/README.md) for the native starting point. Do not install historical spike plugins or copy credentials between machines.
 
 Historical demos and probes remain available for comparison only; their separate-terminal approval requirement does not apply to the native workflow. See [`spike/opencode/README.md`](spike/opencode/README.md) and the superseded [`docs/host-controller-boundary.md`](docs/host-controller-boundary.md).
 
