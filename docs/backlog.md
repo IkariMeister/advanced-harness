@@ -30,8 +30,9 @@ invented. Links point to the current implementation/specification.
   77 automated tests passed; one opt-in live test was skipped in the default suite.
   The 28-file delivery, including recovery documentation, was committed as
   `b12d954db97b97e3d33eb6b9c5e530ff9d2b0f48` and pushed to the harness origin.
-  Remote-head equality was freshly verified. No harness PR, merge, or live prompt
-  deployment has been performed for this delivery.
+  Remote-head equality was freshly verified. Harness PR
+  https://github.com/IkariMeister/advanced-harness/pull/2 is now open into `main`;
+  no merge or live prompt deployment has been performed for this delivery.
 - All eight roles were discovered and passed small inference checks. Successful
   responses did not expose exact runtime model/variant metadata. Catalog checks
   are not inference/entitlement proof; inference checks are not tool/approval proof.
@@ -66,7 +67,7 @@ invented. Links point to the current implementation/specification.
 | --- | --- | --- | --- |
 | BH-001 | P0 | Finish MarsRoverIA fix pilot | Five checks/final approval reported; three unavailable gates waived for this fix; commit 16256ca |
 | BH-002 | P0 | GitHub access, publishing, merge, cleanup pilot | Human reports PR #35 created manually; review/CI, human merge, and requested cleanup remain; External child execution unresolved |
-| BH-003 | P0 | Consolidate and preserve harness delivery | Delivery b12d954 committed/pushed; approve harness PR/release scope separately; no merge/deployment |
+| BH-003 | P0 | Consolidate and preserve harness delivery | Harness PR #2 open; review/required checks, human merge, and separately approved deployment remain |
 | BH-004 | P1 | Full Android verification setup | Confirm Spotless/Detekt and runtime/device/E2E/snapshot contracts |
 | BH-005 | P1 | Live context migration and global/project separation | Offer explicit legacy-to-context migration; verify preservation |
 | BH-006 | P1 | Safe installer upgrades and permission reconciliation | Preserve reviewed models/integration rules through upgrades |
@@ -309,6 +310,17 @@ updates, app operations, harness PR, merge, or installed prompt changes occurred
 Local commit/push consolidation is complete; PR/release and live prompt deployment
 remain separate decisions. After any subsequent note commit, verify the branch's
 remote SHA again rather than assuming the remote still points at the delivery SHA.
+
+Subsequent human approval requested opening the harness PR. Created and freshly
+verified **OPEN**, non-draft PR
+https://github.com/IkariMeister/advanced-harness/pull/2 from
+`feature/native-harness-setup` into `main`; no existing PR was found before creation.
+Its body records the 77 passing tests/one skipped live test, scoped diagnostic result,
+and outstanding validation/deployment limitations. This recovery update records the
+existing PR reference, not new product scope. Required CI/review results and merge
+are not yet verified. Next: review the harness PR and its required checks, then
+human-only merge. Installed prompt deployment and any cleanup require separate
+approval; the Android pilot's PR is not the harness deliverable.
 
 Review the local installer/doctor/setup/integrations/context tests, source templates,
 spec/docs, and backlog together. Separate unrelated work, run typecheck/tests and
