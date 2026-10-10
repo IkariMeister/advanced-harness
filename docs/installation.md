@@ -53,7 +53,39 @@ An existing target is backed up exactly under the visible `$HOME/Projects/advanc
 
 ## After installation
 
-1. Inspect effective config and agent discovery with OpenCode's diagnostic commands on your installed version.
+The installer checks the running OpenCode service after saving, rather than reporting a config write as successful setup. It verifies all eight roles, visibility, primary/subagent modes, exact assigned model/variant, active providers, and enabled catalog models/variants. It compares against your chosen assignments so stale configuration or project overrides cannot silently pass. Checks retry briefly because initial API snapshots can precede plugin settlement.
+
+Run the same checks independently, without reinstalling:
+
+```text
+npm run harness:doctor
+npm run harness:doctor -- --project "C:/Users/you/Projects/android-app"
+npm run harness:doctor -- --opencode "C:/path/to/opencode-cli.exe"
+npm run harness:doctor -- --server "http://localhost:49374"
+```
+
+Use the same project and server as your OpenCode UI. Global installations are checked in the current directory, including project overrides. The diagnostic lists inspected config paths, not contents or credentials. It uses OpenCode's CLI connection/authentication flow, may start the service, and never reloads/restarts it, edits configuration, substitutes models, or sends inference requests. `OPENCODE_BIN` or `--opencode` selects a CLI; Windows automatically discovers the standard desktop-bundled CLI, otherwise `opencode` on PATH is used. The installer also accepts `--opencode`.
+
+Exit codes: **0** means discovery/catalog checks passed; **1** means definite readiness failures; **2** means verification is inconclusive (CLI, API, timeout, unsupported response, or config/project errors). If verification fails after installation, the saved config and backup remain in place; no automatic rollback or repeated installation is needed.
+
+**Catalog availability does not prove account entitlement.** A listed Spark model can still be rejected by the active ChatGPT account. A real, explicitly approved model run remains necessary before claiming all roles are runnable. MCP, Android tools, and workflow approval behavior are not checked here.
+
+For missing shell/tool claims, see [native tool troubleshooting](tool-troubleshooting.md).
+Code Mode searches do not enumerate all native tools. Require invocation/error or
+captured offered-tool evidence; without it, availability remains unverified. Source
+prompt changes are not automatically deployed: applying them requires separate
+consent while preserving installed models, permissions, and unrelated settings.
+
+### If Lead is missing
+
+- Look for **Lead**, not an agent named “Harness.” Only Lead is primary; the seven others are subagents.
+- Start a **new session**. Existing sessions keep their selected agent and model even when `default_agent` changes.
+- If a role is absent from config, check the install target/scope; project installs do not apply to unrelated projects.
+- If hidden or disabled, review those preserved settings deliberately; reinstalling does not silently remove them.
+- If config and runtime differ, inspect overrides and check the UI is connected to the same service/project. If a service restart is needed, finish active work first and run `opencode service restart` deliberately; diagnostics do not interrupt active sessions.
+- If an assigned model/provider/variant fails, connect/enable it or approve a supported replacement explicitly. Never fall back silently.
+
+1. Run `harness:doctor` in the intended project and resolve failed/inconclusive checks.
 2. Start a new Lead session; verify its model and reasoning variant and every child role's model access. No entitlement validation is implied by installation.
 3. Confirm actual MCP server aliases/tool actions. External's source permissions use `jira_*`, `github_*`, `figma_*`, and `stitch_*`; adapt them to configured names. The installer preserves MCP configuration, does not authenticate services, and does not change permission patterns to guess server capabilities.
 4. Agree project/worktree/memory paths and build/test/device/E2E commands.
@@ -62,3 +94,17 @@ An existing target is backed up exactly under the visible `$HOME/Projects/advanc
 To undo an installation, inspect the saved backup and merge/restore intentionally; do not discard configuration changes made after installation. New configs have no preexisting backup. Automated tests cover parsing, model selection, preservation, conflict detection, backup/concurrency behavior, and refusal of noninteractive installation—not a real-account Android pilot.
 
 An isolated configuration inspection with bundled OpenCode 2.0.25 accepted the generated inline definitions for all eight roles and normalized the selected synthetic model references. This checked config loading, not runnable model entitlements or effective agent discovery: the synthetic provider was not an authenticated real account. No user/global configuration or credentials were changed by that check.
+
+On 2026-10-09, the diagnostic passed discovery/catalog checks against the user's installed global configuration and bundled OpenCode 2.0.26: Lead and all seven subagents were visible with the selected modes and model variants. This did not alter the installation, restart the service, or send model requests, and does not establish why a previous UI session lacked Lead.
+
+The live failure-path test also passed on 2.0.26: a disposable project hid Lead, disabled Operator, and assigned an unavailable provider/model. The diagnostic correctly failed each condition. Its project config was removed afterward; the global installation was unchanged.
+
+### Optional live regression check
+
+Unit tests use injected API snapshots and do not start OpenCode. The live test is skipped unless `HARNESS_LIVE_OPENCODE` names your CLI executable. It uses your existing service/connection, may start the service, creates and removes only its own disposable project under `$HOME/Projects`, and makes no inference requests:
+
+```powershell
+$env:HARNESS_LIVE_OPENCODE = 'C:/path/to/opencode-cli.exe'
+node --test test/native-diagnostics-live.test.ts
+Remove-Item Env:HARNESS_LIVE_OPENCODE
+```

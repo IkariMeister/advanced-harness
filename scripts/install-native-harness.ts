@@ -4,17 +4,18 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { agentDirectories, askAssignments, chooseConfiguration, configuredModels, discoverConfigurations, findMarkdownConflicts, loadNativeDefinitions, nativeRoles, parseConfiguration, projectConfiguration, saveInstallation, updateNativeConfiguration, type Ask } from '../src/native-installer.ts';
+import { DiagnosticError, printReport, verifyRuntime } from '../src/native-diagnostics.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:install -- [--scope project|global] [--project <directory>] [--config <file>]');
+  console.log('Usage: npm run harness:install -- [--scope project|global] [--project <directory>] [--config <file>] [--opencode <CLI path>]');
   console.log('Interactive native-agent installer. Preserves unrelated JSON/JSONC settings; writes only after confirmation.');
 } else {
   const options: Record<string, string> = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
     const value = args[index + 1];
-    if (!flag || !['--scope', '--project', '--config'].includes(flag) || !value || value.startsWith('--') || options[flag]) throw new Error('Unknown, duplicate, or incomplete option. Run --help.');
+    if (!flag || !['--scope', '--project', '--config', '--opencode'].includes(flag) || !value || value.startsWith('--') || options[flag]) throw new Error('Unknown, duplicate, or incomplete option. Run --help.');
     options[flag] = value;
   }
   if (options['--scope'] && !['project', 'global'].includes(options['--scope'])) throw new Error('--scope must be project or global');
@@ -72,12 +73,23 @@ if (args.includes('--help')) {
     console.log('Assignments are stored inline in agents; no plugin or separate approval host is installed.');
     const backupParent = join(homedir(), 'Projects', 'advanced-harness-backups');
     if (original !== undefined) console.log(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
+    console.log('After writing, runtime verification may start the OpenCode service. It will not restart/reload it or send paid model requests.');
     if ((await ask('Type install to apply these changes', 'cancel')) !== 'install') console.log('Cancelled. No files were changed.');
     else {
       const backup = saveInstallation(target, original, updated, backupParent);
-      console.log(`Installed eight native agent definitions: ${target}`);
+      console.log(`Configuration written (runtime not yet verified): ${target}`);
       if (backup) console.log(`Backup: ${backup}`);
-      console.log('Start a NEW OpenCode session. Verify agent discovery, model access/variant, and actual MCP tool aliases.');
+      const directory = project ?? process.cwd();
+      try {
+        const intended = Object.fromEntries(nativeRoles.map(role => [role, { ...definitions[role], model: assignments[role] }]));
+        const report = await verifyRuntime({ directory, ...(options['--opencode'] ? { executable: options['--opencode'] } : {}) }, intended);
+        printReport(report);
+        process.exitCode = report.ok ? 0 : 1;
+      } catch (error) {
+        if (error instanceof DiagnosticError) console.error(error.message);
+        console.error('Configuration saved, but runtime verification is inconclusive. Run npm run harness:doctor; check CLI path/service. No rollback or model substitution was performed.');
+        process.exitCode = 2;
+      }
       console.log('Existing session models are unchanged; explicitly verify the assigned Lead model/variant in the new session.');
       console.log('Model access, MCP authentication, project commands, and approval behavior have NOT been runtime-validated.');
     }
