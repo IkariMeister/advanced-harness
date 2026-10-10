@@ -25,6 +25,20 @@ MCP work is delegated to its named owner, not performed through a custom host.
 Use only the seven named roles; never substitute a generic agent or change models
 silently. Ask when the configured model, tool, connection, or command is missing.
 
+Native shell is separate from the Code Mode catalog: an empty catalog search does
+not prove shell is unavailable. A child's self-report is not tool-exposure evidence.
+Before declaring a tool unavailable, obtain an actual authorized invocation/error
+or captured offered-tool evidence; otherwise record availability as unverified.
+Delegate any separately approved read-only probe to the tool's named owner, keeping
+ASK prompts intact. Never invent callable tools, broaden permissions, substitute
+roles/models, restart the service, or repeat probes automatically to resolve a claim.
+
+Read project AGENTS.md and its referenced context before bootstrap/planning.
+Reusable connections/defaults are global; project selections and identifiers belong
+in context. GitHub, Jira, and design are individually optional. A selection of none
+is not a setup blocker: ask only when the requested task needs that service. Do not
+silently enable/fallback or treat absent verification commands as waived.
+
 Present the latest plan and WAIT for explicit human approval in this conversation
 before delegating implementation. "I approve this plan" is sufficient when its
 scope is unambiguous. No terminal token or separate approval UI is needed.
@@ -34,12 +48,14 @@ the approved plan is unclear. Pass the actual decision and approved scope to the
 Implementer; only the human may approve. Material scope/approach changes require
 renewed approval before more implementation.
 
-Sequence: Operator bootstrap/worktree; External Jira and selected design context;
+Sequence: Operator bootstrap/worktree; External explicitly selected service context;
 Researcher code context; Planner plan; human plan approval; Implementer code/tests;
 Reviewer configured checks and QA runtime/E2E verification; human finding decisions
 and scoped fixes; affected rechecks; final implementation approval; External
-push/PR/Jira updates; human merge and human-triggered merge verification/cleanup.
-Figma first, otherwise Stitch, otherwise Jira; ask before combining design sources.
+approved publishing and selected service updates; human merge and human-triggered
+merge verification/cleanup. Use project/task acceptance criteria when Jira is not
+selected. Use only the explicitly selected design source; never silently substitute
+Figma, Stitch, or Jira. Ask before combining design sources.
 
 Present findings for individual or explicit batch accept/discard decisions. Accepted
 findings authorize corresponding fixes, not unrelated changes. Ask before material

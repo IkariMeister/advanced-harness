@@ -9,7 +9,10 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "harness:install": "node scripts/install-native-harness.ts"
+    "harness:install": "node scripts/install-native-harness.ts",
+    "harness:doctor": "node scripts/diagnose-native-harness.ts",
+    "harness:setup": "node scripts/setup-native-project.ts",
+    "harness:integrations": "node scripts/configure-integrations.ts"
   },
   "dependencies": {
     "jsonc-parser": "3.3.1",

@@ -43,20 +43,22 @@ Keep customizable role prompts and the agreed model/reasoning table. Validate mo
 ## Required workflow, optional extras
 
 1. Operator confirms repository/base branch, `AGENTS.md`, existing features/worktrees, and an agreed worktree path. Ask if another active feature or unrelated changes make setup unsafe.
-2. External reads Jira and the selected design source: Figma, otherwise Stitch, otherwise Jira. Ask on contradictions; do not silently mix design sources.
+2. Read project AGENTS.md and referenced context. External retrieves requirements from the services actually selected for this task. GitHub/Jira/design integrations are individually optional; ask about an absent service only when the task requires it. Never silently enable, substitute, or combine design sources.
 3. Researcher inspects related code; Planner supplies the plan; Lead waits for human approval.
 4. Implementer makes approved changes and writes tests. Reviewer runs required checks; QA verifies runtime and configured E2E behavior.
 5. Lead presents findings. Human accept/discard decisions guide scoped fixes, followed by affected rechecks and renewed approval for material plan changes.
-6. Lead asks for final implementation approval. External publishes the approved work and updates Jira. Process PR feedback through the same decisions; never merge.
+6. Lead asks for final implementation approval. External publishes through the configured GitHub backend and updates Jira only when selected and authorized. If the requested publishing workflow lacks a service, ask rather than claiming success. Process PR feedback through the same decisions; never merge.
 7. Ask which observed learnings should become approved `AGENTS.md` changes. On human-triggered merge verification, confirm merged state before safe worktree/branch cleanup.
 
-Jira lifecycle updates are pre-authorized after agreeing the project's state mapping; synchronization failures require a human decision. If outcome is uncertain, inspect before retrying rather than duplicating external operations. Respect GitHub's required checks and human approvals.
+Jira lifecycle updates are pre-authorized only when Jira is selected and the human approves its state mapping and update scope; synchronization failures require a human decision. When Jira is not selected, use project/task acceptance criteria. If outcome is uncertain, inspect before retrying rather than duplicating external operations. Respect GitHub's required checks and human approvals.
 
 Required verification is named in each plan. Evidence capture (screenshots, video, analytics/logcat) and publication is optional unless the human makes it an acceptance criterion. Capture failures alone do not block work; explain missing evidence. Prefer a physical device, otherwise an emulator, and ask when selection is unclear. The private E2E command/API contract must be supplied before it can be invoked.
 
 Reusing a clearly matching artifact is useful, but advanced cache manifests, durable orchestration, and automated reconciliation UI are deferred. Test code, required baselines, and approved `AGENTS.md` changes belong in application Git; recordings, logs, local memory, and workflow notes do not.
 
 ## Simple state and project setup
+
+Reusable MCP connections/agent permissions and default GitHub/Jira/design choices are global. Repository identifiers, chosen optional services, Jira mappings, Android commands, and device/shared-path choices live only in project AGENTS.md or explicitly referenced context. There is no required separate project JSON profile. Existing profiles remain intact until migration is explicitly approved. See [configuration](configuration.md).
 
 The Lead checklist includes feature/issue, worktree, latest plan and approval decision, implementation progress, required checks/results, findings and decisions, final publishing approval, PR, and cleanup. Summarize it before compaction/interruption. Missing or conflicting context means ask, not infer approval.
 

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { loadNativeDefinitions } from '../src/native-installer.ts';
 
 const roles = ['lead', 'operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const;
 const expectedAssignments = {
@@ -51,11 +53,49 @@ test('native operational roles expose shell and keep edit defaults role-scoped',
   for (const role of ['external', 'reviewer', 'qa'] as const) assert.ok(!permissionLines(role).some(line => line.includes('action: edit,')), role);
 });
 
+test('Lead and External require evidence for missing native tools without broadening access', () => {
+  const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
+  for (const role of ['lead', 'external'] as const) {
+    const text = definitions[role].system.replace(/\s+/g, ' ');
+    assert.match(text, /Native shell[\s\S]*separate from the[\s\S]*Code Mode catalog/, role);
+    assert.match(text, /empty catalog search[\s\S]*does not prove shell is unavailable/, role);
+    assert.match(text, /actual authorized invocation\/error[\s\S]*or captured offered-tool evidence/, role);
+    assert.match(text, /availability as[\s\S]*unverified/, role);
+    assert.match(text, /separately approved read-only/, role);
+    assert.match(text, /ASK prompts intact/, role);
+    assert.match(text, /broaden[\s\S]*permissions/, role);
+    assert.match(text, /restart the service/, role);
+    assert.match(text, /probes automatically/, role);
+  }
+  assert.match(definitions.lead.system, /child's self-report is not tool-exposure evidence/);
+  assert.match(definitions.external.system, /tools actually exposed within approved scope/);
+  assert.match(definitions.external.system, /diagnostic approval does not authorize publishing/);
+  assert.ok(permissionLines('external').includes('  - { action: shell, resource: "*", effect: ask }'));
+  assert.ok(!permissionLines('lead').some(line => /action: (shell|execute),/.test(line)));
+});
+
 test('native MCP and web permissions belong only to External and do not imply connections', () => {
   for (const role of roles) {
     const externalLines = permissionLines(role).filter(line => /action: (execute|webfetch|websearch),|action: "(jira|github|figma|stitch)_\*"/.test(line));
     assert.equal(externalLines.length, role === 'external' ? 7 : 0, role);
   }
+});
+
+test('Lead, External, and product docs honor optional services without design fallback', () => {
+  const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
+  for (const role of ['lead', 'external'] as const) {
+    const text = definitions[role].system.replace(/\s+/g, ' ');
+    assert.match(text, /GitHub, Jira, and design are individually optional|Respect none/, role);
+    assert.match(text, /project\/task acceptance criteria/, role);
+    assert.match(text, /Use only the explicitly selected design source; never silently substitute/, role);
+    assert.doesNotMatch(text, /Figma first|Prefer Figma|otherwise Stitch|otherwise Jira/, role);
+  }
+  assert.match(definitions.external.system.replace(/\s+/g, ' '), /only when Jira is selected and the human has approved the state mapping and update scope/);
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  assert.match(readme, /Jira\/design access is not a general setup prerequisite/);
+  assert.match(readme, /project\/task acceptance criteria/);
+  assert.match(readme, /are implemented locally with automated tests/);
+  assert.doesNotMatch(readme, /Jira remains the source of acceptance criteria|Model access validation, project setup, integrations, and a real Android pilot remain to be delivered/);
 });
 
 test('native implementation and verification templates require human scope and treat evidence as optional', () => {
