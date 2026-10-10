@@ -1,6 +1,6 @@
 # Backlog
 
-Last consolidated: 2026-10-10. This is the durable recovery index for **known pending
+Last consolidated: 2026-10-11. This is the durable recovery index for **known pending
 work**, not just deferred features. Update it when scope/status changes; do not rely
 on a conversation summary or a person's memory. Unknown/unreported work is not
 invented. Links point to the current implementation/specification.
@@ -21,13 +21,17 @@ invented. Links point to the current implementation/specification.
 
 ## Latest known state (reported/observed, not a fresh machine audit)
 
-- Harness checkout: `C:\Users\jcgse\Documents\Advanced Harness`, branch `main`.
+- Harness checkout: `C:\Users\jcgse\Documents\Advanced Harness`, delivery branch
+  `feature/native-harness-setup`, tracking `origin/feature/native-harness-setup`.
   The previous `Advanced Harness-worktrees/enforcement-prototype` location became
   empty; do not use it as the development checkout.
 - Installer, agent/model diagnostics, Android setup, optional global integration
   setup, and project-context storage are implemented locally. Latest typecheck and
-  72 automated tests passed; one opt-in live test was skipped in the default suite.
-  Harness changes, including this backlog, were **uncommitted** at consolidation.
+  77 automated tests passed; one opt-in live test was skipped in the default suite.
+  The 28-file delivery, including recovery documentation, was committed as
+  `b12d954db97b97e3d33eb6b9c5e530ff9d2b0f48` and pushed to the harness origin.
+  Remote-head equality was freshly verified. No harness PR, merge, or live prompt
+  deployment has been performed for this delivery.
 - All eight roles were discovered and passed small inference checks. Successful
   responses did not expose exact runtime model/variant metadata. Catalog checks
   are not inference/entitlement proof; inference checks are not tool/approval proof.
@@ -62,7 +66,7 @@ invented. Links point to the current implementation/specification.
 | --- | --- | --- | --- |
 | BH-001 | P0 | Finish MarsRoverIA fix pilot | Five checks/final approval reported; three unavailable gates waived for this fix; commit 16256ca |
 | BH-002 | P0 | GitHub access, publishing, merge, cleanup pilot | Human reports PR #35 created manually; review/CI, human merge, and requested cleanup remain; External child execution unresolved |
-| BH-003 | P0 | Consolidate and preserve harness delivery | 28-file branch/commit and push approved; delivery in progress; no PR/merge/deployment approval |
+| BH-003 | P0 | Consolidate and preserve harness delivery | Delivery b12d954 committed/pushed; approve harness PR/release scope separately; no merge/deployment |
 | BH-004 | P1 | Full Android verification setup | Confirm Spotless/Detekt and runtime/device/E2E/snapshot contracts |
 | BH-005 | P1 | Live context migration and global/project separation | Offer explicit legacy-to-context migration; verify preservation |
 | BH-006 | P1 | Safe installer upgrades and permission reconciliation | Preserve reviewed models/integration rules through upgrades |
@@ -293,6 +297,18 @@ no existing local target branch, and no remote head at
 configured; no identity settings were changed. Commit/push references will be
 recorded only after success. No force-push, PR creation, merge, installed prompt
 deployment, or app changes are included in this authorization.
+
+Delivery result (2026-10-11, freshly verified): commit
+`b12d954db97b97e3d33eb6b9c5e530ff9d2b0f48`
+(`feat: add native harness setup and diagnostics`) contains the approved 28-file
+scope on `feature/native-harness-setup`. Push with upstream succeeded to
+`https://github.com/IkariMeister/advanced-harness.git`; `git ls-remote` confirmed the
+remote head equals that commit. This recovery-note update is a documentation-only
+follow-up to preserve the existing delivery reference in Git history. No forced
+updates, app operations, harness PR, merge, or installed prompt changes occurred.
+Local commit/push consolidation is complete; PR/release and live prompt deployment
+remain separate decisions. After any subsequent note commit, verify the branch's
+remote SHA again rather than assuming the remote still points at the delivery SHA.
 
 Review the local installer/doctor/setup/integrations/context tests, source templates,
 spec/docs, and backlog together. Separate unrelated work, run typecheck/tests and
