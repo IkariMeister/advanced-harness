@@ -86,13 +86,16 @@ async function choice(ask: Ask, question: string, options: string[], defaultValu
 
 async function askSelections(servers: Record<string, Record<string, unknown>>, previous: GlobalIntegrations, ask: Ask, allowNew: boolean): Promise<{ settings: GlobalIntegrations; choices: ServerChoice[] }> {
   const available = { ...servers };
+  const initialNames = Object.keys(servers).sort();
+  const usedInitialNumbers = new Map<number, string>();
   const selected = new Map<string, ServerChoice>();
   const selectServer = async (service: string, suggested: string | undefined): Promise<string | null> => {
     for (;;) {
-      const names = Object.keys(available).sort();
       const answer = (await ask(`${service}: alias (or numbered list), ${allowNew ? 'new, ' : ''}or none`, suggested ?? 'none')).trim() || suggested || 'none';
       if (answer === 'none') return null;
-      const name = /^\d+$/.test(answer) ? names[Number(answer) - 1] : answer;
+      const number = /^\d+$/.test(answer) ? Number(answer) : undefined;
+      const name = number === undefined ? answer : usedInitialNumbers.get(number) ?? initialNames[number - 1];
+      if (number !== undefined && name) usedInitialNumbers.set(number, name);
       if (name && Object.hasOwn(available, name)) { if (!selected.has(name)) selected.set(name, { name }); return name; }
       if (name !== 'new' || !allowNew) continue;
       const alias = (await ask(`${service}: new unique alias`, service)).trim() || service;
