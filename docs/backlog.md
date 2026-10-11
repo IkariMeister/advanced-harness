@@ -81,6 +81,8 @@ invented. Links point to the current implementation/specification.
 | BH-014 | P2 | Optional evidence and practical reuse | Add only when pilot needs justify it; never silently make it a gate |
 | BH-015 | Deferred | Multi-squad shared-repository workflows | Agree per-session routing/concurrency rules before implementation |
 | BH-016 | Deferred | Team/cross-machine coordination and other hosts | Separate product decision; no synchronization/daemon promised |
+| BH-017 | Deferred | Predictable workflow commands | Define workflows for new issues, teammate PR reviews, reported defects, and technical debt; command names/syntax TBD |
+| BH-018 | Deferred | V2 epic/user-story refinement harness | Define a distinct second harness for epic/story refinement; SDD applicability TBD |
 
 Priorities are proposed delivery order, not new implementation authorization.
 
@@ -465,6 +467,17 @@ reviewed installed prompts needs separate consent while preserving existing mode
 permission arrays, connections, and unrelated settings; do not reinstall all roles
 to apply a prompt-only change. Broader ownership/publishing checks remain open.
 
+Approved follow-up request (2026-10-11): evaluate a workflow that avoids repeated
+permission prompts for Git, GitHub CLI, and file edits **within an explicitly
+human-approved project/worktree scope**. Keep this as a request for investigation and
+design, not permission/config implementation authorization. Preserve role ownership:
+Operator owns local Git/worktrees/memory; External owns services and remote Git/`gh`;
+Implementer edits approved source/tests. Publication still needs separate human
+approval, merge remains human-only, and cleanup requires human authorization after
+merged-state verification. Material scope/approach changes require renewed approval.
+OpenCode permissions may govern tool access but do not enforce conversational plan
+state or prove approval; do not describe them as doing so.
+
 Static tests and runtime agent/model catalogs do not prove usable tool permissions.
 Verify shell/Git/filesystem/MCP ownership in the actual installed version and location:
 External owns services/remote Git/gh; Operator local Git/worktrees/memory; Implementer
@@ -560,6 +573,38 @@ machines, broader concurrent-feature coordination, and agent hosts other than
 OpenCode. They must not quietly enter V1 through a daemon, locking engine, or shared
 approval database. Define authority, privacy, conflict/recovery behavior, and human
 approval semantics separately before proposing implementation.
+
+Future harness setup support may assess Codex, Antigravity, Claude Code, and Claude
+Desktop alongside OpenCode. First document each host's setup model, capabilities, and
+constraints; do not assume feature or workflow parity. This remains deferred research
+and product planning, not implementation approval. Preserve the existing OpenCode
+scope while deciding whether and how other hosts fit later.
+
+## BH-017 — Predictable workflow commands
+
+Requested definition only; implementation is not approved. Define predictable harness
+commands/workflows for these task types:
+
+- Starting work on new issues.
+- Reviewing a teammate's PR.
+- Investigating a reported bug/defect.
+- Handling technical debt.
+
+For each, agree the required inputs, ordered steps, role handoffs, outputs, checks, and
+human approval points. Command names and syntax remain TBD pending that definition.
+These workflows must preserve conversational human approvals and existing role ownership.
+Do not claim deterministic enforcement: tool permissions and command patterns do not
+independently enforce plan approval. No commands, code, or configuration changes are
+authorized by this backlog request.
+
+## BH-018 — V2 epic/user-story refinement harness
+
+Requested definition only; no implementation is approved. Define a distinct second
+harness for refining epics and user stories, rather than treating refinement as an
+implementation workflow in the existing harness. Determine its inputs, steps, role
+handoffs, outputs, checks, and human approval points. Whether this harness uses SDD is
+explicitly TBD. Preserve conversational approvals; do not imply deterministic enforcement
+or authorize commands, code, or configuration changes before the definition is approved.
 
 ## Closure and maintenance
 
