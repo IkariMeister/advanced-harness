@@ -19,20 +19,21 @@ invented. Links point to the current implementation/specification.
 5. Review and commit these notes with the harness changes when the human approves;
    uncommitted files persist locally but are not protected by repository history.
 
-## Latest known state (reported/observed, not a fresh machine audit)
+## Latest known state (source-labeled dated observations, not a live audit)
 
-- Harness checkout: `C:\Users\jcgse\Documents\Advanced Harness`, delivery branch
-  `feature/native-harness-setup`, tracking `origin/feature/native-harness-setup`.
-  The previous `Advanced Harness-worktrees/enforcement-prototype` location became
-  empty; do not use it as the development checkout.
+- Operator read-only observation (2026-10-11): harness canonical checkout was clean
+  on `main` at `2ce77149add9ad7c6cabbba92d0ee0a2970eaabc`; the app canonical `main`
+  was `149479d8c202d71570b086dd8773a40308ef2d12` with modified `AGENTS.md` and
+  untracked `.opencode`, which must remain untouched. App feature worktree at
+  `16256cac38e2a85b11be3f16cbcfb208d8a62d01` was reported clean. These are dated
+  observations, not current-state guarantees. Operator owns fresh Git verification.
 - Installer, agent/model diagnostics, Android setup, optional global integration
   setup, and project-context storage are implemented locally. Latest typecheck and
   77 automated tests passed; one opt-in live test was skipped in the default suite.
   The 28-file delivery, including recovery documentation, was committed as
   `b12d954db97b97e3d33eb6b9c5e530ff9d2b0f48` and pushed to the harness origin.
-  Remote-head equality was freshly verified. Harness PR
-  https://github.com/IkariMeister/advanced-harness/pull/2 is now open into `main`;
-  no merge or live prompt deployment has been performed for this delivery.
+  Remote-head equality was freshly verified. PR #2 was subsequently merged (see
+  BH-003); this does not imply live prompt deployment, which remains unapproved.
 - All eight roles were discovered and passed small inference checks. Successful
   responses did not expose exact runtime model/variant metadata. Catalog checks
   are not inference/entitlement proof; inference checks are not tool/approval proof.
@@ -53,9 +54,10 @@ invented. Links point to the current implementation/specification.
   AGENTS.md pointer. Current tooling instead embeds settings directly in context;
   actual migration of this app's Android settings has not been reported. Legacy
   files and unrelated local changes must not be deleted or overwritten automatically.
-- Android build/unit tests passed before the proposed lint fixes. Lint found four
-  API-24 `Iterable.forEach` calls with min SDK 21. The current fix/recheck state is
-  unknown; do not count earlier passes as verification of later changes.
+- Android build/unit tests passed before the lint fixes. Lint found four API-24
+  `Iterable.forEach` calls with min SDK 21. PR #35's scoped fix is merged; Build &
+  Verify succeeded, and runtime/E2E/Roborazzi remain waived (not passed). Broader
+  Android verification remains unresolved under BH-004.
 - Validation used process-only Android Studio JBR JDK 21.0.10; Gradle found cached
   Java 17.0.19 offline. Reported stack: Gradle 9.6.1, AGP 9.0.1, Java/Kotlin toolchain
   17. Permanent environment changes/downloads were not approved by those checks.
@@ -65,9 +67,9 @@ invented. Links point to the current implementation/specification.
 
 | ID | Priority | Item | Status / next action |
 | --- | --- | --- | --- |
-| BH-001 | P0 | Finish MarsRoverIA fix pilot | Five checks/final approval reported; three unavailable gates waived for this fix; commit 16256ca |
-| BH-002 | P0 | GitHub access, publishing, merge, cleanup pilot | Human reports PR #35 created manually; review/CI, human merge, and requested cleanup remain; External child execution unresolved |
-| BH-003 | P0 | Consolidate and preserve harness delivery | Harness PR #2 open; review/required checks, human merge, and separately approved deployment remain |
+| BH-001 | Complete (scoped fix only) | Finish MarsRoverIA fix pilot | PR #35 merged; runtime/E2E/Roborazzi waived for this fix, not passed; broader verification remains BH-004 |
+| BH-002 | Complete (publication/merge) | GitHub publishing lifecycle for scoped pilot | PR #35 merged; cleanup remains separate and unapproved; no inference all checks/reviews satisfied |
+| BH-003 | Complete (harness consolidation/PR) | Consolidate and preserve harness delivery | PR #2 merged; prompt deployment remains separate and unapproved; broader validation remains open |
 | BH-004 | P1 | Full Android verification setup | Confirm Spotless/Detekt and runtime/device/E2E/snapshot contracts |
 | BH-005 | P1 | Live context migration and global/project separation | Offer explicit legacy-to-context migration; verify preservation |
 | BH-006 | P1 | Safe installer upgrades and permission reconciliation | Preserve reviewed models/integration rules through upgrades |
@@ -98,13 +100,23 @@ freshly confirms that branch at `16256cac38e2a85b11be3f16cbcfb208d8a62d01`.
 The earlier snapshot/finding checklist below remains historical context, not a
 claim that implementation approval is still missing for this unchanged fix.
 
-Scope: inspect the app's current branch/worktree and preserve AGENTS.md/context and
-all unrelated app changes. The recommended finding disposition was to accept only
-four API-21-compatible loop replacements, defer the material-icons catalog cleanup,
-and defer D8/Kotlin/tooling investigation. The final acceptance/implementation state
-was not reported here; verify it rather than inventing approval or completion.
+External authoritative GitHub evidence (PR metadata, 2026-10-11):
+https://github.com/IkariMeister/MarsRoverIA/pull/35 was **MERGED** at
+2026-10-10 22:25:50 UTC, base `main`, head `feature/api21_lint_fixes` at
+`16256cac38e2a85b11be3f16cbcfb208d8a62d01`, merge commit
+`0faed9f37d23ae177d66528320cf9828439affda`. Build & Verify was successful; no
+reviews were returned. Do not infer all required reviews/checks were satisfied.
+The scoped fix/merge is complete. Runtime, E2E, and Roborazzi were **WAIVED**, not
+passed; broader verification remains BH-004.
 
-Acceptance / next actions:
+Historical scope and next-action checklist below are superseded for the unchanged
+scoped fix by the reported implementation approval and fresh PR #35 merge evidence
+above. Preserve the historical finding disposition: accept only four API-21-compatible
+loop replacements; defer material-icons catalog cleanup and D8/Kotlin/tooling
+investigation. Those deferred findings are not resolved; broader checks remain BH-004.
+
+Historical acceptance / next actions (superseded for the merged scoped fix; BH-004
+tracks broader verification):
 
 - Present exact affected files, behavior-preserving changes, and verification scope.
 - Obtain current scoped approval before edits; return for approval on material changes.
@@ -115,16 +127,22 @@ Acceptance / next actions:
 
 ## BH-002 — GitHub access and complete publishing lifecycle
 
-Latest user-reported publication: the human manually created
+Historical publication report: the human manually created
 https://github.com/IkariMeister/MarsRoverIA/pull/35 from
 `feature/api21_lint_fixes` into `main` using GitHub CLI. The provided PR body names
 commit `16256ca`, five passing configured checks, and the scoped runtime/E2E/Roborazzi
-waivers as **WAIVED**, not passed. This supersedes the publication-blocked snapshot
-below for the human workaround, but does not validate External's delegated execution.
-PR contents, current CI/review state, merge, and cleanup have not been freshly
-verified here. Next: review the PR and required checks; human-only merge, followed
-by human-requested merged-state verification and safe cleanup. No merge or cleanup
-is authorized by reporting the PR URL.
+waivers as **WAIVED**, not passed. That report superseded the then-current
+publication-blocked snapshot, but not the later authoritative merge evidence below.
+
+External authoritative GitHub evidence (PR metadata, 2026-10-11): PR #35 was
+**MERGED** at 2026-10-10 22:25:50 UTC, base `main`, head
+`feature/api21_lint_fixes` at `16256cac38e2a85b11be3f16cbcfb208d8a62d01`, merge
+commit `0faed9f37d23ae177d66528320cf9828439affda`. Build & Verify was successful;
+no reviews were returned. Do not infer that all required reviews/checks were
+satisfied. This explicitly supersedes historical statements below that merge or
+publication/lifecycle completion was unverified or unselected. Scoped publication
+and human merge are complete; cleanup remains separate and unapproved. Runtime,
+E2E, and Roborazzi were waived for this fix, not passed.
 
 2026-10-10 update: the human approved pushing/opening the PR for the current scoped
 fix, with the three verification waivers above; no merge approval. Publication is
@@ -228,12 +246,28 @@ validation commands. Track runner/shell mismatch under BH-013.
 - Verify repository-required checks/reviews; process feedback through scoped finding
   decisions. Agents never merge.
 - Human merges; only after a human asks, verify merged state and perform safe cleanup.
-  Preserve uncommitted/unpushed work. No push/PR/merge/cleanup completion is currently recorded.
+  Preserve uncommitted/unpushed work. Historical generic lifecycle instructions; the
+  scoped PR #35 push/PR/merge are complete per authoritative evidence above. Cleanup
+  remains unapproved and is not recorded as performed.
 
 ## BH-003 — Consolidate the harness changes into recoverable Git history
 
-2026-10-11 consolidation review (human approved proceeding with review, not yet
-commit/publication): inventoried 28 changed/untracked harness source/test/doc files.
+External authoritative GitHub evidence (PR metadata, 2026-10-11):
+https://github.com/IkariMeister/advanced-harness/pull/2 was **MERGED** at
+2026-10-11 00:39:11 UTC, base `main`, head `feature/native-harness-setup` at
+`1509d3e8dca1c828c7eb10e1a19b3f8cf9e83fe6`, merge commit
+`55c6ac61e81dc127525f0063656c16d49dd8384c`. No reviews or check rollup were
+returned; do not infer required reviews/checks were satisfied. Consolidation and PR
+merge are complete; this supersedes historical open/pending statements below.
+Runtime/E2E/Roborazzi waiver applies only to the Android fix, not as a harness
+validation pass. Broader Android/setup validation remains BH-004. Live prompt
+deployment and cleanup are separate, unapproved actions. The later harness backlog
+commit/push `2ce77149add9ad7c6cabbba92d0ee0a2970eaabc` is distinct from the original
+delivery and does not validate PR #35 publication or authorize deployment/cleanup.
+
+Historical 2026-10-11 consolidation review (human approved proceeding with review,
+not yet commit/publication at that time): inventoried 28 changed/untracked harness
+source/test/doc files.
 No app files, live OpenCode config, credentials/backups, or disposable runtime
 evidence are part of that candidate set. A bounded recognized-token/private-key
 pattern scan found no matches; this is not proof that all sensitive data is absent.
@@ -258,7 +292,7 @@ Findings requiring a scoped fix decision before consolidation:
   align those paragraphs with explicitly selected services and project/task criteria,
   without silent fallback or new runtime behavior; add optional-service prompt checks.
 
-Proposed consolidation groups after accepted fixes and fresh validation:
+Historical proposed consolidation groups before delivery:
 native diagnostics/installer verification; context-only setup and optional global
 connections/integrations; source guidance/regression tests; product/recovery docs.
 Legacy migration inputs remain intact. Preserve source model/frontmatter permission
@@ -287,13 +321,14 @@ either from review or the Android pilot's publication approval.
   above: diagnostics/installer verification, context-only Android setup, independently
   optional global integrations, evidence-based tool guidance, and recovery/product
   documentation. Excludes installed settings, credentials/backups, app files, and
-  external diagnostic evidence. Proposed branch `feature/native-harness-setup`;
-  proposed local commit `feat: add native harness setup and diagnostics`.
-  Await explicit approval of that local branch/commit scope. No push/publication or
-  installed prompt deployment is included. Broader backlog items remain pending.
+  external diagnostic evidence. Proposed branch `feature/native-harness-setup` and
+  proposed local commit `feat: add native harness setup and diagnostics`. This
+  approval request is historical and superseded by the completed delivery below.
+  Installed prompt deployment remains excluded and separately unapproved; broader
+  backlog items remain pending.
 
-Subsequent human direction authorizes the proposed local branch/28-file commit and
-pushing that branch. Fresh preflight confirms the origin push destination is
+Historical subsequent human direction authorized the proposed local branch/28-file
+commit and push. Fresh preflight at that time confirmed the origin push destination was
 `https://github.com/IkariMeister/advanced-harness.git`, no preexisting staged files,
 no existing local target branch, and no remote head at
 `refs/heads/feature/native-harness-setup`. Git author/committer identities are already
@@ -309,25 +344,27 @@ scope on `feature/native-harness-setup`. Push with upstream succeeded to
 remote head equals that commit. This recovery-note update is a documentation-only
 follow-up to preserve the existing delivery reference in Git history. No forced
 updates, app operations, harness PR, merge, or installed prompt changes occurred.
-Local commit/push consolidation is complete; PR/release and live prompt deployment
-remain separate decisions. After any subsequent note commit, verify the branch's
-remote SHA again rather than assuming the remote still points at the delivery SHA.
+Local commit/push consolidation is complete; PR #2 was subsequently merged as
+recorded above. These delivery steps are historical/completed. Live prompt deployment
+and cleanup remain separate, unapproved decisions.
 
-Subsequent human approval requested opening the harness PR. Created and freshly
+Historical subsequent human approval requested opening the harness PR. Created and freshly
 verified **OPEN**, non-draft PR
 https://github.com/IkariMeister/advanced-harness/pull/2 from
 `feature/native-harness-setup` into `main`; no existing PR was found before creation.
 Its body records the 77 passing tests/one skipped live test, scoped diagnostic result,
 and outstanding validation/deployment limitations. This recovery update records the
 existing PR reference, not new product scope. Required CI/review results and merge
-are not yet verified. Next: review the harness PR and its required checks, then
-human-only merge. Installed prompt deployment and any cleanup require separate
-approval; the Android pilot's PR is not the harness deliverable.
+were not verified in that historical snapshot; the authoritative later merge evidence
+above supersedes its open/pending status. Installed prompt deployment and any cleanup
+require separate approval; the Android pilot's PR is not the harness deliverable.
 
-Review the local installer/doctor/setup/integrations/context tests, source templates,
-spec/docs, and backlog together. Separate unrelated work, run typecheck/tests and
-configured review checks, then obtain explicit commit/publishing approval. Record
-commit/PR identifiers here after they exist; none is invented for the current changes.
+Historical closing review instructions, superseded for the completed delivery: review
+the installer/doctor/setup/integrations/context tests, source templates, spec/docs,
+and backlog together; separate unrelated work, run configured checks, obtain explicit
+publishing approval, and record identifiers after they exist. No current BH-003
+commit/PR approval is pending. Live prompt deployment and cleanup remain separately
+unapproved.
 
 Acceptance: reviewed source and recovery notes are committed; an agreed delivery/PR
 workflow does not install historical plugins, copy credentials, or reset user settings.
