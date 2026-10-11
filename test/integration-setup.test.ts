@@ -73,30 +73,61 @@ test('reusing configured servers preserves JSONC, model assignments, credentials
 test('project overrides add only permission fields and disabled new servers, never copy global secrets or models', () => {
   const { sources, draft } = fixture();
   const next: IntegrationDraft = { profile: { ...draft.profile, github: { repository: draft.profile.github.repository, server: 'gh' } }, choices: [{ name: 'gh', create: { type: 'remote', url: 'https://real.test/mcp', disabled: true } }, { name: 'atlassian' }] };
-  const updated = updateIntegrationConfig('{}', sources, next);
+  const updated = updateIntegrationConfig(JSON.stringify({ agents: definitions }), sources, next);
   const value = parseConfiguration(updated, 'test');
   assert.deepEqual((value.mcp as { servers: unknown }).servers, { gh: { type: 'remote', url: 'https://real.test/mcp', disabled: true } });
   assert.equal(value.model, undefined);
   assert.equal(value.providers, undefined);
   assert.ok(!updated.includes('EXISTING_SECRET'));
   assert.ok(!updated.includes('apiKey'));
-  for (const agent of Object.values(value.agents as Record<string, unknown>)) assert.deepEqual(Object.keys(agent as object), ['permissions']);
+  for (const [role, agent] of Object.entries(value.agents as Record<string, unknown>)) assert.ok(Object.keys(agent as object).includes('permissions'), role);
 });
 
 test('existing server replacement, missing roles, duplicate new servers and malformed permissions are refused', () => {
   const { value, sources, draft } = fixture();
-  assert.throws(() => updateIntegrationConfig('{}', sources, { ...draft, choices: [{ name: 'GitHub Team', create: { type: 'remote', url: 'https://bad.test/mcp', disabled: true } }, { name: 'atlassian' }] }), /replace/);
-  assert.throws(() => updateIntegrationConfig('{}', [source({ mcp: value.mcp })], draft), /all eight/);
-  assert.throws(() => updateIntegrationConfig('{}', [source({ ...value, agents: { ...definitions, external: { ...definitions.external, disabled: true } } })], draft), /all eight/);
-  assert.throws(() => updateIntegrationConfig('{"agents":{"external":{"permissions":["invalid"]}}}', sources, draft), /rules array/);
+  assert.throws(() => updateIntegrationConfig(JSON.stringify({ agents: definitions }), sources, { ...draft, choices: [{ name: 'GitHub Team', create: { type: 'remote', url: 'https://bad.test/mcp', disabled: true } }, { name: 'atlassian' }] }), /replace/);
+  assert.throws(() => updateIntegrationConfig('{}', [source({ agents: definitions, mcp: value.mcp })], draft), /role "lead".*inline agent object/);
+  assert.throws(() => updateIntegrationConfig(JSON.stringify({ agents: definitions }), [source({ ...value, agents: { ...definitions, external: { ...definitions.external, disabled: true } } })], draft), /all eight/);
+  assert.throws(() => updateIntegrationConfig(JSON.stringify({ agents: { ...definitions, external: { ...definitions.external, permissions: ['invalid'] } } }), [source(value)], draft), /role "external".*explicit native permissions array/);
   assert.throws(() => updateIntegrationConfig('{}', sources, { ...draft, choices: [{ name: 'missing' }, { name: 'atlassian' }] }), /choices/);
   const duplicate: IntegrationDraft = { profile: { ...draft.profile, github: { repository: draft.profile.github.repository, server: 'both' }, jira: { ...draft.profile.jira, server: 'both' } }, choices: [{ name: 'both', create: { type: 'remote', url: 'https://one.test/mcp', disabled: true } }, { name: 'both', create: { type: 'remote', url: 'https://two.test/mcp', disabled: true } }] };
   assert.throws(() => updateIntegrationConfig('{}', sources, duplicate), /defined twice/);
 });
 
+test('permission additions require every destination role inline with an explicit valid permissions array', () => {
+  const { value, sources, draft } = fixture();
+  const base = JSON.parse(JSON.stringify(value)) as typeof value;
+  for (const [role, mutate, expected] of [
+    ['lead', (agents: Record<string, unknown>) => { delete agents.lead; }, /role "lead".*inline agent object/],
+    ['operator', (agents: Record<string, unknown>) => { agents.operator = { ...definitions.operator, permissions: undefined }; }, /role "operator".*explicit native permissions array/],
+    ['external', (agents: Record<string, unknown>) => { agents.external = { ...definitions.external, permissions: { inherited: true } }; }, /role "external".*explicit native permissions array/],
+    ['reviewer', (agents: Record<string, unknown>) => { agents.reviewer = { ...definitions.reviewer, permissions: [null] }; }, /role "reviewer".*explicit native permissions array/],
+  ] as const) {
+    const agents = { ...base.agents } as Record<string, unknown>;
+    mutate(agents);
+    assert.throws(() => updateIntegrationConfig(JSON.stringify({ agents: agents }), [source({ ...base, agents })], draft), expected, role);
+  }
+  const empty = { ...base, agents: Object.fromEntries(nativeRoles.map(role => [role, { ...definitions[role], permissions: [] }])) };
+  const output = updateIntegrationConfig(JSON.stringify({ agents: definitions }), [source(empty)], draft);
+  const agents = parseConfiguration(output, 'test').agents as Record<string, { permissions: unknown[] }>;
+  for (const role of nativeRoles) assert.ok(agents[role]!.permissions.length > 0);
+});
+
+test('MCP and gh permission additions reject non-string permission effects before producing an update', () => {
+  const { value, sources, draft } = fixture();
+  for (const effect of [['deny'], 1, null]) {
+    const agents = { ...definitions, lead: { ...definitions.lead, permissions: [{ action: 'read', resource: '*', effect }] } };
+    const original = JSON.stringify({ agents });
+    assert.throws(() => updateIntegrationConfig(original, sources, draft), /role "lead".*explicit native permissions array/);
+    const ghDraft: IntegrationDraft = { ...draft, profile: { ...draft.profile, github: { backend: 'gh', hostname: 'github.com', repository: 'company/app' } }, choices: [{ name: 'atlassian' }] };
+    assert.throws(() => updateIntegrationConfig(original, sources, ghDraft), /role "lead".*explicit native permissions array/);
+    assert.equal(original, JSON.stringify({ agents }));
+  }
+});
+
 test('switching aliases preserves prior grants and unrelated role settings without silently revoking them', () => {
   const { sources, draft } = fixture();
-  const first = parseConfiguration(updateIntegrationConfig('{}', sources, draft), 'test');
+  const first = parseConfiguration(updateIntegrationConfig(JSON.stringify({ agents: definitions }), sources, draft), 'test');
   const next: IntegrationDraft = { profile: { ...draft.profile, github: { repository: draft.profile.github.repository, server: 'gh-new' } }, choices: [{ name: 'gh-new', create: { type: 'remote', url: 'https://new.test/mcp', disabled: true } }, { name: 'atlassian' }] };
   const second = parseConfiguration(updateIntegrationConfig(JSON.stringify(first), [...sources, source(first, 'project.jsonc')], next), 'test');
   const permissions = (second.agents as Record<string, { permissions: { action: string; effect: string }[] }>).external!.permissions;
@@ -181,7 +212,7 @@ test('gh selection asks no GitHub MCP endpoint and stores hostname/repository wh
 test('gh backend appends External-only shell ownership, adds no GitHub MCP, and preserves existing servers', () => {
   const { profile, sources } = fixture();
   const draft: IntegrationDraft = { profile: { ...profile, github: { backend: 'gh', hostname: 'github.com', repository: 'company/app' } }, choices: [{ name: 'atlassian' }] };
-  const updated = updateIntegrationConfig('{}', sources, draft);
+  const updated = updateIntegrationConfig(JSON.stringify({ agents: definitions }), sources, draft);
   const value = parseConfiguration(updated, 'test');
   assert.equal(value.mcp, undefined);
   assert.ok(!updated.includes('GitHub_Team_*'));

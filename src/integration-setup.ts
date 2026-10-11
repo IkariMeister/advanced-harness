@@ -153,9 +153,16 @@ export function updateConnectionConfig(original: string, sources: readonly Confi
   if (choices.some(choice => choice.create && choices.filter(other => other.name === choice.name).length > 1)) throw new Error('A new server may not be defined twice.');
   parseConfiguration(original, 'selected OpenCode configuration');
   if (!selected.size && !gh) return original;
-  const installed = expectedAgents(sources);
-  for (const role of nativeRoles) if (!installed[role] || installed[role].disabled === true || installed[role].hidden === true || installed[role].mode !== (role === 'lead' ? 'primary' : 'subagent')) throw new Error('Install/resolve all eight native harness roles first. Integration setup does not invent or unhide agents.');
   const value = parseConfiguration(original, 'selected OpenCode configuration');
+  const installed = expectedAgents(sources);
+  const destination = object(value.agents) ? value.agents : undefined;
+  for (const role of nativeRoles) {
+    const agent = destination?.[role];
+    if (!object(agent)) throw new Error(`Cannot add integration permissions: role "${role}" must be an inline agent object in the selected config.`);
+    const permissions = agent.permissions;
+    if (!Array.isArray(permissions) || !permissions.every(rule => object(rule) && typeof rule.action === 'string' && typeof rule.resource === 'string' && typeof rule.effect === 'string' && ['allow', 'ask', 'deny'].includes(rule.effect))) throw new Error(`Cannot add integration permissions: role "${role}" must have an explicit native permissions array of valid rules in the selected config.`);
+  }
+  for (const role of nativeRoles) if (!installed[role] || installed[role].disabled === true || installed[role].hidden === true || installed[role].mode !== (role === 'lead' ? 'primary' : 'subagent')) throw new Error('Install/resolve all eight native harness roles first. Integration setup does not invent or unhide agents.');
   const bom = original.startsWith('\uFEFF') ? '\uFEFF' : '';
   let text = bom ? original.slice(1) : original;
   const options = { formattingOptions: { insertSpaces: true, tabSize: 2, eol: original.includes('\r\n') ? '\r\n' : '\n' } };
@@ -164,10 +171,8 @@ export function updateConnectionConfig(original: string, sources: readonly Confi
   for (const choice of choices) if (choice.create) set(['mcp', 'servers', choice.name], choice.create);
   for (const role of nativeRoles) {
     const agent = object(value.agents) ? value.agents[role] : undefined;
-    if (agent !== undefined && !object(agent)) throw new Error('Unsupported inline agent entry. No changes made.');
-    const existing = object(agent) ? agent.permissions : undefined;
-    if (existing !== undefined && (!Array.isArray(existing) || !existing.every(rule => object(rule) && typeof rule.action === 'string' && typeof rule.resource === 'string' && ['allow', 'ask', 'deny'].includes(String(rule.effect))))) throw new Error('Expected native permissions rules array. No changes made.');
-    const rules: unknown[] = [...(existing as unknown[] | undefined ?? [])];
+    const existing = (agent as RecordValue).permissions as unknown[];
+    const rules: unknown[] = [...existing];
     const additions: unknown[] = [];
     for (const name of selected) {
       const rule = { action: `${normalizedServer(name)}_*`, resource: '*', effect: role === 'external' ? 'ask' : 'deny' };

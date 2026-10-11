@@ -46,6 +46,24 @@ test('global new optional design server remains disabled and carries no project 
   assert.equal(result.settings.jira, null);
 });
 
+test('initial numbered alias selections remain stable after adding an alphabetically earlier server and reuse its name', async () => {
+  const existing = { jira: { type: 'remote' } };
+  const ask = async (question: string) => {
+    if (question.startsWith('GitHub backend:')) return 'mcp';
+    if (question.startsWith('github: alias')) return 'new';
+    if (question.startsWith('github: new unique')) return 'a-new';
+    if (question.startsWith('github: supplied')) return 'https://github.test/mcp';
+    if (question.startsWith('jira: alias')) return '1';
+    if (question.startsWith('Design source:')) return 'figma';
+    if (question.startsWith('figma: alias')) return 'a-new';
+    throw new Error(`Unexpected prompt: ${question}`);
+  };
+  const result = await askGlobalIntegrations(existing, emptyGlobalIntegrations(), ask);
+  assert.deepEqual(result.settings.jira, { server: 'jira' });
+  assert.deepEqual(result.choices.map(choice => choice.name), ['a-new', 'jira']);
+  assert.deepEqual(result.settings.design, { kind: 'figma', server: 'a-new' });
+});
+
 test('project context records optional GitHub only and can override global defaults to none', async () => {
   const defaults: GlobalIntegrations = { version: 1, github: { backend: 'gh', hostname: 'github.com' }, jira: { server: 'jira' }, design: { kind: 'figma', server: 'design' } };
   const answers = ['gh', 'github.com', 'none', 'none', 'owner/app'];
