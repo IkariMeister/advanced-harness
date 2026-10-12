@@ -31,7 +31,7 @@ Relevant official source links:
 [saved permissions](https://github.com/anomalyco/opencode/blob/v2.0.26/packages/core/src/permission/saved.ts),
 [project identity](https://github.com/anomalyco/opencode/blob/v2.0.26/packages/core/src/project.ts),
 [shell tool](https://github.com/anomalyco/opencode/blob/v2.0.26/packages/core/src/tool/plugin/shell.ts),
-[shell parsing](https://github.com/anomalyco/opencode/blob/v2.0.26/packages/core/src/permission/shell-parse.ts).
+[shell parsing](https://github.com/anomalyco/opencode/blob/v2.0.26/packages/core/src/shell/parse.ts).
 
 Issue context, as observed during the same 2026-10-12 read-only review (statuses
 may change): [#53118 OPEN](https://github.com/anomalyco/opencode/issues/53118)
