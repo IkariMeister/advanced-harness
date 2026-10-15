@@ -693,6 +693,22 @@ merged-state verification. Material scope/approach changes require renewed appro
 OpenCode permissions may govern tool access but do not enforce conversational plan
 state or prove approval; do not describe them as doing so.
 
+2026-10-12 documentation-only follow-up: External completed a read-only
+review of official OpenCode v2.0.26 guidance and existing proposals; this worktree
+proposal defines target capability, lifecycle/revocation, delegation/precedence,
+boundary cases, alternatives, and a future test matrix. See
+[worktree permission proposal](worktree-permission-proposal.md). Research is source
+review, not live-runtime verification; installed CLI version was reported 2.0.26,
+but exact binary provenance was not verified. Proposal distinguishes strict
+operation-bound enforcement (unresolved) from a weaker cwd-only guarantee, which
+must not be represented as confinement. The documentation proposal was subsequently
+reviewed and approved; the 2026-10-15 source-labeled delivery updates above record
+the reported commits and push. No tests or runtime experiments were run for this
+documentation follow-up, and no behavior/configuration changed. Approval of the
+document does not select or authorize a runtime permission approach, upstream
+publication, or implementation; any such next step requires separately scoped
+human approval.
+
 Static tests and runtime agent/model catalogs do not prove usable tool permissions.
 Verify shell/Git/filesystem/MCP ownership in the actual installed version and location:
 External owns services/remote Git/gh; Operator local Git/worktrees/memory; Implementer
