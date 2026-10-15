@@ -1,6 +1,6 @@
 # Backlog
 
-Last consolidated: 2026-10-11. This is the durable recovery index for **known pending
+Last consolidated: 2026-10-15. This is the durable recovery index for **known pending
 work**, not just deferred features. Update it when scope/status changes; do not rely
 on a conversation summary or a person's memory. Unknown/unreported work is not
 invented. Links point to the current implementation/specification.
@@ -20,6 +20,18 @@ invented. Links point to the current implementation/specification.
    uncommitted files persist locally but are not protected by repository history.
 
 ## Latest known state (source-labeled dated observations, not a live audit)
+
+- Operator preflight reported by Lead (2026-10-15): canonical harness feature worktree
+  `C:\Users\jcgse\Projects\advanced-harness-worktrees\feature-bh009` was clean at
+  `7f4346721bd2c3f00bd6caa647b4c9c624212d28`. The following BH-009 delivery details
+  are human-reported in conversation, not independently checked against the remote:
+  docs-only proposal review found no findings; the approved backlog changes were
+  committed as `4a8a72b` and `7f43467` (citation correction), and the human manually
+  pushed `feature/bh009` successfully. External remote HEAD equality is unverified.
+  PR creation was attempted but failed because of tool/browser access; no PR was
+  created by that workflow, and current remote PR state is unverified. This does not
+  rule out a separately created human PR. Broader role validation/live prompt
+  deployment and worktree capability blockers remain unresolved. No tests are implied.
 
 - Operator read-only observation (2026-10-11): harness canonical checkout was clean
   on `main` at `2ce77149add9ad7c6cabbba92d0ee0a2970eaabc`; the app canonical `main`
@@ -70,23 +82,30 @@ invented. Links point to the current implementation/specification.
 | BH-001 | Complete (scoped fix only) | Finish MarsRoverIA fix pilot | PR #35 merged; runtime/E2E/Roborazzi waived for this fix, not passed; broader verification remains BH-004 |
 | BH-002 | Complete (publication/merge) | GitHub publishing lifecycle for scoped pilot | PR #35 merged; cleanup remains separate and unapproved; no inference all checks/reviews satisfied |
 | BH-003 | Complete (harness consolidation/PR) | Consolidate and preserve harness delivery | PR #2 merged; prompt deployment remains separate and unapproved; broader validation remains open |
-| BH-004 | P1 | Full Android verification setup | Confirm Spotless/Detekt and runtime/device/E2E/snapshot contracts |
-| BH-005 | P1 | Live context migration and global/project separation | Offer explicit legacy-to-context migration; verify preservation |
+| BH-004 | P2 | Full Android verification setup | Confirm Spotless/Detekt and runtime/device/E2E/snapshot contracts |
+| BH-005 | P2 | Live context migration and global/project separation | Offer explicit legacy-to-context migration; verify preservation |
 | BH-006 | P1 | Safe installer upgrades and permission reconciliation | Preserve reviewed models/integration rules through upgrades |
-| BH-007 | P1 | Optional Jira end-to-end validation | Enable/authenticate only with approval; validate a selected project's mapping |
-| BH-008 | P1 | Optional design integrations | Validate one selected Figma/Stitch connection/tools; no silent fallback |
+| BH-007 | P2 | Optional Jira end-to-end validation | Enable/authenticate only with approval; validate a selected project's mapping |
+| BH-008 | P2 | Optional design integrations | Validate one selected Figma/Stitch connection/tools; no silent fallback |
 | BH-009 | P1 | Effective runtime tools/permissions | Delegated smoke passed; approved source guidance/regressions implemented; live prompt deployment and broader ownership validation remain |
 | BH-010 | P1 | Interruption, resume, and uncertain operations | Pilot human-confirmed resume and inspect-before-retry behavior |
 | BH-011 | P2 | macOS/LiteLLM portability | Obtain real deployment/reasoning mappings and run a macOS pilot |
 | BH-012 | P2 | Shared-memory/bootstrap/consolidation pilot | Validate agreed paths, serialized updates, and approved rule promotion |
-| BH-013 | P2 | Setup UX and discovery improvements | Address confusing confirmations, Gradle aliases, and diagnostics |
-| BH-014 | P2 | Optional evidence and practical reuse | Add only when pilot needs justify it; never silently make it a gate |
+| BH-013 | P1 | Setup UX and discovery improvements | Address confusing confirmations, Gradle aliases, and diagnostics |
+| BH-014 | P3 | Optional evidence and practical reuse | Add only when pilot needs justify it; never silently make it a gate |
 | BH-015 | Deferred | Multi-squad shared-repository workflows | Agree per-session routing/concurrency rules before implementation |
 | BH-016 | Deferred | Team/cross-machine coordination and other hosts | Separate product decision; no synchronization/daemon promised |
-| BH-017 | Deferred | Predictable workflow commands | Define workflows for new issues, teammate PR reviews, reported defects, and technical debt; command names/syntax TBD |
+| BH-017 | P2 | Predictable workflow commands | Define workflows for new issues, teammate PR reviews, reported defects, and technical debt; command names/syntax TBD |
 | BH-018 | Deferred | V2 epic/user-story refinement harness | Define a distinct second harness for epic/story refinement; SDD applicability TBD |
+| BH-019 | P1 | Per-agent tool availability and ownership | Define intended capabilities and distinguish visibility, permission, invocation, and responsibility |
+| BH-020 | P1 | Safe harness update workflow | Preview version/migration, preserve customizations, and provide recovery |
+| BH-021 | P1 | Safe harness uninstall and cleanup | Inventory managed footprint, preview removal, preserve unrelated state, and report partial failure |
 
-Priorities are proposed delivery order, not new implementation authorization.
+Within-priority delivery order (stable IDs unchanged): **P1** BH-019, BH-009,
+BH-013, BH-006, BH-020, BH-021, BH-010; **P2** BH-005, BH-012, BH-017,
+BH-004, BH-007, BH-008, BH-011; **P3** BH-014. **Deferred:** BH-015,
+BH-016, BH-018. BH-001–003 are complete only for their stated scoped outcomes,
+not broader completion. Priorities/order are not implementation authorization.
 
 ## BH-001 — Finish the Android fix pilot
 
@@ -444,6 +463,16 @@ design integration for a project/task that does not need it.
 
 ## BH-009 — Effective tools and role ownership
 
+2026-10-15 status correction: the source-guidance proposal was reviewed with no
+findings and approved. The human reports the approved documentation changes committed
+as `4a8a72b` and `7f43467` (citation correction), then manually pushed
+`feature/bh009` successfully. These are conversation-reported actions; remote HEAD
+equality has not been independently verified. A PR creation attempt failed due to
+tool/browser access; no PR was created by that workflow. Current remote PR state is
+unverified and a separately created human PR is not ruled out. The broader role
+validation, live prompt deployment, and worktree capability blockers below remain
+open. No test result is added by this status correction.
+
 2026-10-11 approved harness diagnostic: historical session APIs/logs did not retain
 the originally offered tool definitions. Active plugin inventories in the app and
 earlier disposable location contained only built-ins. No evidence established a
@@ -478,7 +507,7 @@ remains unknown. This is not proof that every earlier request offered shell, tha
 all role permissions work, or that delegated publication is validated. No runtime
 permission/model fix or OpenCode bug publication is justified by this result alone.
 
-2026-10-11 source guidance change approved and implemented locally:
+Historical 2026-10-11 source guidance change approved and implemented locally:
 
 - Lead/External source prompts now distinguish native shell from Code Mode catalog
   search and require authorized invocation/error or captured offered-tool evidence
@@ -495,14 +524,24 @@ permission/model fix or OpenCode bug publication is justified by this result alo
 - Fresh verification: typecheck passed; 74 tests passed, one opt-in live test skipped;
   `git diff --check` passed. An initial new assertion failed on Markdown line wrapping
   and was corrected to normalize whitespace; the full suite subsequently passed.
-- Changes remain uncommitted; no live agent prompt/config update, service restart,
-  Android change, push, or PR was made for this source fix. The earlier captured live
+- At that historical point, these changes remained uncommitted; no live agent
+  prompt/config update, service restart, Android change, push, or PR was made for
+  this source fix. The earlier captured live
   smoke preceded these prompt changes and is not a deployment validation.
 
-Next: BH-003 review/consolidation/commit scope approval. Deployment of only the
-reviewed installed prompts needs separate consent while preserving existing models,
-permission arrays, connections, and unrelated settings; do not reinstall all roles
-to apply a prompt-only change. Broader ownership/publishing checks remain open.
+Later delivery update (2026-10-15, human-reported): the approved backlog changes were
+committed as `4a8a72b` and `7f43467` (citation correction), then manually pushed to
+`feature/bh009`. Remote HEAD equality is not independently verified. PR creation was
+attempted but failed due to tool/browser access; no PR was created by that workflow,
+and current remote PR state is unverified. This later report does not change the
+historical local verification or establish live prompt deployment.
+
+Historical next action, superseded for the source-guidance documentation delivery by
+the reported approval/commit/push above: BH-003 review/consolidation/commit scope
+approval. Deployment of only the reviewed installed prompts needs separate consent
+while preserving existing models, permission arrays, connections, and unrelated
+settings; do not reinstall all roles to apply a prompt-only change. Broader
+ownership/publishing checks remain open.
 
 Approved follow-up request (2026-10-11): evaluate a workflow that avoids repeated
 permission prompts for Git, GitHub CLI, and file edits **within an explicitly
@@ -523,6 +562,36 @@ Mode actions, selected aliases, project overrides, and stale service/UI behavior
 Report missing/denied tools honestly. Permission patterns/instructions are not a shell
 sandbox or independently enforced plan-approval gate; historical enforcement spikes
 are not release prerequisites and must not be reintroduced as the product foundation.
+
+## BH-019 — Per-agent tool availability and ownership
+
+Define intended capabilities for the existing Lead and seven specialist roles; do
+not introduce roles. Keep distinct: tools actually offered/visible to a role,
+configured allow/ask/deny policy, successful invocation, and responsibility or
+delegation ownership. Cover native shell separately from Code Mode catalog search,
+and direct MCP plus nested actions where relevant. Define honest handling of missing
+or denied capabilities and escalation to the responsible owner. No agent may grant
+itself access or substitute a role/model to evade a gap. BH-009 validates observed
+runtime behavior against this intended definition; this entry itself does not claim
+runtime availability or authorize permission changes.
+
+## BH-020 — Safe harness update workflow
+
+Define how to discover/check a newer harness version and present installed/available
+versions, improvements, and migration implications. Require human preview and
+approval; preserve customizations, connections, and project context. Specify clear
+failure recovery and rollback behavior. BH-006's upgrade reconciliation and
+preservation safety is foundational. Do not silently auto-update or claim support
+for host capabilities not actually available.
+
+## BH-021 — Safe harness uninstall and cleanup
+
+Define removal from a selected IDE/agent app/CLI using an attributable inventory of
+the harness-managed footprint and human preview/approval. Restore prior settings
+only when safe and without intervening conflicts; preserve unrelated configuration,
+credentials, projects, and work. Ask whether harness-created artifacts should be
+retained or removed, and report partial failures. Never assume authority to delete
+shared credentials/worktrees or the host itself. No cleanup is authorized here.
 
 ## BH-010 — Interruption/resume and uncertain external outcomes
 
