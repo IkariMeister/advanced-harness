@@ -426,10 +426,12 @@ agent permissions, and defaults, not repositories/Jira project identifiers.
 
 ## BH-006 — Safe reinstallation, upgrades, and managed permission lifecycle
 
-Current installation replaces owned native role fields (including permission arrays)
-after confirmation; integration setup appends reviewed rules and intentionally does
-not revoke obsolete grants. An upgrade/reinstall can therefore lose integration rules
-or reintroduce source-model suggestions unless reviewed carefully.
+Implementation now includes model/custom-field preservation, shared permission
+planning, cumulative v2 receipt lineage, chain-aware restore, and installer/global
+integration CLI wiring (latest milestone below). Independent review and isolated
+interactive CLI QA remain outstanding; this is not final implementation acceptance
+or authorization for live use. Historical intermediate observations below are retained
+with their dated validation results.
 
 Propose a merge/upgrade strategy, managed-rule provenance/reconciliation, explicit
 review of obsolete grants, and restore guidance that preserves later user changes.
@@ -438,7 +440,143 @@ and other model customizations; source-default changes need explicit product dec
 Acceptance: repeat setup and upgrades do not silently reset models, lose intended
 permissions, broaden access, delete credentials, or discard user edits.
 
+2026-10-16 scoped follow-up: fixed global integration setup ordering so External's
+newly-added broad `gh`/`gh.exe` ASK fallback rules precede existing command-specific
+rules. Reviewed publishing allows and merge denies remain effective, and later
+explicit user restrictions are retained. Identical setup remains idempotent;
+contradictory same-identity rules fail closed. Regression coverage exercises
+publishing, merge denial, fallback ASK, user restrictions, and repeat setup. This is
+a bounded permission-ordering fix only; cumulative receipt lineage, managed
+permission provenance/reconciliation, model-preserving installer flows, restore
+changes, and broader interactive QA remain pending.
+
+Reviewer corrections accepted for this same scoped fix: ordering now accounts for
+resource-specific rules using wildcard `action: "*"` as well as `shell`, while
+keeping universal `*` resource defaults before the fallback; contradictory effects
+for a same-identity rule fail closed regardless of list order. Updated regression
+tests cover `gh`/`gh.exe`, publishing args, merge denial, fallback ASK, wildcard-action
+restrictions, conflicts in both orders, and repeat idempotence. Fresh verification:
+`npm run typecheck` passed; integration tests passed (24/24); `npm test` passed (114
+passed, 0 failed, 1 opt-in live test skipped). Broader BH-006 remains pending.
+
+2026-10-16 implementation attempt: source editing became available after an initial
+tool failure. Only partial experimental changes were made; they do not implement the
+approved receipt/reconciliation design and are not complete or accepted. Typecheck
+passed after these edits; full tests currently have 2 failures caused by preserving
+existing models/system fields, which conflicts with existing installer behavior/tests.
+Changes must be completed or reverted before review. No interactive production QA,
+configuration writes, Git operations, or publication were performed. Next action:
+continue the approved scope using a cumulative receipt/reconciliation design, repair
+regressions, run required checks, then isolated interactive QA and independent review.
+
+2026-10-16 resumed implementation progress: installer now refreshes the native role
+description/mode/system fields, preserves existing model values (including expanded
+objects/variants) unless a per-role replacement is explicitly selected, retains
+existing permission entries while adding absent template rules, and verifies runtime
+against the model actually saved. Regression coverage checks model representation,
+custom role data, and explicit replacement. Installation/configuration docs describe
+these current behaviors and warn that cumulative receipt/reconciliation is not yet
+implemented. Fresh typecheck and targeted installer/integration/receipt tests passed
+(57/57). Cumulative v2 receipt lineage, shared provenance-aware permission planning,
+conservative restore across upgrades, final full suite, isolated CLI QA, and independent
+review remain outstanding; BH-006 is not complete.
+
+2026-10-16 planner attempt correction: the initial module was incomplete, used
+`pattern` instead of native `resource`, and had a failing movement test. The earlier
+milestone description overstated validation and is superseded by the following work.
+
+2026-10-16 resumed bounded implementation: corrected the planner to native
+`action/resource/effect`, explicit source retirement, shared-source retention,
+whole-plan rollback on conflict, ordered previews, wildcard-action GH fallback
+placement, and optional previous-order evidence. The movement regression now supplies
+the prior order rather than attempting to infer movement from a single owned rule.
+Native installation uses this planner and preserves existing description/mode/system
+by default; its library accepts unchanged managed-field evidence or explicit field
+replacement selections. Existing model object evidence now survives receipt reading
+and restoration. Added focused regressions for these changes.
+
+Fresh final checks: typecheck passed; full suite **126 passed, 0 failed, 1 opt-in
+live test skipped** (`node --test --test-reporter=dot test/*.test.ts`, exit 0).
+Intermediate test-only tuple-index and new-batch glob-overlap failures were corrected
+before these checks. This is a partial milestone, not completed
+BH-006. Still outstanding: cumulative v2 receipt identity/lineage and integrity,
+permission provenance persistence, integration-writer adoption of the shared planner,
+CLI managed-field/obsolete-rule review, conservative permission restore through the
+chain, independent review, and isolated interactive CLI QA. No live configuration,
+Git, or publication action was performed. Next implementation step is receipt lineage
+and planner evidence wiring; legacy permission-array receipts remain opaque.
+
+2026-10-16 resumed receipt/CLI milestone: added `src/receipt-lineage.ts` with immutable
+v2 successor identities and predecessor digests, cumulative original baselines/latest
+values, owned-rule sources/order evidence, and created containers. Directory discovery
+rejects duplicate identities, forks/cycles, missing/altered predecessors, pending
+receipts, and unrelated heads. V1/adoption reading remains supported and legacy arrays
+remain opaque. Active-head restore preserves uniquely attributable later permission
+additions, conflicts without writes on ambiguous rules/user field edits, and refuses
+superseded receipts. Pending writes precede config save; optimistic evidence checks
+cover receipt bytes/identity and inventory; changed or partially applied pending
+evidence is retained on failure. Finalization alone supersedes the predecessor.
+
+Installer and global integration CLI now consume this chain, collect planner
+provenance, preview final order, offer keep-default obsolete removal and custom-field
+replacement selections, and persist/finalize successors. Global setup excludes
+servers/preferences from receipt ownership; project/all-none remain non-revoking.
+The uninstall CLI revalidates receipt history immediately before save. Shared planner
+refinements preserve wildcard-action restrictions and refuse unattributed deny
+overrides. Documentation records recovery and legacy limitations. Automated tests
+cover multi-upgrade restoration, the actual native → integration → upgrade pipeline,
+v1 adoption/opaque arrays, corruption/ambiguity, concurrent evidence changes, and
+failure cleanup. Restore also preserves unrelated JSONC comments, BOM and CRLF;
+pending receipts cannot be used as restore evidence even through inspection mode.
+
+Fresh final validation: `npm run typecheck` passed; complete automated suite passed
+**138 tests, 0 failures, 1 opt-in live test skipped** (`node --test
+--test-reporter=dot test/*.test.ts`, exit 0). Intermediate adoption-fixture argument
+and JSONC comment/whitespace regressions were fixed before these final checks.
+The receipt lifecycle and CLI wiring milestone is implemented; Lead-owned independent
+review and isolated interactive CLI QA remain outstanding, followed by human final
+acceptance. No Git commands, dependency installation, live configuration/service
+operations, or publication were performed. Recovery intentionally rejects multiple
+ unrelated historical heads rather than guessing a migration/merge of their ownership.
+
+2026-10-16 production-flow adapter follow-up: extracted installer implementation to
+`src/installer-flow.ts`; the interactive entrypoint still validates the same supported
+arguments and refuses non-TTY operation before creating the terminal. The production
+flow accepts injected prompts, output, filesystem/recovery locations, diagnostics, and
+save/receipt operations. Added isolated installer-flow tests using question-aware
+answers, covering model/custom-field preservation, explicit model replacement, and
+cancellation/no-write. The first adapter-test attempt used brittle answer sequencing;
+it was replaced with question-asserting responses. The uninstall production flow was
+already dependency-injected in `src/uninstall-cli-flow.ts` and wired to the actual CLI.
+Fresh typecheck passed and the full suite passed with one opt-in live test skipped.
+Integration CLI flow is now extracted to `src/integration-cli-flow.ts`; the entrypoint
+retains argument validation and TTY guard and delegates to the extracted production
+flow. Both flows return explicit 0/1/2 verification statuses and the CLI applies them;
+injected paths resolve from injected home/cwd. Tests cover successful/failed/throwing
+verification and isolated home/cwd path expansion. Adapter tests exercise project
+save/cancellation and global none selection. Existing receipt-lineage tests cover actual
+native → integration → upgrade → restore composition, pending/finalization failures,
+and user additions; uninstall delegates to injected `runUninstallFlow`. New adapter
+tests exercise installer repeat/noop, obsolete-rule keep/remove, pending-write failure,
+and pending evidence retained on finalization failure; global GH rule/source additions,
+repeat/noop, GH-to-MCP source retirement with obsolete keep/remove, and pending evidence
+on finalization failure; successor restoration through the injected uninstall flow
+preserves a later user-added permission. Tests use question-aware prompts and per-test
+temporary directories. Latest `npm run typecheck` passed; focused command
+`node --test test/installer-flow.test.ts test/integration-cli-flow.test.ts test/receipt-lineage.test.ts`
+passed (26/26); Implementer full suite passed (153 passed, 0 failed, 1 opt-in live test
+skipped). Independent Reviewer rechecked the accepted status/path findings, found both
+resolved with no actionable findings, and independently passed typecheck plus the
+26-test focused set. QA independently ran the same 26 isolated production-adapter tests
+and verified fresh install, preserve/replace, cancellation, repeat/no-op, obsolete
+keep/remove, GH→MCP source retirement, finalization evidence, and user-addition restore.
+Limitations: no actual interactive-terminal/live runtime/service QA was performed;
+adapter-level coverage exercises the production flows in disposable fixtures but does not replace human interactive smoke verification.
+
+2026-10-16 delivery and verification update: rebased `feature/bh006` cleanly onto `main` (`226b999`). Added regression tests closing the remaining adapter-level gaps: integration flow aborts without writes when pending receipt creation fails, installer flow validates default-on-Enter and retries invalid scope/model/variant inputs per AGENTS.md, and `runUninstallFlow` confirms cancellation and conflict failure without writes or saves. Verification: `npm run typecheck` passed; focused test suite (97 tests) passed; full test suite passed (166 passed, 0 failed, 1 opt-in live test skipped); `git diff --check` passed clean. Non-TTY interactive blocker is noted; live interactive TTY smoke QA was not run. Final implementation approved; ready for local commit and pull request publication.
+
 ## BH-007 — Optional Jira connection, project access, and lifecycle mapping
+
 
 The global `jira` entry is disabled; MarsRoverIA has Jira **not selected**. Do not
 enable it or ask for a project key merely to complete that project's setup.

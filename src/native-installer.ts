@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, parse as pathParse, resolve } from 'node:path';
 import { applyEdits, modify, parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
 import { parseDocument } from 'yaml';
+import { reconcilePermissions, type PermissionRule, type ReconciliationResult, type AttributedRule } from './permission-reconciliation.ts';
 
 export const nativeRoles = ['lead', 'operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const;
 export type NativeRole = typeof nativeRoles[number];
@@ -172,7 +173,14 @@ export function findMarkdownConflicts(sources: readonly ConfigSource[], target: 
   return [...paths];
 }
 
-export function updateNativeConfiguration(original: string, definitions: Record<NativeRole, NativeDefinition>, assignments: Record<NativeRole, string>, setDefault: boolean, setLeadModel = false): string {
+export interface NativeReconciliationOptions {
+  managedFields?: Partial<Record<NativeRole, Partial<Pick<NativeDefinition, 'description' | 'mode' | 'system'>>>>;
+  replaceFields?: Partial<Record<NativeRole, readonly ('description' | 'mode' | 'system')[]>>;
+  permissions?: Partial<Record<NativeRole, { prior: readonly AttributedRule[]; previousOrder: readonly PermissionRule[]; removeObsolete?: readonly PermissionRule[] }>>;
+  onPermissionPlan?: (role: NativeRole, plan: ReconciliationResult) => void;
+}
+
+export function updateNativeConfiguration(original: string, definitions: Record<NativeRole, NativeDefinition>, assignments: Record<NativeRole, string>, setDefault: boolean, setLeadModel = false, replaceModels: readonly NativeRole[] = [], reconciliation: NativeReconciliationOptions = {}): string {
   const value = parseConfiguration(original, 'selected configuration');
   const bom = original.startsWith('\uFEFF') ? '\uFEFF' : '';
   let text = bom ? original.slice(1) : original;
@@ -184,8 +192,18 @@ export function updateNativeConfiguration(original: string, definitions: Record<
     if (!model) throw new Error(`Invalid model assignment for ${role}`);
     const existing = object(value.agents) ? value.agents[role] : undefined;
     if (existing !== undefined && !object(existing)) throw new Error(`Expected a V2 agent object for ${role}`);
-    // Update only owned fields; preserve color, steps, requests, and unrelated roles.
-    for (const [field, content] of Object.entries({ ...definitions[role], model })) set(['agents', role, field], content);
+    if (!object(existing) || existing.model === undefined || replaceModels.includes(role)) set(['agents', role, 'model'], model);
+    for (const field of ['description', 'mode', 'system'] as const) {
+      const current = object(existing) ? existing[field] : undefined;
+      const managed = reconciliation.managedFields?.[role]?.[field];
+      if (current === undefined || reconciliation.replaceFields?.[role]?.includes(field) || managed !== undefined && current === managed) set(['agents', role, field], definitions[role][field]);
+    }
+    if (object(existing) && existing.permissions !== undefined && !Array.isArray(existing.permissions)) throw new Error(`Expected a native permission array for ${role}`);
+    const current = object(existing) && Array.isArray(existing.permissions) ? existing.permissions : [];
+    const plan = reconcilePermissions({ existing: current as PermissionRule[], desired: (definitions[role].permissions as PermissionRule[]).map(rule => ({ rule, sources: [`native:${role}`] })), retiringSources: [`native:${role}`], ...reconciliation.permissions?.[role] });
+    if (plan.preview.conflicts.length) throw new Error(`Permission reconciliation conflict for ${role}: ${plan.preview.conflicts.map(c => c.message).join(' ')}`);
+    reconciliation.onPermissionPlan?.(role, plan);
+    set(['agents', role, 'permissions'], plan.rules);
   }
   if (setDefault) set(['default_agent'], 'lead');
   if (setLeadModel) set(['model'], assignments.lead.split('#')[0]);

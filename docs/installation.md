@@ -42,7 +42,7 @@ npm ci
 npm run harness:install
 ```
 
-The installer asks for project or global scope, reads existing `opencode.json`/`opencode.jsonc` files, and asks for a model and reasoning variant for **each of the eight agents**. Nothing is written until you review the assignments and type `install`. Enter at a model prompt explicitly accepts its displayed suggestion; there is no automatic substitution on model-access failure.
+The installer asks for project or global scope, reads existing `opencode.json`/`opencode.jsonc` files, and asks for a model and reasoning variant for **each of the eight agents**. Existing role model assignments, including expanded model objects and variants, are preserved by default; a separate per-role confirmation is required to replace one. Nothing is written until you review the assignments and type `install`. Enter at a model prompt explicitly accepts its displayed suggestion; there is no automatic substitution on model-access failure.
 
 Examples:
 
@@ -80,7 +80,43 @@ Making Lead the default agent and changing the root default model are **separate
 
 The selected config receives inline V2 `agents` definitions: description, primary/subagent mode, selected model, role permissions, and the native conversational system prompt. Inline definitions avoid the historical `agent/` versus `agents/` file-layout discrepancy. No harness plugin, host, IPC service, workflow database, or Markdown agent copies are installed.
 
-Existing role collisions are identified in the final summary. Confirmation replaces those five owned fields while preserving other role fields (such as color, steps, hidden/disabled flags, and requests). Those preserved fields may affect discovery/behavior and need review. Unrelated agents, providers, credentials, MCP connections, plugins, and other settings are preserved; JSONC comments, trailing commas, BOM, and line endings are retained. Existing `$schema` is preserved, or the published editor-schema URL is added when absent.
+Existing role collisions are identified in the final summary. Existing description, mode, and system prompt are preserved by default; missing fields receive template values. Unchanged fields attributable to the active receipt refresh from the templates. Customized/unattributed fields have separate keep-default replacement prompts. Other role fields (such as color, steps, hidden/disabled flags, and requests) are preserved. The shared permission planner retains existing rules and their relative order, adds compatible missing template rules, and aborts on ambiguous identities or unsafe restriction overrides. Obsolete owned rules default to keep; each removal requires a separate selection before final confirmation. The preview shows additions, removals, retained obsolete rules, and final order. These preserved fields may affect discovery/behavior. Unrelated agents, providers, credentials, MCP connections, plugins, and other settings are preserved; JSONC comments, trailing commas, BOM, and line endings are retained. Existing `$schema` is preserved, or the published editor-schema URL is added when absent.
+
+### Cumulative v2 recovery receipts
+
+Installer and global integration permission changes extend one validated receipt chain
+in the recovery directory. Each immutable v2 receipt carries a unique identity,
+predecessor filename/identity/SHA-256 digest, original managed-field baselines, latest
+managed values, permission sources and order evidence, and created containers. It
+does not own connections, credentials, preferences, or project context. A matching
+preexisting permission rule never becomes owned merely by matching a template.
+
+Discovery refuses missing/altered predecessors, duplicate identities, forks/cycles,
+pending receipts, or multiple unrelated heads for the same target. Keep the complete
+chain together. Receipt bytes and file identities are rechecked after review and
+before writes. A pending successor is written before configuration save and finalized
+only after the saved configuration is verified. Only finalization supersedes its
+predecessor; the predecessor file is not rewritten. Partial saves or finalization
+failures retain pending evidence and report its path. Resolve recovery explicitly
+before another update; never delete evidence just to bypass a conflict.
+
+Uninstall must select the active head. Superseded receipts cannot be restored
+independently. Restore removes uniquely identifiable owned rules while retaining later
+user additions, restores original managed fields only when their latest managed state
+still matches, and removes only empty installer-created containers. Missing, edited,
+duplicated or moved owned rules produce a no-write conflict. User field edits also
+conflict rather than being overwritten.
+
+Version 1 installer and adoption receipts remain readable and can become predecessors.
+Their permission arrays remain opaque whole-field evidence: no per-rule ownership is
+inferred. New v2 additions can be attributed separately, but restoring the legacy array
+still requires an exact match after removing those additions. Legacy installations
+without native-rule provenance may therefore conflict when setup would override an
+unattributed deny. A receipt is local recovery evidence, not a cryptographic trust or
+authorization boundary against a same-user process rewriting the entire history.
+
+Automated lifecycle tests cover native install → integration → upgrade → restore.
+Independent review and isolated interactive CLI QA remain required before live use.
 
 Existing named Markdown agents in relevant global/project/ancestor `agent` or `agents` directories cause an abort: reconcile those definitions deliberately before rerunning rather than merging competing prompts/permissions silently. Detected historical adapter installations also cause an abort; disable them intentionally, because their tool filter is incompatible with native shell/MCP access. The installer never deletes those files/plugins. Not every arbitrary plugin or runtime override can be detected; inspect effective config afterward.
 

@@ -1,0 +1,152 @@
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { agentDirectories, askAssignments, chooseConfiguration, configuredModels, discoverConfigurations, findMarkdownConflicts, loadNativeDefinitions, modelReference, nativeRoles, parseConfiguration, projectConfiguration, saveInstallation, updateNativeConfiguration, type Ask } from './native-installer.ts';
+import { DiagnosticError, printReport, verifyRuntime } from './native-diagnostics.ts';
+import { assertSafeFilesystemPath } from './installation-receipt.ts';
+import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from './receipt-lineage.ts';
+import type { ReconciliationResult } from './permission-reconciliation.ts';
+
+export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string }
+export interface InstallerFlowDependencies {
+  ask: Ask;
+  output(message: string): void;
+  error(message: string): void;
+  cwd?: string;
+  home?: string;
+  xdgConfigHome?: string;
+  recoveryDirectory?: string;
+  agentsDirectory?: string;
+  environment?: NodeJS.ProcessEnv;
+  loadDefinitions?: typeof loadNativeDefinitions;
+  updateConfiguration?: typeof updateNativeConfiguration;
+  save?: typeof saveInstallation;
+  writePending?: typeof writePendingSuccessor;
+  finalize?: typeof finalizeSuccessor;
+  verify?: typeof verifyRuntime;
+  printReport?: typeof printReport;
+}
+
+export async function runInstallerFlow(options: InstallerFlowOptions, deps: InstallerFlowDependencies): Promise<number> {
+  const { ask } = deps;
+  const output = deps.output;
+  const errorOutput = deps.error;
+  const cwd = deps.cwd ?? process.cwd();
+  const home = deps.home ?? homedir();
+  const env = deps.environment ?? process.env;
+  let scope = options.scope;
+  while (!scope || !['project', 'global'].includes(scope)) scope = (await ask('Install scope: project or global', 'project')) || 'project';
+  if (scope === 'global' && options.project) throw new Error('--project cannot be combined with global scope.');
+  const expand = (path: string) => path.replace(/^(?:~|\$HOME)(?=[/\\]|$)/, home);
+  const project = scope === 'project' ? resolve(cwd, expand(options.project ?? ((await ask('Project directory', cwd)) || cwd))) : undefined;
+  if (project && (!existsSync(project) || !statSync(project).isDirectory())) throw new Error('Project directory does not exist or is not a directory. Create/select it before installing.');
+  const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
+  const sources = discoverConfigurations(project, globalDirectory);
+  const target = options.config ? resolve(cwd, expand(options.config)) : project ? projectConfiguration(project, sources) : chooseConfiguration(globalDirectory);
+  const allowedDirectories = project ? [project, join(project, '.opencode')] : [resolve(globalDirectory)];
+  const sameDirectory = (directory: string) => process.platform === 'win32' ? directory.toLowerCase() === dirname(target).toLowerCase() : directory === dirname(target);
+  if (!['opencode.json', 'opencode.jsonc'].includes(basename(target)) || !allowedDirectories.some(sameDirectory)) throw new Error('--config must select opencode.json/jsonc inside the chosen project (or its .opencode folder), or the global OpenCode directory.');
+  assertSafeFilesystemPath(target, 'file');
+  const original = existsSync(target) ? readFileSync(target, 'utf8') : undefined;
+  const backupParent = deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups');
+  const history = discoverReceiptChain(backupParent, target);
+  if (!sources.some(source => source.path === target) && original !== undefined) sources.push({ path: target, text: original, value: parseConfiguration(original, target) });
+  const conflicts = findMarkdownConflicts(sources, target, globalDirectory, project);
+  if (conflicts.length) throw new Error(`Existing named Markdown agents may override inline installation. Resolve intentionally, then rerun; no files were changed:\n${conflicts.join('\n')}`);
+  const adapter = agentDirectories(sources, target, globalDirectory, project).some(directory => existsSync(join(directory, 'plugins', 'advanced-harness')));
+  const configuredAdapter = sources.some(source => Array.isArray(source.value.plugins) && source.value.plugins.some(entry => {
+    const name = typeof entry === 'string' ? entry : entry && typeof entry === 'object' && 'package' in entry ? String(entry.package) : '';
+    return /spike[/\\]opencode|advanced-harness-opencode-spike/i.test(name);
+  }));
+  if (adapter || configuredAdapter) throw new Error('Historical advanced-harness plugin detected. Disable/remove it intentionally before installing native agents; the installer will not delete it.');
+  output(`\nScope: ${scope}\nTarget: ${target}`);
+  output('Read configuration files (contents/credentials are not printed):');
+  for (const source of sources) output(`  ${source.path}`);
+  if (!sources.length) output('  None; a new configuration will be created.');
+  if (env.OPENCODE_CONFIG_CONTENT || env.OPENCODE_CONFIG) output('Warning: environment config overrides may affect runtime behavior; they are not edited by this installer.');
+  output('\nConfigured model IDs (not proof of account access):');
+  const choices = configuredModels(sources);
+  choices.forEach((model, index) => output(`  ${index + 1}. ${model}`));
+  if (!choices.length) output('  None declared. Enter IDs verified in OpenCode /models.');
+  output('Each role requires your choice. Enter a listed number or provider/model#variant; Enter accepts the shown suggestion.');
+  output('Unknown account access/variants must be checked in /models. Spark previously failed with the tested ChatGPT account.');
+  const definitions = (deps.loadDefinitions ?? loadNativeDefinitions)(deps.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)));
+  const assignments = await askAssignments(definitions, sources, ask);
+  const existingConfig = original === undefined ? {} : parseConfiguration(original, target);
+  const existingAgents = existingConfig.agents && typeof existingConfig.agents === 'object' ? existingConfig.agents as Record<string, Record<string, unknown>> : {};
+  const replaceModels = [] as typeof nativeRoles[number][];
+  for (const role of nativeRoles) if (existingAgents[role]?.model !== undefined && /^(y|yes)$/i.test(await ask(`Replace existing ${role} model?`, 'no'))) replaceModels.push(role);
+  const setDefault = /^(y|yes)$/i.test(await ask('Make Lead the default agent for new sessions?', 'no'));
+  const setLeadModel = /^(y|yes)$/i.test(await ask('Also set the root default model to Lead? (otherwise preserve it)', 'no'));
+  const reconciliation = receiptReconciliationOptions(history);
+  reconciliation.replaceFields = {};
+  for (const role of nativeRoles) for (const field of ['description', 'mode', 'system'] as const) {
+    const current = existingAgents[role]?.[field];
+    if (current !== undefined && current !== reconciliation.managedFields?.[role]?.[field] && /^(y|yes)$/i.test(await ask(`Replace customized/unattributed ${role} ${field} with the template?`, 'no'))) reconciliation.replaceFields[role] = [...(reconciliation.replaceFields[role] ?? []), field];
+  }
+  const plans: Partial<Record<typeof nativeRoles[number], ReconciliationResult>> = {};
+  reconciliation.onPermissionPlan = (role, plan) => { plans[role] = plan; };
+  const update = deps.updateConfiguration ?? updateNativeConfiguration;
+  let updated = update(original ?? '{}\n', definitions, assignments, setDefault, setLeadModel, replaceModels, reconciliation);
+  for (const role of nativeRoles) for (const obsolete of plans[role]?.preview.retainedObsolete ?? []) if (/^(y|yes)$/i.test(await ask(`Remove obsolete owned ${role} permission ${JSON.stringify(obsolete.rule)}?`, 'no'))) {
+    const state = reconciliation.permissions![role]!;
+    state.removeObsolete = [...(state.removeObsolete ?? []), obsolete.rule];
+  }
+  updated = update(original ?? '{}\n', definitions, assignments, setDefault, setLeadModel, replaceModels, reconciliation);
+  const provenanceChanged = history.head?.receipt.version === 2 && nativeRoles.some(role => JSON.stringify(plans[role]?.provenance ?? []) !== JSON.stringify(history.head!.receipt.version === 2 ? history.head!.receipt.permissions.find(p => p.path[1] === role)?.owned ?? [] : []));
+  const needsReceipt = updated !== (original ?? '{}\n') || provenanceChanged;
+  const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans) : undefined;
+  output('\nAssignments:');
+  for (const role of nativeRoles) {
+    const saved = parseConfiguration(updated, target).agents as Record<string, Record<string, unknown>>;
+    output(`  ${role}: ${modelReference(saved[role]?.model) ?? '(invalid saved model)'}`);
+    output(`  Permission preview: ${JSON.stringify(plans[role]?.preview)}`);
+  }
+  const value = original === undefined ? {} : parseConfiguration(original, target);
+  const existing = value.agents as Record<string, unknown> | undefined;
+  const collisions = nativeRoles.filter(role => existing && Object.hasOwn(existing, role));
+  if (collisions.length) output(`Existing roles updated: ${collisions.join(', ')}. Models/custom fields are preserved unless individually selected; unchanged attributable fields are refreshed. Permissions are reconciled as previewed.`);
+  output('Preserved hidden/disabled flags, ancestor definitions, and runtime overrides may affect discovery. Verify effective agents after installation.');
+  output(`Default agent: ${setDefault ? 'set to lead' : 'preserved'}; root default model: ${setLeadModel ? assignments.lead.split('#')[0] : 'preserved'}.`);
+  output('Providers, credentials, MCP servers, plugins, and unrelated agents/settings will not be changed.');
+  output('Assignments are stored inline in agents; no plugin or separate approval host is installed.');
+  if (original !== undefined) output(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
+  output('After writing, runtime verification may start the OpenCode service. It will not restart/reload it or send paid model requests.');
+  if (await ask('Type install to apply these changes', 'cancel') !== 'install') { output('Cancelled. No files were changed.'); return 0; }
+  if (!receipt) { output('Configuration already matches; no configuration, backup, or receipt writes are needed.'); return 0; }
+  const pending = (deps.writePending ?? writePendingSuccessor)(history, receipt);
+  const receiptPath = pending.path;
+  let backup: string | undefined;
+  try { revalidatePendingSuccessor(pending); backup = (deps.save ?? saveInstallation)(target, original, updated, backupParent); }
+  catch (err) {
+    if (recoverFailedSuccessor(pending, original) !== 'cleared') errorOutput(`Configuration write may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
+    throw err;
+  }
+  const finalText = readFileSync(target, 'utf8');
+  try { (deps.finalize ?? finalizeSuccessor)(pending, updated); }
+  catch (err) { errorOutput(`Configuration saved but receipt finalization failed; pending evidence retained at ${receiptPath}. Resolve recovery before any further update or restore.`); throw err; }
+  output(`Configuration written (runtime not yet verified): ${target}`);
+  if (backup) output(`Backup: ${backup}`);
+  output(`Private uninstall receipt retained at ${receiptPath}`);
+  const directory = project ?? cwd;
+  try {
+    const saved = parseConfiguration(finalText, target);
+    const savedAgents = saved.agents as Record<string, Record<string, unknown>>;
+    const intended = Object.fromEntries(nativeRoles.map(role => {
+      const actual = modelReference(savedAgents[role]?.model);
+      if (!actual) throw new Error(`Saved model assignment for ${role} is invalid.`);
+      return [role, { ...definitions[role], model: actual }];
+    }));
+    const report = await (deps.verify ?? verifyRuntime)({ directory, ...(options.opencode ? { executable: options.opencode } : {}) }, intended);
+    (deps.printReport ?? printReport)(report);
+    if (!report.ok) return 1;
+  } catch (err) {
+    if (err instanceof DiagnosticError) errorOutput(err.message);
+    errorOutput('Configuration saved, but runtime verification is inconclusive. Run npm run harness:doctor; check CLI path/service. No rollback or model substitution was performed.');
+    return 2;
+  }
+  output('Existing session models are unchanged; explicitly verify the assigned Lead model/variant in the new session.');
+  output('Model access, MCP authentication, project commands, and approval behavior have NOT been runtime-validated.');
+  return 0;
+}

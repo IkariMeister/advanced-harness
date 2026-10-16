@@ -6,6 +6,7 @@ import { adoptExisting, assertSafeFilesystemPath, configurationField, persistAdo
 import { saveInstallation } from '../src/native-installer.ts';
 import { adoptionPreviewAction, selectAdoptionFields } from '../src/adoption-prompts.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
+import { revalidateRestoreReceipt } from '../src/receipt-lineage.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
@@ -32,7 +33,7 @@ if (args.includes('--help')) {
     const current = readFileSync(target, 'utf8');
     const backupParent = process.env.ADVANCED_HARNESS_RECOVERY_DIR || join(homedir(), 'Projects', 'advanced-harness-backups');
     let receiptPath = String(options['--receipt'] ?? '');
-    let receipt;
+    let receipt: ReturnType<typeof readInstallationReceipt> | undefined;
     if (options['--adopt-existing']) {
       const beforePath = options['--before-config'] ? resolve(String(options['--before-config'])) : undefined;
       if (beforePath) assertSafeFilesystemPath(beforePath, 'file');
@@ -66,6 +67,9 @@ if (args.includes('--help')) {
         output: message => console.log(message),
         error: message => console.error(message),
         save: updated => {
+          const latest = readInstallationReceipt(receiptPath, target);
+          if (JSON.stringify(latest) !== JSON.stringify(receipt)) throw new Error('Receipt changed during uninstall review; no write permitted.');
+          revalidateRestoreReceipt(receipt!);
           const backup = saveInstallation(target, current, updated, backupParent);
           console.log(`Uninstall complete. Backup retained: ${backup ?? '(target did not previously exist)'}`);
         },

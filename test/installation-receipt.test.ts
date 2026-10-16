@@ -51,6 +51,19 @@ test('conflicting edits block whole receipt-backed mutation', () => {
   assert.equal(plan.updated, '{"model":"user/model"}');
 });
 
+test('expanded model evidence survives receipt persistence and restores its original representation', t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-model-receipt-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const target = join(root, 'opencode.jsonc');
+  const model = { providerID: 'company', model: 'original', variant: 'low', custom: 'preserve' };
+  const before = JSON.stringify({ agents: { lead: { model } } });
+  const after = JSON.stringify({ agents: { lead: { model: 'company/replacement#medium' } } });
+  const receipt = readInstallationReceipt(writeInstallationReceipt(root, createReceipt(target, before, after)), target);
+  const plan = planUninstall(receipt, after);
+  assert.deepEqual(plan.conflicts, []);
+  assert.deepEqual(configurationField(plan.updated, ['agents', 'lead', 'model']), model);
+});
+
 test('CLI conflict flow reports exact stderr, exits 1, and never prompts or saves', async () => {
   const current = '{"model":"user/model"}';
   const receipt = createReceipt('opencode.jsonc', '{"model":"old/model"}', '{"model":"new/model"}');
