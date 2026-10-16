@@ -80,6 +80,18 @@ export function suggestedCommands(inspection: Inspection, shell: ProjectProfile[
   };
 }
 
+/** Full-preview confirmation accepts only the documented tokens; all else cancels. */
+export function setupConfirmation(response: string): 'save' | 'cancel' {
+  const answer = response.trim();
+  return answer === 'save' || answer === 'setup' ? 'save' : 'cancel';
+}
+
+/** Production CLI decision flow, extracted so cancellation is regression-tested. */
+export function confirmAndSaveSetup(response: string, files: readonly SetupFile[], backupParent: string): { status: 'cancelled' } | { status: 'saved'; backups: (string | undefined)[] } {
+  if (setupConfirmation(response) !== 'save') return { status: 'cancelled' };
+  return { status: 'saved', backups: saveSetup(files, backupParent) };
+}
+
 function inside(path: string, directory: string): boolean {
   const child = relative(resolve(directory), resolve(path));
   return child === '' || (!child.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && child !== '..' && !isAbsolute(child));
@@ -116,13 +128,17 @@ async function choose<T extends string>(ask: Ask, question: string, choices: rea
   }
 }
 
-export async function askProfile(root: string, inspection: Inspection, previous: ProjectProfile | undefined, ask: Ask): Promise<ProjectProfile> {
+export async function askProjectShell(ask: Ask, suggested: ProjectProfile['shell']): Promise<ProjectProfile['shell']> {
+  return choose(ask, 'Command shell: powershell, bash, or cmd', ['powershell', 'bash', 'cmd'], suggested);
+}
+
+export async function askProfile(root: string, inspection: Inspection, previous: ProjectProfile | undefined, ask: Ask, selectedShell?: ProjectProfile['shell']): Promise<ProjectProfile> {
   let baseBranch = '';
   while (!baseBranch) {
     const answer = (await ask('Base branch (confirm against the repository; not inferred)', previous?.baseBranch ?? 'main')).trim() || previous?.baseBranch || 'main';
     if (validBranch(answer)) baseBranch = answer;
   }
-  const shell = await choose(ask, 'Command shell: powershell, bash, or cmd', ['powershell', 'bash', 'cmd'], previous?.shell ?? (process.platform === 'win32' ? 'powershell' : 'bash'));
+  const shell: ProjectProfile['shell'] = selectedShell ?? await choose(ask, 'Command shell: powershell, bash, or cmd', ['powershell', 'bash', 'cmd'], previous?.shell ?? (process.platform === 'win32' ? 'powershell' : 'bash'));
   const suggestions = suggestedCommands(inspection, shell);
   const checks = {} as Record<CheckName, ProjectCheck>;
   for (const name of checkNames) {

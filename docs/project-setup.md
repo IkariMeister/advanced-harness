@@ -14,7 +14,7 @@ Project settings are stored **only in project context**: `AGENTS.md` by default,
 ## What setup asks
 
 - **Base branch**: explicitly confirm the repository's base (for example `main` or `develop`). The suggested name is not a Git-verified branch.
-- **Command shell**: `powershell`, `bash`, or `cmd`. This labels command syntax; it does not change OpenCode's shell setting. Confirm that the execution environment matches. Windows defaults to PowerShell; macOS defaults to Bash-compatible syntax.
+- **Command shell**: `powershell`, `bash`, or `cmd`. This selects suggested syntax only; it does not select/validate the actual execution shell, check readiness, or convert commands already entered/saved. Expected wrappers are `./gradlew` for Bash, ` .\gradlew.bat` for PowerShell, and `gradlew.bat` for cmd. Confirm that the execution environment matches. Windows defaults to PowerShell; macOS defaults to Bash-compatible syntax.
 - **Build, lint, unit, Roborazzi, runtime, and E2E commands**: each is a single shell command line, run later from the active application worktree root. Enter accepts the suggestion; `-` leaves that check **unconfigured**. Existing unconfigured checks remain unconfigured on repeat setup unless you change them.
 - **Device preference**: `physical-first` (default), `emulator`, or `ask`, plus an optional serial. This records a preference, not a device connection/validation. `-` removes the serial so QA can select at runtime.
 - **Worktree parent**: defaults to `$HOME/Projects/advanced-harness-worktrees/<project-id>`.
@@ -24,15 +24,15 @@ Worktree and memory paths must be outside the app checkout, must not contain it,
 
 ## Gradle inspection and suggestions
 
-Setup reads bounded root/module `build.gradle(.kts)` and `settings.gradle(.kts)` files and root `AGENTS.md`. It skips symlink entries and generated/hidden/source directories; inspection is limited to 2,000 entries and three nested directory levels. Text files over 1 MiB are refused. It does **not** execute Gradle scripts, Git, shell commands, device commands, or private E2E tooling.
+Setup reads bounded root/module `build.gradle(.kts)` and `settings.gradle(.kts)` files and root `AGENTS.md`. It skips symlink entries and generated/hidden/source directories; inspection is limited to 2,000 entries and three nested directory levels. Text files over 1 MiB are refused. Textual inspection may miss modules declared through aliases or convention plugins, deeper trees, or beyond scan limits. It does **not** execute Gradle scripts, Git, shell commands, device commands, or private E2E tooling.
 
-Literal Android plugin IDs and Roborazzi references produce heuristic suggestions, such as `./gradlew :app:assembleDebug` or `.\gradlew.bat :app:testDebugUnitTest`. Only an existing wrapper for the selected shell enables suggestions. Aliases/convention plugins, deeper modules, flavors, and custom tasks may not be detected correctly. **Every suggestion needs your confirmation; none is a verified task or result.** Runtime and private E2E commands have no invented defaults. Ask the project owner for the E2E invocation contract.
+Literal Android plugin IDs and Roborazzi references produce heuristic suggestions, such as `./gradlew :app:assembleDebug` or ` .\gradlew.bat :app:testDebugUnitTest`. The first detected module is used, or root-conventional tasks if none was detected. Only an existing wrapper for the selected shell enables suggestions; a wrapper for another shell does not. Enter the correct commands manually or `-` to leave unconfigured. Aliases/convention plugins, deeper modules, flavors, and custom tasks may not be detected correctly. Roborazzi references do not verify that a corresponding task exists. **Every suggestion needs your confirmation; none is a verified task or result.** Runtime and private E2E commands have no invented defaults. Ask the project owner for the E2E invocation contract.
 
 Commands can perform arbitrary operations when executed later. Do not enter literal secrets; use environment references. Saved commands are configuration, not approval to execute them, and do not automatically expand role shell permissions.
 
 ## Files and confirmation
 
-Setup previews choices, destination files, and the proposed marked instructions section. It writes only after you type **`setup`**:
+Setup previews choices, destination files, and the proposed marked instructions section. Type `save` or the legacy `setup` to save (surrounding whitespace is ignored). Enter, `cancel`, and every other response cancel; cancellation explicitly reports that nothing changed. It creates no writes or backups:
 
 1. **`AGENTS.md`** by default: adds/replaces only the section between `<!-- advanced-harness:project:start -->` and `<!-- advanced-harness:project:end -->`. It contains the actual settings as fenced JSON and accompanying workflow instructions. Content outside the section is preserved, including BOM and line endings. Malformed/duplicate markers, invalid embedded JSON/settings, and unknown data fields are rejected rather than discarded.
 2. **An explicitly selected Markdown context file**, when `--context` is supplied: stores that same marked section, and adds a reference to the file in `AGENTS.md`. The path must stay inside the project. Both files are listed before confirmation.
