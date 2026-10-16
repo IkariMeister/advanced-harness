@@ -2,6 +2,11 @@
 
 **Status:** approved direction, 2026-10-08. Native template configuration and a real-project pilot still need validation.
 
+Task-specific workflow definitions for Jira issue work, teammate PR reviews, reported
+defects, and technical debt are documented in [task workflows](task-workflows.md).
+These are definitions only, not executable commands; command names and syntax remain
+TBD.
+
 ## What we are building
 
 An agent workflow inside OpenCode V2, not another execution platform. Lead coordinates the specialized roles using native tools, shell, Git, and MCP integrations. The human approves plans, findings/fixes, exceptions, and final publishing in the Lead conversation. No separate harness terminal, host service, custom plugin approval API, IPC, revision-token UI, or SQLite state engine is required.
@@ -79,7 +84,7 @@ Keep customizable role prompts and the agreed model/reasoning table. Validate mo
 4. Implementer makes approved changes and writes tests. Reviewer runs required checks; QA verifies runtime and configured E2E behavior.
 5. Lead presents findings. Human accept/discard decisions guide scoped fixes, followed by affected rechecks and renewed approval for material plan changes.
 6. Lead asks for final implementation approval. External publishes through the configured GitHub backend and updates Jira only when selected and authorized. If the requested publishing workflow lacks a service, ask rather than claiming success. Process PR feedback through the same decisions; never merge.
-7. Ask which observed learnings should become approved `AGENTS.md` changes. On human-triggered merge verification, confirm merged state before safe worktree/branch cleanup.
+7. Ask which observed learnings should become approved `AGENTS.md` changes. A human's confirmation that the PR is merged triggers External to verify merged state and authorizes Operator to clean up the task worktree and local feature branch after safety checks. Preserve the remote branch; stop and ask if work is dirty, unpushed, or uncertain.
 
 Jira lifecycle updates are pre-authorized only when Jira is selected and the human approves its state mapping and update scope; synchronization failures require a human decision. When Jira is not selected, use project/task acceptance criteria. If outcome is uncertain, inspect before retrying rather than duplicating external operations. Respect GitHub's required checks and human approvals.
 

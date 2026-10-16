@@ -95,7 +95,7 @@ invented. Links point to the current implementation/specification.
 | BH-014 | P3 | Optional evidence and practical reuse | Add only when pilot needs justify it; never silently make it a gate |
 | BH-015 | Deferred | Multi-squad shared-repository workflows | Agree per-session routing/concurrency rules before implementation |
 | BH-016 | Deferred | Team/cross-machine coordination and other hosts | Separate product decision; no synchronization/daemon promised |
-| BH-017 | P2 | Predictable workflow commands | Define workflows for new issues, teammate PR reviews, reported defects, and technical debt; command names/syntax TBD |
+| BH-017 | P2 | Predictable workflow commands | Approved task-workflow definitions clarified for Jira start ordering and human-triggered safe cleanup; commands/syntax remain TBD and are not implemented |
 | BH-018 | Deferred | V2 epic/user-story refinement harness | Define a distinct second harness for epic/story refinement; SDD applicability TBD |
 | BH-019 | P1 | Per-agent tool availability and ownership | Capability docs complete; approved External source-permission follow-up implemented and local checks pass; independent reviews and final implementation approval pending |
 | BH-020 | P1 | Safe harness update workflow | Preview version/migration, preserve customizations, and provide recovery |
@@ -754,20 +754,21 @@ scope while deciding whether and how other hosts fit later.
 
 ## BH-017 — Predictable workflow commands
 
-Requested definition only; implementation is not approved. Define predictable harness
-commands/workflows for these task types:
+Human-approved documentation definitions are recorded in
+[task-workflows.md](task-workflows.md). This completes the requested workflow
+definitions only; implementation/executable commands are not approved. Definitions
+cover these task types:
 
 - Starting work on new issues.
 - Reviewing a teammate's PR.
 - Investigating a reported bug/defect.
 - Handling technical debt.
 
-For each, agree the required inputs, ordered steps, role handoffs, outputs, checks, and
-human approval points. Command names and syntax remain TBD pending that definition.
-These workflows must preserve conversational human approvals and existing role ownership.
-Do not claim deterministic enforcement: tool permissions and command patterns do not
-independently enforce plan approval. No commands, code, or configuration changes are
-authorized by this backlog request.
+Each definition covers inputs, ordered steps, role ownership, outputs, checks,
+illustrative examples, and human approval points. Command names and syntax remain TBD.
+Preserve conversational human approvals and existing role ownership. Tool permissions
+and command patterns do not independently enforce plan approval. No commands, code, or
+configuration changes are authorized by this definition.
 
 ## BH-018 — V2 epic/user-story refinement harness
 
