@@ -11,6 +11,21 @@ and successful execution are different evidence. `harness:doctor` checks agent/m
 discovery and catalogs, not all offered tools or delegated execution. A CLI/auth
 status check outside External does not validate that child's native shell.
 
+Keep four report fields separate: **offered/visible** to this request, **configured**
+allow/ask/deny policy (including project/session overlays and rule ordering),
+**invoked/result** (only for an actual call), and **owner** responsible for that work.
+Do not infer one field from another: ASK is not a denial, an allow rule does not
+prove exposure, and one successful invocation says nothing conclusive about another
+session or role. If there was no invocation and no captured offered-tool evidence,
+availability is unverified.
+
+Direct MCP actions and nested Code Mode actions are different execution routes.
+An MCP alias/permission does not prove its server is enabled, authenticated, or
+offering a usable tool; a Code Mode catalog result does not establish a direct MCP
+action (or vice versa). Establish the actual offered route and inspect the corresponding
+effective configuration. Do not guess server/tool identifiers or treat a wrapper as
+evidence for a nested action.
+
 ## Triage without guessing
 
 1. Record the affected session/parent IDs, role, location, service/version, and model
@@ -40,7 +55,15 @@ status check outside External does not validate that child's native shell.
    tool definitions. Any temporary observer requires approval, must not mutate requests,
    and must not log prompts, schemas, arguments, headers, credentials, or bodies.
    Inspect both HTTP and WebSocket transport where applicable. Do not install an
-   observer globally or in the application, or restart active work automatically.
+    observer globally or in the application, or restart active work automatically.
+
+Escalate by ownership: Operator handles local Git/worktrees/memory; External handles
+MCP, services, and remote Git; Implementer handles approved source/tests; Reviewer
+and QA report verification prerequisites to Lead; Lead obtains human decisions.
+Report exact denial/error and its scope. If evidence is only a self-report, catalog
+miss, or configuration rule, label availability unverified. Do not grant permissions,
+switch roles/models, retry, or restart as a workaround. Permission prompts are tool
+authorization, not plan approval.
 
 Stop repeating self-report probes as proof. Record the evidence and uncertainty,
 then propose the smallest next action. A version probe does not authenticate a

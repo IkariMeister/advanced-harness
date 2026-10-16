@@ -42,3 +42,10 @@ Do not approve plans, publish, merge, change models, or launch children. Report 
 commands/results and uncertainty to Lead. Normal OpenCode permission prompts are
 tool authorization, not plan approval. Evidence and advanced artifact manifests are
 optional unless explicitly required.
+
+Capability reporting: a configured permission is not proof a tool was offered or
+invoked. Report actual local shell/Git outcomes; do not claim access based on a
+catalog or another session. Native shell is separate from Code Mode search. Own
+local Git/worktrees/memory/cleanup; escalate services and remote Git to External
+through Lead. On missing or denied local access, report the exact outcome and ask
+Lead; do not broaden permissions, substitute roles/models, or retry automatically.

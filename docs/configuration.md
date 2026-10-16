@@ -28,7 +28,9 @@ Choose an existing alias/list number to preserve its complete settings. Global s
 
 Selecting `gh` asks for a host (`github.com` or Enterprise), not an MCP URL. It does not install or authenticate GitHub CLI.
 
-Selected aliases get appended native rules: **External ask**, other seven harness roles **deny**. Selecting `gh` adds equivalent shell rules for `gh *`/`gh.exe *`. Code Mode is ask for External. All eight native inline roles must be installed/visible with intended modes when writing these rules; all-none requires no permission changes. Matching appended rules take precedence; review existing explicit denies. Colliding normalized aliases or overlapping permission prefixes abort. Ordinary command patterns are workflow conventions, not a sandbox against scripts/aliases/absolute paths.
+Selected MCP aliases get appended native rules: **External ask**, other seven harness roles **deny**; this preserves ASK for unresolved MCP tool mappings. External's Code Mode `execute` action is allowed, but does not authorize a conversationally unapproved operation. Selecting `gh` adds broad `gh *`/`gh.exe *` ASK rules, then narrow External-only shell ALLOW exceptions for `pr create/edit/comment/review`, `issue create/edit/comment`, `workflow run`, and `run rerun/cancel`; matching `pr merge` commands are explicitly DENY. Exact and argument-bearing commands are covered. Native `git push` is allowed for External only; other Git commands remain ASK. The other seven harness roles retain their deny rules. All eight native inline roles must be installed/visible with intended modes when writing these rules; all-none requires no permission changes. Matching appended rules take precedence; review existing explicit denies. Colliding normalized aliases or overlapping permission prefixes abort. Ordinary command patterns are workflow conventions, not a sandbox against scripts/aliases/absolute paths.
+
+Permission ALLOW only removes the tool prompt for a matching operation; it does not supply conversational approval. External must obtain human authorization for writes. CI run/rerun/cancel and force/delete pushes require an explicit human request; final implementation approval remains required before publication. `gh pr merge` stays denied and merging remains human-only. Do not infer that `execute` or MCP permission allows a bypass of these responsibilities.
 
 `none` changes preferences; it does **not** delete/disable existing reusable connections or revoke old grants. Other projects may still need them. Repeated identical setup is idempotent; switching selections leaves old grants intact for deliberate review. Reinstalling native role definitions may replace permission arrays, so inspect effective permissions afterward.
 
@@ -85,6 +87,14 @@ self-report does not establish tool absence; require an actual authorized
 invocation/error or captured offered-tool evidence, otherwise mark availability
 unverified. See [tool troubleshooting](tool-troubleshooting.md). Printed guidance
 does not authorize running diagnostics or change installed agent prompts.
+
+For every capability report separately what was offered to the current request, what
+the effective permissions configure (including project/session overrides and order),
+what invocation/result was actually observed, and which role owns the operation.
+Direct MCP actions and nested Code Mode actions are separate routes: neither a selected
+alias nor a catalog match proves the other route works. Missing or denied access is
+escalated to its owner; do not broaden permissions or substitute roles/models. A
+permission dialog authorizes a tool operation, not a plan.
 
 ## Existing profiles and settings
 

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { askIntegrations, checkConnections, checkGh, configuredServers, discoveryPrompt, normalizedServer, parseIntegrations, updateIntegrationConfig, validateEndpoint, validateIntegrations, type IntegrationDraft, type IntegrationProfile } from '../src/integration-setup.ts';
+import { askIntegrations, checkConnections, checkGh, configuredServers, discoveryPrompt, normalizedServer, parseIntegrations, updateConnectionConfig, updateIntegrationConfig, validateEndpoint, validateIntegrations, type IntegrationDraft, type IntegrationProfile } from '../src/integration-setup.ts';
 import { loadNativeDefinitions, nativeRoles, parseConfiguration, type ConfigSource } from '../src/native-installer.ts';
 
 const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -223,6 +223,53 @@ test('gh backend appends External-only shell ownership, adds no GitHub MCP, and 
   assert.equal(legacy.github.backend, undefined);
   for (const hostname of ['https://github.com', 'github.com --show-token', 'user:token@github.com', 'bad..host']) assert.throws(() => validateIntegrations({ ...draft.profile, github: { ...draft.profile.github, hostname } }));
   assert.throws(() => validateIntegrations({ ...draft.profile, github: { backend: 'gh', hostname: 'github.com', repository: 'company/app', server: 'github' } }));
+});
+
+test('External permissions allow only scoped publishing commands and keep merge/admin/fallback ask', () => {
+  const { profile, sources } = fixture();
+  const draft: IntegrationDraft = { profile: { ...profile, github: { backend: 'gh', hostname: 'github.com', repository: 'company/app' } }, choices: [{ name: 'atlassian' }] };
+  const value = parseConfiguration(updateIntegrationConfig(JSON.stringify({ agents: definitions }), sources, draft), 'test');
+  const permissions = (value.agents as Record<string, { permissions: { action: string; resource: string; effect: string }[] }>).external!.permissions;
+  const effect = (command: string) => permissions.filter(rule => rule.action === 'shell' && (rule.resource === command || (rule.resource.endsWith('*') && command.startsWith(rule.resource.slice(0, -1))))).at(-1)?.effect;
+
+  for (const executable of ['gh', 'gh.exe']) {
+    for (const action of ['pr create', 'pr edit', 'pr comment', 'pr review', 'issue create', 'issue edit', 'issue comment', 'workflow run', 'run rerun', 'run cancel']) {
+      for (const invocation of [`${executable} ${action}`, `${executable} ${action} --help`]) assert.equal(effect(invocation), 'allow', invocation);
+    }
+    for (const invocation of [`${executable} pr merge`, `${executable} pr merge 42`]) assert.equal(effect(invocation), 'deny', invocation);
+    assert.equal(effect(`${executable} api repos/org/repo`), 'ask');
+    for (const invocation of [`${executable} auth status`, `${executable} secret list`, `${executable} release create v1`]) assert.equal(effect(invocation), 'ask', invocation);
+  }
+  assert.equal(effect('git push'), 'allow');
+  assert.equal(effect('git push --force origin feature'), 'allow');
+  assert.equal(effect('git push origin --delete old-feature'), 'allow');
+  assert.equal(effect('git status'), 'ask');
+  assert.equal(effect('git fetch origin'), 'ask');
+  assert.equal(permissions.filter(rule => rule.action === 'execute').at(-1)?.effect, 'allow');
+});
+
+test('integration setup adds approved External git-push exceptions to legacy permissions, idempotently', () => {
+  const { profile, sources } = fixture();
+  const draft: IntegrationDraft = { profile: { ...profile, github: { backend: 'gh', hostname: 'github.com', repository: 'company/app' } }, choices: [{ name: 'atlassian' }] };
+  const legacyAgents = JSON.parse(JSON.stringify(definitions)) as Record<string, { permissions: { action: string; resource: string; effect: string }[] }>;
+  legacyAgents.external!.permissions = legacyAgents.external!.permissions.filter(rule => !(rule.action === 'shell' && (rule.resource === 'git push' || rule.resource === 'git push *')));
+  assert.ok(!legacyAgents.external!.permissions.some(rule => rule.action === 'shell' && rule.resource.startsWith('git push')));
+  const original = JSON.stringify({ agents: legacyAgents });
+  assert.equal(updateConnectionConfig(original, sources, [], false), original);
+  const output = updateIntegrationConfig(original, sources, draft);
+  const value = parseConfiguration(output, 'test');
+  const agents = value.agents as Record<string, { permissions: { action: string; resource: string; effect: string }[] }>;
+  const effective = (permissions: { action: string; resource: string; effect: string }[], command: string) => permissions.filter(rule => rule.action === 'shell' && (rule.resource === command || (rule.resource.endsWith('*') && command.startsWith(rule.resource.slice(0, -1))))).at(-1)?.effect;
+
+  assert.equal(effective(agents.external!.permissions, 'git push'), 'allow');
+  assert.equal(effective(agents.external!.permissions, 'git push --force origin feature'), 'allow');
+  assert.equal(effective(agents.external!.permissions, 'git push origin --delete old-feature'), 'allow');
+  assert.equal(effective(agents.external!.permissions, 'git fetch origin'), 'ask');
+  for (const role of nativeRoles.filter(role => role !== 'external')) {
+    const permissions = agents[role]!.permissions;
+    assert.ok(!permissions.some(rule => rule.action === 'shell' && rule.resource.startsWith('git push') && rule.effect === 'allow'), role);
+  }
+  assert.equal(updateIntegrationConfig(output, [...sources, source(value)], draft), output);
 });
 
 test('gh checks only CLI version/auth status; raw output/tokens are suppressed, failures remain unverified', async () => {

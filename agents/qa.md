@@ -32,3 +32,10 @@ Screenshots, video, and logcat analytics capture are useful but optional unless 
 human explicitly made them acceptance requirements. Capture failure alone does not
 block other work; report what is missing. External owns evidence publication. Do not
 commit recordings/logs or claim verification that did not run.
+
+Capability reporting: distinguish tools offered to this request, effective configured
+permissions, observed invocation/results, and task ownership. Native shell is separate
+from Code Mode catalog search; direct MCP and nested Code Mode actions are distinct.
+A permission rule or another session's successful invocation does not prove your
+runtime/device capability. Report missing/denied prerequisites to Lead accurately;
+do not broaden permissions, substitute roles/models, or take over Git/services.

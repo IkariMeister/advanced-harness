@@ -19,6 +19,23 @@ const object = (value: unknown): value is RecordValue => !!value && typeof value
 const keys = (value: RecordValue, allowed: readonly string[]) => Object.keys(value).every(key => allowed.includes(key));
 const plain = (text: string) => !!text.trim() && text.length <= 128 && !/[\x00-\x1f\x7f]/.test(text);
 
+const externalGhCommands = [
+  'pr create', 'pr edit', 'pr comment', 'pr review',
+  'issue create', 'issue edit', 'issue comment',
+  'workflow run', 'run rerun', 'run cancel',
+] as const;
+
+function externalGithubRules(): { action: string; resource: string; effect: 'allow' | 'deny' }[] {
+  const rules: { action: string; resource: string; effect: 'allow' | 'deny' }[] = [];
+  for (const executable of ['gh', 'gh.exe']) {
+    for (const command of externalGhCommands) {
+      for (const suffix of ['', ' *']) rules.push({ action: 'shell', resource: `${executable} ${command}${suffix}`, effect: 'allow' });
+    }
+    for (const suffix of ['', ' *']) rules.push({ action: 'shell', resource: `${executable} pr merge${suffix}`, effect: 'deny' });
+  }
+  return rules;
+}
+
 export function normalizedServer(name: string): string {
   if (!plain(name) || ['__proto__', 'prototype', 'constructor'].includes(name)) throw new Error('Invalid MCP server name.');
   return name.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -178,8 +195,17 @@ export function updateConnectionConfig(original: string, sources: readonly Confi
       const rule = { action: `${normalizedServer(name)}_*`, resource: '*', effect: role === 'external' ? 'ask' : 'deny' };
       additions.push(rule);
     }
-    if (gh) for (const resource of ['gh *', 'gh.exe *']) additions.push({ action: 'shell', resource, effect: role === 'external' ? 'ask' : 'deny' });
-    if (role === 'external') additions.push({ action: 'execute', resource: '*', effect: 'ask' });
+    if (role === 'external') {
+      additions.push(
+        { action: 'shell', resource: 'git push', effect: 'allow' },
+        { action: 'shell', resource: 'git push *', effect: 'allow' },
+      );
+    }
+    if (gh) {
+      for (const resource of ['gh *', 'gh.exe *']) additions.push({ action: 'shell', resource, effect: role === 'external' ? 'ask' : 'deny' });
+      if (role === 'external') additions.push(...externalGithubRules());
+    }
+    if (role === 'external') additions.push({ action: 'execute', resource: '*', effect: 'allow' });
     if (JSON.stringify(rules.slice(-additions.length)) !== JSON.stringify(additions)) rules.push(...additions);
     set(['agents', role, 'permissions'], rules);
   }

@@ -53,6 +53,23 @@ test('native operational roles expose shell and keep edit defaults role-scoped',
   for (const role of ['external', 'reviewer', 'qa'] as const) assert.ok(!permissionLines(role).some(line => line.includes('action: edit,')), role);
 });
 
+test('External source permission exceptions are narrowly scoped and merge stays denied', () => {
+  const lines = permissionLines('external');
+  assert.ok(lines.includes('  - { action: shell, resource: "*", effect: ask }'));
+  assert.ok(lines.includes('  - { action: shell, resource: "git push", effect: allow }'));
+  assert.ok(lines.includes('  - { action: shell, resource: "git push *", effect: allow }'));
+  for (const executable of ['gh', 'gh.exe']) {
+    for (const command of ['pr create', 'pr edit', 'pr comment', 'pr review', 'issue create', 'issue edit', 'issue comment', 'workflow run', 'run rerun', 'run cancel']) {
+      assert.ok(lines.includes(`  - { action: shell, resource: "${executable} ${command}", effect: allow }`));
+      assert.ok(lines.includes(`  - { action: shell, resource: "${executable} ${command} *", effect: allow }`));
+    }
+    assert.ok(lines.includes(`  - { action: shell, resource: "${executable} pr merge", effect: deny }`));
+    assert.ok(lines.includes(`  - { action: shell, resource: "${executable} pr merge *", effect: deny }`));
+    assert.ok(!lines.includes(`  - { action: shell, resource: "${executable} *", effect: allow }`));
+  }
+  assert.ok(lines.includes('  - { action: execute, resource: "*", effect: allow }'));
+});
+
 test('Lead and External require evidence for missing native tools without broadening access', () => {
   const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
   for (const role of ['lead', 'external'] as const) {
@@ -104,4 +121,53 @@ test('native implementation and verification templates require human scope and t
   assert.match(template('planner'), /waits for explicit\nhuman approval/);
   for (const role of ['implementer', 'reviewer', 'qa', 'external'] as const) assert.match(template(role), /optional unless/, role);
   for (const role of ['operator', 'implementer', 'reviewer', 'qa'] as const) assert.ok(permissionLines(role).includes('  - { action: shell, resource: "gh *", effect: deny }'), role);
+});
+
+test('all native roles distinguish offered tools, configured policy, invocation, and ownership', () => {
+  const docs = readFileSync(new URL('../docs/opencode-native-workflow.md', import.meta.url), 'utf8');
+  const guide = readFileSync(new URL('../agents/README.md', import.meta.url), 'utf8');
+  for (const role of roles) {
+    const text = template(role).replace(/\s+/g, ' ');
+    assert.match(text, /Capability reporting/, role);
+    assert.match(text, /offered/, role);
+    assert.match(text, /permissions?/, role);
+    assert.match(text, /invocation|invoked|outcomes|results|result/, role);
+    assert.match(text, /ownership|owns|owner/, role);
+  }
+  assert.match(docs, /tools actually offered\/visible/);
+  assert.match(docs, /configured allow\/ask\/deny policy/);
+  assert.match(docs, /observed invocation and its result/);
+  assert.match(docs, /task ownership/);
+  assert.match(guide, /Direct MCP tools and nested Code Mode actions/);
+});
+
+test('tool guidance distinguishes native shell, direct MCP, nested actions, and escalation', () => {
+  const workflow = readFileSync(new URL('../docs/opencode-native-workflow.md', import.meta.url), 'utf8');
+  const troubleshooting = readFileSync(new URL('../docs/tool-troubleshooting.md', import.meta.url), 'utf8');
+  const configuration = readFileSync(new URL('../docs/configuration.md', import.meta.url), 'utf8');
+  for (const text of [workflow, troubleshooting, configuration].map(value => value.replace(/\s+/g, ' '))) {
+    assert.match(text, /native[^.]{0,80}(?:separate|separately)[^.]{0,100}(?:Code Mode|catalog)/i);
+    assert.match(text, /Direct MCP[^.]*nested Code Mode/i);
+    assert.match(text, /unverified/);
+    assert.match(text, /permission[^\n]*(?:plan approval|plan)/i);
+  }
+  assert.match(troubleshooting, /Operator handles local Git/);
+  assert.match(troubleshooting, /External handles/);
+  assert.match(troubleshooting, /Do not grant permissions,?\s*switch roles\/models, retry, or restart/);
+});
+
+test('permission documentation separates narrow External ALLOW from conversational authorization', () => {
+  const workflow = readFileSync(new URL('../docs/opencode-native-workflow.md', import.meta.url), 'utf8');
+  const configuration = readFileSync(new URL('../docs/configuration.md', import.meta.url), 'utf8');
+  const external = template('external');
+  for (const text of [workflow, configuration, external].map(value => value.replace(/\s+/g, ' '))) {
+    assert.match(text, /git push/);
+    assert.match(text, /workflow run/);
+    assert.match(text, /run rerun\/cancel/);
+    assert.match(text, /pr merge/);
+    assert.match(text, /explicit human request/);
+    assert.match(text, /not a sandbox|not.*approval gate|does not authorize|do not authorize/);
+  }
+  assert.match(workflow, /other shell\/gh operations remain ASK/);
+  assert.match(configuration, /MCP tool mappings stay ASK|preserves ASK for unresolved MCP tool mappings/);
 });
