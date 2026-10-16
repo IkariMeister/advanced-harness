@@ -1,6 +1,6 @@
 # Backlog
 
-Last consolidated: 2026-10-15. This is the durable recovery index for **known pending
+Last consolidated: 2026-10-16. This is the durable recovery index for **known pending
 work**, not just deferred features. Update it when scope/status changes; do not rely
 on a conversation summary or a person's memory. Unknown/unreported work is not
 invented. Links point to the current implementation/specification.
@@ -585,6 +585,14 @@ preservation safety is foundational. Do not silently auto-update or claim suppor
 for host capabilities not actually available.
 
 ## BH-021 — Safe harness uninstall and cleanup
+
+2026-10-16 publication update (human-reported verification): approved code is committed
+as `80a1c203b8ac77489b84e9df8804255a9e389d8d` and External verified it was pushed to
+`origin/feature/bh021`. PR #3 is open, targeting `main`:
+https://github.com/IkariMeister/advanced-harness/pull/3. Publication is complete;
+merge remains human-pending. Live adoption/uninstall was not run. This status update
+records the reported verified event and does not imply merge, live behavior, or any
+additional checks.
 
 2026-10-16 compact adoption UX review accepted three fixes: bulk yes must classify present known-agent fields as explicit removal (not evidence restoration); bulk must exclude root defaults, which always receive separate keep-default prompts; and tests must exercise the CLI's actual prompt decision flow. `src/adoption-prompts.ts` routes bulk agent fields into removal only after one grouped unknown-history acknowledgment; supplied evidence does not change that behavior. Root defaults remain separate. Focused automated branches compose selections with `adoptExisting` and `planUninstall`, checking actual later removal/preservation, and verify final confirmation cancellation produces no receipt/config write. Independently reported verification: `npm run typecheck` passed; `npm test` passed 106, failed 0, skipped 1 opt-in live test. Human final implementation approval was received; this records approval only, not publication or merge.
 
