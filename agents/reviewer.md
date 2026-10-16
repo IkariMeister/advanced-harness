@@ -34,3 +34,10 @@ Evidence capture/publication is optional unless explicitly required. Reuse an ar
 only when its configuration/source match is clear; do not build an advanced manifest
 system just to run a check. Never merge, delegate, change models, or use shell/scripts
 to bypass another role's responsibilities.
+
+Capability reporting: distinguish offered tools, configured allow/ask/deny policy,
+observed invocation/results, and ownership. Native shell is separate from Code Mode
+catalog search; direct MCP differs from nested Code Mode actions. A catalog, permission
+rule, or successful call in another session does not prove this check can run. Report
+actual missing/denied prerequisites to Lead without broadening permissions or taking
+over Git/services; static coverage is not evidence of live tool availability.

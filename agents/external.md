@@ -11,9 +11,55 @@ permissions:
   - { action: read, resource: "*.env.*", effect: ask }
   - { action: external_directory, resource: "*", effect: ask }
   - { action: shell, resource: "*", effect: ask }
+  - { action: shell, resource: "git push", effect: allow }
+  - { action: shell, resource: "git push *", effect: allow }
+  - { action: shell, resource: "gh pr create", effect: allow }
+  - { action: shell, resource: "gh pr create *", effect: allow }
+  - { action: shell, resource: "gh pr edit", effect: allow }
+  - { action: shell, resource: "gh pr edit *", effect: allow }
+  - { action: shell, resource: "gh pr comment", effect: allow }
+  - { action: shell, resource: "gh pr comment *", effect: allow }
+  - { action: shell, resource: "gh pr review", effect: allow }
+  - { action: shell, resource: "gh pr review *", effect: allow }
+  - { action: shell, resource: "gh issue create", effect: allow }
+  - { action: shell, resource: "gh issue create *", effect: allow }
+  - { action: shell, resource: "gh issue edit", effect: allow }
+  - { action: shell, resource: "gh issue edit *", effect: allow }
+  - { action: shell, resource: "gh issue comment", effect: allow }
+  - { action: shell, resource: "gh issue comment *", effect: allow }
+  - { action: shell, resource: "gh workflow run", effect: allow }
+  - { action: shell, resource: "gh workflow run *", effect: allow }
+  - { action: shell, resource: "gh run rerun", effect: allow }
+  - { action: shell, resource: "gh run rerun *", effect: allow }
+  - { action: shell, resource: "gh run cancel", effect: allow }
+  - { action: shell, resource: "gh run cancel *", effect: allow }
+  - { action: shell, resource: "gh pr merge", effect: deny }
+  - { action: shell, resource: "gh pr merge *", effect: deny }
+  - { action: shell, resource: "gh.exe pr create", effect: allow }
+  - { action: shell, resource: "gh.exe pr create *", effect: allow }
+  - { action: shell, resource: "gh.exe pr edit", effect: allow }
+  - { action: shell, resource: "gh.exe pr edit *", effect: allow }
+  - { action: shell, resource: "gh.exe pr comment", effect: allow }
+  - { action: shell, resource: "gh.exe pr comment *", effect: allow }
+  - { action: shell, resource: "gh.exe pr review", effect: allow }
+  - { action: shell, resource: "gh.exe pr review *", effect: allow }
+  - { action: shell, resource: "gh.exe issue create", effect: allow }
+  - { action: shell, resource: "gh.exe issue create *", effect: allow }
+  - { action: shell, resource: "gh.exe issue edit", effect: allow }
+  - { action: shell, resource: "gh.exe issue edit *", effect: allow }
+  - { action: shell, resource: "gh.exe issue comment", effect: allow }
+  - { action: shell, resource: "gh.exe issue comment *", effect: allow }
+  - { action: shell, resource: "gh.exe workflow run", effect: allow }
+  - { action: shell, resource: "gh.exe workflow run *", effect: allow }
+  - { action: shell, resource: "gh.exe run rerun", effect: allow }
+  - { action: shell, resource: "gh.exe run rerun *", effect: allow }
+  - { action: shell, resource: "gh.exe run cancel", effect: allow }
+  - { action: shell, resource: "gh.exe run cancel *", effect: allow }
+  - { action: shell, resource: "gh.exe pr merge", effect: deny }
+  - { action: shell, resource: "gh.exe pr merge *", effect: deny }
   - { action: webfetch, resource: "*", effect: ask }
   - { action: websearch, resource: "*", effect: ask }
-  - { action: execute, resource: "*", effect: ask }
+  - { action: execute, resource: "*", effect: allow }
   - { action: "jira_*", resource: "*", effect: ask }
   - { action: "github_*", resource: "*", effect: ask }
   - { action: "figma_*", resource: "*", effect: ask }
@@ -42,6 +88,16 @@ tools actually exposed within approved scope; never invent tool paths, broaden
 permissions, change models, restart the service, or retry probes automatically.
 Keep ASK prompts intact; diagnostic approval does not authorize publishing.
 
+The source permission list has narrow shell exceptions for `git push` and only
+`gh`/`gh.exe` `pr create/edit/comment/review`, `issue create/edit/comment`,
+`workflow run`, and `run rerun/cancel`; `pr merge` is explicitly denied. Everything
+else stays ASK. These ALLOW rules do not authorize writes conversationally: obtain
+human authorization for each write; CI run/rerun/cancel and force/delete pushes
+require an explicit human request. Final approval is still required before actual
+publication. Do not use `execute` or MCP as a way around shell command boundaries or
+approval requirements; MCP granularity remains unresolved and configured MCP rules
+stay ASK.
+
 Retrieve requirements/acceptance criteria from explicitly selected services. When
 Jira is not selected, use project/task acceptance criteria and ask on ambiguity.
 Use only the explicitly selected design source; never silently substitute Figma,
@@ -64,3 +120,13 @@ Publish useful evidence to Jira/PR when requested and supported. Capture/publica
 is optional unless explicitly made an acceptance requirement; report missing evidence
 without inventing success or blocking unrelated progress. Evidence, logs, credentials,
 and local workflow notes do not belong in application Git. Never launch children.
+
+Capability reporting: distinguish tools offered to this request, effective
+permissions, observed invocation/results, and service ownership. Native shell is
+separate from Code Mode's execute catalog; empty search does not prove shell absent.
+Direct MCP tools and nested Code Mode actions are different routes; verify the
+actual exposed action and configured server/tool instead of assuming equivalence.
+Report missing/denied access accurately; if no invocation/error or captured offered
+tool evidence exists, mark availability unverified. Ask Lead about required access;
+do not broaden permissions, substitute roles/models, invent a route, or retry/restart
+automatically. A permission prompt is tool authorization, never plan approval.

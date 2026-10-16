@@ -11,6 +11,35 @@ These are the source templates for the approved [conversational workflow](../doc
 - Implementer writes approved source/test changes. Reviewer/QA may run configured commands, but do not silently fix source. Required verification is independent of optional evidence capture.
 - Explicit models are unchanged. Validate every model/variant before delegation. Spark failed on the tested ChatGPT connection; Operator/External require an explicitly approved mapping or supported connection before a full pilot. No automatic model substitution.
 
+## Capability and ownership contract
+
+The role descriptions below state intended workflow capabilities, not a guarantee
+that a request actually receives a tool. Keep distinct: tools offered to the current
+request, effective configured allow/ask/deny policy (including overrides), an
+observed invocation/result, and task ownership. A catalog or permission rule is not
+execution evidence; a successful call proves only that call in that session. Report
+unobserved availability as unverified.
+
+Native `shell` is separate from Code Mode `execute` catalog search. Empty catalog
+results do not enumerate native tools. Direct MCP tools and nested Code Mode actions
+are distinct routes; verify the actual route and configured action rather than
+assuming one implies the other. If a tool is missing or denied, report the observed
+error/outcome and escalate to the role owner; do not broaden permissions, substitute
+a role/model, invent a tool route, or retry/restart automatically. Permission dialogs
+authorize tool operations, not plans. See the [workflow capability matrix](../docs/opencode-native-workflow.md#roles-and-access)
+and [troubleshooting guide](../docs/tool-troubleshooting.md).
+
+| Role | Intended capability | Owner / escalation |
+| --- | --- | --- |
+| Lead | Read/search, questions, named-role delegation; no implementation or publishing tools | Human decisions and sequencing; delegate to named capability owner |
+| Operator | Read/search, ASK shell/edit for local operations | Local Git, worktrees, memory, cleanup; remote/service work goes to External |
+| External | Read/search, ASK shell/web/Code Mode/MCP | Services, MCP, remote Git and approved publishing; escalate access gaps to Lead |
+| Researcher | Read/search only | Local research; request Git from Operator and service context from External |
+| Planner | Read/search only | Planning only; request missing context through Lead |
+| Implementer | Read/search/edit, ASK shell | Approved source/tests; request Git from Operator and services from External |
+| Reviewer | Read/search, ASK shell | Independent review/configured checks; report findings and missing prerequisites |
+| QA | Read/search, ASK shell | Runtime/design/E2E verification; report findings and missing setup |
+
 ## Installation
 
 Run `npm run harness:install` from this checkout. The [interactive installer](../docs/installation.md) reads global/project JSON/JSONC configuration, asks for a model and reasoning variant for every role, and installs the native definitions inline in `agents` after confirmation. It supports project/global scope, preserves unrelated settings/comments, and backs up an existing target under `$HOME/Projects/advanced-harness-backups`. It does not deploy anything merely by cloning or running tests, authenticate models/MCP, or install the historical plugin.

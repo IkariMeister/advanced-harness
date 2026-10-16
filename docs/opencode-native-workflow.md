@@ -23,18 +23,49 @@ These are agent instructions, **not deterministic security enforcement**. OpenCo
 
 ## Roles and access
 
-| Role | Native capabilities | Workflow responsibility |
+The matrix describes intended workflow capability and ownership, **not a runtime
+inventory**. Keep four facts separate: (1) tools actually offered/visible to a
+particular request, (2) the effective configured allow/ask/deny policy, (3) an
+observed invocation and its result, and (4) task ownership: which role owns the task. A catalog,
+permission rule, agent self-report, or successful invocation in another session
+does not establish all four. Record missing evidence as unverified.
+
+| Role | Intended native capabilities (not availability proof) | Workflow responsibility / escalation |
 | --- | --- | --- |
-| Lead | Local read/search, questions, seven named subagents | Human decisions, task sequencing, checklist; no direct implementation/publishing |
-| Operator | Local read/search, shell/local Git, memory edits | Bootstrap/worktrees, local Git information, shared memory, safe cleanup |
-| External | MCP, web/API, shell/remote Git | Jira/GitHub/design context and synchronization, approved push/PR, optional evidence publication |
-| Researcher | Local read/search | Understand code and requirements; ask External for service context |
-| Planner | Local read/search | Propose/revise plans; never approve or implement |
-| Implementer | Local read/search/edit, appropriate shell | Approved application code/tests/fixes; no remote publishing |
-| Reviewer | Local read/search, configured shell checks | Review/build/lint/unit/Roborazzi; findings instead of source fixes |
-| QA | Local read/search, configured device/test shell | Runtime/design/E2E checks; findings and optional capture |
+| Lead | Local read/search, questions, named subagent delegation; no shell/edit/MCP configured in the source template | Human decisions, sequencing, checklist. Delegate local Git to Operator, services to External, code to Implementer, verification to Reviewer/QA. Escalate unavailable capability to its owner/human. |
+| Operator | Local read/search; shell and edit are ASK in source template | Bootstrap/worktrees/local Git/memory/cleanup. No remote publishing or service access; report missing local tooling to Lead. |
+| External | Local read/search; shell generally ASK, `git push` and named `gh`/`gh.exe` operations narrowly ALLOW with merge DENY; execute ALLOW; web and named MCP patterns ASK | MCP/services/remote Git/gh and authorized publishing. Ask Lead about absent tools, auth, selection, or access; do not substitute another owner. |
+| Researcher | Local read/search; no shell/edit/MCP configured in source template | Inspect code/context; request local Git information from Operator and services from External through Lead. |
+| Planner | Local read/search; no shell/edit/MCP configured in source template | Propose plans only; request missing context through Lead, never approve or implement. |
+| Implementer | Local read/search/edit; shell ASK in source template | Approved source/tests/fixes. Request Git/worktree operations from Operator and services from External through Lead. |
+| Reviewer | Local read/search; shell ASK in source template | Review and configured checks; report findings, do not fix source. Ask Lead about missing commands/prerequisites. |
+| QA | Local read/search; shell ASK in source template | Runtime/design/E2E checks; report findings, do not edit. Ask Lead about missing device/test setup. |
+
+These are source-template policy intentions only. Project overrides, host version,
+session overlays, model request construction, plugins, and permission ordering can
+change effective configuration or exposure. Preserve the distinction when reporting:
+“configured ASK” is not “denied”; “catalog search returned no match” is not “native
+shell absent”; and “tool invocation succeeded” proves only that invocation in that
+session. A tool reported missing without offered-tool evidence or an actual authorized
+invocation/error remains **unverified**.
 
 Default-deny tool policies are followed by explicit role exceptions. Native templates use `ask` for broad shell and operational-file edits until a project supplies specific commands/paths. This can cause normal OpenCode permission prompts, not a separate approval terminal. Only External has MCP action patterns or Code Mode access. MCP patterns must match actual normalized `<server>_<tool>` names; aliases in the example are conventions to configure, not assumed working connections.
+
+Native tools such as `shell` are separate from Code Mode's `execute` catalog. `execute.search` discovers only that catalog; an empty result does not enumerate or disprove native tools. Direct MCP actions and nested Code Mode actions are also distinct routes: confirm which actual action/tool is exposed and configured rather than inferring one from the other. A configured MCP alias does not prove enabled/authenticated service access or a usable tool.
+
+If access is missing or denied, report the exact observed outcome without relabeling it as a tool-absence diagnosis. Escalate local Git/worktree/memory to Operator, MCP/services/remote Git to External, code changes to Implementer, verification prerequisites to Lead via Reviewer/QA, and plan/approval decisions to the human through Lead. Do not grant permissions, substitute roles/models, retry, restart, or invent a tool route to work around a gap. Permission dialogs authorize tool operations, not human plan approval.
+
+External's source policy allows native `git push` and only these `gh`/`gh.exe`
+commands: `pr create/edit/comment/review`, `issue create/edit/comment`, `workflow
+run`, and `run rerun/cancel`. Exact no-argument forms and argument-bearing forms are
+listed; all other shell/gh operations remain ASK, except `pr merge`, which is DENY.
+This policy is specific to shell commands and does not grant broad MCP access. The
+integration setup appends these scoped exceptions after broad ASK rules when the
+`gh` backend is selected; other roles keep their denies. Permission ALLOW does not
+grant conversational authorization: every write still requires the specified human
+decision, CI run/rerun/cancel and force/delete pushes require an explicit human
+request, and final publication approval remains required. These instructions and
+patterns are not a sandbox or an enforced approval gate.
 
 Operator/Implementer/Reviewer/QA shell access is not cryptographic ownership enforcement. Narrow allowlists and explicit deny rules for obvious remote Git/GitHub commands support the convention; indirect commands, scripts, aliases, and network access remain user-authority capabilities. Do not build another host layer to imply stronger guarantees.
 

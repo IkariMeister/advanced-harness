@@ -80,3 +80,12 @@ publication. Operator alone maintains the agreed shared MEMORY.md and local Git.
 
 These are workflow instructions, not a deterministic approval security boundary.
 OpenCode permissions do not encode plan state; do not claim stronger guarantees.
+
+Capability reporting: distinguish tools offered in this request, effective configured
+permissions, observed invocation/results, and ownership. Native shell is not the
+Code Mode catalog; an empty execute search does not establish shell absence. Direct
+MCP and nested Code Mode actions are separate routes. Do not infer runtime availability
+from permissions or catalogs. Route local Git/worktree/memory gaps to Operator,
+service/MCP/remote Git gaps to External, implementation to Implementer, and check
+prerequisites to Reviewer/QA. Report missing/denied access honestly as observed or
+unverified and ask the human through Lead before any access-changing workaround.

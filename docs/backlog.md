@@ -97,7 +97,7 @@ invented. Links point to the current implementation/specification.
 | BH-016 | Deferred | Team/cross-machine coordination and other hosts | Separate product decision; no synchronization/daemon promised |
 | BH-017 | P2 | Predictable workflow commands | Define workflows for new issues, teammate PR reviews, reported defects, and technical debt; command names/syntax TBD |
 | BH-018 | Deferred | V2 epic/user-story refinement harness | Define a distinct second harness for epic/story refinement; SDD applicability TBD |
-| BH-019 | P1 | Per-agent tool availability and ownership | Define intended capabilities and distinguish visibility, permission, invocation, and responsibility |
+| BH-019 | P1 | Per-agent tool availability and ownership | Capability docs complete; approved External source-permission follow-up implemented and local checks pass; independent reviews and final implementation approval pending |
 | BH-020 | P1 | Safe harness update workflow | Preview version/migration, preserve customizations, and provide recovery |
 | BH-021 | P1 | Safe harness uninstall and cleanup | Inventory managed footprint, preview removal, preserve unrelated state, and report partial failure |
 
@@ -563,17 +563,69 @@ Report missing/denied tools honestly. Permission patterns/instructions are not a
 sandbox or independently enforced plan-approval gate; historical enforcement spikes
 are not release prerequisites and must not be reintroduced as the product foundation.
 
+Deferred MCP mapping integration note (unresolved MCP tool IDs/schemas stay ASK; no
+broad MCP alias allow is authorized). The separately approved native source-permission
+follow-up below does not implement or imply MCP access. The initial BH-019 capability
+documentation has been reviewed as recorded in its entry; final human approval for that
+implementation remains outstanding.
+
+Approved External source/setup policy follow-up, implemented locally in `agents/external.md`
+and `src/integration-setup.ts`: native `execute` ALLOW; native
+`git push` ALLOW; narrow `gh` and `gh.exe` shell ALLOW for PR create/edit/comment/review,
+issue create/edit/comment, workflow run, and run rerun/cancel. Exact no-argument and
+argument-bearing forms are covered. Other `gh`/shell commands remain ASK; `pr merge`
+is DENY. No broad `gh *` ALLOW. Matching setup rules must follow the broad ASK and
+merge denial must win after the command-specific allowances. Other seven roles retain
+their existing denies. ALLOW is not conversational authorization: all writes still
+need human authorization; CI run/rerun/cancel and force/delete pushes require an
+explicit human request; final implementation approval is required before publication.
+Initial regression tests covered exact/no-argument and argument-bearing forms for both
+CLI names, last-match behavior, merge deny, and ASK fallbacks. `npm run typecheck`
+passed; `node --test test/native-agents.test.ts test/integration-setup.test.ts` passed
+(32/32); `npm test` passed (85 passed, 0 failed, 1 opt-in live test skipped).
+
+R1 (Medium) was explicitly accepted (`yes i accept`) and fixed in the same approved
+scope: integration setup now appends External-only exact and argument-bearing
+`git push` ALLOW rules when applying a non-all-none integration setup, after generic
+shell ASK. It does not allow other Git operations, leaves all-none unchanged, and
+does not alter other roles. A regression begins with legacy External permissions
+without the source-template push exceptions, checks effective push ALLOW for normal,
+force, and delete forms, verifies fetch remains ASK and other roles gain no push
+allow, and verifies repeat setup is idempotent. `node --test test/integration-setup.test.ts`
+passed (22/22); `npm run typecheck` passed; `npm test` passed (86 passed, 0 failed,
+1 opt-in live test skipped). Reviewer independently closed R1 with no new findings;
+typecheck passed, `node --test test/integration-setup.test.ts` passed (22/22), and
+`npm test` passed (86 passed, 0 failed, 1 opt-in live test skipped). QA's affected
+static recheck reported no actionable findings. Final human implementation/publication
+approval remains pending; MCP mapping remains deferred. Do not describe
+command patterns as a sandbox or approval enforcement. No installed config changes,
+live probes, deployment, publication, or merge occurred.
+
 ## BH-019 — Per-agent tool availability and ownership
 
-Define intended capabilities for the existing Lead and seven specialist roles; do
-not introduce roles. Keep distinct: tools actually offered/visible to a role,
-configured allow/ask/deny policy, successful invocation, and responsibility or
-delegation ownership. Cover native shell separately from Code Mode catalog search,
-and direct MCP plus nested actions where relevant. Define honest handling of missing
-or denied capabilities and escalation to the responsible owner. No agent may grant
-itself access or substitute a role/model to evade a gap. BH-009 validates observed
-runtime behavior against this intended definition; this entry itself does not claim
-runtime availability or authorize permission changes.
+Implementation complete in `docs/opencode-native-workflow.md`, `docs/tool-troubleshooting.md`,
+`docs/configuration.md`, `agents/README.md`, all eight `agents/*.md` templates, and
+`test/native-agents.test.ts`. Guidance defines intended capabilities/ownership for
+Lead and the seven existing roles; separates tools offered to a request, configured
+allow/ask/deny policy, observed invocation/results, and responsibility; distinguishes
+native shell from Code Mode catalog search and direct MCP from nested actions; and
+requires honest missing/denied-access escalation. No roles were added and permission
+settings were preserved.
+
+Verification: `npm run typecheck` passed; `npm test` passed (82 passed, 0 failed,
+1 opt-in live test skipped); native-agent tests passed (9/9). Reviewer independently
+passed typecheck/tests and reported no correctness findings. QA's static tooling-
+scenario review reported no actionable findings. Operator verified the approved 14
+files only, no untracked files, clean `diff --check`, all eight role frontmatters
+byte-for-byte unchanged from base (including roles/models/modes/ordered permissions),
+and no lockfile/AGENTS/MEMORY changes; only this BH019 entry was updated in backlog.
+Static checks do not establish live tool availability. No deployment, live probes, or
+publication occurred; Android/E2E are N/A. Final human implementation approval remains
+outstanding for the initial capability-guidance implementation. A separately approved
+2026-10-16 source-permission follow-up is underway in this same feature worktree; it
+does not authorize deployment, live probes, publication, or merge. See the deferred
+MCP mapping integration note below for its exact shell/execute scope and human-control
+limitations.
 
 ## BH-020 — Safe harness update workflow
 

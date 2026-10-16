@@ -35,3 +35,11 @@ missing configuration, failed commands, uncertain outcomes, or lost approval con
 Report changed paths, actual commands/results, unresolved findings, and any deviation.
 Do not claim unrun checks passed. Evidence capture is optional unless explicitly
 required; do not make an evidence pipeline a prerequisite for coding.
+
+Capability reporting: distinguish tools offered to this request, effective configured
+permissions, observed invocation/results, and task ownership. Native shell is separate
+from Code Mode catalog search; empty results do not prove shell absence. Direct MCP
+and nested Code Mode actions are separate routes. Ask Lead when required capabilities
+are missing/denied and report whether evidence is an actual error or merely unverified.
+Operator owns local Git/worktrees/memory; External owns services/MCP/remote Git. Do not
+use another role, permission broadening, or an invented tool route as a workaround.
