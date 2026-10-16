@@ -1,8 +1,18 @@
 # Task workflow definitions
 
-**Status:** Human-approved documentation definitions only. Command names and syntax
-remain TBD; these workflows are not implemented as executable commands. Tool access,
-permission dialogs, and integrations do not constitute conversational approval.
+**Status:** Human-approved workflows are implemented as native project Markdown prompt
+commands in `.opencode/commands/`. Prompt templates guide behavior; they do not enforce
+approval. Tool access, permission dialogs, integrations, and command arguments do not
+constitute conversational approval. Project commands and arguments override global
+commands with the same names.
+
+| Command | Purpose | Arguments |
+| --- | --- | --- |
+| `/start-issue` | Start a Jira issue | `$ARGUMENTS` (full input) |
+| `/review-pr` | Review a teammate PR | `$ARGUMENTS` (full input) |
+| `/report-defect` | Draft/report defect and optionally investigate | `$1` parent; `$2` description (last positional consumes remainder) |
+| `/assess-debt` | Assess debt and propose issues | `$ARGUMENTS` (full input) |
+| `/grill-me` | Clarify an idea and offer an explicit handoff | Optional `$ARGUMENTS` topic |
 
 ## Shared roles and controls
 
