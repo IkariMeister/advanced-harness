@@ -146,6 +146,16 @@ Code Mode searches do not enumerate all native tools. Require invocation/error o
 captured offered-tool evidence; without it, availability remains unverified. Source
 prompt changes are not automatically deployed: applying them requires separate
 consent while preserving installed models, permissions, and unrelated settings.
+Deploy prompt-only updates safely using:
+
+```text
+npm run harness:deploy-prompts -- [--scope project|global] [--project <directory>] [--config <file>]
+```
+
+This refreshes native role descriptions and system prompts from `agents/*.md` into
+the target configuration while preserving configured models, reasoning variants,
+permission arrays, and unrelated fields, backed by pre-save backups and receipt lineage.
+
 
 ### If Lead is missing
 

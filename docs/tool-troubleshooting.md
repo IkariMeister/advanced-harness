@@ -75,9 +75,9 @@ Inspect remote state before retrying any uncertain publishing operation.
 Editing `agents/lead.md` or `agents/external.md` does not update existing installed
 inline agent systems. Applying reviewed prompt-only changes requires separate
 consent and a preview/backup that preserves models, permission arrays, connection
-settings, and unrelated fields. Do not reinstall every role just to deploy this
-guidance; reinstallation can replace permission arrays. No live prompt update is
-performed by tests or by reading this document.
+settings, and unrelated fields. Run `npm run harness:deploy-prompts` to apply prompt
+updates without reinstalling or resetting model/permission configuration.
+No live prompt update is performed by tests or by reading this document.
 
 ## Regression scope
 
