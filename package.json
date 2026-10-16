@@ -14,7 +14,8 @@
     "harness:doctor": "node scripts/diagnose-native-harness.ts",
     "harness:update": "node scripts/update-native-harness.ts",
     "harness:setup": "node scripts/setup-native-project.ts",
-    "harness:integrations": "node scripts/configure-integrations.ts"
+    "harness:integrations": "node scripts/configure-integrations.ts",
+    "harness:deploy-prompts": "node scripts/deploy-native-prompts.ts"
   },
   "dependencies": {
     "jsonc-parser": "3.3.1",
