@@ -2,10 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { askIntegrations, checkConnections, checkGh, configuredServers, discoveryPrompt, normalizedServer, parseIntegrations, updateConnectionConfig, updateIntegrationConfig, validateEndpoint, validateIntegrations, type IntegrationDraft, type IntegrationProfile } from '../src/integration-setup.ts';
+import { askIntegrations, checkConnections, checkGh, configuredServers, discoveryPrompt, normalizedServer, parseIntegrations, updateConnectionConfig as updateConnections, updateIntegrationConfig as updateIntegrations, validateEndpoint, validateIntegrations, type IntegrationDraft, type IntegrationProfile } from '../src/integration-setup.ts';
 import { loadNativeDefinitions, nativeRoles, parseConfiguration, type ConfigSource } from '../src/native-installer.ts';
 
 const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
+// These fixtures represent fresh native installation with attributable universal defaults.
+// Legacy/no-evidence behavior is tested separately below; matching alone grants no ownership.
+const nativeEvidence = { permissions: Object.fromEntries(nativeRoles.map(role => [role, { prior: [{ rule: { action: '*', resource: '*', effect: 'deny' as const }, sources: [`native:${role}`] }], previousOrder: [{ action: '*', resource: '*', effect: 'deny' as const }] }])) };
+const updateConnectionConfig = (...args: Parameters<typeof updateConnections>) => updateConnections(args[0], args[1], args[2], args[3], args[4] ?? nativeEvidence);
+const updateIntegrationConfig = (...args: Parameters<typeof updateIntegrations>) => updateIntegrations(args[0], args[1], args[2], args[3] ?? nativeEvidence);
 function source(value: Record<string, unknown>, path = 'global.jsonc'): ConfigSource { return { path, value, text: JSON.stringify(value) }; }
 function fixture() {
   const github = { type: 'remote', url: 'https://example.test/mcp', headers: { Authorization: 'Bearer {env:GITHUB_MCP_KEY}' }, oauth: false };
@@ -15,6 +20,11 @@ function fixture() {
   const draft: IntegrationDraft = { profile, choices: [{ name: 'GitHub Team' }, { name: 'atlassian' }] };
   return { value, profile, draft, sources: [source(value)] };
 }
+
+test('unattributed universal deny is never silently overridden by a selected alias', () => {
+  const { value, sources, draft } = fixture();
+  assert.throws(() => updateIntegrations(JSON.stringify(value), sources, draft), /Cannot override existing restriction/);
+});
 
 test('configuration discovery uses whole-server replacement, preserves secret fields without printing them', () => {
   const { value, sources } = fixture();
@@ -246,6 +256,45 @@ test('External permissions allow only scoped publishing commands and keep merge/
   assert.equal(effect('git status'), 'ask');
   assert.equal(effect('git fetch origin'), 'ask');
   assert.equal(permissions.filter(rule => rule.action === 'execute').at(-1)?.effect, 'allow');
+});
+
+test('gh fallback rules follow universal defaults but precede retained shell and wildcard-action restrictions', () => {
+  const { profile, sources } = fixture();
+  const external = JSON.parse(JSON.stringify(definitions.external)) as { permissions: { action: string; resource: string; effect: string }[] };
+  external.permissions.push(
+    { action: 'shell', resource: 'gh api *', effect: 'deny' },
+    { action: '*', resource: 'gh.exe api *', effect: 'deny' },
+  );
+  const original = JSON.stringify({ ...sources[0]!.value, agents: { ...definitions, external } });
+  const ghProfile = { ...profile, github: { backend: 'gh' as const, hostname: 'github.com', repository: 'company/app' } };
+  const draft: IntegrationDraft = { profile: ghProfile, choices: [{ name: 'atlassian' }] };
+  const first = updateIntegrationConfig(original, [{ ...sources[0]!, value: parseConfiguration(original, 'original config') }], draft);
+  const second = updateIntegrationConfig(first, [{ ...sources[0]!, value: parseConfiguration(first, 'first update') }], draft);
+  const permissions = ((parseConfiguration(first, 'first update').agents as Record<string, { permissions: { action: string; resource: string; effect: string }[] }>).external!).permissions;
+  const effective = (command: string) => permissions.filter(rule =>
+    (rule.action === 'shell' || rule.action === '*') &&
+    (rule.resource === command || rule.resource === '*' || (rule.resource.endsWith('*') && command.startsWith(rule.resource.slice(0, -1))))
+  ).at(-1)?.effect;
+  assert.equal(effective('gh pr create'), 'allow');
+  assert.equal(effective('gh pr create --title x'), 'allow');
+  assert.equal(effective('gh pr merge 42'), 'deny');
+  assert.equal(effective('gh api repos/org/repo'), 'deny');
+  assert.equal(effective('gh.exe api repos/org/repo'), 'deny');
+  assert.equal(effective('gh.exe issue create --title x'), 'allow');
+  assert.equal(second, first);
+});
+
+test('same-identity conflicting gh fallback rules fail closed regardless of order', () => {
+  const { profile, sources } = fixture();
+  const ghProfile = { ...profile, github: { backend: 'gh' as const, hostname: 'github.com', repository: 'company/app' } };
+  const draft: IntegrationDraft = { profile: ghProfile, choices: [{ name: 'atlassian' }] };
+  for (const order of [[{ action: 'shell', resource: 'gh *', effect: 'deny' }], [{ action: 'shell', resource: 'gh *', effect: 'ask' }, { action: 'shell', resource: 'gh *', effect: 'deny' }], [{ action: 'shell', resource: 'gh *', effect: 'deny' }, { action: 'shell', resource: 'gh *', effect: 'ask' }]]) {
+    const external = JSON.parse(JSON.stringify(definitions.external)) as { permissions: { action: string; resource: string; effect: string }[] };
+    external.permissions.push(...order);
+    const original = JSON.stringify({ ...sources[0]!.value, agents: { ...definitions, external } });
+    const localSources = [{ ...sources[0]!, value: parseConfiguration(original, 'conflict config') }];
+    assert.throws(() => updateIntegrationConfig(original, localSources, draft), /Conflicting existing permission rule shell gh \*/);
+  }
 });
 
 test('integration setup adds approved External git-push exceptions to legacy permissions, idempotently', () => {

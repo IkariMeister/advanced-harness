@@ -1,8 +1,9 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { basename, join, parse as pathParse, resolve } from 'node:path';
-import { parseConfiguration } from './native-installer.ts';
+import { modelReference, parseConfiguration } from './native-installer.ts';
 import { parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
+import { readReceiptForRestore, validateV2Receipt, planV2Restore, type V2Receipt } from './receipt-lineage.ts';
 
 export function assertSafeFilesystemPath(path: string, leaf: 'file' | 'directory' | 'either' = 'either'): string {
   const absolute = resolve(path);
@@ -50,7 +51,7 @@ export const receiptVersion = 1;
 export type FieldChange = { path: string[]; before: unknown; after: unknown };
 export type InstallationReceipt = { version: 1; target: string; complete: boolean; status?: 'pending' | 'complete'; provenance: 'installer'; changes: FieldChange[]; createdContainers: string[][] };
 export type AdoptionReceipt = { version: 1; target: string; complete: true; provenance: 'user-adopted'; changes: FieldChange[]; createdContainers: [] };
-export type AnyReceipt = InstallationReceipt | AdoptionReceipt;
+export type AnyReceipt = InstallationReceipt | AdoptionReceipt | V2Receipt;
 
 /** Persist only narrowly scoped field history, never a whole configuration snapshot. */
 export function writeInstallationReceipt(parent: string, receipt: InstallationReceipt): string {
@@ -102,11 +103,11 @@ export function assertNoReceiptOverlap(directory: string, target: string, propos
     const path = join(directory, entry.name);
     const raw = receiptValue(assertSafeFilesystemPath(path, 'file')) as {target?: unknown} | null;
     if (!raw || typeof raw.target !== 'string') throw new Error(`Invalid recovery receipt ${entry.name}; resolve it before continuing.`);
-    if (resolve(raw.target) !== resolve(target)) continue;
-    const other = readInstallationReceipt(path, target, true);
+    if ((process.platform === 'win32' ? resolve(raw.target).toLowerCase() : resolve(raw.target)) !== (process.platform === 'win32' ? resolve(target).toLowerCase() : resolve(target))) continue;
+    const other = readReceiptDocument(path, target, true);
     const pending = (other as InstallationReceipt).status === 'pending';
     const stillApplied = other.changes.some(change => JSON.stringify(configurationField(currentText, change.path)) === JSON.stringify(evidenceValue(change.after)));
-    if (!pending && !stillApplied) continue;
+    if (!pending && !stillApplied && other.version !== 2) continue;
     const overlap = proposed.changes.map(change => JSON.stringify(change.path)).filter(key => other.changes.some(change => JSON.stringify(change.path) === key));
     if (overlap.length) throw new Error(`Outstanding receipt ${entry.name} overlaps fields ${overlap.map(key => JSON.parse(key).join('.')).join(', ')}; resolve it before installation.`);
   }
@@ -137,14 +138,24 @@ export function persistAdoptionReceipt(parent: string, receipt: AdoptionReceipt,
 }
 
 export function readInstallationReceipt(path: string, target: string, allowPending = false): AnyReceipt {
+  return readReceiptForRestore(path, target, allowPending);
+}
+
+export function readReceiptDocument(path: string, target: string, allowPending = false): AnyReceipt {
   const receiptPath = assertSafeFilesystemPath(path, 'file');
   assertSafeFilesystemPath(target, 'file');
   const value = receiptValue(receiptPath);
+  if (value && typeof value === 'object' && (value as {version?: unknown}).version === 2) return validateV2Receipt(value, target, allowPending);
+  return validateLegacyReceipt(value, target, allowPending);
+}
+
+export function validateLegacyReceipt(value: unknown, target: string, allowPending = false): InstallationReceipt | AdoptionReceipt {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Malformed installation receipt.');
-  const receipt = value as AnyReceipt;
+  const receipt = value as InstallationReceipt | AdoptionReceipt;
   const status = (value as Record<string, unknown>).status;
   const topKeys = ['version','target','complete','status','provenance','changes','createdContainers'];
-  if (Object.keys(value).some(key => !topKeys.includes(key)) || typeof receipt.target !== 'string' || !receipt.target || receipt.version !== receiptVersion || (receipt.complete !== true && !(allowPending && status === 'pending' && receipt.complete === false)) || (status !== undefined && !['pending','complete'].includes(String(status))) || !['installer', 'user-adopted'].includes(receipt.provenance) || resolve(receipt.target) !== resolve(target) || !Array.isArray(receipt.changes) || !Array.isArray(receipt.createdContainers)) throw new Error('Receipt is incomplete, unsupported, or targets a different configuration.');
+  const sameTarget = typeof receipt.target === 'string' && (process.platform === 'win32' ? resolve(receipt.target).toLowerCase() === resolve(target).toLowerCase() : resolve(receipt.target) === resolve(target));
+  if (Object.keys(value).some(key => !topKeys.includes(key)) || typeof receipt.target !== 'string' || !receipt.target || receipt.version !== receiptVersion || (receipt.complete !== true && !(allowPending && status === 'pending' && receipt.complete === false)) || (status !== undefined && !['pending','complete'].includes(String(status))) || !['installer', 'user-adopted'].includes(receipt.provenance) || !sameTarget || !Array.isArray(receipt.changes) || !Array.isArray(receipt.createdContainers)) throw new Error('Receipt is incomplete, unsupported, or targets a different configuration.');
   if (receipt.provenance === 'user-adopted' && (receipt.complete !== true || status !== undefined) || receipt.provenance === 'installer' && status === 'pending' && receipt.complete !== false || receipt.provenance === 'installer' && status === 'complete' && receipt.complete !== true) throw new Error('Receipt status and provenance are inconsistent.');
   const validPaths = new Set(['model', 'default_agent']);
   for (const role of ['lead', 'operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa']) for (const field of ['description', 'mode', 'model', 'permissions', 'system']) validPaths.add(`agents.${role}.${field}`);
@@ -176,10 +187,10 @@ function evidenceTypeValid(path: string[], evidence: unknown): boolean {
   if (evidence && typeof evidence === 'object' && Object.hasOwn(evidence, 'absent')) return true;
   const value = (evidence as {value?: unknown}).value;
   const field = path.at(-1);
-  return field === 'permissions' ? Array.isArray(value) : typeof value === 'string';
+  return field === 'permissions' ? Array.isArray(value) : field === 'model' ? modelReference(value) !== undefined : typeof value === 'string';
 }
 
-function modifyJsonc(text: string, path: string[], value: unknown): string {
+export function modifyJsonc(text: string, path: string[], value: unknown): string {
   const { applyEdits, modify } = awaitJsonc();
   const edits = modify(text, path, value, { formattingOptions: { insertSpaces: true, tabSize: 2, eol: text.includes('\r\n') ? '\r\n' : '\n' } });
   if (value !== undefined || !path.length) return applyEdits(text, edits);
@@ -189,29 +200,26 @@ function modifyJsonc(text: string, path: string[], value: unknown): string {
     parent = parent?.type === 'object' ? parent.children?.find(prop => prop.children?.[0]?.value === segment)?.children?.[1] : undefined;
   }
   const property = parent?.type === 'object' ? parent.children?.find(prop => prop.children?.[0]?.value === path.at(-1)) : undefined;
-  if (parent?.type === 'object' && parent.children?.length === 1 && property) {
-    const start = property.offset, end = start + property.length;
-    const comma = findContainerComma(text, end, parent.offset + parent.length - 1);
-    if (comma >= 0) return text.slice(0, start) + text.slice(comma + 1);
-    const preceding = findPreviousComma(text, parent.offset + 1, start);
-    if (preceding >= 0) return text.slice(0, preceding) + text.slice(start + property.length);
+  if (parent?.type === 'object' && property) {
+    // jsonc-parser's removal edit can swallow preceding unrelated comments.
+    // Remove the property token and only its separator, preserving surrounding bytes.
+    const siblings = parent.children ?? [];
+    const index = siblings.indexOf(property);
+    const end = property.offset + property.length;
+    const following = findContainerComma(text, end, siblings[index + 1]?.offset ?? parent.offset + parent.length - 1);
+    const preceding = following < 0 && index > 0
+      ? findPreviousComma(text, siblings[index - 1]!.offset + siblings[index - 1]!.length, property.offset) : -1;
+    const comma = following >= 0 ? following : preceding;
+    let start = property.offset, finish = end;
+    const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+    const newline = text.indexOf('\n', end);
+    const lineEnd = newline < 0 ? text.length : newline;
+    if (/^[ \t]*$/.test(text.slice(lineStart, start)) && /^[ \t\r,]*$/.test(text.slice(end, lineEnd))) {
+      start = lineStart; finish = newline < 0 ? lineEnd : newline + 1;
+    }
+    return applyEdits(text, [{ offset: start, length: finish - start, content: '' }, ...(comma >= 0 && (comma < start || comma >= finish) ? [{ offset: comma, length: 1, content: '' }] : [])]);
   }
-  const valueNode = property?.children?.[1];
-  if (parent?.type !== 'object' || parent.children?.length !== 1 || !valueNode) return applyEdits(text, edits);
-  // Locate punctuation within the selected value's parent using parser tokens;
-  // textual search is unsafe because comments and string payloads can contain it.
-  const comma = findContainerComma(text, valueNode.offset + valueNode.length, parent.offset + parent.length - 1);
-  const close = parent.offset + parent.length - 1;
-  if (comma < 0 || comma >= close) return applyEdits(text, edits);
-  // jsonc-parser may include trailing punctuation in the removal edit. When it
-  // does, remove only that comma by offset from the edited result; never rewrite
-  // document text with a global regexp.
-  if (edits.some(edit => edit.offset <= comma && edit.offset + edit.length > comma)) {
-    const updated = applyEdits(text, edits);
-    const shiftedComma = comma + edits.filter(edit => edit.offset + edit.length <= comma).reduce((delta, edit) => delta + edit.content.length - edit.length, 0);
-    return updated.slice(0, shiftedComma) + updated.slice(shiftedComma + 1);
-  }
-  return applyEdits(text, [...edits, { offset: comma, length: 1, content: '' }]);
+  return applyEdits(text, edits);
 }
 
 function findPreviousComma(text: string, from: number, before: number): number {
@@ -291,6 +299,12 @@ export function createReceipt(target: string, beforeText: string | undefined, af
 }
 
 export function planUninstall(receipt: AnyReceipt, text: string): { updated: string; actions: string[]; conflicts: string[] } {
+  if (!receipt.complete || ('status' in receipt && receipt.status === 'pending')) throw new Error('Pending receipt cannot be restored; resolve recovery first.');
+  if (receipt.version === 2) return planV2Restore(receipt, text);
+  return planLegacyUninstall(receipt, text);
+}
+
+export function planLegacyUninstall(receipt: InstallationReceipt | AdoptionReceipt, text: string): { updated: string; actions: string[]; conflicts: string[] } {
   const current = parseConfiguration(text, receipt.target);
   const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
   let body = bom ? text.slice(1) : text;

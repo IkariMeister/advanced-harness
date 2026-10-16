@@ -2,7 +2,8 @@ import { applyEdits, modify } from 'jsonc-parser';
 import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { parseConfiguration, nativeRoles, type Ask, type ConfigSource } from './native-installer.ts';
+import { parseConfiguration, nativeRoles, type Ask, type ConfigSource, type NativeReconciliationOptions } from './native-installer.ts';
+import { reconcilePermissions, type PermissionRule } from './permission-reconciliation.ts';
 import { cliQuery, DiagnosticError, expectedAgents, type Query, type RuntimeOptions } from './native-diagnostics.ts';
 
 type RecordValue = Record<string, unknown>;
@@ -149,17 +150,17 @@ export async function askIntegrations(servers: Record<string, RecordValue>, prev
 }
 
 /** Append only reviewed permission rules; never overwrite server credentials or agents. */
-export function updateIntegrationConfig(original: string, sources: readonly ConfigSource[], draft: IntegrationDraft): string {
+export function updateIntegrationConfig(original: string, sources: readonly ConfigSource[], draft: IntegrationDraft, reconciliation: NativeReconciliationOptions = {}): string {
   validateIntegrations(draft.profile);
   const gh = draft.profile.github.backend === 'gh';
   const selected = new Set([...(gh ? [] : [draft.profile.github.server!]), draft.profile.jira.server]);
   if (draft.choices.length !== (gh ? 1 : 2) || draft.choices.some(choice => !selected.has(choice.name))) throw new Error('Invalid integration server choices.');
   for (const name of selected) if (!draft.choices.some(choice => choice.name === name)) throw new Error('Missing server selection.');
-  return updateConnectionConfig(original, sources, draft.choices, gh);
+  return updateConnectionConfig(original, sources, draft.choices, gh, reconciliation);
 }
 
 /** Global connections/preferences only; never contains repository or Jira project settings. */
-export function updateConnectionConfig(original: string, sources: readonly ConfigSource[], choices: readonly ServerChoice[], gh: boolean): string {
+export function updateConnectionConfig(original: string, sources: readonly ConfigSource[], choices: readonly ServerChoice[], gh: boolean, reconciliation: NativeReconciliationOptions = {}): string {
   const servers = configuredServers(sources);
   const selected = new Set(choices.map(choice => choice.name));
   assertUniqueNames([...Object.keys(servers), ...selected]);
@@ -189,8 +190,7 @@ export function updateConnectionConfig(original: string, sources: readonly Confi
   for (const role of nativeRoles) {
     const agent = object(value.agents) ? value.agents[role] : undefined;
     const existing = (agent as RecordValue).permissions as unknown[];
-    const rules: unknown[] = [...existing];
-    const additions: unknown[] = [];
+    const additions: { action: string; resource: string; effect: string }[] = [];
     for (const name of selected) {
       const rule = { action: `${normalizedServer(name)}_*`, resource: '*', effect: role === 'external' ? 'ask' : 'deny' };
       additions.push(rule);
@@ -206,8 +206,13 @@ export function updateConnectionConfig(original: string, sources: readonly Confi
       if (role === 'external') additions.push(...externalGithubRules());
     }
     if (role === 'external') additions.push({ action: 'execute', resource: '*', effect: 'allow' });
-    if (JSON.stringify(rules.slice(-additions.length)) !== JSON.stringify(additions)) rules.push(...additions);
-    set(['agents', role, 'permissions'], rules);
+    const state = reconciliation.permissions?.[role];
+    const plan = reconcilePermissions({ existing: existing as PermissionRule[], ...state,
+      retiringSources: [...new Set(state?.prior.flatMap(p => p.sources.filter(s => s.startsWith('integration:'))) ?? [])],
+      desired: additions.map(rule => ({ rule: rule as PermissionRule, sources: [rule.action === 'shell' && /^gh(?:\.exe)? /.test(rule.resource) ? 'integration:gh' : rule.action.endsWith('_*') ? `integration:mcp:${rule.action}` : 'integration:base'] })) });
+    if (plan.preview.conflicts.length) throw new Error(`Permission reconciliation conflict for ${role}: ${plan.preview.conflicts.map(c => c.message).join(' ')}`);
+    reconciliation.onPermissionPlan?.(role, plan);
+    set(['agents', role, 'permissions'], plan.rules);
   }
   parseConfiguration(text, 'updated OpenCode configuration');
   return bom + text;

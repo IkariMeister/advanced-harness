@@ -76,10 +76,21 @@ test('JSONC installation preserves comments, root choices, credentials, MCP, plu
   assert.equal(agents.lead?.disabled, true);
   for (const role of nativeRoles) {
     assert.equal(agents[role]?.model, assignments[role]);
-    assert.equal(agents[role]?.system, definitions[role].system);
+    assert.equal(agents[role]?.system, role === 'lead' ? 'old' : definitions[role].system);
     assert.deepEqual(agents[role]?.permissions, definitions[role].permissions);
   }
   assert.equal(value.$schema, 'https://opencode.ai/config.json');
+});
+
+test('custom managed fields survive; only unchanged evidence or explicit selections refresh them', () => {
+  const original = JSON.stringify({ agents: { lead: { description: 'custom', mode: 'custom-mode', system: 'previous managed prompt' } } });
+  const inspect = (options: Parameters<typeof updateNativeConfiguration>[6]) => (parseConfiguration(updateNativeConfiguration(original, definitions, assignments, false, false, [], options), 'test').agents as Record<string, Record<string, unknown>>).lead!;
+  assert.equal(inspect({}).system, 'previous managed prompt');
+  const refreshed = inspect({ managedFields: { lead: { description: 'previous description', system: 'previous managed prompt' } } });
+  assert.equal(refreshed.description, 'custom');
+  assert.equal(refreshed.mode, 'custom-mode');
+  assert.equal(refreshed.system, definitions.lead.system);
+  assert.equal(inspect({ replaceFields: { lead: ['mode'] } }).mode, definitions.lead.mode);
 });
 
 test('default-agent/model changes require separate opt-ins; BOM and CRLF are preserved', () => {
@@ -91,6 +102,18 @@ test('default-agent/model changes require separate opt-ins; BOM and CRLF are pre
   assert.equal(value.default_agent, 'lead');
   assert.equal(value.model, 'local/lead');
   assert.equal((value.agents as Record<string, Record<string, unknown>>).lead?.model, 'local/lead#low');
+});
+
+test('reinstall preserves customized model representations unless explicitly replaced', () => {
+  const original = JSON.stringify({ agents: {
+    lead: { model: { providerID: 'openai', model: 'gpt-6-luna', variant: 'low', custom: 'keep' }, color: 'violet', permissions: [{ action: 'shell', resource: 'git status', effect: 'deny' }] },
+  } });
+  const preserved = parseConfiguration(updateNativeConfiguration(original, definitions, assignments, false), 'preserved').agents as Record<string, Record<string, unknown>>;
+  assert.deepEqual(preserved.lead!.model, { providerID: 'openai', model: 'gpt-6-luna', variant: 'low', custom: 'keep' });
+  assert.equal(preserved.lead!.color, 'violet');
+  assert.deepEqual(preserved.lead!.permissions, [{ action: 'shell', resource: 'git status', effect: 'deny' }, ...definitions.lead.permissions]);
+  const replaced = parseConfiguration(updateNativeConfiguration(original, definitions, assignments, false, false, ['lead']), 'replaced').agents as Record<string, Record<string, unknown>>;
+  assert.equal(replaced.lead!.model, assignments.lead);
 });
 
 test('invalid, duplicate, non-object and ambiguous configurations are never rewritten', t => {
