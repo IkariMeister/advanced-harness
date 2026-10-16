@@ -95,7 +95,7 @@ invented. Links point to the current implementation/specification.
 | BH-014 | P3 | Optional evidence and practical reuse | Add only when pilot needs justify it; never silently make it a gate |
 | BH-015 | Deferred | Multi-squad shared-repository workflows | Agree per-session routing/concurrency rules before implementation |
 | BH-016 | Deferred | Team/cross-machine coordination and other hosts | Separate product decision; no synchronization/daemon promised |
-| BH-017 | P2 | Predictable workflow commands | Approved task-workflow definitions clarified for Jira start ordering and human-triggered safe cleanup; commands/syntax remain TBD and are not implemented |
+| BH-017 | P2 | Predictable workflow commands | Five approved project prompt commands and regression checks implemented; runtime OpenCode command discovery/behavior remains unvalidated |
 | BH-018 | Deferred | V2 epic/user-story refinement harness | Define a distinct second harness for epic/story refinement; SDD applicability TBD |
 | BH-019 | P1 | Per-agent tool availability and ownership | Capability docs complete; approved External source-permission follow-up implemented and local checks pass; independent reviews and final implementation approval pending |
 | BH-020 | P1 | Safe harness update workflow | Preview version/migration, preserve customizations, and provide recovery |
@@ -754,9 +754,10 @@ scope while deciding whether and how other hosts fit later.
 
 ## BH-017 — Predictable workflow commands
 
-Human-approved documentation definitions are recorded in
-[task-workflows.md](task-workflows.md). This completes the requested workflow
-definitions only; implementation/executable commands are not approved. Definitions
+Human-approved workflow definitions are recorded in
+[task-workflows.md](task-workflows.md) and implemented as project prompt templates in
+`.opencode/commands/`. Static regression checks cover command files and safety rules;
+runtime OpenCode command discovery and behavior remain to be validated. Commands
 cover these task types:
 
 - Starting work on new issues.
@@ -764,11 +765,10 @@ cover these task types:
 - Investigating a reported bug/defect.
 - Handling technical debt.
 
-Each definition covers inputs, ordered steps, role ownership, outputs, checks,
-illustrative examples, and human approval points. Command names and syntax remain TBD.
-Preserve conversational human approvals and existing role ownership. Tool permissions
-and command patterns do not independently enforce plan approval. No commands, code, or
-configuration changes are authorized by this definition.
+Preserve conversational human approvals and existing role ownership. Tool permissions,
+command prompts and arguments do not independently enforce plan approval. Runtime
+validation is pending; no installed prompt deployment, service operation, publication
+or merge is implied.
 
 ## BH-018 — V2 epic/user-story refinement harness
 
