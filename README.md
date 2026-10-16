@@ -8,6 +8,8 @@ The simplified direction was approved on 2026-10-08. There is **no separate harn
 
 The workflow specification is in [`docs/opencode-native-workflow.md`](docs/opencode-native-workflow.md). Native agent templates are in [`agents/`](agents/README.md). The [interactive installer, diagnostics, and receipt-backed uninstall/adoption workflow](docs/installation.md), [context-only project setup](docs/project-setup.md), and [optional global connections/project selections](docs/configuration.md) are implemented locally with automated tests. Uninstall/adoption still needs the documented isolated interactive QA; it is not validated for live cleanup. Cloning this repository does not activate agents or configure MCP connections. Machine-specific model/service access, live setup migration, broader role permissions, and the full publishing/merge/cleanup lifecycle still need validation; see [the recovery backlog](docs/backlog.md).
 
+Four task types have human-approved **documentation definitions** in [task workflows](docs/task-workflows.md): starting a Jira issue, teammate PR review, reported defects, and technical debt. They are not executable commands; names and syntax remain TBD.
+
 **Approval is a conversational workflow rule followed by Lead, not an independently enforced security gate.** OpenCode permissions control tool access; they do not prove that a particular plan was approved. Shell runs with the user's authority, and shell command patterns are not a sandbox. Do not claim deterministic approval enforcement, cross-process isolation, or exactly-once external operations.
 
 The TypeScript code covers native installation, diagnostics, project-context setup, and optional integration tooling, with automated regression tests. The obsolete approval controller, host/IPC system, integration spike, demos, and prototype tests have been removed; they remain available in Git history only. Once installed, agents run through OpenCode without a custom harness service.
@@ -46,7 +48,7 @@ These assignments are preferences to validate against the active connection, not
 3. A material scope/approach change returns to you for approval before more implementation. Ambiguous approval or competing plan versions require clarification.
 4. Lead presents review/QA findings. You accept or discard findings individually or as a clearly listed batch; accepted fixes stay within their approved scope.
 5. Lead presents verification results and asks for final approval before External pushes and opens the PR. New material changes after final approval require renewed approval.
-6. Only a human merges. After you ask to verify the merge, Operator may clean up the feature worktree/branch once merged state is confirmed. Ask before handling uncommitted or unpushed work.
+6. Only a human merges. Your confirmation that the PR is merged triggers External to verify the merge and authorizes Operator to clean up the task worktree and local feature branch after safety checks. Preserve the remote branch; stop and ask if work is dirty, unpushed, or anything is uncertain.
 7. On interruption, Lead summarizes the current state and asks before resuming. Inspect Git/service state before retrying an uncertain external action; do not claim an automatic recovery engine.
 8. Explicit conversational exceptions are allowed for specific steps. Mark waived checks as waived, never passed. Blanket “approve everything,” agent-generated approvals, and bypassing GitHub requirements are not supported.
 
@@ -60,7 +62,7 @@ Ordinary OpenCode tool-permission prompts may still appear for shell, filesystem
 4. **Implement:** Implementer writes the approved changes and tests using native OpenCode tools. Report any material deviation instead of silently expanding scope.
 5. **Review and verify:** Reviewer runs configured build/lint/unit/Roborazzi checks; QA checks runtime behavior, design, and configured E2E tests. Lead presents findings and obtains your fix/discard decisions; rerun affected checks after fixes.
 6. **Publish:** Lead obtains final implementation approval. External pushes and opens the PR through the selected GitHub backend, updates Jira only when selected and authorized, and handles later feedback through the same finding/fix loop. Ask when the requested publishing task needs an absent integration. Do not merge.
-7. **Consolidate and clean up:** Ask which observed learnings should become confirmed `AGENTS.md` rules; approve resulting changes before publishing. After human merge and a human-triggered verification, Operator cleans up safely.
+7. **Consolidate and clean up:** Ask which observed learnings should become confirmed `AGENTS.md` rules; approve resulting changes before publishing. A human's merge confirmation triggers External's merge verification and authorizes Operator, after safety checks, to remove the task worktree and local feature branch. Preserve the remote branch and stop on dirty/unpushed work or uncertainty.
 
 ## Tool and integration ownership
 
