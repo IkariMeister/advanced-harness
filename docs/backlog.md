@@ -84,7 +84,7 @@ invented. Links point to the current implementation/specification.
 | BH-003 | Complete (harness consolidation/PR) | Consolidate and preserve harness delivery | PR #2 merged; prompt deployment remains separate and unapproved; broader validation remains open |
 | BH-004 | P2 | Full Android verification setup | Confirm Spotless/Detekt and runtime/device/E2E/snapshot contracts |
 | BH-005 | P2 | Live context migration and global/project separation | Offer explicit legacy-to-context migration; verify preservation |
-| BH-006 | P1 | Safe installer upgrades and permission reconciliation | Preserve reviewed models/integration rules through upgrades |
+| BH-006 | Complete (implementation/verification; PR open) | Safe installer upgrades and permission reconciliation | PR #30 OPEN: https://github.com/IkariMeister/advanced-harness/pull/30; head `feature/bh006` at `54d2e1f`; merge pending/unverified |
 | BH-007 | P2 | Optional Jira end-to-end validation | Enable/authenticate only with approval; validate a selected project's mapping |
 | BH-008 | P2 | Optional design integrations | Validate one selected Figma/Stitch connection/tools; no silent fallback |
 | BH-009 | P1 | Effective runtime tools/permissions | Delegated smoke passed; approved source guidance/regressions implemented; live prompt deployment and broader ownership validation remain |
@@ -573,9 +573,10 @@ keep/remove, GH→MCP source retirement, finalization evidence, and user-additio
 Limitations: no actual interactive-terminal/live runtime/service QA was performed;
 adapter-level coverage exercises the production flows in disposable fixtures but does not replace human interactive smoke verification.
 
-2026-10-16 delivery and verification update: rebased `feature/bh006` cleanly onto `main` (`226b999`). Added regression tests closing the remaining adapter-level gaps: integration flow aborts without writes when pending receipt creation fails, installer flow validates default-on-Enter and retries invalid scope/model/variant inputs per AGENTS.md, and `runUninstallFlow` confirms cancellation and conflict failure without writes or saves. Verification: `npm run typecheck` passed; focused test suite (97 tests) passed; full test suite passed (166 passed, 0 failed, 1 opt-in live test skipped); `git diff --check` passed clean. Non-TTY interactive blocker is noted; live interactive TTY smoke QA was not run. Final implementation approved; ready for local commit and pull request publication.
+2026-10-16 delivery and verification update: rebased `feature/bh006` cleanly onto `main` (`226b999`). Added regression tests closing the remaining adapter-level gaps: integration flow aborts without writes when pending receipt creation fails, installer flow validates default-on-Enter and retries invalid scope/model/variant inputs per AGENTS.md, and `runUninstallFlow` confirms cancellation and conflict failure without writes or saves. Verification: `npm run typecheck` passed; focused test suite (97 tests) passed; full test suite passed (166 passed, 0 failed, 1 opt-in live test skipped); `git diff --check` passed clean. Non-TTY interactive blocker is noted; live interactive TTY smoke QA was not run. Final implementation approved; changes committed as `54d2e1f` and pushed to `origin/feature/bh006`. External confirmed PR #30 is OPEN, targeting `main`: https://github.com/IkariMeister/advanced-harness/pull/30. Implementation and delivery verification are complete; merge is pending and unverified. No cleanup occurred.
 
 ## BH-007 — Optional Jira connection, project access, and lifecycle mapping
+
 
 
 The global `jira` entry is disabled; MarsRoverIA has Jira **not selected**. Do not
