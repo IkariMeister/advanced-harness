@@ -20,8 +20,20 @@ successful checks, model entitlement, tool access, or completed external actions
 Keep `docs/backlog.md` current when an agreed feature, blocker, validation result,
 deferral, or next action changes. Preserve stable IDs and unresolved work. Record
 commit/PR references only after they exist; keep credentials out of recovery notes.
+For project-scoped delivery tracking, mark an item complete when its PR is confirmed
+open; track merge status separately. Never claim a PR is open
+before External confirms it.
 
 This repository is the harness tooling checkout, not the MarsRoverIA pilot app.
 Preserve unrelated work in both repositories. Project settings belong only in the
 application's AGENTS.md or explicitly referenced context; reusable connections and
 defaults are global. Existing legacy profiles require explicit migration consent.
+
+## Testing interactive CLI flows
+
+- Redirected stdin is not interactive CLI QA. If no usable TTY is available, report
+  the blocker and attribute any interactive smoke evidence to the human who ran it;
+  do not present it as independently reproduced.
+- Cover the CLI-used confirmation flow in regression tests, including cancellation
+  with no writes or backups, alternate contexts, and shell default-on-Enter/retry
+  behavior. Prefer exercising the actual flow over testing isolated prompt helpers.

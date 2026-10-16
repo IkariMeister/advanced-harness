@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { askProfile, checkNames, inspectProject, parseProfile, prepareSetup, saveSetup, suggestedCommands, updateProjectInstructions, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
+import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, inspectProject, parseProfile, prepareSetup, saveSetup, setupConfirmation, suggestedCommands, updateProjectInstructions, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
 import { contextData, updateContext } from '../src/project-context.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
@@ -41,6 +41,21 @@ test('bounded inspection detects Gradle/modules/wrappers without executing scrip
   assert.equal(suggestedCommands(result, 'bash').runtime, undefined);
   assert.deepEqual(suggestedCommands({ ...result, wrappers: { bash: false, windows: false } }, 'bash'), {});
   assert.deepEqual(suggestedCommands({ ...result, wrappers: { bash: true, windows: false } }, 'powershell'), {});
+});
+
+test('full-preview confirmation trims save and legacy setup; every other answer cancels', () => {
+  assert.equal(setupConfirmation(' save  '), 'save');
+  assert.equal(setupConfirmation('setup'), 'save');
+  for (const answer of ['', 'cancel', 'SAVE', 'unknown', 'save please']) assert.equal(setupConfirmation(answer), 'cancel');
+});
+
+test('shell selection accepts default/saved shell and retries invalid input', async () => {
+  assert.equal(await askProjectShell(async () => '', 'bash'), 'bash');
+  assert.equal(await askProjectShell(async () => '', 'cmd'), 'cmd');
+  const replies = ['invalid', 'powershell'];
+  const prompts: string[] = [];
+  assert.equal(await askProjectShell(async question => { prompts.push(question); return replies.shift()!; }, 'bash'), 'powershell');
+  assert.equal(prompts.length, 2);
 });
 
 test('inspection rejects missing Git/Gradle roots instead of assuming an Android app', t => {
@@ -145,15 +160,57 @@ test('setup writes only selected files with exact backups; worktrees and memory 
   assert.equal(existsSync(join(project, '.gitignore')), false);
 });
 
-test('prepare and cancellation perform no writes; save preserves original instructions outside the section', t => {
+test('production confirmation flow cancels blank, cancel, and unknown responses without writes or backups, including alternate context', t => {
   const { root, project } = fixture(t);
-  const original = '# Original rules';
-  writeFileSync(join(project, 'AGENTS.md'), original);
+  const context = join(project, 'docs', 'HARNESS.md');
+  mkdirSync(join(project, 'docs'));
+  const original = '# Original rules\n';
+  writeFileSync(join(project, 'AGENTS.md'), '# Project guidance\n');
+  writeFileSync(context, original);
+  const files = prepareSetup(project, profile(root, project), readFileSync(context, 'utf8'), context);
+  for (const response of ['', 'cancel', 'unknown']) {
+    assert.deepEqual(confirmAndSaveSetup(response, files, join(root, `backups-${response || 'blank'}`)), { status: 'cancelled' });
+    assert.equal(readFileSync(context, 'utf8'), original);
+    assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), '# Project guidance\n');
+    assert.equal(existsSync(join(root, `backups-${response || 'blank'}`)), false);
+  }
+});
+
+test('production confirmation flow cancels default-context responses without writes or backups', t => {
+  const { root, project } = fixture(t);
+  const path = join(project, 'AGENTS.md');
+  const original = '# Existing guidance\n';
+  writeFileSync(path, original);
   const files = prepareSetup(project, profile(root, project), original);
-  assert.equal(files.length, 1);
-  assert.equal(existsSync(join(project, '.opencode')), false);
-  saveSetup(files, join(root, 'backups'));
-  assert.ok(readFileSync(join(project, 'AGENTS.md'), 'utf8').startsWith(original));
+  for (const response of ['', 'cancel', 'unknown']) {
+    assert.deepEqual(confirmAndSaveSetup(response, files, join(root, `default-backups-${response || 'blank'}`)), { status: 'cancelled' });
+    assert.equal(readFileSync(path, 'utf8'), original);
+    assert.equal(existsSync(join(root, `default-backups-${response || 'blank'}`)), false);
+  }
+});
+
+test('production confirmation flow accepts save/setup and preserves save safeguards', t => {
+  const { root, project } = fixture(t);
+  const context = join(project, 'docs', 'HARNESS.md');
+  mkdirSync(join(project, 'docs'));
+  const original = '# Original rules\n';
+  writeFileSync(context, original);
+  const files = prepareSetup(project, profile(root, project), original, context);
+  for (const [index, response] of ['save', 'setup'].entries()) {
+    const target = join(project, 'docs', `HARNESS-${index}.md`);
+    writeFileSync(target, original);
+    const prepared = prepareSetup(project, profile(root, project), original, target);
+    const result = confirmAndSaveSetup(response, prepared, join(root, `backups-${index}`));
+    assert.equal(result.status, 'saved');
+    assert.equal(readFileSync(result.backups[0]!, 'utf8'), original);
+    assert.ok(readFileSync(target, 'utf8').startsWith(original));
+  }
+  writeFileSync(context, original);
+  const concurrent = prepareSetup(project, profile(root, project), original, context);
+  writeFileSync(context, '# Changed concurrently');
+  assert.throws(() => confirmAndSaveSetup('save', concurrent, join(root, 'concurrent-backups')), /changed/);
+  assert.equal(readFileSync(context, 'utf8'), '# Changed concurrently');
+  assert.equal(existsSync(join(root, 'concurrent-backups')), false);
 });
 
 test('concurrent AGENTS modification aborts the entire write set before profile/backup creation', t => {
