@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, parse as pathParse, resolve } from 'node:path';
 import { applyEdits, modify, parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
 import { parseDocument } from 'yaml';
 
@@ -194,23 +194,46 @@ export function updateNativeConfiguration(original: string, definitions: Record<
 }
 
 export function saveInstallation(target: string, expected: string | undefined, updated: string, backupParent: string): string | undefined {
+  const checkAncestors = (path: string, leaf: 'file' | 'directory' | 'either'): void => {
+    const absolute = resolve(path), root = pathParse(absolute).root;
+    let cursor = root;
+    const parts = absolute.slice(root.length).split(/[\\/]+/).filter(Boolean);
+    for (let index = 0; index < parts.length; index++) {
+      cursor = join(cursor, parts[index]!);
+      const stat = lstatSync(cursor, { throwIfNoEntry: false });
+      if (!stat) continue;
+      if (stat.isSymbolicLink()) throw new Error(`Symlink path component refused: ${cursor}`);
+      const final = index === parts.length - 1;
+      if (final && leaf === 'file' && !stat.isFile()) throw new Error(`Refusing non-regular configuration file: ${cursor}`);
+      if (final && leaf === 'directory' && !stat.isDirectory()) throw new Error(`Expected directory: ${cursor}`);
+      if (!final && !stat.isDirectory()) throw new Error(`Non-directory path ancestor refused: ${cursor}`);
+    }
+  };
+  checkAncestors(target, 'file'); checkAncestors(backupParent, 'directory');
   const entry = lstatSync(target, { throwIfNoEntry: false });
   if (entry && (!entry.isFile() || entry.isSymbolicLink())) throw new Error('Refusing to replace a non-regular or symlink configuration file.');
+  const identity = entry ? `${entry.dev}:${entry.ino}` : undefined;
   const current = existsSync(target) ? readFileSync(target, 'utf8') : undefined;
   if (current !== expected) throw new Error('Configuration changed while answering prompts. Rerun the installer; nothing was overwritten.');
   let backup: string | undefined;
   if (expected !== undefined) {
     const directory = join(backupParent, `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
+    checkAncestors(backupParent, 'directory');
     mkdirSync(directory, { recursive: true, mode: 0o700 });
+    checkAncestors(directory, 'directory');
     backup = join(directory, basename(target));
     writeFileSync(backup, expected, { flag: 'wx', mode: 0o600 });
   }
   mkdirSync(dirname(target), { recursive: true });
+  checkAncestors(target, 'file');
   const temporary = `${target}.harness-${randomUUID()}.tmp`;
   try {
     writeFileSync(temporary, updated, { flag: 'wx', mode: 0o600 });
     if (expected !== undefined) chmodSync(temporary, lstatSync(target).mode & 0o777);
+    checkAncestors(target, 'file');
     if ((existsSync(target) ? readFileSync(target, 'utf8') : undefined) !== expected) throw new Error('Configuration changed before save. Nothing was overwritten.');
+    const latest = lstatSync(target, { throwIfNoEntry: false });
+    if ((latest ? `${latest.dev}:${latest.ino}` : undefined) !== identity) throw new Error('Configuration file identity changed before save. Nothing was overwritten.');
     renameSync(temporary, target);
   } finally {
     if (existsSync(temporary)) unlinkSync(temporary);

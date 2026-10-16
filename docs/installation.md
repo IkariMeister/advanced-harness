@@ -1,5 +1,40 @@
 # Interactive native-agent installer
 
+## Uninstall (BH021)
+
+Installer receipts are stored privately under `$HOME/Projects/advanced-harness-backups` or the isolated `ADVANCED_HARNESS_RECOVERY_DIR`. Receipt-backed uninstall is invoked with `npm run harness:uninstall -- --config <opencode.json|opencode.jsonc> --receipt <receipt>`. For an existing installation, `--adopt-existing` is a separate provenance-only mode; optional `--before-config <known-before-config>` supplies same-path historical evidence. First answer **“Adopt all detected agent fields for removal?”** (default No). Yes selects only present supported fields on the eight known roles for unknown-history removal; one grouped acknowledgment is required. Root `default_agent` and `model` are always prompted separately and default to keep. No asks once per detected agent; keep is the default, and restore requires supplied same-path evidence. Per-agent removal also requires an acknowledgment. Custom agents, other fields, absent fields, and unrelated settings are excluded. An ownership/history warning precedes the grouped choice. A final `adopt` confirmation records provenance only; it changes no config and does not uninstall. A later, separate uninstall preview and `uninstall` confirmation are required. Automated prompt-flow tests compose decisions with adoption/uninstall planning; manual interactive CLI QA remains pending. Do not apply this workflow to a live installation.
+
+### Isolated uninstall/adoption QA (no installer/runtime calls)
+
+In a disposable PowerShell terminal, create an isolated config/evidence pair and route
+recovery output to that fixture. This flow invokes only the interactive uninstall CLI;
+it does not run `harness:install`, launch OpenCode, or call runtime verification:
+
+```powershell
+$qa = Join-Path $env:TEMP ('bh021-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $qa | Out-Null
+$env:ADVANCED_HARNESS_RECOVERY_DIR = Join-Path $qa 'recovery'
+'{"agents":{"lead":{"model":"provider/new"}}}' | Set-Content -NoNewline (Join-Path $qa 'opencode.json')
+'{"agents":{"lead":{"model":"provider/old"}}}' | Set-Content -NoNewline (Join-Path $qa 'before.json')
+npm run harness:uninstall -- --config (Join-Path $qa 'opencode.json') --adopt-existing --before-config (Join-Path $qa 'before.json')
+```
+
+At the bulk question answer `N`, then choose `restore` for Lead and accept default
+`keep` for other detected agents and root settings; every present root default is asked
+separately even if Lead is restored. Type `adopt` at the final
+provenance confirmation. Verify the
+config remains byte-identical and a `native-adoption-*.json` appears in recovery.
+Then run receipt-backed uninstall separately using that exact receipt path; review
+the preview, type `uninstall`, and confirm only the selected model field is restored.
+Repeat uninstall with the same receipt to confirm no new config backup is created.
+Use `--adopt-existing` without `--before-config` to validate keep-unmanaged and
+acknowledged-removal behavior. Also repeat with `y` at the bulk question, acknowledge
+unknown history once for the agent group, and verify the receipt contains only present
+supported known-agent fields; root prompts still appear and should be kept. Test blank/default responses and refusal of the final
+`adopt` confirmation on a disposable fixture, verifying the config remains unchanged
+and no receipt is created. After QA, remove only this disposable `$qa` directory
+and clear the process-local variable with `Remove-Item Env:ADVANCED_HARNESS_RECOVERY_DIR`.
+
 Run from the Advanced Harness checkout with Node.js 24. The installer CLI is [`scripts/install-native-harness.ts`](../scripts/install-native-harness.ts):
 
 ```text
@@ -108,3 +143,13 @@ $env:HARNESS_LIVE_OPENCODE = 'C:/path/to/opencode-cli.exe'
 node --test test/native-diagnostics-live.test.ts
 Remove-Item Env:HARNESS_LIVE_OPENCODE
 ```
+# Receipt-backed uninstall
+
+`npm run harness:uninstall -- --config <opencode.json|opencode.jsonc> --receipt <receipt>`
+offers an interactive, receipt-backed restoration preview. For an installation without
+a harness receipt, `--adopt-existing --before-config <known-before-config>` offers
+bulk adoption or one decision per detected agent, with root defaults handled separately.
+Adoption records the selected baseline as provenance only and does not write the live
+configuration. Keep recovery receipts private and use disposable configs when testing.
+This workflow remains under BH-021 validation; do not use it for live cleanup until
+the documented acceptance and isolated QA are complete.

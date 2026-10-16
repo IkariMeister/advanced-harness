@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { agentDirectories, askAssignments, chooseConfiguration, configuredModels, discoverConfigurations, findMarkdownConflicts, loadNativeDefinitions, nativeRoles, parseConfiguration, projectConfiguration, saveInstallation, updateNativeConfiguration, type Ask } from '../src/native-installer.ts';
 import { DiagnosticError, printReport, verifyRuntime } from '../src/native-diagnostics.ts';
+import { assertNoReceiptOverlap, assertSafeFilesystemPath, completePendingReceipt, createReceipt, recoverFailedInstallation, writePendingReceipt } from '../src/installation-receipt.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
@@ -35,6 +36,7 @@ if (args.includes('--help')) {
     const allowedDirectories = project ? [project, join(project, '.opencode')] : [resolve(globalDirectory)];
     const sameDirectory = (directory: string) => process.platform === 'win32' ? directory.toLowerCase() === dirname(target).toLowerCase() : directory === dirname(target);
     if (!['opencode.json', 'opencode.jsonc'].includes(basename(target)) || !allowedDirectories.some(sameDirectory)) throw new Error('--config must select opencode.json/jsonc inside the chosen project (or its .opencode folder), or the global OpenCode directory.');
+    assertSafeFilesystemPath(target, 'file');
     const original = existsSync(target) ? readFileSync(target, 'utf8') : undefined;
     if (!sources.some(source => source.path === target) && original !== undefined) sources.push({ path: target, text: original, value: parseConfiguration(original, target) });
     const conflicts = findMarkdownConflicts(sources, target, globalDirectory, project);
@@ -61,6 +63,7 @@ if (args.includes('--help')) {
     const setDefault = /^(y|yes)$/i.test(await ask('Make Lead the default agent for new sessions?', 'no'));
     const setLeadModel = /^(y|yes)$/i.test(await ask('Also set the root default model to Lead? (otherwise preserve it)', 'no'));
     const updated = updateNativeConfiguration(original ?? '{}\n', definitions, assignments, setDefault, setLeadModel);
+    const receipt = createReceipt(target, original, updated);
     console.log('\nAssignments:');
     for (const role of nativeRoles) console.log(`  ${role}: ${assignments[role]}`);
     const value = original === undefined ? {} : parseConfiguration(original, target);
@@ -71,14 +74,30 @@ if (args.includes('--help')) {
     console.log(`Default agent: ${setDefault ? 'set to lead' : 'preserved'}; root default model: ${setLeadModel ? assignments.lead.split('#')[0] : 'preserved'}.`);
     console.log('Providers, credentials, MCP servers, plugins, and unrelated agents/settings will not be changed.');
     console.log('Assignments are stored inline in agents; no plugin or separate approval host is installed.');
-    const backupParent = join(homedir(), 'Projects', 'advanced-harness-backups');
+    const backupParent = process.env.ADVANCED_HARNESS_RECOVERY_DIR || join(homedir(), 'Projects', 'advanced-harness-backups');
+    if (original !== undefined) assertNoReceiptOverlap(backupParent, target, receipt, original);
     if (original !== undefined) console.log(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
     console.log('After writing, runtime verification may start the OpenCode service. It will not restart/reload it or send paid model requests.');
     if ((await ask('Type install to apply these changes', 'cancel')) !== 'install') console.log('Cancelled. No files were changed.');
     else {
-      const backup = saveInstallation(target, original, updated, backupParent);
+      if (updated === (original ?? '{}\n')) {
+        console.log('Configuration already matches; no configuration, backup, or receipt writes are needed.');
+      } else {
+      const receiptPath = writePendingReceipt(backupParent, receipt);
+      let backup: string | undefined;
+      try {
+        backup = saveInstallation(target, original, updated, backupParent);
+      } catch (error) {
+        if (recoverFailedInstallation(receiptPath, original, target) === 'cleared') { /* unchanged target: safe to discard pending evidence */ }
+        else console.error(`Configuration write may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
+        throw error;
+      }
+      const finalText = readFileSync(target, 'utf8');
+      const finalized = createReceipt(target, original, finalText);
+      completePendingReceipt(receiptPath, finalized);
       console.log(`Configuration written (runtime not yet verified): ${target}`);
       if (backup) console.log(`Backup: ${backup}`);
+      console.log(`Private uninstall receipt retained at ${receiptPath}`);
       const directory = project ?? process.cwd();
       try {
         const intended = Object.fromEntries(nativeRoles.map(role => [role, { ...definitions[role], model: assignments[role] }]));
@@ -92,6 +111,7 @@ if (args.includes('--help')) {
       }
       console.log('Existing session models are unchanged; explicitly verify the assigned Lead model/variant in the new session.');
       console.log('Model access, MCP authentication, project commands, and approval behavior have NOT been runtime-validated.');
+      }
     }
   } finally { terminal.close(); }
 }
