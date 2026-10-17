@@ -37,8 +37,8 @@ export const ROLE_TOOL_OWNERSHIP: Record<NativeRole, ToolOwnershipRule> = {
   researcher: {
     role: 'researcher',
     domain: 'Codebase inspection and local context discovery',
-    allowedCapabilities: ['read', 'glob', 'grep', 'websearch', 'webfetch'],
-    deniedCapabilities: ['file write', 'git mutations', 'remote operations'],
+    allowedCapabilities: ['read', 'glob', 'grep'],
+    deniedCapabilities: ['file write', 'git mutations', 'remote operations', 'websearch', 'webfetch'],
     escalationTarget: 'lead',
     approvalRequired: false
   },
@@ -91,8 +91,15 @@ export function checkToolOwnership(
   const normAction = action.toLowerCase().trim();
   const normResource = resource.toLowerCase().trim();
 
+  const command = parseOwnedCommand(normResource);
+
+  // Unsupported command syntax is not evidence that an owned operation is safe.
+  if ((normAction === 'shell' || normAction === 'execute') && command === 'unknown') {
+    return ownershipViolation(role, action, resource, 'Unsupported command syntax; operation ownership cannot be verified.', 'lead');
+  }
+
   // gh pr merge is DENY for all roles without exception
-  if ((normAction === 'shell' || normAction === 'execute') && /gh(?:\.exe)?\s+pr\s+merge\b/i.test(normResource)) {
+  if ((normAction === 'shell' || normAction === 'execute') && command === 'gh-merge') {
     return {
       allowed: false,
       violation: {
@@ -105,7 +112,7 @@ export function checkToolOwnership(
   }
 
   // Remote git push belongs strictly to external
-  if ((normAction === 'shell' || normAction === 'execute') && /^(?:git\s+push\b|git\.exe\s+push\b)/i.test(normResource)) {
+  if ((normAction === 'shell' || normAction === 'execute') && command === 'git-push') {
     if (role !== 'external') {
       return {
         allowed: false,
@@ -120,7 +127,7 @@ export function checkToolOwnership(
   }
 
   // GitHub CLI operations belong to external
-  if ((normAction === 'shell' || normAction === 'execute') && /^(?:gh\b|gh\.exe\b)/i.test(normResource)) {
+  if ((normAction === 'shell' || normAction === 'execute') && command === 'gh-other') {
     if (role !== 'external') {
       return {
         allowed: false,
@@ -134,9 +141,11 @@ export function checkToolOwnership(
     }
   }
 
-  // Source editing belongs strictly to implementer (and lead for project AGENTS instructions)
+  // Only explicitly identified context/memory files are editable by workflow owners.
   if (normAction === 'edit' || normAction === 'write') {
-    if (role !== 'implementer' && role !== 'lead' && role !== 'operator') {
+    const contextPath = /^(?:agents\.md|memory\.md|(?:memory|context)\/[^/\\]+\.md)$/i.test(normResource);
+    const allowed = role === 'implementer' || (role === 'lead' && /^agents\.md$/i.test(normResource)) || (role === 'operator' && /^(?:memory\.md|memory\/[^/\\]+\.md)$/i.test(normResource));
+    if (!allowed || (role !== 'implementer' && !contextPath)) {
       return {
         allowed: false,
         violation: {
@@ -150,6 +159,46 @@ export function checkToolOwnership(
   }
 
   return { allowed: true };
+}
+
+function ownershipViolation(role: NativeRole, action: string, resource: string, reason: string, escalateTo: string) {
+  return { allowed: false, violation: { role, requestedAction: `${action} ${resource}`, reason, escalateTo } };
+}
+
+function parseOwnedCommand(resource: string): 'git-push' | 'gh-merge' | 'gh-other' | 'other' | 'unknown' {
+  if (/[;&|`$<>\n\r]/.test(resource) || /(^|\s)(?:sudo|env|command)\s/.test(resource)) return 'unknown';
+  const tokens: string[] = [];
+  const pattern = /"([^"\\]*)"|'([^'\\]*)'|([^\s"']+)/gy;
+  let cursor = 0;
+  while (cursor < resource.length) {
+    while (/\s/.test(resource[cursor] ?? '') && cursor < resource.length) cursor++;
+    if (cursor >= resource.length) break;
+    pattern.lastIndex = cursor;
+    const match = pattern.exec(resource);
+    if (!match || match.index !== cursor) return 'unknown';
+    const token = match[1] ?? match[2] ?? match[3];
+    if (token === undefined || !token.length) return 'unknown';
+    tokens.push(token);
+    cursor = pattern.lastIndex;
+    if (cursor < resource.length && !/\s/.test(resource[cursor]!)) return 'unknown';
+  }
+  if (tokens.length === 0) return 'other';
+  const first = tokens[0]!.replace(/^['"]|['"]$/g, '').toLowerCase();
+  if (/^(?:git|git\.exe)$/.test(first)) {
+    if (tokens[1]?.toLowerCase() === 'push') return 'git-push';
+    if (tokens[1]?.toLowerCase().startsWith('pu') || tokens[1]?.toLowerCase().startsWith('push')) return 'unknown';
+    if (tokens[1]?.toLowerCase() === '-c' || tokens[1]?.startsWith('-')) return 'unknown';
+    return 'other';
+  }
+  if (/^(?:gh|gh\.exe)$/.test(first)) {
+    if (tokens[1]?.toLowerCase() === 'pr' && tokens[2]?.toLowerCase() === 'merge') return 'gh-merge';
+    if (tokens[1]?.toLowerCase() === 'pr' && tokens[2]?.toLowerCase().startsWith('mer')) return 'unknown';
+    if (tokens[1]?.toLowerCase().startsWith('pr') && tokens[1]?.toLowerCase() !== 'pr') return 'unknown';
+    if (tokens[1]?.startsWith('-') || tokens[2]?.startsWith('-')) return 'unknown';
+    return 'gh-other';
+  }
+  if (/^(?:\.|\/|[a-z]:\\)/i.test(first)) return 'unknown';
+  return 'other';
 }
 
 export function validateRoleToolMatrix(): { role: NativeRole; rule: ToolOwnershipRule }[] {
