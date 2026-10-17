@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -130,4 +130,24 @@ test('deployPrompts writes backup, updates config and generates cumulative v2 re
   assert.ok(chain.head);
   assert.equal(chain.head.receipt.version, 2);
   assert.equal(chain.head.receipt.provenance, 'installer');
+});
+
+test('deployPrompts refuses config or template drift from the reviewed preview before writes', (t) => {
+  const root = fixture(t);
+  const configPath = join(root, 'opencode.json');
+  const backupDir = join(root, 'backups');
+  const agents = Object.fromEntries(nativeRoles.map(role => [role, { description: 'old', system: 'old' }]));
+  const original = JSON.stringify({ agents });
+  writeFileSync(configPath, original);
+  const reviewed = planPromptDeployment(original, definitions, configPath);
+  writeFileSync(configPath, original + ' ');
+  assert.throws(() => deployPrompts(configPath, backupDir, { reviewedPlan: reviewed }), /changed since preview/);
+  assert.equal(existsSync(backupDir), false);
+  writeFileSync(configPath, original);
+  const changedDefinitions = { ...definitions, lead: { ...definitions.lead, system: definitions.lead.system + ' changed' } };
+  assert.throws(() => deployPrompts(configPath, backupDir, {
+    reviewedPlan: reviewed,
+    deps: { loadDefinitions: () => changedDefinitions }
+  }), /changed since preview/);
+  assert.equal(existsSync(backupDir), false);
 });
