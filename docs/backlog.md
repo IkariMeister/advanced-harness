@@ -136,6 +136,15 @@ Next: Lead review of the scoped BH-020 follow-up fixes and implementation decisi
 Git, publication, merge, live configuration, or interactive-terminal actions were
 performed for the follow-up.
 
+2026-10-17 post-rebase verification (reviewer-reported): after a clean rebase of
+`feature/bh020-review-fixes` HEAD `774b407` onto `9c22de2`, typecheck passed and the
+full test suite reported **207 passed, 0 failed, 1 opt-in test skipped (208 total)**.
+The reviewer reported no findings; upstream changes and existing backlog content were
+preserved. The earlier 182-test result above remains historical, not superseded as a
+record of that earlier run. Interactive TTY smoke was not run, and the opt-in test was
+skipped; neither is waived or claimed passed. Next action: publish the authorized
+follow-up PR; no PR is open yet.
+
 Within-priority delivery order (stable IDs unchanged): **P1** BH-019, BH-009,
 BH-013, BH-006, BH-020, BH-021, BH-010; **P2** BH-005, BH-012, BH-017,
 BH-004, BH-007, BH-008, BH-011; **P3** BH-014. **Deferred:** BH-015,
