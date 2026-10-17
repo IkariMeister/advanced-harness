@@ -34,6 +34,15 @@ material scope or approach change returns to the human. Findings are accepted or
 discarded individually or in an explicitly listed batch; acceptance authorizes only
 the corresponding fix.
 
+On interruption or context loss, preserve existing local/remote work untouched. Operator
+inspects local Git/worktree and External inspects remote/service state read-only. Lead
+presents the resume checklist, marks missing approvals unconfirmed (never inferred from
+existing worktree diffs, commits, child reports, or dated notes), and obtains explicit
+human confirmation before resuming. On uncertain external or local mutations (push, PR/issue
+operations, transitions, comments, cleanup), inspect actual state read-only before retry:
+record verified completion without repeating the mutation, or report incomplete/diverged/
+inconclusive state and wait for human confirmation before retrying or repairing.
+
 ## Start a Jira issue
 
 **Inputs:** Jira issue key/URL; confirmed human user identity in Jira; current

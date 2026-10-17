@@ -22,9 +22,10 @@ The obsolete approval controller and integration spike have been removed. Native
 - Material plan/scope changes require renewed human approval. An accepted finding authorizes only its corresponding fix; a material approach change still returns to the human.
 - Final approval concerns the current implementation and verification results, and authorizes External to push/open the PR. Later material changes require renewed approval; only a human merges.
 - Conversational exceptions must identify the specific skipped requirement. Never report a waived check as passed or treat a blanket approval as permission for unrelated future work.
-- On interruption or lost approval context, summarize current Git/service state and ask before resuming. Do not retry an uncertain external action until its actual outcome is inspected.
+- On interruption, compaction, or lost context, preserve existing local and remote work untouched. Operator inspects local Git/worktree state (branch, HEAD, status, diffs, commits) and External inspects remote/service state (remote ref, PR, Jira) read-only. Lead presents the resume checklist, marks missing or lost conversational approvals as unconfirmed, and waits for explicit human confirmation before resuming. Existing diffs, commits, child claims, or dated notes never imply plan, fix, publishing, or cleanup approval. Return any material plan change to the human.
+- Before retrying any uncertain external or local mutation (such as git push, gh PR/issue/workflow operations, Jira transitions/comments, or worktree cleanup), inspect actual state read-only through its owner. If inspection confirms the mutation already completed as approved, record the verified outcome without repeating the write. If inspection shows it did not complete, partially applied, diverged, or remains inconclusive, report the exact observed state versus expected state to Lead and wait for explicit human confirmation before retrying or repairing.
 
-These are agent instructions, **not deterministic security enforcement**. OpenCode permission dialogs govern tool access, not plan state. Shell/MCP can perform powerful operations; role prompts and command patterns do not create a sandbox or exactly-once execution guarantee.
+These are agent instructions, **not deterministic security enforcement**. OpenCode permission dialogs govern tool access, not plan state. Shell/MCP can perform powerful operations; role prompts and command patterns do not create a sandbox, automatic recovery engine, workflow database, or exactly-once execution guarantee.
 
 ## Roles and access
 
@@ -96,7 +97,7 @@ Reusing a clearly matching artifact is useful, but advanced cache manifests, dur
 
 Reusable MCP connections/agent permissions and default GitHub/Jira/design choices are global. Repository identifiers, chosen optional services, Jira mappings, Android commands, and device/shared-path choices live only in project AGENTS.md or explicitly referenced context. There is no required separate project JSON profile. Existing profiles remain intact until migration is explicitly approved. See [configuration](configuration.md).
 
-The Lead checklist includes feature/issue, worktree, latest plan and approval decision, implementation progress, required checks/results, findings and decisions, final publishing approval, PR, and cleanup. Summarize it before compaction/interruption. Missing or conflicting context means ask, not infer approval.
+The Lead checklist includes feature/issue, worktree, latest plan and approval decision, implementation progress, required checks/results, findings and decisions, final publishing approval, PR, and cleanup. Summarize it before compaction/interruption. When resuming after an interruption or compaction, inspect actual state read-only, present the checklist with missing approvals marked unconfirmed, and obtain explicit human confirmation before resuming work. Missing or conflicting context means ask, not infer approval.
 
 Use one agreed `MEMORY.md` outside application worktrees, preferably in a visible project-data folder under `$HOME/Projects`. Operator maintains it with source/scope/confirmation labels and deduplication. Confirm additions to `AGENTS.md`; do not store secrets or operational artifacts in feature Git.
 

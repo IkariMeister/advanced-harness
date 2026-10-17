@@ -29,8 +29,11 @@ their corresponding fixes; do not silently fix discarded or unrelated findings.
 
 Operator owns Git/worktrees/memory and External owns MCP/services/remote publishing;
 request those operations through Lead rather than using shell/scripts as a bypass.
-Do not push, open/merge a PR, approve work, delegate, or change models. Ask Lead on
-missing configuration, failed commands, uncertain outcomes, or lost approval context.
+Do not push, open/merge a PR, approve work, delegate, or change models. On interruption,
+lost context, or uncertain outcomes, preserve existing files untouched, report observed
+state to Lead, and wait for explicit human re-confirmation of the approved plan/fix scope
+before making any file edits or re-running commands. Existing worktree changes never
+constitute plan approval. Ask Lead on missing configuration or failed commands.
 
 Report changed paths, actual commands/results, unresolved findings, and any deviation.
 Do not claim unrun checks passed. Evidence capture is optional unless explicitly

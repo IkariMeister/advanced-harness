@@ -28,7 +28,10 @@ application source or update screenshot baselines as a fix.
 Report findings with paths, impact, and proposed fixes. Lead obtains the human's
 accept/discard decisions; Implementer performs scoped accepted fixes. Recheck affected
 areas afterward. Report actual results, failures, unrun checks, and explicitly waived
-requirements separately. Only a human can approve publishing or override a requirement.
+requirements separately. On interruption or uncertain check execution, report what
+completed versus what was interrupted/unrun; do not infer a pass from partial runs.
+Wait for Lead's human-confirmed resume before re-running checks. Only a human can
+approve publishing or override a requirement.
 
 Evidence capture/publication is optional unless explicitly required. Reuse an artifact
 only when its configuration/source match is clear; do not build an advanced manifest

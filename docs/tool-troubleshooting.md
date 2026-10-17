@@ -68,7 +68,10 @@ authorization, not plan approval.
 Stop repeating self-report probes as proof. Record the evidence and uncertainty,
 then propose the smallest next action. A version probe does not authenticate a
 repository or authorize pushing, PR creation, merging, or application commands.
-Inspect remote state before retrying any uncertain publishing operation.
+Inspect remote and local state read-only before retrying any uncertain publishing,
+service mutation, or cleanup operation. Record verified completion without repeating
+the write, or report observed state to Lead and wait for explicit human confirmation
+before retrying.
 
 ## Source changes versus installed prompts
 

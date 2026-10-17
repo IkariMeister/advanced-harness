@@ -88,7 +88,7 @@ invented. Links point to the current implementation/specification.
 | BH-007 | P2 | Optional Jira end-to-end validation | Enable/authenticate only with approval; validate a selected project's mapping |
 | BH-008 | P2 | Optional design integrations | Validate one selected Figma/Stitch connection/tools; no silent fallback |
 | BH-009 | P1 | Effective runtime tools/permissions | Delegated smoke passed; approved source guidance/regressions implemented; live prompt deployment and broader ownership validation remain |
-| BH-010 | P1 | Interruption, resume, and uncertain operations | Pilot human-confirmed resume and inspect-before-retry behavior |
+| BH-010 | P1 | Interruption, resume, and uncertain operations | Hardened prompt/command/doc contracts and regression tests implemented; disposable sandbox pilot verified; awaiting review and final publishing approval |
 | BH-011 | P2 | macOS/LiteLLM portability | Obtain real deployment/reasoning mappings and run a macOS pilot |
 | BH-012 | P2 | Shared-memory/bootstrap/consolidation pilot | Validate agreed paths, serialized updates, and approved rule promotion |
 | BH-013 | Complete (implementation/verification; PR open) | Setup UX and discovery improvements | PR #5 OPEN: https://github.com/IkariMeister/advanced-harness/pull/5; head `feature/bh013` at `97c45300c1f454aadb128607c9f214483f2d157d`; merge pending/unverified |
@@ -820,11 +820,54 @@ shared credentials/worktrees or the host itself. No cleanup is authorized here.
 
 ## BH-010 — Interruption/resume and uncertain external outcomes
 
-Pilot a context loss/interruption: Lead summarizes state and asks before resuming.
-Verify that missing approval context is not invented, material plan changes return to
-the human, and uncertain external operations are inspected before any retry. Record
-results for plan approval, finding decisions, final publishing approval, and cleanup.
-Do not promise automatic recovery, exactly-once mutations, or a new workflow database.
+2026-10-17 implementation & pilot verification update:
+Hardened conversational interruption/resume and inspect-before-retry specifications
+across native agent templates (`agents/lead.md`, `agents/operator.md`, `agents/external.md`,
+`agents/implementer.md`, `agents/reviewer.md`, `agents/qa.md`), all five workflow commands
+(`.opencode/commands/*.md`), and documentation (`docs/opencode-native-workflow.md`,
+`docs/task-workflows.md`, `docs/tool-troubleshooting.md`, `README.md`).
+
+Key rules codified:
+- On interruption, compaction, or lost context, preserve existing local and remote work
+  untouched. Operator inspects local Git/worktree state (branch, HEAD, status, diffs, commits)
+  and External inspects remote/service state read-only.
+- Lead presents the resume checklist (issue/feature/worktree, plan & approval status,
+  progress, checks/results, findings/decisions, final approval, PR, cleanup), marking any
+  missing conversational approvals as unconfirmed. Approvals are never inferred from existing
+  diffs, commits, child reports, or dated notes.
+- Material plan changes must return to the human for explicit approval before proceeding.
+- Uncertain external or local mutations (git push, gh PR/issue/comment/review/workflow,
+  Jira transitions/comments/creations, worktree cleanup) require read-only inspection first:
+  if inspection confirms the mutation already completed cleanly as approved, record the
+  verified result without repeating the write; if incomplete, partially applied, diverged,
+  or inconclusive, report exact observed state vs. expected state to Lead and wait for
+  explicit human confirmation before retrying or repairing.
+- No automatic recovery engine, workflow database, or exactly-once mutation claim.
+
+Automated regression coverage:
+- Added assertions in `test/native-agents.test.ts` and `test/workflow-commands.test.ts`.
+- Verification: `npm run typecheck` passed (exit 0); focused test suite passed (21/21);
+  full automated test suite passed (169 passed, 0 failed, 1 opt-in live test skipped);
+  `git diff --check` passed clean.
+
+Bounded disposable sandbox pilot results:
+- Disposable local Git repository with a bare origin remote was prepared in a temporary
+  directory.
+- Scenario A (interruption during implementation): verified that local worktree edits
+  and in-flight commits are preserved untouched, unpushed commits ahead of origin and
+  uncommitted working tree modifications are reported read-only, and approval is marked
+  unconfirmed rather than inferred from the present code changes.
+- Scenario B (uncertain push - Case 1: already reached remote): read-only `git ls-remote`
+  confirmed remote ref equaled local HEAD (`af29728`), allowing the operation to be recorded
+  as verified without repeating the push.
+- Scenario B (uncertain push - Case 2: incomplete/not pushed): read-only `git ls-remote`
+  detected local HEAD (`549e5f7`) diverged from remote HEAD (`af29728`), stopping without
+  retrying and reporting the unpushed commit to Lead for human confirmation.
+- Disposable sandbox was completely cleaned up after test completion.
+
+Delivery state: implementation and local verification complete; review and final human
+publishing approval pending.
+
 
 ## BH-011 — macOS and LiteLLM
 
