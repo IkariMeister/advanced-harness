@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export type MemoryEntry = {
@@ -43,13 +43,13 @@ const SECRET_PATTERNS = [
   /github_pat_[A-Za-z0-9_]{20,}/i,
   /sk-[A-Za-z0-9_-]{20,}/i,
   /bearer\s+[A-Za-z0-9_\-.]{20,}/i,
-  /begin\s+(?:rsa|openssh|dsa|ec|private)\s+key/i,
-  /(?:api[_-]?key|password|secret|token)\s*[:=]\s*['"][^\s'"]{8,}['"]/i,
+  /-----\s*begin\s+(?:(?:rsa|openssh|dsa|ec|encrypted)\s+)?private\s+key\s*-----/i,
+  /(?:api[_-]?key|password|secret|token)\s*[:=]\s*(?:['"][^\s'"]{8,}['"]|[^\s,;]{8,})/i,
   /[a-zA-Z]+:\/\/[^/\s:@]+:[^/\s:@]+@[^/\s]+/i,
 ];
 
 const LOCAL_PATH_PATTERNS = [
-  /(?:[a-zA-Z]:\\|\/)(?:Users|home)[\\/][^\\/\s]+[\\/](?:Projects[\\/])?advanced-harness-(?:worktrees|data)[\\/]/i,
+  /(?:[a-zA-Z]:\\|\/)(?:Users|home)[\\/][^\\/\s]+[\\/](?:Projects[\\/])?(?:advanced-harness-(?:worktrees|data)|[^\\/\s]*(?:worktree|worktrees)[^\\/\s]*|worktrees?)[\\/]/i,
   /\.opencode[\\/]harness\.[a-z0-9.]+/i,
 ];
 
@@ -154,6 +154,11 @@ export function validateMemoryEntry(entry: MemoryEntry): void {
   if (!entry || typeof entry !== 'object') {
     throw new Error('Memory entry must be an object.');
   }
+  for (const [label, value] of [['source', entry.source], ['scope', entry.scope], ['confirmation', entry.confirmation], ['fact', entry.fact]] as const) {
+    if (typeof value === 'string' && /[\r\n]/.test(value)) {
+      throw new Error(`Memory entry ${label} must not contain raw newlines.`);
+    }
+  }
   const source = entry.source?.trim();
   const scope = entry.scope?.trim();
   const confirmation = entry.confirmation?.trim();
@@ -163,7 +168,9 @@ export function validateMemoryEntry(entry: MemoryEntry): void {
   if (!scope) throw new Error('Memory entry scope cannot be empty.');
   if (!confirmation) throw new Error('Memory entry confirmation cannot be empty.');
   if (!fact) throw new Error('Memory entry fact cannot be empty.');
-
+  for (const [label, value] of [['source', source], ['scope', scope], ['confirmation', confirmation]] as const) {
+    if (/[\r\n;\]]/.test(value)) throw new Error(`Memory entry ${label} contains unsupported delimiters or raw newlines.`);
+  }
   const combined = `${source} ${scope} ${confirmation} ${fact}`;
   for (const pattern of SECRET_PATTERNS) {
     if (pattern.test(combined)) {
@@ -312,33 +319,36 @@ export function writeSharedMemorySerialized(
   baselineHash: string | undefined
 ): { success: boolean; hash: string } {
   const target = resolve(memoryPath);
-  const current = readSharedMemory(target);
-
-  if (baselineHash !== undefined && current.hash !== baselineHash) {
-    throw new Error('Concurrent modification detected on shared MEMORY.md. Baseline hash does not match current file on disk.');
-  }
-
-  const deduplicated = deduplicateMemoryEntries(entries);
-  const formatted = formatSharedMemory(deduplicated);
-  const newHash = createHash('sha256').update(formatted).digest('hex');
-
   const parent = dirname(target);
-  if (!existsSync(parent)) {
-    mkdirSync(parent, { recursive: true });
+  if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
+  const lockPath = `${target}.lock`;
+  let lockFd: number;
+  try { lockFd = openSync(lockPath, 'wx'); }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('Concurrent modification detected on shared MEMORY.md. Another writer holds the lock.');
+    throw err;
   }
-
-  const tempPath = join(parent, `.MEMORY.${process.pid}.${Date.now()}.tmp`);
+  const tempPath = join(parent, `.MEMORY.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
   try {
+    const current = readSharedMemory(target);
+    if (baselineHash !== undefined && current.hash !== baselineHash) {
+      throw new Error('Concurrent modification detected on shared MEMORY.md. Baseline hash does not match current file on disk.');
+    }
+    const deduplicated = deduplicateMemoryEntries(entries);
+    const formatted = formatSharedMemory(deduplicated);
+    const newHash = createHash('sha256').update(formatted).digest('hex');
     writeFileSync(tempPath, formatted, 'utf8');
     renameSync(tempPath, target);
+    return { success: true, hash: newHash };
   } catch (err) {
     if (existsSync(tempPath)) {
       try { unlinkSync(tempPath); } catch {}
     }
     throw err;
+  } finally {
+    closeSync(lockFd);
+    try { unlinkSync(lockPath); } catch {}
   }
-
-  return { success: true, hash: newHash };
 }
 
 export function planRulePromotion(options: {
@@ -366,6 +376,9 @@ export function planRulePromotion(options: {
         if (pattern.test(ruleText)) {
           throw new Error('Promoted rule contains machine-local worktree or operational paths. Rejecting promotion into AGENTS.md.');
         }
+      }
+      if (/(?:^|[^\w])(?:[a-z]:[\\/](?:Users|Documents and Settings)[\\/][^\\/]+|\\\\[^\\]+\\[^\\]+|\/(?:Users|home)\/[^/\s]+)(?:[\\/]|[\s.,;:!?)]|$)/i.test(ruleText)) {
+        throw new Error('Promoted rule contains machine-local worktree or operational paths. Rejecting promotion into AGENTS.md.');
       }
       promotedRules.push(`- ${ruleText}`);
       promotedCount++;
