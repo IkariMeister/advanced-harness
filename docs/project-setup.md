@@ -20,7 +20,7 @@ Project settings are stored **only in project context**: `AGENTS.md` by default,
 - **Worktree parent**: defaults to `$HOME/Projects/advanced-harness-worktrees/<project-id>`.
 - **Shared memory**: defaults to `$HOME/Projects/advanced-harness-data/<project-id>/MEMORY.md`. The ID includes a short canonical-path hash to avoid collisions between different checkouts with the same name. Clones intended to share memory can explicitly select the same agreed path.
 
-Worktree and memory paths must be outside the app checkout, must not contain it, and shared memory must not sit within the worktree parent. Paths are saved only: no worktrees, branches, memory files, devices, or operational directories are created.
+Worktree and memory paths must be outside the app checkout, must not contain it, and shared memory must not sit within the worktree parent. Paths are saved only: setup creates no worktrees, branches, memory files, devices, or operational directories. Task bootstrap later creates the feature worktree and initializes `MEMORY.md` without blocking on existing worktrees unless target branch or worktree names collide.
 
 ## Gradle inspection and suggestions
 

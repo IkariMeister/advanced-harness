@@ -169,7 +169,7 @@ export function updateProjectInstructions(original: string | undefined, profile:
     'These embedded settings are the project context source; legacy .opencode/harness.project.json files are not loaded automatically.',
     'Use the settings below before planning. Commands are confirmed choices, not verified results or authorization to execute them.',
     'Run commands in the active application worktree root. Ask on instruction conflicts, missing prerequisites, or unconfigured checks; missing checks are not passed or waived.',
-    'Operator owns local Git/worktrees and shared MEMORY.md; bootstrap creation requires approval. Shared memory stays outside application worktrees.',
+    'Operator owns local Git/worktrees and shared MEMORY.md. Task bootstrap prepares the worktree and initializes shared memory without blocking on other worktrees. Shared memory stays outside application worktrees.',
     'Screenshots/video/logcat evidence remain optional unless explicitly required. Implementation and publishing require separate conversational approvals.',
   ]);
 }

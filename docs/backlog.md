@@ -92,7 +92,7 @@ invented. Links point to the current implementation/specification.
 | BH-009 | P1 | Effective runtime tools/permissions | Delegated smoke passed; approved source guidance/regressions implemented; live prompt deployment and broader ownership validation remain |
 | BH-010 | Complete (implementation/verification; PR open) | Interruption, resume, and uncertain operations | PR #36 OPEN: https://github.com/IkariMeister/advanced-harness/pull/36; head `feature/bh010` at `3d09565`; merge pending/unverified |
 | BH-011 | P2 | macOS/LiteLLM portability | Obtain real deployment/reasoning mappings and run a macOS pilot |
-| BH-012 | P2 | Shared-memory/bootstrap/consolidation pilot | Validate agreed paths, serialized updates, and approved rule promotion |
+| BH-012 | P2 | Shared-memory/bootstrap/consolidation pilot | Implemented pure TS module, prompt/command/doc alignment, and multi-worktree tests; 213 tests pass; review and final implementation approval pending |
 | BH-013 | Complete (implementation/verification; PR open) | Setup UX and discovery improvements | PR #5 OPEN: https://github.com/IkariMeister/advanced-harness/pull/5; head `feature/bh013` at `97c45300c1f454aadb128607c9f214483f2d157d`; merge pending/unverified |
 | BH-014 | P3 | Optional evidence and practical reuse | Add only when pilot needs justify it; never silently make it a gate |
 | BH-015 | Deferred | Multi-squad shared-repository workflows | Agree per-session routing/concurrency rules before implementation |
@@ -925,12 +925,16 @@ setup, OAuth, and project-context portability on macOS. Never copy Windows crede
 
 ## BH-012 — Shared memory, bootstrap, and approved instruction consolidation
 
-Paths are recorded, not proof that worktrees/memory were created or permissions work.
-Validate human-approved Operator bootstrap under visible `$HOME/Projects`, one agreed
-shared MEMORY.md across feature worktrees, serialized writes, source/scope/confirmation
-labels, deduplication, and conflict handling. Ask which observations should become
-project rules; approve AGENTS.md changes before publication. Do not store secrets or
-operational artifacts in application Git. Concurrent squads require BH-015 first.
+Implementation and verification status (2026-10-17):
+- Implemented pure TypeScript shared-memory, bootstrap readiness, and instruction consolidation module `src/shared-memory.ts`:
+  - Bootstrap & path validation (`validateBootstrapContext`, `checkBootstrapReadiness`): enforces worktree and memory paths outside checkout, `memoryPath` ending in `MEMORY.md` outside worktree parent, allows existing worktrees and untouched canonical changes without blocking bootstrap, stopping only on missing/invalid config or target branch/worktree collision.
+  - Shared `MEMORY.md` parsing, formatting, and validation (`parseSharedMemory`, `formatSharedMemory`, `validateMemoryEntry`): structured `- [Source: <source>; scope: <scope>; confirmation: <confirmation>] <fact>` under `# Shared Operator memory`, rejects credentials/tokens (`ghp_`, `sk-`, `Bearer `, private keys, passwords, URL credentials) and raw operational log dumps.
+  - Deduplication and conflict handling (`deduplicateMemoryEntries`, `detectMemoryConflicts`): idempotent normalized deduplication; order of precedence **Current Human Decision > `AGENTS.md` > `MEMORY.md`**; surfaces same-scope contradictory facts (unless explicit replacement) and AGENTS instruction violations to the human via Lead rather than silently overwriting.
+  - Serialized atomic writes (`writeSharedMemorySerialized`): baseline hash comparison refusing concurrent modifications, temp file write and atomic `renameSync`.
+  - Instruction consolidation (`planRulePromotion`, `applyApprovedRulePromotion`): handles explicit dispositions (`promote`, `keep-memory`, `discard`), unified diff generation, rejects secrets and machine-local worktree/operational paths from promotion, preserves embedded harness JSON markers, and requires explicit human approval before writing to `AGENTS.md`.
+- Aligned embedded project instructions in `src/project-setup.ts`, native agent templates (`agents/operator.md`, `agents/lead.md`), workflow commands (`.opencode/commands/start-issue.md`), and documentation (`README.md`, `docs/opencode-native-workflow.md`, `docs/project-setup.md`, `docs/task-workflows.md`).
+- Added comprehensive unit tests in `test/shared-memory.test.ts` (multi-worktree fixture, concurrent write refusal, bootstrap readiness, entry parsing, secret/dump rejection, deduplication, conflict detection, rule promotion diffs and approval gate) and contract tests in `test/native-agents.test.ts` and `test/workflow-commands.test.ts`.
+- Verification: `npm run typecheck` passed cleanly; `npm test` passed (214 tests: 213 passed, 0 failed, 1 opt-in live test skipped). Local feature worktree `C:\Users\jcgse\Projects\advanced-harness-worktrees\feature-bh012` is clean. Independent review and final human implementation approval before push and PR opening remain pending. No publication, remote changes, or merge occurred.
 
 ## BH-013 — Setup UX and bounded discovery improvements
 
