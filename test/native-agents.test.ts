@@ -171,3 +171,66 @@ test('permission documentation separates narrow External ALLOW from conversation
   assert.match(workflow, /other shell\/gh operations remain ASK/);
   assert.match(configuration, /MCP tool mappings stay ASK|preserves ASK for unresolved MCP tool mappings/);
 });
+
+test('BH-010: native agent templates enforce non-destructive resume and unconfirmed approval reporting', () => {
+  const lead = template('lead');
+  const operator = template('operator');
+  const external = template('external');
+  const implementer = template('implementer');
+  const reviewer = template('reviewer');
+  const qa = template('qa');
+
+  // Lead resume checklist, unconfirmed status, and non-inference
+  const leadClean = lead.replace(/\s+/g, ' ');
+  assert.match(leadClean, /On interruption, compaction, or lost context/);
+  assert.match(leadClean, /preserve existing local and remote work untouched/);
+  assert.match(leadClean, /resume checklist/);
+  assert.match(leadClean, /unconfirmed/);
+  assert.match(leadClean, /never infer plan, fix, publishing, or cleanup approval from existing diffs, commits, child reports, or dated notes/);
+  assert.match(leadClean, /Wait for explicit human confirmation before resuming/);
+  assert.match(leadClean, /return any material plan change to the human/);
+
+  // Operator non-destructive read-only inspection and preservation
+  const operatorClean = operator.replace(/\s+/g, ' ');
+  assert.match(operatorClean, /On interruption or context loss/);
+  assert.match(operatorClean, /preserve uncommitted and unpushed work untouched/);
+  assert.match(operatorClean, /wait for Lead's human-confirmed resume/);
+
+  // Implementer waiting for human re-confirmation on lost context
+  const implementerClean = implementer.replace(/\s+/g, ' ');
+  assert.match(implementerClean, /On interruption, lost context, or uncertain outcomes, preserve existing files untouched/);
+  assert.match(implementerClean, /wait for explicit human re-confirmation/);
+  assert.match(implementerClean, /Existing worktree changes never constitute plan approval/);
+
+  // Reviewer and QA reporting observed vs unrun without claiming pass
+  const reviewerClean = reviewer.replace(/\s+/g, ' ');
+  assert.match(reviewerClean, /On interruption or uncertain check execution/);
+  assert.match(reviewerClean, /do not infer a pass from partial runs/);
+  assert.match(reviewerClean, /Wait for Lead's human-confirmed resume/);
+  const qaClean = qa.replace(/\s+/g, ' ');
+  assert.match(qaClean, /On interruption or uncertain verification execution/);
+  assert.match(qaClean, /wait for Lead's human-confirmed resume/);
+});
+
+test('BH-010: native templates and docs enforce two-branch inspect-before-retry rule for uncertain mutations', () => {
+  const lead = template('lead');
+  const operator = template('operator');
+  const external = template('external');
+  const workflow = readFileSync(new URL('../docs/opencode-native-workflow.md', import.meta.url), 'utf8');
+  const taskWorkflows = readFileSync(new URL('../docs/task-workflows.md', import.meta.url), 'utf8');
+  const troubleshooting = readFileSync(new URL('../docs/tool-troubleshooting.md', import.meta.url), 'utf8');
+
+  for (const raw of [lead, operator, external, workflow, taskWorkflows, troubleshooting]) {
+    const text = raw.replace(/\s+/g, ' ');
+    assert.match(text, /inspect.*read-only|read-only.*inspect/i);
+    assert.match(text, /already completed|verified outcome|verified completion|verified result/i);
+    assert.match(text, /without repeating/i);
+    assert.match(text, /wait for (?:explicit )?human confirmation before (?:retrying|repairing)|wait for human confirmation before (?:retrying|repairing)|wait for (?:explicit )?human confirmation before retrying/i);
+  }
+
+  // Disclaims automatic recovery or workflow database
+  for (const text of [lead, operator, workflow]) {
+    assert.match(text, /workflow database|workflow engine/);
+    assert.match(text, /automatic recovery/);
+  }
+});

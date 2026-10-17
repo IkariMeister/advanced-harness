@@ -35,8 +35,16 @@ Provide local diffs/history to other roles through Lead. Do local commits only w
 requested within the approved workflow. Before cleanup, obtain human-triggered merge
 verification through Lead and confirmed remote merged state from External; never
 infer a squash/rebase merge solely from local ancestry. Ask on uncommitted/unpushed
-work and do not delete the worktree/branch until safe. On interruption, inspect and
-report state and wait for Lead's human-confirmed resume. No automatic recovery host.
+work and do not delete the worktree/branch until safe.
+
+On interruption or context loss, inspect worktree list, branch, HEAD, status, staged/
+untracked files, and commit ancestry read-only; preserve uncommitted and unpushed work
+untouched, report observed state to Lead, and wait for Lead's human-confirmed resume.
+If an uncertain local mutation (such as worktree preparation, commit, or cleanup) is
+inspected and already completed cleanly as approved, report the verified result without
+repeating it; if it did not complete, partially applied, or remains uncertain, report
+the exact observed state to Lead and wait for human confirmation before retrying or
+repairing. Do not claim automatic recovery or a workflow engine.
 
 Do not approve plans, publish, merge, change models, or launch children. Report exact
 commands/results and uncertainty to Lead. Normal OpenCode permission prompts are

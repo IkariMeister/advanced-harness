@@ -48,3 +48,29 @@ test('workflow commands preserve their expected handoff behavior', async () => {
   assert.match(grill, /one focused question at a time/);
   assert.match(grill, /Do not automatically invoke a command/);
 });
+
+test('BH-010: workflow commands enforce interruption handling and inspect-before-retry rules', async () => {
+  const startIssue = await readFile(new URL('start-issue.md', root), 'utf8');
+  assert.match(startIssue, /On interruption or context loss, preserve existing local and remote state untouched/);
+  assert.match(startIssue, /Operator inspects local Git\/worktree and External inspects remote\/service state read-only/);
+  assert.match(startIssue, /marks missing approvals unconfirmed, and waits for explicit human confirmation before resuming/);
+  assert.match(startIssue, /record verified completion without repeating the write, or report incomplete\/diverged\/inconclusive state and wait for human confirmation before retrying/);
+
+  const review = await readFile(new URL('review-pr.md', root), 'utf8');
+  assert.match(review, /On interruption or uncertain posting, preserve existing state untouched and inspect actual PR comments\/reviews read-only/);
+  assert.match(review, /record verified posted feedback without duplicating comments/);
+  assert.match(review, /wait for explicit human confirmation before retrying/);
+
+  const defect = await readFile(new URL('report-defect.md', root), 'utf8');
+  assert.match(defect, /On interruption or uncertain bug creation\/update, preserve existing state and inspect parent and child issues read-only/);
+  assert.match(defect, /record verified created issues without duplicating tickets/);
+  assert.match(defect, /wait for explicit human confirmation before retrying/);
+
+  const debt = await readFile(new URL('assess-debt.md', root), 'utf8');
+  assert.match(debt, /On interruption or uncertain issue creation, preserve existing state and inspect destination issues read-only/);
+  assert.match(debt, /record verified created issues without duplicating tickets/);
+  assert.match(debt, /wait for explicit human confirmation before retrying/);
+
+  const grill = await readFile(new URL('grill-me.md', root), 'utf8');
+  assert.match(grill, /On interruption or lost context, summarize clarified answers and ask before resuming/);
+});
