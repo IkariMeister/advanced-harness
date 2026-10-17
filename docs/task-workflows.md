@@ -57,9 +57,10 @@ instructions.
 2. External assigns the Jira issue to that confirmed human user. If identity is unknown,
     stop and ask; do not guess or leave the issue unassigned while proceeding.
 3. Operator inspects the current repository, instructions, base branch, existing
-    worktrees, and unrelated changes, then creates an isolated task worktree. Resolve
-    unsafe or conflicting bootstrap context before proceeding; stop and ask if setup is
-    unsafe or the task worktree cannot be prepared.
+    worktrees, and unrelated changes, then creates an isolated task worktree and
+    initializes shared `MEMORY.md` if missing. Other existing worktrees and untouched
+    canonical changes do not block bootstrap; stop and ask only on missing/invalid settings,
+    target branch/worktree collision, or creation errors.
 4. External transitions the actual issue to the project's equivalent of **In Progress**.
     External reads the issue and linked parent for context, not scope expansion. Unavailable
     context, uncertain permissions, or an unclear/unsafe transition are blockers: stop
@@ -80,9 +81,12 @@ instructions.
    only after that approval. On PR open, transition Jira to In Review if possible; ask
    about ambiguous mappings, permissions, or uncertain transition outcomes. Never
    invent a Done transition or other unconfirmed lifecycle behavior. Agents never merge.
-10. A human's confirmation that the PR is merged triggers External to verify the merge
-    and is itself authorization for Operator to perform safe final cleanup after safety
-    checks; a detected merge alone is not. External reports whether the remote branch
+10. Evaluate candidate memory learnings once for approved consolidation into `AGENTS.md`
+    (promote, keep in memory, or discard); approve resulting diff before publication,
+    rejecting secrets and operational paths. A human's confirmation that the PR is merged
+    triggers External to verify the merge and is itself authorization for Operator to perform
+    safe final cleanup after safety checks; a detected merge alone is not. External reports
+    whether the remote branch
     exists; do not delete it. Operator checks for uncommitted/unpushed work and other
     unsafe or uncertain conditions, then removes the task worktree and local feature
     branch only if safe. Stop and ask if anything is dirty, unpushed, or uncertain;

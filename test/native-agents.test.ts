@@ -234,3 +234,27 @@ test('BH-010: native templates and docs enforce two-branch inspect-before-retry 
     assert.match(text, /automatic recovery/);
   }
 });
+
+test('BH-012: Lead and Operator enforce bootstrap rules, conflict precedence, and approved rule promotion', () => {
+  const lead = template('lead').replace(/\s+/g, ' ');
+  const operator = template('operator').replace(/\s+/g, ' ');
+
+  // Conflict precedence
+  assert.match(lead, /Precedence is Current Human Decision > AGENTS\.md > MEMORY\.md/);
+  assert.match(operator, /(?:Order of precedence|Precedence) is Current Human Decision > AGENTS\.md > MEMORY\.md/);
+
+  // Non-blocking bootstrap
+  assert.match(lead, /Operator creates task worktrees without blocking on other existing worktrees unless target branch\/worktree collides/);
+  assert.match(operator, /Other existing worktrees and untouched canonical changes do not block bootstrap/);
+  assert.match(operator, /stop and ask Lead only if settings are missing\/invalid, target branch\/worktree already exists, or creation fails/);
+
+  // Serialized memory updates and rejection of secrets/logs
+  assert.match(operator, /Write serialized updates using baseline verification/);
+  assert.match(operator, /reject secrets or operational log dumps/);
+
+  // Rule consolidation
+  assert.match(lead, /Present candidate memory learnings for individual or batch disposition/);
+  assert.match(lead, /Promoted rules require an explicit diff preview and human approval before publication, rejecting secrets or local operational paths and preserving embedded sections/);
+  assert.match(operator, /Evaluate candidate learnings once for approved consolidation into AGENTS\.md/);
+  assert.match(operator, /Never promote secrets or machine-local worktree paths/);
+});

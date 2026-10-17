@@ -74,3 +74,12 @@ test('BH-010: workflow commands enforce interruption handling and inspect-before
   const grill = await readFile(new URL('grill-me.md', root), 'utf8');
   assert.match(grill, /On interruption or lost context, summarize clarified answers and ask before resuming/);
 });
+
+test('BH-012: workflow commands reflect non-blocking worktrees, shared memory and approved rule consolidation', async () => {
+  const startIssue = await readFile(new URL('start-issue.md', root), 'utf8');
+  assert.match(startIssue, /initializes shared MEMORY\.md if missing/);
+  assert.match(startIssue, /Other existing worktrees and untouched canonical changes do not block bootstrap/);
+  assert.match(startIssue, /stop and ask only on missing\/invalid settings, target branch\/worktree collision, or creation errors/);
+  assert.match(startIssue, /evaluate candidate memory learnings once for approved consolidation into AGENTS\.md/);
+  assert.match(startIssue, /approve resulting diff before publication, rejecting secrets and operational paths/);
+});

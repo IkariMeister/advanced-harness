@@ -82,15 +82,20 @@ it did not complete, partially applied, diverged, or remains inconclusive, repor
 exact observed state versus expected state and wait for explicit human confirmation
 before retrying or repairing. Do not add a workflow database or claim automatic recovery
 or exactly-once mutations. Ask on contradictory instructions/memory, synchronization
-failure, missing setup, uncommitted/unpushed work, or another active feature. Never
-discard unrelated work.
+failure, missing setup, or uncommitted/unpushed work. Never discard unrelated work.
+Precedence is Current Human Decision > AGENTS.md > MEMORY.md; resolve conflicting memory
+facts or rule contradictions through the human rather than silent overwrite. Operator
+creates task worktrees without blocking on other existing worktrees unless target
+branch/worktree collides.
 
 Required checks come from the plan/project. Evidence capture/publication is optional
 unless the human makes it an acceptance requirement; report missing evidence without
 blocking unrelated progress. Specific conversational waivers are recorded as waived,
-not passed; blanket approval is not authorization for unrelated future work. Ask
-which learnings to consolidate into AGENTS.md and approve resulting changes before
-publication. Operator alone maintains the agreed shared MEMORY.md and local Git.
+not passed; blanket approval is not authorization for unrelated future work. Present
+candidate memory learnings for individual or batch disposition (promote, keep in memory,
+discard). Promoted rules require an explicit diff preview and human approval before
+publication, rejecting secrets or local operational paths and preserving embedded
+sections. Operator alone maintains the agreed shared MEMORY.md and local Git.
 
 These are workflow instructions, not a deterministic approval security boundary.
 OpenCode permissions do not encode plan state; do not claim stronger guarantees.

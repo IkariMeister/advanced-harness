@@ -79,13 +79,13 @@ Keep customizable role prompts and the agreed model/reasoning table. Validate mo
 
 ## Required workflow, optional extras
 
-1. Operator confirms repository/base branch, `AGENTS.md`, existing features/worktrees, and an agreed worktree path. Ask if another active feature or unrelated changes make setup unsafe.
+1. Operator confirms repository/base branch, `AGENTS.md`, existing features/worktrees, and an agreed worktree path. Task bootstrap creates the isolated feature worktree under the configured worktree parent and initializes shared `MEMORY.md` if missing. Other existing worktrees and untouched canonical changes do not block bootstrap; stop and ask only on missing/invalid settings, target branch/worktree collision, or creation errors.
 2. Read project AGENTS.md and referenced context. External retrieves requirements from the services actually selected for this task. GitHub/Jira/design integrations are individually optional; ask about an absent service only when the task requires it. Never silently enable, substitute, or combine design sources.
 3. Researcher inspects related code; Planner supplies the plan; Lead waits for human approval.
 4. Implementer makes approved changes and writes tests. Reviewer runs required checks; QA verifies runtime and configured E2E behavior.
 5. Lead presents findings. Human accept/discard decisions guide scoped fixes, followed by affected rechecks and renewed approval for material plan changes.
 6. Lead asks for final implementation approval. External publishes through the configured GitHub backend and updates Jira only when selected and authorized. If the requested publishing workflow lacks a service, ask rather than claiming success. Process PR feedback through the same decisions; never merge.
-7. Ask which observed learnings should become approved `AGENTS.md` changes. A human's confirmation that the PR is merged triggers External to verify merged state and authorizes Operator to clean up the task worktree and local feature branch after safety checks. Preserve the remote branch; stop and ask if work is dirty, unpushed, or uncertain.
+7. Evaluate candidate memory learnings once for approved consolidation into `AGENTS.md` (promote, keep in memory, or discard); approve resulting diff before publication, rejecting secrets and operational paths. A human's confirmation that the PR is merged triggers External to verify merged state and authorizes Operator to clean up the task worktree and local feature branch after safety checks. Preserve the remote branch; stop and ask if work is dirty, unpushed, or uncertain.
 
 Jira lifecycle updates are pre-authorized only when Jira is selected and the human approves its state mapping and update scope; synchronization failures require a human decision. When Jira is not selected, use project/task acceptance criteria. If outcome is uncertain, inspect before retrying rather than duplicating external operations. Respect GitHub's required checks and human approvals.
 
@@ -99,7 +99,7 @@ Reusable MCP connections/agent permissions and default GitHub/Jira/design choice
 
 The Lead checklist includes feature/issue, worktree, latest plan and approval decision, implementation progress, required checks/results, findings and decisions, final publishing approval, PR, and cleanup. Summarize it before compaction/interruption. When resuming after an interruption or compaction, inspect actual state read-only, present the checklist with missing approvals marked unconfirmed, and obtain explicit human confirmation before resuming work. Missing or conflicting context means ask, not infer approval.
 
-Use one agreed `MEMORY.md` outside application worktrees, preferably in a visible project-data folder under `$HOME/Projects`. Operator maintains it with source/scope/confirmation labels and deduplication. Confirm additions to `AGENTS.md`; do not store secrets or operational artifacts in feature Git.
+Use one agreed `MEMORY.md` outside application worktrees, preferably in a visible project-data folder under `$HOME/Projects`. Operator maintains it with serialized atomic writes, baseline verification, source/scope/confirmation labels, deduplication, and rejection of secrets and raw operational dumps. Precedence is **Current Human Decision > `AGENTS.md` > `MEMORY.md`**; surface conflicting facts or rule contradictions to the human via Lead rather than silently overwriting. Confirm additions to `AGENTS.md`; do not store secrets or operational artifacts in feature Git.
 
 No cross-machine unfinished-state synchronization or concurrent-feature coordinator is needed in product V1. One active feature is checked operationally, not guaranteed by a new locking daemon.
 
