@@ -88,7 +88,7 @@ invented. Links point to the current implementation/specification.
 | BH-007 | P2 | Optional Jira end-to-end validation | Enable/authenticate only with approval; validate a selected project's mapping |
 | BH-008 | P2 | Optional design integrations | Validate one selected Figma/Stitch connection/tools; no silent fallback |
 | BH-009 | P1 | Effective runtime tools/permissions | Delegated smoke passed; approved source guidance/regressions implemented; live prompt deployment and broader ownership validation remain |
-| BH-010 | P1 | Interruption, resume, and uncertain operations | Hardened prompt/command/doc contracts and regression tests implemented; disposable sandbox pilot verified; awaiting review and final publishing approval |
+| BH-010 | Complete (implementation/verification; PR open) | Interruption, resume, and uncertain operations | PR #36 OPEN: https://github.com/IkariMeister/advanced-harness/pull/36; head `feature/bh010` at `3d09565`; merge pending/unverified |
 | BH-011 | P2 | macOS/LiteLLM portability | Obtain real deployment/reasoning mappings and run a macOS pilot |
 | BH-012 | P2 | Shared-memory/bootstrap/consolidation pilot | Validate agreed paths, serialized updates, and approved rule promotion |
 | BH-013 | Complete (implementation/verification; PR open) | Setup UX and discovery improvements | PR #5 OPEN: https://github.com/IkariMeister/advanced-harness/pull/5; head `feature/bh013` at `97c45300c1f454aadb128607c9f214483f2d157d`; merge pending/unverified |
@@ -865,8 +865,9 @@ Bounded disposable sandbox pilot results:
   retrying and reporting the unpushed commit to Lead for human confirmation.
 - Disposable sandbox was completely cleaned up after test completion.
 
-Delivery state: implementation and local verification complete; review and final human
-publishing approval pending.
+Delivery state: implementation and local verification complete; PR #36 is **OPEN**,
+targeting `main`, from `feature/bh010` at `3d09565`: https://github.com/IkariMeister/advanced-harness/pull/36.
+Merge is pending and unverified. No cleanup has occurred.
 
 
 ## BH-011 — macOS and LiteLLM
