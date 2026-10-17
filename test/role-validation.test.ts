@@ -44,6 +44,52 @@ test('checkToolOwnership enforces remote git push ownership strictly for externa
   }
 });
 
+test('owned command checks reject unsupported prefixes and global options safely', () => {
+  for (const [role, command] of [
+    ['operator', 'git -C . push origin main'],
+    ['external', 'gh --repo owner/repo pr merge 123'],
+    ['external', 'gh -R owner/repo pr merge 123']
+  ] as const) {
+    const result = checkToolOwnership(role, 'shell', command);
+    assert.equal(result.allowed, false, command);
+    assert.equal(result.violation?.escalateTo, 'lead');
+  }
+  for (const role of nativeRoles) {
+    assert.equal(checkToolOwnership(role, 'shell', 'gh pr merge 123').allowed, false);
+  }
+});
+
+test('quoted owned subcommands normalize consistently for shell and execute', () => {
+  for (const action of ['shell', 'execute']) {
+    for (const quote of ['"', "'"]) {
+      const push = checkToolOwnership('operator', action, `git ${quote}push${quote} origin main`);
+      assert.equal(push.allowed, false, `${action}: quoted git push`);
+      assert.equal(push.violation?.escalateTo, 'external');
+
+      const merge = checkToolOwnership('external', action, `gh pr ${quote}merge${quote} 123`);
+      assert.equal(merge.allowed, false, `${action}: quoted gh merge`);
+      assert.equal(merge.violation?.escalateTo, 'human');
+    }
+  }
+});
+
+test('unsupported interleaved options and partial quoting fail closed for shell and execute', () => {
+  const unsafe = [
+    ['external', 'gh pr --repo owner/repo merge 123'],
+    ['external', 'gh pr -R owner/repo merge 123'],
+    ['operator', 'git pu"sh" origin main'],
+    ['external', 'gh pr mer"ge" 123'],
+    ['external', 'gh pr "merge 123']
+  ] as const;
+  for (const action of ['shell', 'execute']) for (const [role, command] of unsafe) {
+    const result = checkToolOwnership(role, action, command);
+    assert.equal(result.allowed, false, `${action}: ${command}`);
+    assert.equal(result.violation?.escalateTo, 'lead');
+  }
+  assert.equal(checkToolOwnership('external', 'shell', 'gh pr create --title test').allowed, true);
+  assert.equal(checkToolOwnership('external', 'shell', 'git push origin main').allowed, true);
+});
+
 test('checkToolOwnership enforces gh CLI ownership strictly for external', () => {
   // External is allowed gh commands
   const externalResult = checkToolOwnership('external', 'shell', 'gh pr create --title "test"');
@@ -70,6 +116,16 @@ test('checkToolOwnership enforces file editing ownership to implementer, operato
   }
 });
 
+test('operator and lead exceptions apply only to explicit context or memory files', () => {
+  assert.equal(checkToolOwnership('operator', 'edit', 'MEMORY.md').allowed, true);
+  assert.equal(checkToolOwnership('operator', 'write', 'memory/notes.md').allowed, true);
+  assert.equal(checkToolOwnership('lead', 'edit', 'AGENTS.md').allowed, true);
+  for (const resource of ['src/app.ts', 'package.json', 'docs/guide.md']) {
+    assert.equal(checkToolOwnership('operator', 'edit', resource).allowed, false, resource);
+    assert.equal(checkToolOwnership('lead', 'write', resource).allowed, false, resource);
+  }
+});
+
 test('native template definitions align with role tool ownership policies', () => {
   for (const role of nativeRoles) {
     const def = definitions[role];
@@ -84,6 +140,15 @@ test('native template definitions align with role tool ownership policies', () =
     if (role === 'external') {
       assert.ok(def.system.includes('`pr merge` is explicitly denied'));
       assert.ok(def.system.includes('`git push`'));
+      assert.ok(def.permissions.some((rule: any) => rule.action === 'webfetch' && rule.effect === 'ask'));
+      assert.ok(def.permissions.some((rule: any) => rule.action === 'websearch' && rule.effect === 'ask'));
+    }
+    if (role === 'researcher') {
+      assert.ok(!ownership.allowedCapabilities.includes('websearch'));
+      assert.ok(!ownership.allowedCapabilities.includes('webfetch'));
+      assert.ok(def.permissions.some((rule: any) => rule.action === '*' && rule.effect === 'deny'));
+      assert.ok(!def.permissions.some((rule: any) => rule.action === 'websearch'));
+      assert.ok(!def.permissions.some((rule: any) => rule.action === 'webfetch'));
     }
   }
 });
