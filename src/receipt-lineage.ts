@@ -5,11 +5,13 @@ import { assertSafeFilesystemPath, configurationField, createReceipt, modifyJson
 import { nativeRoles, type NativeReconciliationOptions, type NativeRole } from './native-installer.ts';
 import { reconcilePermissions, type AttributedRule, type PermissionRule, type ReconciliationResult } from './permission-reconciliation.ts';
 
+export type HarnessVersionStamp = { version: string; commit: string; dirty?: boolean };
 export type PermissionEvidence = { path: string[]; order: PermissionRule[]; owned: AttributedRule[]; opaque?: FieldChange };
 export type V2Receipt = Omit<InstallationReceipt, 'version' | 'status'> & {
   version: 2; id: string; status: 'pending' | 'complete';
   predecessor: { file: string; identity: string; digest: string } | null;
   permissions: PermissionEvidence[];
+  harnessVersion?: HarnessVersionStamp;
 };
 type Entry = { file: string; text: string; identity: string; digest: string; receipt: AnyReceipt };
 export type ReceiptSnapshot = { directory: string; target: string; fingerprint: string; entries: Entry[]; head?: Entry };
@@ -25,10 +27,14 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const validated = new WeakMap<object, { snapshot: ReceiptSnapshot; serialized: string }>();
 
 export function validateV2Receipt(value: unknown, target: string, allowPending = false): V2Receipt {
-  if (!record(value) || Object.keys(value).some(k => !['version', 'id', 'target', 'complete', 'status', 'provenance', 'changes', 'createdContainers', 'predecessor', 'permissions'].includes(k))) throw new Error('Unsupported v2 receipt fields.');
-  const { id, predecessor, permissions, ...base } = value;
+  if (!record(value) || Object.keys(value).some(k => !['version', 'id', 'target', 'complete', 'status', 'provenance', 'changes', 'createdContainers', 'predecessor', 'permissions', 'harnessVersion'].includes(k))) throw new Error('Unsupported v2 receipt fields.');
+  const { id, predecessor, permissions, harnessVersion, ...base } = value;
   validateLegacyReceipt({ ...base, version: 1 }, target, allowPending);
   if (value.version !== 2 || value.provenance !== 'installer' || !['pending', 'complete'].includes(String(value.status)) || typeof id !== 'string' || !uuid.test(id) || !Array.isArray(permissions)) throw new Error('Invalid v2 receipt identity/status.');
+  if (harnessVersion !== undefined) {
+    if (!record(harnessVersion) || typeof harnessVersion.version !== 'string' || !harnessVersion.version || typeof harnessVersion.commit !== 'string' || !harnessVersion.commit || Object.keys(harnessVersion).some(k => !['version', 'commit', 'dirty'].includes(k))) throw new Error('Invalid harness version stamp.');
+    if (harnessVersion.dirty !== undefined && typeof harnessVersion.dirty !== 'boolean') throw new Error('Invalid harness version stamp.');
+  }
   if (predecessor !== null && (!record(predecessor) || Object.keys(predecessor).sort().join() !== 'digest,file,identity' || typeof predecessor.file !== 'string' || basename(predecessor.file) !== predecessor.file || /[/\\]/.test(predecessor.file) || !/^native-(install|adoption)-.+\.json$/.test(predecessor.file) || typeof predecessor.identity !== 'string' || typeof predecessor.digest !== 'string' || !/^[a-f0-9]{64}$/.test(predecessor.digest))) throw new Error('Invalid predecessor reference.');
   const receipt = value as unknown as V2Receipt;
   const paths = new Set<string>();
@@ -145,7 +151,7 @@ export function receiptReconciliationOptions(snapshot: ReceiptSnapshot): NativeR
   return result;
 }
 
-export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string | undefined, after: string, plans: Partial<Record<NativeRole, ReconciliationResult>>): V2Receipt {
+export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string | undefined, after: string, plans: Partial<Record<NativeRole, ReconciliationResult>>, harnessVersion?: HarnessVersionStamp): V2Receipt {
   revalidateReceiptSnapshot(snapshot);
   const delta = createReceipt(snapshot.target, before, after), parent = snapshot.head;
   const changes = structuredClone(parent?.receipt.changes ?? []);
@@ -175,7 +181,7 @@ export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string
   }
   const containers = [...(parent?.receipt.createdContainers ?? [])];
   for (const path of delta.createdContainers) if (!containers.some(p => equal(p, path))) containers.push(path);
-  const receipt: V2Receipt = { version: 2, id: randomUUID(), target: snapshot.target, complete: true, status: 'complete', provenance: 'installer', predecessor: parent ? { file: parent.file, identity: parent.identity, digest: parent.digest } : null, changes, createdContainers: containers, permissions };
+  const receipt: V2Receipt = { version: 2, id: randomUUID(), target: snapshot.target, complete: true, status: 'complete', provenance: 'installer', predecessor: parent ? { file: parent.file, identity: parent.identity, digest: parent.digest } : null, changes, createdContainers: containers, permissions, ...(harnessVersion ? { harnessVersion } : {}) };
   return validateV2Receipt(receipt, snapshot.target);
 }
 

@@ -98,7 +98,7 @@ invented. Links point to the current implementation/specification.
 | BH-017 | P2 | Predictable workflow commands | Five approved project prompt commands and regression checks implemented; runtime OpenCode command discovery/behavior remains unvalidated |
 | BH-018 | Deferred | V2 epic/user-story refinement harness | Define a distinct second harness for epic/story refinement; SDD applicability TBD |
 | BH-019 | P1 | Per-agent tool availability and ownership | Capability docs complete; approved External source-permission follow-up implemented and local checks pass; independent reviews and final implementation approval pending |
-| BH-020 | P1 | Safe harness update workflow | Preview version/migration, preserve customizations, and provide recovery |
+| BH-020 | P1 | Safe harness update workflow | Implementation complete locally; version stamp, discovery, preview diff, and receipt-chain recovery verified by 180 passing tests; interactive TTY QA noted as blocker |
 | BH-021 | P1 | Safe harness uninstall and cleanup | Inventory managed footprint, preview removal, preserve unrelated state, and report partial failure |
 
 Within-priority delivery order (stable IDs unchanged): **P1** BH-019, BH-009,
@@ -769,12 +769,13 @@ limitations.
 
 ## BH-020 — Safe harness update workflow
 
-Define how to discover/check a newer harness version and present installed/available
-versions, improvements, and migration implications. Require human preview and
-approval; preserve customizations, connections, and project context. Specify clear
-failure recovery and rollback behavior. BH-006's upgrade reconciliation and
-preservation safety is foundational. Do not silently auto-update or claim support
-for host capabilities not actually available.
+2026-10-17 implementation update: safe harness update workflow implemented locally on `feature/bh020`.
+- **Harness version discovery**: added `src/harness-version.ts` to inspect local `package.json` version, HEAD commit, and dirty status. Detects remote changes on `origin/main` via read-only `git ls-remote` only on human approval. Report/preview-only: never modifies git checkout or runs silent auto-updates; prints exact `git pull` commands for the human.
+- **Lineage version stamp**: added optional `harnessVersion: { version, commit, dirty }` to v2 receipt definitions in `src/receipt-lineage.ts` with strict validation. Backward compatible with earlier v2 receipts. Written on every finalized successor.
+- **Update planner**: added `src/update-planner.ts` to compute unified diffs for system prompts per role, detect description updates, reconcile permissions using existing pure planner, and track preserved models, custom fields, and user permissions.
+- **Interactive CLI flow**: added `src/update-cli-flow.ts` and `scripts/update-native-harness.ts` (`npm run harness:update`). Confirms default-on-Enter (keeps installed prompt), asks per-role opt-in for prompt updates, writes private backup and pending successor first, saves atomically, and finalizes with runtime diagnostics. Retains pending evidence on failure for safe rollback via existing receipt chain.
+- **Verification**: `npm run typecheck` passed cleanly; test suite passed **180 tests, 0 failures, 1 opt-in live test skipped** (`node --test test/*.test.ts`). `git diff --check` passed.
+- **Limitations**: interactive TTY smoke QA cannot be run via redirected stdin/agent and is noted as a human blocker. No publication or PR open without External confirmation and human approval.
 
 ## BH-021 — Safe harness uninstall and cleanup
 

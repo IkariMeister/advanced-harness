@@ -147,6 +147,22 @@ captured offered-tool evidence; without it, availability remains unverified. Sou
 prompt changes are not automatically deployed: applying them requires separate
 consent while preserving installed models, permissions, and unrelated settings.
 
+## Safe harness update workflow
+
+To check for newer harness versions and preview updates to installed agent prompts and permissions:
+
+```text
+npm run harness:update
+npm run harness:update -- --project "path/to/android-project"
+npm run harness:update -- --check-remote
+```
+
+1. **Discovery**: Compares the local harness checkout (`package.json` version and git commit) against the installed version stamp recorded in the active receipt. If `--check-remote` is specified (or approved at the prompt), it runs a read-only `git ls-remote` to check `origin/main`.
+2. **Report/Preview-only**: The update command never runs `git pull` or modifies the harness git checkout. If a newer remote commit is detected, it prints the exact git commands for you to review and run manually.
+3. **Per-role inspection and opt-in**: Shows a unified diff for each role where source template prompts have changed. Models, permissions, and custom fields are flagged as preserved. Prompt updates are strictly opt-in per role (default Enter keeps installed prompt).
+4. **Safe recovery**: Updates write an exact private backup and a pending successor receipt first. On failure, pending evidence is retained. You can restore through the existing receipt chain (`npm run harness:uninstall`) to rollback cleanly.
+5. **Confirmation**: Final confirmation requires typing `update`. Cancellation leaves all files and receipts unchanged.
+
 ### If Lead is missing
 
 - Look for **Lead**, not an agent named “Harness.” Only Lead is primary; the seven others are subagents.
