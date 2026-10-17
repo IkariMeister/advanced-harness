@@ -86,11 +86,12 @@ export function checkRemoteHead(repoRoot: string, run: Runner = defaultRun): Rem
 
     // Check if remoteHead is ancestor of localHead (local ahead)
     let isAncestorOfLocal = false;
+    let localAncestryInconclusive = false;
     try {
       run('git', ['merge-base', '--is-ancestor', remoteHead, localHead], { cwd: repoRoot });
       isAncestorOfLocal = true;
-    } catch {
-      isAncestorOfLocal = false;
+    } catch (error) {
+      if (!isAncestryNegative(error)) localAncestryInconclusive = true;
     }
 
     if (isAncestorOfLocal) {
@@ -99,21 +100,28 @@ export function checkRemoteHead(repoRoot: string, run: Runner = defaultRun): Rem
 
     // Check if localHead is ancestor of remoteHead (remote newer)
     let isAncestorOfRemote = false;
+    let remoteAncestryInconclusive = false;
     try {
       run('git', ['merge-base', '--is-ancestor', localHead, remoteHead], { cwd: repoRoot });
       isAncestorOfRemote = true;
-    } catch {
-      isAncestorOfRemote = false;
+    } catch (error) {
+      if (!isAncestryNegative(error)) remoteAncestryInconclusive = true;
     }
 
     if (isAncestorOfRemote) {
       return { remoteHead, status: 'remote-newer' };
     }
 
-    return { remoteHead, status: 'diverged' };
+    return { remoteHead, status: localAncestryInconclusive || remoteAncestryInconclusive ? 'inconclusive' : 'diverged' };
   } catch {
     return { status: 'inconclusive' };
   }
+}
+
+function isAncestryNegative(error: unknown): boolean {
+  // execFileSync reports git's normal --is-ancestor negative result as exit 1.
+  // Missing objects and command failures have other exit codes and are inconclusive.
+  return typeof error === 'object' && error !== null && 'status' in error && error.status === 1;
 }
 
 export function compareInstalledAndSource(
