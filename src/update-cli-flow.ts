@@ -173,11 +173,8 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     } else if (r.status === 'prompt-changed' || r.status === 'both-changed') {
       output('  System prompt differences (installed vs template):');
       if (r.diffLines) {
-        for (const line of r.diffLines.slice(0, 15)) {
+        for (const line of r.diffLines) {
           output(`    ${line}`);
-        }
-        if (r.diffLines.length > 15) {
-          output(`    ... (${r.diffLines.length - 15} more lines)`);
         }
       }
       const answer = await ask(`Update ${role} system prompt to latest source template? (Enter/no keeps installed)`, 'no');
@@ -193,13 +190,29 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     }
 
     const p = plan.plans[role];
-    if (p && (p.preview.additions.length || p.preview.removals.length || p.preview.retainedObsolete.length)) {
-      output(`  Permission reconciliation: additions=${p.preview.additions.length}, removals=${p.preview.removals.length}, retainedObsolete=${p.preview.retainedObsolete.length}`);
+    if (p && (p.preview.additions.length || p.preview.removals.length || p.preview.retainedObsolete.length || r.status === 'not-installed')) {
+      output('  Permission reconciliation:');
+      if (r.status === 'not-installed') {
+        for (const rule of p.rules) output(`    + ${JSON.stringify(rule)}`);
+      } else {
+        for (const rule of p.preview.additions) output(`    + ${JSON.stringify(rule)}`);
+      }
+      for (const rule of p.preview.removals) output(`    - ${JSON.stringify(rule)}`);
+      for (const rule of p.preview.retainedObsolete) output(`    = retained obsolete ${JSON.stringify(rule)}`);
     }
+  }
+
+  output('\nFinal permission rule order from the saved-configuration plan:');
+  for (const role of nativeRoles) {
+    const rules = plan.plans[role]?.rules;
+    if (!rules) continue;
+    output(`  [${role}]`);
+    for (const rule of rules) output(`    ${JSON.stringify(rule)}`);
   }
 
   // Set up reconciliation options and update config
   const reconciliation = receiptReconciliationOptions(history);
+  reconciliation.managedFields = {};
   reconciliation.replaceFields = {};
   for (const role of nativeRoles) {
     if (updatePrompts.includes(role)) {

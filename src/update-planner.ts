@@ -83,40 +83,39 @@ export function planUpdate(
         preservedFields: { customFields: [] }
       };
       hasChanges = true;
-      continue;
     }
 
-    const installedPrompt = typeof installed.system === 'string' ? installed.system.trim() : '';
+    const installedPrompt = typeof installed?.system === 'string' ? installed.system.trim() : '';
     const sourcePrompt = source.system.trim();
     const promptChanged = installedPrompt !== sourcePrompt;
 
-    const installedDesc = typeof installed.description === 'string' ? installed.description.trim() : '';
+    const installedDesc = typeof installed?.description === 'string' ? installed.description.trim() : '';
     const sourceDesc = source.description.trim();
     const descChanged = installedDesc !== sourceDesc;
 
-    let status: RolePromptDiff['status'] = 'unchanged';
+    let status: RolePromptDiff['status'] = installed ? 'unchanged' : 'not-installed';
     if (promptChanged && descChanged) status = 'both-changed';
     else if (promptChanged) status = 'prompt-changed';
     else if (descChanged) status = 'description-changed';
 
-    if (status !== 'unchanged') hasChanges = true;
+    if (installed && status !== 'unchanged') hasChanges = true;
 
     // Check preserved fields
     const knownKeys = new Set(['description', 'mode', 'model', 'permissions', 'system']);
-    const customFields = Object.keys(installed).filter(k => !knownKeys.has(k));
-    const model = typeof installed.model === 'string' ? installed.model : undefined;
+    const customFields = installed ? Object.keys(installed).filter(k => !knownKeys.has(k)) : [];
+    const model = typeof installed?.model === 'string' ? installed.model : undefined;
 
     let diffLines: string[] | undefined;
-    if (promptChanged) {
+    if (installed && promptChanged) {
       diffLines = computeUnifiedDiff(installedPrompt, sourcePrompt);
     }
 
-    roles[role] = {
+    if (installed) roles[role] = {
       role,
       status,
-      installedDescription: installedDesc,
+      ...(installed ? { installedDescription: installedDesc } : {}),
       sourceDescription: sourceDesc,
-      installedPrompt,
+      ...(installed ? { installedPrompt } : {}),
       sourcePrompt,
       diffLines,
       preservedFields: {
@@ -126,7 +125,7 @@ export function planUpdate(
     };
 
     // Reconcile permissions
-    const existingRules = Array.isArray(installed.permissions) ? (installed.permissions as any[]) : [];
+    const existingRules = Array.isArray(installed?.permissions) ? (installed.permissions as any[]) : [];
     let priorOwned: any[] = [];
     let previousOrder: any[] | undefined = undefined;
 

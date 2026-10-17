@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { nativeRoles, parseConfiguration } from '../src/native-installer.ts';
 import { discoverReceiptChain } from '../src/receipt-lineage.ts';
+import { createSuccessorReceipt, finalizeSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
+import { loadNativeDefinitions, updateNativeConfiguration } from '../src/native-installer.ts';
 
 function createDummyInstalledConfig(): Record<string, unknown> {
   return {
@@ -104,6 +106,101 @@ test('update flow default-on-Enter keeps installed system prompt', async t => {
   assert.equal(agents.lead?.customField, 'keep-custom');
   // model preserved
   assert.equal(agents.lead?.model, 'custom/model#low');
+});
+
+test('missing role permission preview agrees with saved rules and final order', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-update-missing-role-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const config = join(project, 'opencode.json');
+  const dummy = createDummyInstalledConfig();
+  delete (dummy.agents as Record<string, unknown>).lead;
+  writeFileSync(config, JSON.stringify(dummy, null, 2));
+  const output: string[] = [];
+  const status = await runUpdateFlow({ scope: 'project', project }, {
+    ask: async question => question.startsWith('Check remote') ? 'no' : question.includes('system prompt to latest') ? 'no' : question.startsWith('Type update') ? 'update' : (() => { throw new Error(question); })(),
+    output: text => output.push(text), error: text => output.push(text), home: root,
+    recoveryDirectory: join(root, 'recovery'),
+    runCommand: (_cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : '',
+    verify: async () => ({ ok: true, checks: [] } as never), printReport: () => {}
+  });
+  assert.equal(status, 0);
+  const saved = parseConfiguration(readFileSync(config, 'utf8'), config).agents as Record<string, Record<string, unknown>>;
+  const permissions = saved.lead!.permissions as unknown[];
+  assert.ok(permissions.length > 0);
+  const previewLines = output.join('\n').split('\n');
+  const previewStart = previewLines.indexOf('Final permission rule order from the saved-configuration plan:');
+  assert.notEqual(previewStart, -1);
+  const leadHeader = previewLines.findIndex((line, index) => index > previewStart && line === '  [lead]');
+  assert.notEqual(leadHeader, -1);
+  const nextRole = previewLines.findIndex((line, index) => index > leadHeader && /^  \[/.test(line));
+  assert.deepEqual(previewLines.slice(leadHeader + 1, nextRole === -1 ? undefined : nextRole),
+    permissions.map(rule => `    ${JSON.stringify(rule)}`));
+  assert.deepEqual(permissions, loadNativeDefinitions(join(process.cwd(), 'agents')).lead.permissions);
+});
+
+test('receipt-managed prompt remains unchanged when prompt update is declined', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-update-receipt-decline-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const config = join(project, 'opencode.json');
+  const agentsDirectory = join(root, 'agents'); mkdirSync(agentsDirectory);
+  const sourceDefinitions = loadNativeDefinitions(join(process.cwd(), 'agents'));
+  const agents = structuredClone(sourceDefinitions);
+  const initial = updateNativeConfiguration(JSON.stringify({ agents: {} }), agents,
+    Object.fromEntries(nativeRoles.map(role => [role, agents[role].model])) as Record<typeof nativeRoles[number], string>, false);
+  writeFileSync(config, initial);
+  const recovery = join(root, 'recovery');
+  const before = readFileSync(config, 'utf8');
+  const permissionPlans = Object.fromEntries(nativeRoles.map(role => {
+    const rules = (parseConfiguration(before, config).agents as Record<string, Record<string, unknown>>)[role]!.permissions as import('../src/permission-reconciliation.ts').PermissionRule[];
+    return [role, { rules, provenance: [], preview: { additions: [], removals: [], retainedObsolete: [], order: rules, conflicts: [] } }];
+  })) as never;
+  const successor = createSuccessorReceipt(discoverReceiptChain(recovery, config), undefined, before, permissionPlans);
+  const pending = writePendingSuccessor(discoverReceiptChain(recovery, config), successor);
+  finalizeSuccessor(pending, before);
+
+  const installedPrompt = (parseConfiguration(before, config).agents as Record<string, Record<string, unknown>>).lead!.system;
+  agents.lead.system = `${agents.lead.system}\nsource template changed line`;
+  const output: string[] = [];
+  const invoke = (promptAnswer: string) => runUpdateFlow({ scope: 'project', project }, {
+    ask: async question => question.startsWith('Check remote') ? 'no' : question.includes('system prompt to latest') ? promptAnswer : question.startsWith('Type update') ? 'update' : (() => { throw new Error(question); })(),
+    output: text => output.push(text), error: () => {}, home: root, recoveryDirectory: recovery,
+    agentsDirectory,
+    loadDefinitions: () => agents,
+    runCommand: (_cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : '',
+    verify: async () => ({ ok: true, checks: [] } as never), printReport: () => {}
+  });
+  await invoke('no');
+  const after = parseConfiguration(readFileSync(config, 'utf8'), config).agents as Record<string, Record<string, unknown>>;
+  assert.equal(after.lead!.system, installedPrompt);
+  assert.ok(output.some(line => line.includes('+ source template changed line')));
+  const leadRules = after.lead!.permissions as unknown[];
+  assert.deepEqual(leadRules, agents.lead.permissions);
+  const previewLines = output.join('\n').split('\n');
+  const previewStart = previewLines.indexOf('Final permission rule order from the saved-configuration plan:');
+  assert.notEqual(previewStart, -1);
+  const leadHeader = previewLines.findIndex((line, index) => index > previewStart && line === '  [lead]');
+  assert.notEqual(leadHeader, -1);
+  const nextRole = previewLines.findIndex((line, index) => index > leadHeader && /^  \[/.test(line));
+  assert.deepEqual(previewLines.slice(leadHeader + 1, nextRole === -1 ? undefined : nextRole),
+    leadRules.map(rule => `    ${JSON.stringify(rule)}`));
+
+  writeFileSync(config, before);
+  output.length = 0;
+  await invoke('');
+  const afterEnter = parseConfiguration(readFileSync(config, 'utf8'), config).agents as Record<string, Record<string, unknown>>;
+  assert.equal(afterEnter.lead!.system, installedPrompt);
+  assert.deepEqual(afterEnter.lead!.permissions, agents.lead.permissions);
+  const enterLines = output.join('\n').split('\n');
+  const enterPreviewStart = enterLines.indexOf('Final permission rule order from the saved-configuration plan:');
+  assert.notEqual(enterPreviewStart, -1);
+  const enterLeadHeader = enterLines.findIndex((line, index) => index > enterPreviewStart && line === '  [lead]');
+  assert.notEqual(enterLeadHeader, -1);
+  const enterNextRole = enterLines.findIndex((line, index) => index > enterLeadHeader && /^  \[/.test(line));
+  assert.deepEqual(enterLines.slice(enterLeadHeader + 1, enterNextRole === -1 ? undefined : enterNextRole),
+    (afterEnter.lead!.permissions as unknown[]).map(rule => `    ${JSON.stringify(rule)}`));
+  assert.ok(output.some(line => line.includes('+ source template changed line')));
 });
 
 test('update flow applies prompt when explicitly selected and records harness version stamp', async t => {

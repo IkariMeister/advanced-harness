@@ -67,9 +67,11 @@ invented. Links point to the current implementation/specification.
   actual migration of this app's Android settings has not been reported. Legacy
   files and unrelated local changes must not be deleted or overwritten automatically.
 - Android build/unit tests passed before the lint fixes. Lint found four API-24
-  `Iterable.forEach` calls with min SDK 21. PR #35's scoped fix is merged; Build &
-  Verify succeeded, and runtime/E2E/Roborazzi remain waived (not passed). Broader
-  Android verification remains unresolved under BH-004.
+  `Iterable.forEach` calls with min SDK 21. The MarsRoverIA PR #35 fix is merged at
+  `0faed9f37d23ae177d66528320cf9828439affda`; Build & Verify succeeded, and
+  runtime/E2E/Roborazzi remain waived (not passed). Broader Android verification
+  remains unresolved under BH-004. Separately, harness PR #35 is merged at `d8c4ac4`;
+  its review follow-up is on `feature/bh020-review-fixes` with no new PR open yet.
 - Validation used process-only Android Studio JBR JDK 21.0.10; Gradle found cached
   Java 17.0.19 offline. Reported stack: Gradle 9.6.1, AGP 9.0.1, Java/Kotlin toolchain
   17. Permanent environment changes/downloads were not approved by those checks.
@@ -98,8 +100,41 @@ invented. Links point to the current implementation/specification.
 | BH-017 | P2 | Predictable workflow commands | Five approved project prompt commands and regression checks implemented; runtime OpenCode command discovery/behavior remains unvalidated |
 | BH-018 | Deferred | V2 epic/user-story refinement harness | Define a distinct second harness for epic/story refinement; SDD applicability TBD |
 | BH-019 | P1 | Per-agent tool availability and ownership | Capability docs complete; approved External source-permission follow-up implemented and local checks pass; independent reviews and final implementation approval pending |
-| BH-020 | Complete (implementation/verification; PR open) | Safe harness update workflow | PR #35 OPEN: https://github.com/IkariMeister/advanced-harness/pull/35; head `feature/bh020` at `a95fe9b`; merge pending/unverified |
+| BH-020 | Complete (implementation/verification; merged) | Safe harness update workflow | Harness PR #35 merged at `d8c4ac4`; review follow-up is on `feature/bh020-review-fixes`, with no new PR open yet |
 | BH-021 | P1 | Safe harness uninstall and cleanup | Inventory managed footprint, preview removal, preserve unrelated state, and report partial failure |
+
+### BH-020 accepted PR #35 review findings (2026-10-17)
+
+The human accepted fixes for all three reported findings. The original harness PR #35
+(`feature/bh020`, head `a95fe9b`) is merged at `d8c4ac4`. Follow-up review fixes are
+implemented on `feature/bh020-review-fixes`; no new PR has been opened:
+
+- Receipt-backed update now drops prior managed field evidence before applying source
+  defaults, so declining prompt replacement (including Enter/default-no) preserves
+  installed prompt content. A production-flow receipt-backed regression covers this.
+- Prompt diff preview prints all diff lines, and permission preview lists concrete
+  additions/removals/retained obsolete rules plus final ordered rules per role, derived
+  from the same update plan. Targeted flow tests and full suite pass.
+- Remote ancestry checks now distinguish Git's exit-1 non-ancestor result from other
+  command/object failures; missing local objects report inconclusive, without fetch.
+  Regression covers absent remote object. Typecheck passed; full suite: 181 passed,
+  0 failed, 1 opt-in live test skipped. Interactive TTY smoke was not run.
+
+2026-10-17 exact-order follow-up completed within accepted scope: the update flow prints
+missing-role permission additions from the planned final rules, without prompting to
+replace a prompt that is not installed. The single final-order section lists each role
+and ordered rules. Regression assertions anchor to that section and compare the exact
+saved lead permission order for missing-role and receipt-backed decline/no and
+default-Enter flows. The test failure was traced to output callbacks containing
+multiline strings; tests now normalize callback output into lines before locating the
+section/role headers. Verification: `node --test test/update-cli-flow.test.ts` passed
+(7/7); `npm run typecheck` passed; `npm test` passed (182 passed, 0 failed, 1 opt-in
+live test skipped). Interactive TTY smoke remains unrun. No Git, publication, merge, or
+ live configuration operations were performed.
+
+Next: Lead review of the scoped BH-020 follow-up fixes and implementation decision. No
+Git, publication, merge, live configuration, or interactive-terminal actions were
+performed for the follow-up.
 
 Within-priority delivery order (stable IDs unchanged): **P1** BH-019, BH-009,
 BH-013, BH-006, BH-020, BH-021, BH-010; **P2** BH-005, BH-012, BH-017,
@@ -574,6 +609,8 @@ Limitations: no actual interactive-terminal/live runtime/service QA was performe
 adapter-level coverage exercises the production flows in disposable fixtures but does not replace human interactive smoke verification.
 
 2026-10-16 delivery and verification update: rebased `feature/bh006` cleanly onto `main` (`226b999`). Added regression tests closing the remaining adapter-level gaps: integration flow aborts without writes when pending receipt creation fails, installer flow validates default-on-Enter and retries invalid scope/model/variant inputs per AGENTS.md, and `runUninstallFlow` confirms cancellation and conflict failure without writes or saves. Verification: `npm run typecheck` passed; focused test suite (97 tests) passed; full test suite passed (166 passed, 0 failed, 1 opt-in live test skipped); `git diff --check` passed clean. Non-TTY interactive blocker is noted; live interactive TTY smoke QA was not run. Final implementation approved; changes committed as `54d2e1f` and pushed to `origin/feature/bh006`. External confirmed PR #30 was **MERGED** into `main` at `457b003ba0f2152a9d856796a27538a11e8a8bec` (2026-10-16 21:56:10 UTC): https://github.com/IkariMeister/advanced-harness/pull/30. Local `main` fast-forwarded to `origin/main` at `457b003`. Per user authorization, local feature worktree `C:\Users\jcgse\Projects\advanced-harness-worktrees\feature-bh006` was removed and local branch `feature/bh006` deleted; remote branch `origin/feature/bh006` is preserved.
+
+2026-10-17 accepted BH-020 review follow-ups implemented: update planning now reconciles permissions for missing roles against an empty existing rule set, so CLI additions/final-order preview covers rules that save installs. Production-flow regression verifies missing-role preview against saved permissions. Receipt prompt regression now preserves installed prompt equal to receipt evidence, injects a changed source definition, declines with explicit `no` and default Enter, and checks prompt preservation plus displayed diff and permission/final-order output. Verification was attempted but the configured shell tool request was denied; typecheck and tests are not claimed passed. No interactive TTY QA, Git operation, or publication was performed.
 
 ## BH-007 — Optional Jira connection, project access, and lifecycle mapping
 

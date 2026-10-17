@@ -91,10 +91,26 @@ test('checkRemoteHead detects up-to-date, remote-newer, local-ahead, diverged, a
   const mockDiverged = (_cmd: string, args: string[]) => {
     if (args[0] === 'ls-remote') return '1111111111111111111111111111111111111111\trefs/heads/main';
     if (args[0] === 'rev-parse') return '2222222222222222222222222222222222222222';
-    throw new Error('diverged');
+    const error = new Error('diverged') as Error & { status: number };
+    error.status = 1;
+    throw error;
   };
   assert.deepEqual(checkRemoteHead('/repo', mockDiverged), {
     remoteHead: '1111111111111111111111111111111111111111',
     status: 'diverged'
+  });
+});
+
+test('checkRemoteHead reports inconclusive when remote object is absent locally', () => {
+  const runner = (_cmd: string, args: string[]) => {
+    if (args[0] === 'ls-remote') return 'ffffffffffffffffffffffffffffffffffffffff\trefs/heads/main';
+    if (args[0] === 'rev-parse') return 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const error = new Error('fatal: bad object ffffffffffffffffffffffffffffffffffffffff') as Error & { status: number };
+    error.status = 128;
+    throw error;
+  };
+  assert.deepEqual(checkRemoteHead('/repo', runner), {
+    remoteHead: 'ffffffffffffffffffffffffffffffffffffffff',
+    status: 'inconclusive'
   });
 });
