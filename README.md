@@ -121,6 +121,14 @@ npm run harness:doctor -- --project "path/to/android-project"
 
 This verifies agent visibility/modes and model/variant catalog availability, not account entitlement. It may start OpenCode's service but never restarts it or sends model requests. See [installation troubleshooting](docs/installation.md#after-installation).
 
+Check for updates and preview changes to installed prompts and permissions:
+
+```text
+npm run harness:update -- --project "path/to/android-project"
+```
+
+This compares the local checkout and installed version stamp, checks remote `origin/main` on approval, previews per-role prompt diffs, preserves customizations, and records recovery receipts. See [safe harness update workflow](docs/installation.md#safe-harness-update-workflow).
+
 Configure an Android project interactively:
 
 ```text
