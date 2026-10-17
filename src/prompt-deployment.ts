@@ -11,6 +11,8 @@ export type PromptDeployTarget = {
 
 export type PromptDeploymentPlan = {
   target: string;
+  reviewedOriginal: string;
+  reviewedDefinitions: Record<NativeRole, NativeDefinition>;
   roles: {
     role: NativeRole;
     descriptionChanged: boolean;
@@ -76,6 +78,8 @@ export function planPromptDeployment(
 
   return {
     target: targetPath,
+    reviewedOriginal: original,
+    reviewedDefinitions: structuredClone(definitions),
     roles: rolesPlan,
     updatedText,
     hasChanges
@@ -94,6 +98,7 @@ export function deployPrompts(
   backupParent: string,
   options: {
     definitionsDirectory?: string;
+    reviewedPlan?: PromptDeploymentPlan;
     deps?: PromptDeployDependencies;
   } = {}
 ): { updated: boolean; backup?: string | undefined; receiptPath?: string | undefined } {
@@ -104,13 +109,19 @@ export function deployPrompts(
   const loadDefs = options.deps?.loadDefinitions ?? loadNativeDefinitions;
   const definitions = loadDefs(options.definitionsDirectory ?? 'agents');
 
-  const plan = planPromptDeployment(original, definitions, target);
-  if (!plan.hasChanges) {
+  const plan = options.reviewedPlan;
+  if (plan) {
+    if (plan.target !== target || original !== plan.reviewedOriginal || JSON.stringify(definitions) !== JSON.stringify(plan.reviewedDefinitions)) {
+      throw new Error('Configuration or prompt templates changed since preview. Review a fresh preview and confirm deployment again.');
+    }
+  }
+  const executionPlan = plan ?? planPromptDeployment(original, definitions, target);
+  if (!executionPlan.hasChanges) {
     return { updated: false };
   }
 
   const history = discoverReceiptChain(backupParent, target);
-  const receipt = createSuccessorReceipt(history, original, plan.updatedText, {});
+  const receipt = createSuccessorReceipt(history, original, executionPlan.updatedText, {});
 
   const writePending = options.deps?.writePending ?? writePendingSuccessor;
   const pending = writePending(history, receipt);
@@ -120,7 +131,7 @@ export function deployPrompts(
   const save = options.deps?.save ?? saveInstallation;
   try {
     revalidatePendingSuccessor(pending);
-    backup = save(target, original, plan.updatedText, backupParent);
+    backup = save(target, original, executionPlan.updatedText, backupParent);
   } catch (err) {
     if (recoverFailedSuccessor(pending, original) !== 'cleared') {
       // Pending evidence preserved
@@ -130,7 +141,7 @@ export function deployPrompts(
 
   const finalize = options.deps?.finalize ?? finalizeSuccessor;
   try {
-    finalize(pending, plan.updatedText);
+    finalize(pending, executionPlan.updatedText);
   } catch (err) {
     throw new Error(`Configuration saved but receipt finalization failed; pending evidence at ${receiptPath}: ${String(err)}`);
   }
