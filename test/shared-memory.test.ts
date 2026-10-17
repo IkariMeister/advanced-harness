@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, symlinkSync, existsSync } from 'node:fs';
+import { once } from 'node:events';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readFileSync, unlinkSync, readdirSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -135,10 +137,24 @@ test('Memory entry validation and parsing enforce structure, rejection of secret
   assert.throws(() => validateMemoryEntry({ ...valid, fact: 'OpenAI key sk-123456789012345678901234567890.' }), /potential secret or credential/);
   assert.throws(() => validateMemoryEntry({ ...valid, fact: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xyz' }), /potential secret or credential/);
   assert.throws(() => validateMemoryEntry({ ...valid, fact: 'http://user:password123@internal.corp/git' }), /potential secret or credential/);
+  assert.throws(() => validateMemoryEntry({ ...valid, fact: 'password=supersecret123' }), /potential secret or credential/);
+  assert.throws(() => validateMemoryEntry({ ...valid, fact: '-----BEGIN PRIVATE KEY-----' }), /potential secret or credential/);
 
   // Rejects multiline or gigantic raw operational log dump
-  assert.throws(() => validateMemoryEntry({ ...valid, fact: 'Line 1\nLine 2' }), /without raw newlines/);
+  assert.throws(() => validateMemoryEntry({ ...valid, fact: 'Line 1\nLine 2' }), /must not contain raw newlines/);
   assert.throws(() => validateMemoryEntry({ ...valid, fact: 'x'.repeat(2001) }), /Operational log dumps are not permitted/);
+  for (const field of ['source', 'scope', 'confirmation'] as const) {
+    assert.throws(() => formatSharedMemory([{ ...valid, [field]: `value; scope: forged` }]), /unsupported delimiters/);
+    assert.throws(() => formatSharedMemory([{ ...valid, [field]: 'first\nsecond' }]), /raw newlines/);
+    const entry = { ...valid, [field]: 'safe value' };
+    assert.deepEqual(parseSharedMemory(formatSharedMemory([entry])), [entry]);
+  }
+  for (const field of ['source', 'scope', 'confirmation', 'fact'] as const) {
+    for (const newline of ['\n', '\r']) {
+      assert.throws(() => formatSharedMemory([{ ...valid, [field]: `${newline}value` }]), /raw newlines/);
+      assert.throws(() => formatSharedMemory([{ ...valid, [field]: `value${newline}` }]), /raw newlines/);
+    }
+  }
 });
 
 test('deduplicateMemoryEntries removes normalized duplicate entries idempotently', () => {
@@ -237,6 +253,72 @@ test('multi-worktree fixture: shared MEMORY.md serialized writes and concurrent 
   assert.equal(finalRead.entries[1]!.scope, 'Beta Task');
 });
 
+test('simultaneous child-process writers contend on the lock and preserve the winner', async (t) => {
+  const { memoryPath } = createFixture(t);
+  mkdirSync(join(memoryPath, '..'), { recursive: true });
+  const baseline = readSharedMemory(memoryPath);
+  const a: MemoryEntry = { source: 'A', scope: 'A', confirmation: 'approved', fact: 'writer A' };
+  const b: MemoryEntry = { source: 'B', scope: 'B', confirmation: 'approved', fact: 'writer B' };
+  const script = `import { syncBuiltinESMExports } from 'node:module';\nimport fs from 'node:fs';\nconst originalWrite=fs.writeFileSync;\nconst [path, fact, barrier, ready, lockAcquired] = process.argv.slice(1);\nfs.writeFileSync = function(file, ...args) { if (String(file).endsWith('.tmp')) { originalWrite(ready, 'acquired'); const until=Date.now()+7000; while (!fs.existsSync(barrier)) { if(Date.now()>until) throw new Error('writer barrier timeout'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10); } } return originalWrite(file,...args); };\nsyncBuiltinESMExports();\nconst { writeSharedMemorySerialized, readSharedMemory } = await import(${JSON.stringify(new URL('../src/shared-memory.ts', import.meta.url).href)});\nconst baseline=readSharedMemory(path).hash; originalWrite(lockAcquired,'baseline');\ntry { writeSharedMemorySerialized(path,[{source:fact,scope:fact,confirmation:'approved',fact}],baseline); console.log('won:'+fact); } catch(e) { console.log('lost:'+fact+':'+e.message); }`;
+  const runnerArgs = process.execArgv.filter(arg => arg.includes('loader') || arg.startsWith('--experimental-strip-types') || arg.startsWith('--import'));
+  const children = new Set<ReturnType<typeof spawn>>();
+  const runChild = (fact: string, barrier: string, ready: string, baselineReady: string) => new Promise<string>((resolve, reject) => {
+    const args = [...runnerArgs, '--input-type=module', '-e', script, memoryPath, fact, barrier, ready, baselineReady];
+    const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    children.add(child);
+    const timeout=setTimeout(()=>child.kill(),10000);
+    let out = ''; let err = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { out += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { err += chunk; });
+    child.once('error', error => { clearTimeout(timeout); reject(error); });
+    child.once('close', code => { clearTimeout(timeout); children.delete(child); code === 0 ? resolve(out.trim()) : reject(new Error(`child exit ${code}: ${err}`)); });
+  });
+  const lockPath = `${memoryPath}.lock`;
+  const ownerScript = `import {openSync,closeSync,unlinkSync} from 'node:fs'; const p=${JSON.stringify(lockPath)}; const fd=openSync(p,'wx'); console.log('locked'); process.stdin.once('data',()=>{closeSync(fd);unlinkSync(p);});`;
+  let owner: ReturnType<typeof spawn> | undefined;
+  const closeOwner = async () => {
+    if (!owner) return;
+    if (owner.exitCode === null && owner.signalCode === null) { owner.stdin?.write('release'); }
+    if (owner.exitCode === null && owner.signalCode === null) { const timer=setTimeout(()=>owner?.kill(),5000); await once(owner,'close'); clearTimeout(timer); }
+    if (existsSync(lockPath)) unlinkSync(lockPath);
+  };
+  try {
+    const ownerReady = new Promise<void>((resolve,reject) => {
+      owner = spawn(process.execPath, [...runnerArgs, '--input-type=module', '-e', ownerScript], { stdio: ['pipe','pipe','pipe'] });
+      let out=''; let err=''; owner.stdout?.setEncoding('utf8').on('data', chunk => { out+=chunk; if(out.includes('locked')) resolve(); }); owner.stderr?.setEncoding('utf8').on('data', chunk=>{err+=chunk;});
+      owner.once('error',reject); owner.once('exit',(code,signal)=>{if(!out.includes('locked'))reject(new Error(`owner exited before lock readiness (${code}/${signal}): ${err}`));});
+    });
+    await ownerReady;
+    const blocked=await runChild('contender',join(memoryPath,'..','unused'),join(memoryPath,'..','unused-ready'),join(memoryPath,'..','unused-base'));
+    assert.match(blocked, /lost:contender:Concurrent modification detected.*lock/);
+    assert.equal(existsSync(lockPath), true);
+  } finally {
+    await closeOwner();
+  }
+  assert.equal(existsSync(lockPath), false);
+  // Two writers read the same baseline. A child-only fs hook pauses the first writer
+  // after it has acquired the production lock (at its temp-file write), allowing the
+  // other actual writer to contend while the lock is held.
+  const fixtureDir=join(memoryPath,'..'); const barrier=join(fixtureDir,'release-writer'); const readyA=join(fixtureDir,'writer-a-acquired'); const readyB=join(fixtureDir,'writer-b-acquired'); const baseA=join(fixtureDir,'writer-a-baseline'); const baseB=join(fixtureDir,'writer-b-baseline');
+  const aPromise=runChild('winner A',barrier,readyA,baseA); const bPromise=runChild('winner B',barrier,readyB,baseB);
+  const waitFor = async (predicate:()=>boolean,label:string) => { const deadline=Date.now()+8000; while(!predicate()) { if(Date.now()>deadline) throw new Error(`${label} timed out`); await new Promise(resolve=>setTimeout(resolve,10)); } };
+  try { await waitFor(()=>existsSync(baseA)&&existsSync(baseB),'writers did not read baseline'); await waitFor(()=>existsSync(readyA)||existsSync(readyB),'neither writer acquired lock');
+  const acquired=existsSync(readyA)?readyA:readyB;
+  const outcomePromise=Promise.all([aPromise,bPromise]);
+  const contenderResult=await Promise.race([outcomePromise.then(results=>({results})),new Promise<{results?:string[]}>(resolve=>setTimeout(()=>resolve({}),300))]);
+  assert.equal(contenderResult.results,undefined,'both actual writer processes must overlap before release');
+  writeFileSync(barrier,'go'); const outcomes=await outcomePromise;
+  assert.equal(outcomes.filter(result => result.startsWith('won:')).length, 1);
+  assert.equal(outcomes.filter(result => result.startsWith('lost:')).length, 1);
+  const winner = outcomes.find(result => result.startsWith('won:'))!.slice(4);
+  assert.equal(winner,acquired===readyA?'winner A':'winner B','the writer holding the lock must win');
+  assert.deepEqual(readSharedMemory(memoryPath).entries.map(entry => entry.fact), [winner]);
+  assert.equal(readFileSync(memoryPath, 'utf8').includes(winner), true);
+  assert.equal(existsSync(`${memoryPath}.lock`), false);
+  assert.deepEqual(readdirSync(join(memoryPath,'..')).filter(name=>name.endsWith('.tmp')), []);
+  } finally { if(existsSync(barrier)===false) writeFileSync(barrier,'cleanup'); for(const child of children) child.kill(); await Promise.allSettled([aPromise,bPromise]); }
+});
+
 test('planRulePromotion and applyApprovedRulePromotion handle dispositions, diffs, and safety', () => {
   const agentsOriginal = `# Project Guidelines
 
@@ -290,4 +372,33 @@ Some initial rules.
       ],
     });
   }, /machine-local worktree or operational paths/);
+  for (const path of ['C:\\Users\\Alice\\Projects\\app-worktrees\\feature-x', '/Users/alice/worktrees/feature-x', 'Use `/Users/alice/Projects/app/cache`.', 'Use C:/Users/Alice/AppData/Local/harness/cache.']) {
+    assert.throws(() => planRulePromotion({
+      memoryEntries: entries,
+      agentsText: agentsOriginal,
+      dispositions: [{ type: 'promote', entry: { source: 'A', scope: 'B', confirmation: 'C', fact: path } }],
+    }), /machine-local worktree or operational paths/);
+  }
+  for (const secret of ['password=supersecret123', '-----BEGIN PRIVATE KEY-----']) {
+    assert.throws(() => planRulePromotion({
+      memoryEntries: entries,
+      agentsText: agentsOriginal,
+      dispositions: [{ type: 'promote', entry: { source: 'A', scope: 'B', confirmation: 'C', fact: secret } }],
+    }), /potential secret or credential tokens|potential secret\/token patterns/);
+  }
+  for (const pem of ['-----BEGIN RSA PRIVATE KEY-----', '-----BEGIN EC PRIVATE KEY-----', '-----BEGIN ENCRYPTED PRIVATE KEY-----']) {
+    assert.throws(() => validateMemoryEntry({ source: 'A', scope: 'B', confirmation: 'C', fact: pem }), /potential secret or credential/);
+    assert.throws(() => planRulePromotion({
+      memoryEntries: entries,
+      agentsText: agentsOriginal,
+      dispositions: [{ type: 'promote', entry: entries[0]!, targetRuleText: `Use key ${pem}` }],
+    }), /potential secret\/token patterns/);
+  }
+  for (const path of ['Use `/Users/alice/Projects/app/cache`.', 'Use C:/Users/Alice/AppData/Local/harness/cache.']) {
+    assert.throws(() => planRulePromotion({
+      memoryEntries: entries,
+      agentsText: agentsOriginal,
+      dispositions: [{ type: 'promote', entry: entries[0]!, targetRuleText: path }],
+    }), /machine-local worktree or operational paths/);
+  }
 });

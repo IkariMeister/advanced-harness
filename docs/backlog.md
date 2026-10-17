@@ -145,6 +145,21 @@ record of that earlier run. Interactive TTY smoke was not run, and the opt-in te
 skipped; neither is waived or claimed passed. Next action: publish the authorized
 follow-up PR; no PR is open yet.
 
+2026-10-17 PR #38 accepted-finding follow-up (BH-012): all four review findings
+were accepted for scoped fixes. Implemented serialized shared-memory writes with an
+exclusive lock and baseline recheck; rejected metadata delimiters/newlines that break
+the line format; expanded common password-assignment and PEM-key credential checks;
+and rejected common Windows/macOS machine-local worktree paths during promotion.
+Regression coverage was added in `test/shared-memory.test.ts`. Prior-revision results
+are superseded: Reviewer typecheck passed, the full suite timed out at 200 seconds,
+and focused tests had an assertion failure and timed out at 10 seconds. After repair,
+`node --test --test-timeout=20000 test/shared-memory.test.ts` passed (8/8),
+`npm run typecheck` passed, and `npm test` passed (214 passed, 0 failed, 1 opt-in
+  live test skipped), all on 2026-10-17. The child-process race test uses a child-only
+filesystem hook to pause after lock acquisition, verifies the competing real writer
+loses, and checks lock/temp cleanup. No PR status or Git action is changed by this
+  update; reviewer recheck remains outstanding.
+
 Within-priority delivery order (stable IDs unchanged): **P1** BH-019, BH-009,
 BH-013, BH-006, BH-020, BH-021, BH-010; **P2** BH-005, BH-012, BH-017,
 BH-004, BH-007, BH-008, BH-011; **P3** BH-014. **Deferred:** BH-015,
@@ -925,7 +940,7 @@ setup, OAuth, and project-context portability on macOS. Never copy Windows crede
 
 ## BH-012 — Shared memory, bootstrap, and approved instruction consolidation
 
-Implementation and verification status (2026-10-17):
+Implementation and verification status (2026-10-17; Windows only):
 - Implemented pure TypeScript shared-memory, bootstrap readiness, and instruction consolidation module `src/shared-memory.ts`:
   - Bootstrap & path validation (`validateBootstrapContext`, `checkBootstrapReadiness`): enforces worktree and memory paths outside checkout, `memoryPath` ending in `MEMORY.md` outside worktree parent, allows existing worktrees and untouched canonical changes without blocking bootstrap, stopping only on missing/invalid config or target branch/worktree collision.
   - Shared `MEMORY.md` parsing, formatting, and validation (`parseSharedMemory`, `formatSharedMemory`, `validateMemoryEntry`): structured `- [Source: <source>; scope: <scope>; confirmation: <confirmation>] <fact>` under `# Shared Operator memory`, rejects credentials/tokens (`ghp_`, `sk-`, `Bearer `, private keys, passwords, URL credentials) and raw operational log dumps.
@@ -934,7 +949,7 @@ Implementation and verification status (2026-10-17):
   - Instruction consolidation (`planRulePromotion`, `applyApprovedRulePromotion`): handles explicit dispositions (`promote`, `keep-memory`, `discard`), unified diff generation, rejects secrets and machine-local worktree/operational paths from promotion, preserves embedded harness JSON markers, and requires explicit human approval before writing to `AGENTS.md`.
 - Aligned embedded project instructions in `src/project-setup.ts`, native agent templates (`agents/operator.md`, `agents/lead.md`), workflow commands (`.opencode/commands/start-issue.md`), and documentation (`README.md`, `docs/opencode-native-workflow.md`, `docs/project-setup.md`, `docs/task-workflows.md`).
 - Added comprehensive unit tests in `test/shared-memory.test.ts` (multi-worktree fixture, concurrent write refusal, bootstrap readiness, entry parsing, secret/dump rejection, deduplication, conflict detection, rule promotion diffs and approval gate) and contract tests in `test/native-agents.test.ts` and `test/workflow-commands.test.ts`.
-- Verification: `npm run typecheck` passed cleanly; `npm test` passed (214 tests: 213 passed, 0 failed, 1 opt-in live test skipped). Implementation and stated verification are complete. PR #38 is OPEN, targeting `main`, from `feature/bh012` at `ece238b`: https://github.com/IkariMeister/advanced-harness/pull/38. Delivery is complete for implementation/verification; merge is pending and unverified. No cleanup occurred.
+- Verification: reviewer final independent checks passed: focused suite 8/8, `npm run typecheck`, and `npm test` (214 passed, 0 failed, 1 opt-in live test skipped). Checks were executed on Windows only; cross-platform validation is not established. A Medium finding remains deferred to a future session, not fixed, waived, or passed: in `test/shared-memory.test.ts` approximately lines 286–291, `ownerReady` has unbounded readiness waiting, so a child that stays alive without emitting `locked` can hang `npm test`. Future approved work should add bounded readiness rejection and guaranteed child cleanup. The human requested a PR comment about this deferred finding. PR #38 is OPEN, targeting `main`, with reviewed head `24d0d1b`: https://github.com/IkariMeister/advanced-harness/pull/38. Publication of the new fixes is pending; do not infer a new commit SHA or publication. Historical earlier head `ece238b` is superseded by this review status. Merge is pending and unverified; no cleanup occurred.
 
 ## BH-013 — Setup UX and bounded discovery improvements
 
