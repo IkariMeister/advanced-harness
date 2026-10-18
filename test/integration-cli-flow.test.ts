@@ -72,7 +72,7 @@ test('integration cancellation preserves alternate context and unrelated files u
     throw new Error(`Unexpected prompt: ${question}`);
   };
   await runIntegrationFlow({ scope: 'project', project, context: 'docs/Alternate context.md' }, {
-    ask, output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery,
+    ask, output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery, environment: {},
   });
   assert.equal(readFileSync(agents, 'utf8'), originalAgents);
   assert.equal(readFileSync(unrelated, 'utf8'), originalUnrelated);

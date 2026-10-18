@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assessRuntime, cliQuery, decodeRows, expectedAgents, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
 import { nativeRoles } from '../src/native-installer.ts';
@@ -135,6 +138,30 @@ test('doctor CLI precedence is explicit executable, OPENCODE_BIN, then platform 
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_BIN;
     else process.env.OPENCODE_BIN = previous;
+  }
+});
+
+test('Windows executable discovery uses a controlled LOCALAPPDATA fixture and falls back when absent', { skip: process.platform !== 'win32' }, async t => {
+  const { findOpenCode } = await import('../src/native-diagnostics.ts');
+  const root = mkdtempSync(join(tmpdir(), 'opencode-discovery-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const previousLocal = process.env.LOCALAPPDATA;
+  const previousBin = process.env.OPENCODE_BIN;
+  const appData = join(root, 'controlled-local-app-data');
+  const expected = join(appData, 'Programs', '@opencodedesktop', 'resources', 'opencode-cli.exe');
+  try {
+    process.env.LOCALAPPDATA = appData;
+    delete process.env.OPENCODE_BIN;
+    mkdirSync(join(appData, 'Programs', '@opencodedesktop', 'resources'), { recursive: true });
+    writeFileSync(expected, 'fixture');
+    assert.equal(findOpenCode(), expected);
+    rmSync(expected);
+    assert.equal(findOpenCode(), 'opencode');
+  } finally {
+    if (previousLocal === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = previousLocal;
+    if (previousBin === undefined) delete process.env.OPENCODE_BIN;
+    else process.env.OPENCODE_BIN = previousBin;
   }
 });
 
