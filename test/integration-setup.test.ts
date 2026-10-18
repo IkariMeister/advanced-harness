@@ -243,7 +243,7 @@ test('External permissions allow only scoped publishing commands and keep merge/
   const effect = (command: string) => permissions.filter(rule => rule.action === 'shell' && (rule.resource === command || (rule.resource.endsWith('*') && command.startsWith(rule.resource.slice(0, -1))))).at(-1)?.effect;
 
   for (const executable of ['gh', 'gh.exe']) {
-    for (const action of ['pr create', 'pr edit', 'pr comment', 'pr review', 'issue create', 'issue edit', 'issue comment', 'workflow run', 'run rerun', 'run cancel']) {
+    for (const action of ['pr view', 'pr create', 'pr edit', 'pr comment', 'pr review', 'issue create', 'issue edit', 'issue comment', 'workflow run', 'run rerun', 'run cancel']) {
       for (const invocation of [`${executable} ${action}`, `${executable} ${action} --help`]) assert.equal(effect(invocation), 'allow', invocation);
     }
     for (const invocation of [`${executable} pr merge`, `${executable} pr merge 42`]) assert.equal(effect(invocation), 'deny', invocation);
@@ -295,6 +295,20 @@ test('same-identity conflicting gh fallback rules fail closed regardless of orde
     const localSources = [{ ...sources[0]!, value: parseConfiguration(original, 'conflict config') }];
     assert.throws(() => updateIntegrationConfig(original, localSources, draft), /Conflicting existing permission rule shell gh \*/);
   }
+});
+
+test('a specific existing gh pr view deny conflicts without changing the source configuration', () => {
+  const { profile, sources } = fixture();
+  const ghProfile = { ...profile, github: { backend: 'gh' as const, hostname: 'github.com', repository: 'company/app' } };
+  const draft: IntegrationDraft = { profile: ghProfile, choices: [{ name: 'atlassian' }] };
+  const original = JSON.stringify({ ...sources[0]!.value, agents: { ...definitions, external: {
+    ...definitions.external,
+    permissions: [...definitions.external.permissions, { action: 'shell', resource: 'gh pr view *', effect: 'deny' }],
+  } } });
+  const localSources = [{ ...sources[0]!, value: parseConfiguration(original, 'conflict config') }];
+  assert.throws(() => updateIntegrationConfig(original, localSources, draft), /Permission reconciliation conflict/);
+  assert.equal(original.includes('"resource":"gh pr view *","effect":"deny"'), true);
+  assert.equal(parseConfiguration(original, 'unchanged config').agents && JSON.stringify(parseConfiguration(original, 'unchanged config').agents).includes('gh pr view *'), true);
 });
 
 test('integration setup adds approved External git-push exceptions to legacy permissions, idempotently', () => {

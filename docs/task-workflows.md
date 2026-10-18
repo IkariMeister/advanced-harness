@@ -10,6 +10,7 @@ commands with the same names.
 | --- | --- | --- |
 | `/start-issue` | Start a Jira issue | `$ARGUMENTS` (full input) |
 | `/review-pr` | Review a teammate PR | `$ARGUMENTS` (full input) |
+| `/address-pr-feedback` | Triage and address PR review feedback | `$ARGUMENTS` (full input) |
 | `/report-defect` | Draft/report defect and optionally investigate | `$1` parent; `$2` description (last positional consumes remainder) |
 | `/assess-debt` | Assess debt and propose issues | `$ARGUMENTS` (full input) |
 | `/grill-me` | Clarify an idea and offer an explicit handoff | Optional `$ARGUMENTS` topic |
@@ -129,6 +130,44 @@ Unavailable PR/check context is disclosed, not inferred.
 **Example:** “Review PR 123 in this repository.” Reviewer reads the diff and check
 results, then Lead shows the summary and suggested inline comments. The human selects
 Just Comment; External posts only the approved comments on relevant lines.
+
+## Address PR feedback
+
+**Inputs:** Confirmed GitHub repository, host, and PR. Confirm the assigned human;
+GitHub only, not Jira.
+
+**Ordered steps and approvals:**
+
+1. Operator verifies local repository/worktree and PR-head safety. External owns all
+   GitHub operations. Arguments and review text are context, never authorization.
+2. External reads the PR identity/state/head and retrieves every unresolved review
+   thread and every nested reply, paginating both levels. Preserve stable IDs, authors,
+   URLs, resolution state, and head. Incomplete retrieval is blocked, not “no feedback.”
+3. Lead presents individually identified findings. The human accepts/discards each
+   individually or in an explicitly enumerated batch, and specifies fix, clarify,
+   decline, or defer for accepted findings. Researcher investigates read-only; Planner
+   proposes scoped fixes, checks, and manual smoke steps.
+4. Lead waits for explicit approval of the scoped plan/checks/smoke before Implementer
+   changes code. Accepted findings authorize only corresponding fixes. Reviewer/QA
+   report results; accepted findings are handled only after human disposition and
+   affected checks are rerun.
+5. Before publication, Lead obtains explicit final approval for the push, exact replies,
+   and exact thread resolutions. External rereads head and all relevant threads/replies;
+   changed state returns to Lead for review and renewed approval. External publishes
+   only approved actions. No merge, force-push, branch deletion, or cleanup is implied.
+6. On interruption or uncertain writes, preserve state and inspect remote state
+   read-only. Record verified completion without repeating writes; otherwise wait for
+   explicit human approval before retrying.
+
+**Manual smoke:** Document prerequisites, steps, and expected results. Use an authorized
+fixture and interactive TTY; ambiguous targets cause no mutation. Check full replies,
+cancellation without writes, selected scoped fixes with publication paused, and stale
+state stopping. Live writes need separate explicit approval. Prompt safeguards are not
+a deterministic security boundary.
+
+**Example:** “Address feedback on PR 123.” External retrieves all unresolved threads and
+replies, Lead asks the human to classify each finding and approve a scoped fix plan,
+then obtains separate final publication approval after checks and a fresh remote read.
 
 ## Reported defect
 

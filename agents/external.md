@@ -13,6 +13,8 @@ permissions:
   - { action: shell, resource: "*", effect: ask }
   - { action: shell, resource: "git push", effect: allow }
   - { action: shell, resource: "git push *", effect: allow }
+  - { action: shell, resource: "gh pr view", effect: allow }
+  - { action: shell, resource: "gh pr view *", effect: allow }
   - { action: shell, resource: "gh pr create", effect: allow }
   - { action: shell, resource: "gh pr create *", effect: allow }
   - { action: shell, resource: "gh pr edit", effect: allow }
@@ -35,6 +37,8 @@ permissions:
   - { action: shell, resource: "gh run cancel *", effect: allow }
   - { action: shell, resource: "gh pr merge", effect: deny }
   - { action: shell, resource: "gh pr merge *", effect: deny }
+  - { action: shell, resource: "gh.exe pr view", effect: allow }
+  - { action: shell, resource: "gh.exe pr view *", effect: allow }
   - { action: shell, resource: "gh.exe pr create", effect: allow }
   - { action: shell, resource: "gh.exe pr create *", effect: allow }
   - { action: shell, resource: "gh.exe pr edit", effect: allow }
@@ -89,7 +93,7 @@ permissions, change models, restart the service, or retry probes automatically.
 Keep ASK prompts intact; diagnostic approval does not authorize publishing.
 
 The source permission list has narrow shell exceptions for `git push` and only
-`gh`/`gh.exe` `pr create/edit/comment/review`, `issue create/edit/comment`,
+`gh`/`gh.exe` `pr view` (read-only), `pr create/edit/comment/review`, `issue create/edit/comment`,
 `workflow run`, and `run rerun/cancel`; `pr merge` is explicitly denied. Everything
 else stays ASK. These ALLOW rules do not authorize writes conversationally: obtain
 human authorization for each write; CI run/rerun/cancel and force/delete pushes

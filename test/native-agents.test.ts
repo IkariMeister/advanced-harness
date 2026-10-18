@@ -59,7 +59,7 @@ test('External source permission exceptions are narrowly scoped and merge stays 
   assert.ok(lines.includes('  - { action: shell, resource: "git push", effect: allow }'));
   assert.ok(lines.includes('  - { action: shell, resource: "git push *", effect: allow }'));
   for (const executable of ['gh', 'gh.exe']) {
-    for (const command of ['pr create', 'pr edit', 'pr comment', 'pr review', 'issue create', 'issue edit', 'issue comment', 'workflow run', 'run rerun', 'run cancel']) {
+    for (const command of ['pr view', 'pr create', 'pr edit', 'pr comment', 'pr review', 'issue create', 'issue edit', 'issue comment', 'workflow run', 'run rerun', 'run cancel']) {
       assert.ok(lines.includes(`  - { action: shell, resource: "${executable} ${command}", effect: allow }`));
       assert.ok(lines.includes(`  - { action: shell, resource: "${executable} ${command} *", effect: allow }`));
     }

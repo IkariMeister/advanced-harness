@@ -21,7 +21,7 @@ const keys = (value: RecordValue, allowed: readonly string[]) => Object.keys(val
 const plain = (text: string) => !!text.trim() && text.length <= 128 && !/[\x00-\x1f\x7f]/.test(text);
 
 const externalGhCommands = [
-  'pr create', 'pr edit', 'pr comment', 'pr review',
+  'pr view', 'pr create', 'pr edit', 'pr comment', 'pr review',
   'issue create', 'issue edit', 'issue comment',
   'workflow run', 'run rerun', 'run cancel',
 ] as const;
