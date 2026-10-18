@@ -102,6 +102,7 @@ invented. Links point to the current implementation/specification.
 | BH-019 | P1 | Per-agent tool availability and ownership | Capability docs complete; approved External source-permission follow-up implemented and local checks pass; independent reviews and final implementation approval pending |
 | BH-020 | Complete (implementation/verification; merged) | Safe harness update workflow | Harness PR #35 merged at `d8c4ac4`; review follow-up is on `feature/bh020-review-fixes`, with no new PR open yet |
 | BH-021 | P1 | Safe harness uninstall and cleanup | Inventory managed footprint, preview removal, preserve unrelated state, and report partial failure |
+| BH-022 | P1 | GitHub Actions CI validation | Workflow implemented on `feature/bh022-ci`; typecheck and full offline test suite pass locally; PR pending |
 
 ### BH-020 accepted PR #35 review findings (2026-10-17)
 
@@ -146,7 +147,7 @@ skipped; neither is waived or claimed passed. Next action: publish the authorize
 follow-up PR; no PR is open yet.
 
 Within-priority delivery order (stable IDs unchanged): **P1** BH-019, BH-009,
-BH-013, BH-006, BH-020, BH-021, BH-010; **P2** BH-005, BH-012, BH-017,
+BH-013, BH-006, BH-020, BH-021, BH-022, BH-010; **P2** BH-005, BH-012, BH-017,
 BH-004, BH-007, BH-008, BH-011; **P3** BH-014. **Deferred:** BH-015,
 BH-016, BH-018. BH-001–003 are complete only for their stated scoped outcomes,
 not broader completion. Priorities/order are not implementation authorization.
@@ -863,6 +864,19 @@ only when safe and without intervening conflicts; preserve unrelated configurati
 credentials, projects, and work. Ask whether harness-created artifacts should be
 retained or removed, and report partial failures. Never assume authority to delete
 shared credentials/worktrees or the host itself. No cleanup is authorized here.
+
+## BH-022 — GitHub Actions CI validation
+
+2026-10-18 implementation & verification:
+Added `.github/workflows/ci.yml` defining automated CI on GitHub Actions:
+- Triggers on `push` and `pull_request` targeting `main`, plus manual `workflow_dispatch`.
+- Concurrency group cancels superseded in-progress PR runs while allowing `main` branch runs to complete.
+- Runs on `ubuntu-latest` with least-privilege `contents: read` permissions.
+- Sets up Node.js 24.x (`actions/setup-node@v4`) with npm dependency caching.
+- Validates repository health through `npm ci`, `git diff --check`, `npm run typecheck`, and `npm test`.
+- All offline test suites run; live OpenCode test (`native-diagnostics-live.test.ts`) is automatically skipped when `HARNESS_LIVE_OPENCODE` is unset.
+- Verification: `npm run typecheck` passed (exit 0); full automated test suite passed (207 passed, 0 failed, 1 opt-in live test skipped); `git diff --check` passed clean.
+- Next action: commit and open PR once human approves publication.
 
 ## BH-010 — Interruption/resume and uncertain external outcomes
 
