@@ -102,7 +102,7 @@ invented. Links point to the current implementation/specification.
 | BH-019 | P1 | Per-agent tool availability and ownership | Capability docs complete; approved External source-permission follow-up implemented and local checks pass; independent reviews and final implementation approval pending |
 | BH-020 | Complete (implementation/verification; merged) | Safe harness update workflow | Harness PR #35 merged at `d8c4ac4`; review follow-up is on `feature/bh020-review-fixes`, with no new PR open yet |
 | BH-021 | P1 | Safe harness uninstall and cleanup | Inventory managed footprint, preview removal, preserve unrelated state, and report partial failure |
-| BH-022 | P1 | GitHub Actions CI validation | Workflow implemented on `feature/bh022-ci`; typecheck and full offline test suite pass locally; PR pending |
+| BH-022 | Complete (implementation/verification; PR open) | GitHub Actions CI validation | PR #39 OPEN: https://github.com/IkariMeister/advanced-harness/pull/39; head `feature/bh022-ci` at `395fd26`; merge pending/unverified |
 
 ### BH-020 accepted PR #35 review findings (2026-10-17)
 
@@ -891,7 +891,7 @@ Added `.github/workflows/ci.yml` defining automated CI on GitHub Actions:
 - Validates repository health through `npm ci`, `git diff --check`, `npm run typecheck`, and `npm test`.
 - All offline test suites run; live OpenCode test (`native-diagnostics-live.test.ts`) is automatically skipped when `HARNESS_LIVE_OPENCODE` is unset.
 - Verification: `npm run typecheck` passed (exit 0); full automated test suite passed (207 passed, 0 failed, 1 opt-in live test skipped); `git diff --check` passed clean.
-- Next action: commit and open PR once human approves publication.
+- External confirmed PR #39 is **OPEN**, targeting `main`, from `feature/bh022-ci` at `395fd26`: https://github.com/IkariMeister/advanced-harness/pull/39. Merge is pending human review and approval.
 
 ## BH-010 — Interruption/resume and uncertain external outcomes
 
