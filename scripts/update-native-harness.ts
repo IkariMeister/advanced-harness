@@ -1,10 +1,11 @@
 import { createInterface } from 'node:readline/promises';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import type { Ask } from '../src/native-installer.ts';
+import { askHostSelection } from '../src/host-registry.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:update -- [--scope project|global] [--project <directory>] [--config <file>] [--opencode <CLI path>] [--check-remote]');
+  console.log('Usage: npm run harness:update -- [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--scope project|global] [--project <directory>] [--config <file>] [--opencode <CLI path>] [--check-remote]');
   console.log('Safe harness update workflow. Discovers newer versions, previews prompt & permission updates, preserves customizations, and records recovery receipts.');
 } else {
   const options: Record<string, string | boolean> = {};
@@ -15,7 +16,7 @@ if (args.includes('--help')) {
       continue;
     }
     const value = args[index + 1];
-    if (!flag || !['--scope', '--project', '--config', '--opencode'].includes(flag) || !value || value.startsWith('--') || options[flag]) {
+    if (!flag || !['--scope', '--project', '--config', '--opencode', '--host'].includes(flag) || !value || value.startsWith('--') || options[flag]) {
       throw new Error('Unknown, duplicate, or incomplete option. Run --help.');
     }
     options[flag] = value;
@@ -30,13 +31,15 @@ if (args.includes('--help')) {
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   const ask: Ask = async (question, suggested) => (await terminal.question(`${question}${suggested ? ` [${suggested}]` : ''}: `)).trim();
   try {
+    const host = options['--host'] ? String(options['--host']) : (await askHostSelection(ask, 'opencode')).join(',');
     process.exitCode = await runUpdateFlow(
       {
         ...(options['--scope'] ? { scope: String(options['--scope']) } : {}),
         ...(options['--project'] ? { project: String(options['--project']) } : {}),
         ...(options['--config'] ? { config: String(options['--config']) } : {}),
         ...(options['--opencode'] ? { opencode: String(options['--opencode']) } : {}),
-        ...(options['--check-remote'] ? { checkRemote: true } : {})
+        ...(options['--check-remote'] ? { checkRemote: true } : {}),
+        host
       },
       {
         ask,

@@ -5,16 +5,26 @@ import { assertSafeFilesystemPath, configurationField, createReceipt, modifyJson
 import { nativeRoles, type NativeReconciliationOptions, type NativeRole } from './native-installer.ts';
 import { reconcilePermissions, type AttributedRule, type PermissionRule, type ReconciliationResult } from './permission-reconciliation.ts';
 
+import { isSupportedHost, type HostId } from './host-registry.ts';
+
 export type HarnessVersionStamp = { version: string; commit: string; dirty?: boolean };
 export type PermissionEvidence = { path: string[]; order: PermissionRule[]; owned: AttributedRule[]; opaque?: FieldChange };
+export type ManagedFileEvidence = {
+  path: string;
+  kind: 'config' | 'instructions' | 'rules' | 'skills' | 'settings';
+  before: { absent: true } | { digest?: string; content?: string };
+  after: { absent: true } | { digest?: string; content?: string };
+};
 export type V2Receipt = Omit<InstallationReceipt, 'version' | 'status'> & {
   version: 2; id: string; status: 'pending' | 'complete';
+  host?: HostId | undefined;
   predecessor: { file: string; identity: string; digest: string } | null;
   permissions: PermissionEvidence[];
-  harnessVersion?: HarnessVersionStamp;
+  managedFiles?: ManagedFileEvidence[] | undefined;
+  harnessVersion?: HarnessVersionStamp | undefined;
 };
 type Entry = { file: string; text: string; identity: string; digest: string; receipt: AnyReceipt };
-export type ReceiptSnapshot = { directory: string; target: string; fingerprint: string; entries: Entry[]; head?: Entry };
+export type ReceiptSnapshot = { directory: string; target: string; host?: HostId | undefined; fingerprint: string; entries: Entry[]; head?: Entry | undefined };
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const canonicalTarget = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 const key = (path: string[]) => path.join('.');
@@ -27,10 +37,19 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const validated = new WeakMap<object, { snapshot: ReceiptSnapshot; serialized: string }>();
 
 export function validateV2Receipt(value: unknown, target: string, allowPending = false): V2Receipt {
-  if (!record(value) || Object.keys(value).some(k => !['version', 'id', 'target', 'complete', 'status', 'provenance', 'changes', 'createdContainers', 'predecessor', 'permissions', 'harnessVersion'].includes(k))) throw new Error('Unsupported v2 receipt fields.');
-  const { id, predecessor, permissions, harnessVersion, ...base } = value;
+  if (!record(value) || Object.keys(value).some(k => !['version', 'id', 'target', 'complete', 'status', 'provenance', 'changes', 'createdContainers', 'predecessor', 'permissions', 'harnessVersion', 'host', 'managedFiles'].includes(k))) throw new Error('Unsupported v2 receipt fields.');
+  const { id, predecessor, permissions, harnessVersion, host, managedFiles, ...base } = value;
   validateLegacyReceipt({ ...base, version: 1 }, target, allowPending);
   if (value.version !== 2 || value.provenance !== 'installer' || !['pending', 'complete'].includes(String(value.status)) || typeof id !== 'string' || !uuid.test(id) || !Array.isArray(permissions)) throw new Error('Invalid v2 receipt identity/status.');
+  if (host !== undefined && !isSupportedHost(host)) throw new Error(`Invalid receipt host: ${String(host)}`);
+  if (managedFiles !== undefined) {
+    if (!Array.isArray(managedFiles)) throw new Error('Invalid managedFiles array in v2 receipt.');
+    for (const f of managedFiles) {
+      if (!record(f) || typeof f.path !== 'string' || !['config', 'instructions', 'rules', 'skills', 'settings'].includes(String(f.kind)) || !record(f.before) || !record(f.after)) {
+        throw new Error('Invalid managedFiles evidence item.');
+      }
+    }
+  }
   if (harnessVersion !== undefined) {
     if (!record(harnessVersion) || typeof harnessVersion.version !== 'string' || !harnessVersion.version || typeof harnessVersion.commit !== 'string' || !harnessVersion.commit || Object.keys(harnessVersion).some(k => !['version', 'commit', 'dirty'].includes(k))) throw new Error('Invalid harness version stamp.');
     if (harnessVersion.dirty !== undefined && typeof harnessVersion.dirty !== 'boolean') throw new Error('Invalid harness version stamp.');
@@ -57,7 +76,7 @@ export function validateV2Receipt(value: unknown, target: string, allowPending =
   return receipt;
 }
 
-function inventory(directory: string, target: string, ignore?: string): { entries: Entry[]; fingerprint: string } {
+function inventory(directory: string, target: string, host?: HostId, ignore?: string): { entries: Entry[]; fingerprint: string } {
   assertSafeFilesystemPath(directory, 'directory');
   const entries: Entry[] = [], signatures: unknown[] = [];
   if (!existsSync(directory)) return { entries, fingerprint: hash('[]') };
@@ -71,15 +90,17 @@ function inventory(directory: string, target: string, ignore?: string): { entrie
     try { raw = JSON.parse(text); } catch { throw new Error(`Malformed recovery receipt: ${file}`); }
     if (!record(raw) || typeof raw.target !== 'string') throw new Error(`Invalid recovery receipt: ${file}`);
     if (canonicalTarget(raw.target) !== canonicalTarget(target)) continue;
+    const receiptHost: HostId = (raw.version === 2 && raw.host && isSupportedHost(raw.host)) ? (raw.host as HostId) : 'opencode';
+    if (host && receiptHost !== host) continue;
     const receipt = readReceiptDocument(path, target, true);
     entries.push({ file, text, receipt, digest: hash(text), identity: receipt.version === 2 ? receipt.id : `v1:${file}` });
   }
   return { entries, fingerprint: hash(JSON.stringify(signatures)) };
 }
 
-export function discoverReceiptChain(directory: string, target: string): ReceiptSnapshot {
+export function discoverReceiptChain(directory: string, target: string, host?: HostId): ReceiptSnapshot {
   directory = resolve(directory); target = resolve(target);
-  const { entries, fingerprint } = inventory(directory, target);
+  const { entries, fingerprint } = inventory(directory, target, host);
   const byFile = new Map(entries.map(e => [e.file, e]));
   if (new Set(entries.map(e => e.identity)).size !== entries.length) throw new Error('Duplicate receipt identity.');
   const children = new Map<string, string>();
@@ -107,23 +128,24 @@ export function discoverReceiptChain(directory: string, target: string): Receipt
   }
   const heads = entries.filter(e => !children.has(e.file));
   if (heads.length > 1) throw new Error('Multiple unrelated receipt heads; explicit recovery is required.');
-  return { directory, target, fingerprint, entries, ...(heads[0] ? { head: heads[0] } : {}) };
+  return { directory, target, host, fingerprint, entries, ...(heads[0] ? { head: heads[0] } : {}) };
 }
 
 export function revalidateReceiptSnapshot(snapshot: ReceiptSnapshot, ignore?: string): void {
-  if (inventory(snapshot.directory, snapshot.target, ignore).fingerprint !== snapshot.fingerprint) throw new Error('Receipt evidence changed during review; no write permitted.');
+  if (inventory(snapshot.directory, snapshot.target, snapshot.host, ignore).fingerprint !== snapshot.fingerprint) throw new Error('Receipt evidence changed during review; no write permitted.');
 }
 
 export function readReceiptForRestore(path: string, target: string, allowPending = false): AnyReceipt {
   const receipt = readReceiptDocument(path, target, allowPending);
   if (allowPending && !receipt.complete) return receipt;
+  const host: HostId = (receipt.version === 2 && receipt.host && isSupportedHost(receipt.host)) ? receipt.host : 'opencode';
   // Unlinked v1 files retain backward-compatible standalone reading.
   const hasV2 = readdirSync(dirname(resolve(path))).some(file => /^native-install-.*\.json$/.test(file) && file !== basename(path) && (() => {
-    const raw = JSON.parse(readFileSync(assertSafeFilesystemPath(join(dirname(resolve(path)), file), 'file'), 'utf8')) as { version?: unknown; target?: unknown };
-    return raw.version === 2 && typeof raw.target === 'string' && canonicalTarget(raw.target) === canonicalTarget(target);
+    const raw = JSON.parse(readFileSync(assertSafeFilesystemPath(join(dirname(resolve(path)), file), 'file'), 'utf8')) as { version?: unknown; target?: unknown; host?: unknown };
+    return raw.version === 2 && typeof raw.target === 'string' && canonicalTarget(raw.target) === canonicalTarget(target) && ((raw.host && isSupportedHost(raw.host)) ? raw.host : 'opencode') === host;
   })());
   if (receipt.version === 1 && !hasV2) return receipt;
-  const snapshot = discoverReceiptChain(dirname(resolve(path)), target);
+  const snapshot = discoverReceiptChain(dirname(resolve(path)), target, host);
   if (snapshot.head?.file !== basename(path)) throw new Error('Superseded receipt cannot be restored independently; select the active head.');
   validated.set(receipt, { snapshot, serialized: JSON.stringify(receipt) });
   return receipt;
@@ -151,7 +173,7 @@ export function receiptReconciliationOptions(snapshot: ReceiptSnapshot): NativeR
   return result;
 }
 
-export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string | undefined, after: string, plans: Partial<Record<NativeRole, ReconciliationResult>>, harnessVersion?: HarnessVersionStamp): V2Receipt {
+export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string | undefined, after: string, plans: Partial<Record<NativeRole, ReconciliationResult>>, harnessVersion?: HarnessVersionStamp, extra?: { host?: HostId; managedFiles?: ManagedFileEvidence[] }): V2Receipt {
   revalidateReceiptSnapshot(snapshot);
   const delta = createReceipt(snapshot.target, before, after), parent = snapshot.head;
   const changes = structuredClone(parent?.receipt.changes ?? []);
@@ -181,7 +203,10 @@ export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string
   }
   const containers = [...(parent?.receipt.createdContainers ?? [])];
   for (const path of delta.createdContainers) if (!containers.some(p => equal(p, path))) containers.push(path);
-  const receipt: V2Receipt = { version: 2, id: randomUUID(), target: snapshot.target, complete: true, status: 'complete', provenance: 'installer', predecessor: parent ? { file: parent.file, identity: parent.identity, digest: parent.digest } : null, changes, createdContainers: containers, permissions, ...(harnessVersion ? { harnessVersion } : {}) };
+  const parentHost = parent?.receipt.version === 2 ? parent.receipt.host : undefined;
+  const host: HostId = extra?.host ?? snapshot.host ?? parentHost ?? 'opencode';
+  const managedFiles = extra?.managedFiles ?? (parent?.receipt.version === 2 ? parent.receipt.managedFiles : undefined);
+  const receipt: V2Receipt = { version: 2, id: randomUUID(), target: snapshot.target, complete: true, status: 'complete', provenance: 'installer', host, predecessor: parent ? { file: parent.file, identity: parent.identity, digest: parent.digest } : null, changes, createdContainers: containers, permissions, ...(managedFiles ? { managedFiles: structuredClone(managedFiles) } : {}), ...(harnessVersion ? { harnessVersion } : {}) };
   return validateV2Receipt(receipt, snapshot.target);
 }
 
@@ -253,8 +278,59 @@ export function planV2Restore(receipt: V2Receipt, text: string): { updated: stri
     updated = modifyJsonc(updated, p.path, restored);
     actions.push(`${key(p.path)}: restore attributable rules; preserve user additions`);
   }
+  if (receipt.managedFiles) {
+    for (const f of receipt.managedFiles) {
+      assertSafeFilesystemPath(f.path, 'file');
+      const exists = existsSync(f.path);
+      const current = exists ? readFileSync(f.path, 'utf8') : undefined;
+      const expectedAfter = ('absent' in f.after && f.after.absent) ? undefined : ('content' in f.after ? f.after.content : undefined);
+      const expectedBefore = ('absent' in f.before && f.before.absent) ? undefined : ('content' in f.before ? f.before.content : undefined);
+      if (current === expectedAfter) {
+        if (expectedBefore === undefined) {
+          actions.push(`${f.path}: remove installer-created ${f.kind}`);
+        } else {
+          actions.push(`${f.path}: restore prior ${f.kind}`);
+        }
+      } else if (current === expectedBefore) {
+        actions.push(`${f.path}: already restored`);
+      } else {
+        conflicts.push(`${f.path} (concurrently modified)`);
+      }
+    }
+  }
   const scalar: InstallationReceipt = { version: 1, target: receipt.target, provenance: 'installer', complete: true, changes: receipt.changes.filter(c => c.path.at(-1) !== 'permissions'), createdContainers: receipt.createdContainers };
   const rest = planLegacyUninstall(scalar, bom + updated);
   conflicts.push(...rest.conflicts); actions.push(...rest.actions);
   return { updated: conflicts.length ? text : rest.updated, actions, conflicts };
+}
+
+export function applyManagedFilePlan(receipt: V2Receipt, backupParent: string): { backups: string[]; modified: string[] } {
+  const backups: string[] = [];
+  const modified: string[] = [];
+  if (!receipt.managedFiles) return { backups, modified };
+  assertSafeFilesystemPath(backupParent, 'directory');
+  const backupDir = join(backupParent, `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
+  for (const f of receipt.managedFiles) {
+    assertSafeFilesystemPath(f.path, 'file');
+    const exists = existsSync(f.path);
+    const current = exists ? readFileSync(f.path, 'utf8') : undefined;
+    const expectedAfter = ('absent' in f.after && f.after.absent) ? undefined : ('content' in f.after ? f.after.content : undefined);
+    const expectedBefore = ('absent' in f.before && f.before.absent) ? undefined : ('content' in f.before ? f.before.content : undefined);
+    if (current === expectedAfter) {
+      if (current !== undefined) {
+        mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+        const backupPath = join(backupDir, basename(f.path));
+        writeFileSync(backupPath, current, { flag: 'wx', mode: 0o600 });
+        backups.push(backupPath);
+      }
+      if (expectedBefore === undefined) {
+        if (exists) unlinkSync(f.path);
+        modified.push(`${f.path} (removed)`);
+      } else {
+        writeFileSync(f.path, expectedBefore, 'utf8');
+        modified.push(`${f.path} (restored)`);
+      }
+    }
+  }
+  return { backups, modified };
 }

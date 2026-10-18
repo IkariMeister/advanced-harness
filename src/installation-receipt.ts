@@ -4,6 +4,14 @@ import { basename, join, parse as pathParse, resolve } from 'node:path';
 import { modelReference, parseConfiguration } from './native-installer.ts';
 import { parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
 import { readReceiptForRestore, validateV2Receipt, planV2Restore, type V2Receipt } from './receipt-lineage.ts';
+import { isSupportedHost, type HostId } from './host-registry.ts';
+
+export function effectiveReceiptHost(receipt: AnyReceipt): HostId {
+  if (receipt.version === 2 && 'host' in receipt && typeof receipt.host === 'string' && isSupportedHost(receipt.host)) {
+    return receipt.host;
+  }
+  return 'opencode';
+}
 
 export function assertSafeFilesystemPath(path: string, leaf: 'file' | 'directory' | 'either' = 'either'): string {
   const absolute = resolve(path);
@@ -94,16 +102,18 @@ export function recoverFailedInstallation(path: string, expected: string | undef
   return 'retained';
 }
 
-export function assertNoReceiptOverlap(directory: string, target: string, proposed: InstallationReceipt, currentText: string): void {
+export function assertNoReceiptOverlap(directory: string, target: string, proposed: InstallationReceipt | V2Receipt, currentText: string, host: HostId = 'opencode'): void {
   assertSafeFilesystemPath(directory, 'directory');
   assertSafeFilesystemPath(target, 'file');
   if (!existsSync(directory)) return;
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (!entry.isFile() || !/^native-(?:install|adoption)-.*\.json$/.test(entry.name)) continue;
     const path = join(directory, entry.name);
-    const raw = receiptValue(assertSafeFilesystemPath(path, 'file')) as {target?: unknown} | null;
+    const raw = receiptValue(assertSafeFilesystemPath(path, 'file')) as {target?: unknown; host?: unknown} | null;
     if (!raw || typeof raw.target !== 'string') throw new Error(`Invalid recovery receipt ${entry.name}; resolve it before continuing.`);
     if ((process.platform === 'win32' ? resolve(raw.target).toLowerCase() : resolve(raw.target)) !== (process.platform === 'win32' ? resolve(target).toLowerCase() : resolve(target))) continue;
+    const otherHost: HostId = (raw.host && isSupportedHost(raw.host)) ? raw.host : 'opencode';
+    if (otherHost !== host) continue;
     const other = readReceiptDocument(path, target, true);
     const pending = (other as InstallationReceipt).status === 'pending';
     const stillApplied = other.changes.some(change => JSON.stringify(configurationField(currentText, change.path)) === JSON.stringify(evidenceValue(change.after)));

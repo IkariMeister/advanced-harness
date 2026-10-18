@@ -1,0 +1,345 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import {
+  supportedHosts,
+  isSupportedHost,
+  parseHostSelection,
+  askHostSelection,
+  HOST_MODEL_PRESETS,
+  HOST_CAPABILITIES,
+  detectInstalledHosts,
+  registerHostAdapter,
+  getHostAdapter,
+  clearRegisteredAdapters,
+  type HostId,
+  type HostAdapter
+} from '../src/host-registry.ts';
+import {
+  createSuccessorReceipt,
+  discoverReceiptChain,
+  finalizeSuccessor,
+  writePendingSuccessor,
+  readReceiptForRestore,
+  planV2Restore,
+  applyManagedFilePlan,
+  type ReceiptSnapshot,
+  type ManagedFileEvidence
+} from '../src/receipt-lineage.ts';
+import { assertNoReceiptOverlap, effectiveReceiptHost } from '../src/installation-receipt.ts';
+import { diagnoseHost } from '../src/native-diagnostics.ts';
+import { runInstallerFlow } from '../src/installer-flow.ts';
+import { runUpdateFlow } from '../src/update-cli-flow.ts';
+import { nativeRoles } from '../src/native-installer.ts';
+
+function createTempDir(prefix: string): string {
+  const dir = join(tmpdir(), `${prefix}-${randomUUID()}`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+test('supportedHosts and parseHostSelection validate all hosts, aliases, and errors', () => {
+  assert.deepEqual(supportedHosts, ['opencode', 'claude-code', 'antigravity', 'codex', 'cursor']);
+
+  // Valid single host
+  assert.deepEqual(parseHostSelection('opencode'), ['opencode']);
+  assert.deepEqual(parseHostSelection('claude-code'), ['claude-code']);
+  assert.deepEqual(parseHostSelection('antigravity'), ['antigravity']);
+  assert.deepEqual(parseHostSelection('codex'), ['codex']);
+  assert.deepEqual(parseHostSelection('cursor'), ['cursor']);
+
+  // Case insensitivity & trimming
+  assert.deepEqual(parseHostSelection('  Claude-Code  '), ['claude-code']);
+  assert.deepEqual(parseHostSelection('ANTIGRAVITY'), ['antigravity']);
+
+  // 'all' expansion
+  assert.deepEqual(parseHostSelection('all'), [...supportedHosts]);
+
+  // Comma-separated list with deduplication and canonical ordering
+  assert.deepEqual(
+    parseHostSelection('cursor, opencode, antigravity, opencode'),
+    ['opencode', 'antigravity', 'cursor']
+  );
+
+  // Errors on empty or invalid hosts
+  assert.throws(() => parseHostSelection(''), /Host selection cannot be empty/);
+  assert.throws(() => parseHostSelection('   '), /Host selection cannot be empty/);
+  assert.throws(() => parseHostSelection('unknown-host'), /Unsupported host: "unknown-host"/);
+  assert.throws(() => parseHostSelection('opencode,invalid,cursor'), /Unsupported host: "invalid"/);
+});
+
+test('askHostSelection defaults on Enter and retries invalid entries', async () => {
+  const inputs = ['', 'invalid-host', 'claude-code,codex'];
+  let promptCount = 0;
+  const ask = async (_q: string, suggested?: string) => {
+    promptCount++;
+    return inputs.shift() ?? suggested ?? '';
+  };
+
+  // First input '' -> defaults to suggested ('opencode')
+  const res1 = await askHostSelection(ask, 'opencode');
+  assert.deepEqual(res1, ['opencode']);
+  assert.equal(promptCount, 1);
+
+  // Second trial: 'invalid-host' retries, then 'claude-code,codex' succeeds
+  const res2 = await askHostSelection(ask, 'opencode');
+  assert.deepEqual(res2, ['claude-code', 'codex']);
+  assert.equal(promptCount, 3);
+});
+
+test('HOST_MODEL_PRESETS covers all 8 roles across all 5 hosts', () => {
+  for (const host of supportedHosts) {
+    const presets = HOST_MODEL_PRESETS[host];
+    assert.ok(presets, `Missing presets for host ${host}`);
+    for (const role of nativeRoles) {
+      const preset = presets[role];
+      assert.ok(preset, `Host ${host} missing preset for role ${role}`);
+      assert.ok(preset.model, `Host ${host} role ${role} missing model identifier`);
+    }
+  }
+
+  // Claude Code uses opus (planner/reviewer), sonnet (lead/researcher/implementer/qa), haiku (operator/external)
+  assert.equal(HOST_MODEL_PRESETS['claude-code'].planner.model, 'opus');
+  assert.equal(HOST_MODEL_PRESETS['claude-code'].reviewer.model, 'opus');
+  assert.equal(HOST_MODEL_PRESETS['claude-code'].lead.model, 'sonnet');
+  assert.equal(HOST_MODEL_PRESETS['claude-code'].operator.model, 'haiku');
+  assert.equal(HOST_MODEL_PRESETS['claude-code'].external.model, 'haiku');
+
+  // Antigravity uses inherit, pro, flash, flash_lite
+  assert.equal(HOST_MODEL_PRESETS.antigravity.lead.model, 'inherit');
+  assert.equal(HOST_MODEL_PRESETS.antigravity.planner.model, 'pro');
+  assert.equal(HOST_MODEL_PRESETS.antigravity.reviewer.model, 'pro');
+  assert.equal(HOST_MODEL_PRESETS.antigravity.implementer.model, 'flash');
+  assert.equal(HOST_MODEL_PRESETS.antigravity.operator.model, 'flash_lite');
+  assert.equal(HOST_MODEL_PRESETS.antigravity.external.model, 'flash_lite');
+
+  // Cursor uses phased session tiers
+  assert.equal(HOST_MODEL_PRESETS.cursor.lead.model, 'standard');
+  assert.equal(HOST_MODEL_PRESETS.cursor.planner.model, 'high-reasoning');
+});
+
+test('HOST_CAPABILITIES provides accurate disclosures and gh pr merge guards for each host', () => {
+  for (const host of supportedHosts) {
+    const cap = HOST_CAPABILITIES[host];
+    assert.ok(cap, `Missing capability definition for ${host}`);
+    assert.ok(cap.displayName);
+    assert.ok(cap.isolationModel);
+    assert.ok(cap.permissionModel);
+    assert.ok(cap.ghPrMergeGuard.length > 0, `Missing gh pr merge guard for ${host}`);
+    assert.ok(cap.disclosures.length >= 2, `Missing disclosures for ${host}`);
+  }
+
+  assert.equal(HOST_CAPABILITIES.opencode.isolationModel, 'native-subagents');
+  assert.equal(HOST_CAPABILITIES['claude-code'].isolationModel, 'native-subagents');
+  assert.equal(HOST_CAPABILITIES.antigravity.isolationModel, 'native-subagents');
+  assert.equal(HOST_CAPABILITIES.codex.isolationModel, 'cli-profile-exec');
+  assert.equal(HOST_CAPABILITIES.cursor.isolationModel, 'in-session-phases');
+});
+
+test('detectInstalledHosts accurately scans project and home config files', () => {
+  const tempProject = createTempDir('detect-test');
+  const tempHome = createTempDir('detect-home');
+
+  try {
+    // Empty directory defaults to ['opencode'] fallback
+    const emptyDetected = detectInstalledHosts(tempProject, tempHome);
+    assert.deepEqual(emptyDetected, ['opencode']);
+
+    // Add Claude Code markers
+    mkdirSync(join(tempProject, '.claude'), { recursive: true });
+    writeFileSync(join(tempProject, 'CLAUDE.md'), '# Claude Config');
+    const claudeDetected = detectInstalledHosts(tempProject, tempHome);
+    assert.deepEqual(claudeDetected, ['claude-code']);
+
+    // Add Antigravity markers in project
+    mkdirSync(join(tempProject, '.agents'), { recursive: true });
+    writeFileSync(join(tempProject, 'hooks.json'), '{}');
+    const multiDetected = detectInstalledHosts(tempProject, tempHome);
+    assert.deepEqual(multiDetected, ['claude-code', 'antigravity']);
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('Host adapter registry supports dynamic registration and lookup', () => {
+  clearRegisteredAdapters();
+  try {
+    assert.equal(getHostAdapter('antigravity'), undefined);
+    const mockAdapter: HostAdapter = {
+      host: 'antigravity',
+      install: async () => {},
+      update: async () => {},
+      doctor: async () => ({ ok: true, issues: [], notes: ['Mock active'] })
+    };
+    registerHostAdapter(mockAdapter);
+    assert.equal(getHostAdapter('antigravity'), mockAdapter);
+  } finally {
+    clearRegisteredAdapters();
+  }
+});
+
+test('diagnoseHost produces structured report with presets and disclosures', async () => {
+  const tempProject = createTempDir('diag-test');
+  try {
+    const report = await diagnoseHost('antigravity', { project: tempProject });
+    assert.equal(report.host, 'antigravity');
+    assert.equal(report.displayName, 'Google Antigravity');
+    assert.equal(report.installed, false);
+    assert.ok(report.disclosures.length > 0);
+    assert.equal(report.rolePresets.lead.model, 'inherit');
+    assert.ok(report.notes.some(n => n.includes('not detected')));
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+  }
+});
+
+test('multi-host receipt lineage: host isolation, managedFiles restore, and assertNoReceiptOverlap', () => {
+  const tempDir = createTempDir('receipt-multihost-test');
+  const targetConfig = join(tempDir, 'opencode.json');
+  writeFileSync(targetConfig, '{"custom": "base"}');
+
+  try {
+    // 1. Create a snapshot for opencode
+    const snapshotOpenCode = discoverReceiptChain(tempDir, targetConfig, 'opencode');
+    assert.equal(snapshotOpenCode.host, 'opencode');
+    assert.equal(snapshotOpenCode.entries.length, 0);
+
+    const receiptOpenCode = createSuccessorReceipt(
+      snapshotOpenCode,
+      '{"custom": "base"}',
+      '{"custom": "base", "model": "openai/gpt-4"}',
+      {},
+      undefined,
+      { host: 'opencode' }
+    );
+    assert.equal(receiptOpenCode.host, 'opencode');
+    assert.equal(effectiveReceiptHost(receiptOpenCode), 'opencode');
+
+    const pendingOpenCode = writePendingSuccessor(snapshotOpenCode, receiptOpenCode);
+    writeFileSync(targetConfig, '{"custom": "base", "model": "openai/gpt-4"}');
+    finalizeSuccessor(pendingOpenCode, '{"custom": "base", "model": "openai/gpt-4"}');
+
+    // 2. Discovering receipt chain for 'claude-code' on the same target does not see the opencode receipt
+    const snapshotClaude = discoverReceiptChain(tempDir, targetConfig, 'claude-code');
+    assert.equal(snapshotClaude.host, 'claude-code');
+    assert.equal(snapshotClaude.entries.length, 0);
+
+    // 3. assertNoReceiptOverlap isolates by host
+    // Overlapping proposed change for 'opencode' would collide with the existing opencode receipt
+    const proposedChange = {
+      version: 1 as const,
+      target: targetConfig,
+      complete: true,
+      provenance: 'installer' as const,
+      changes: [{ path: ['model'], before: { absent: true }, after: { value: 'openai/gpt-4' } }],
+      createdContainers: []
+    };
+    assert.throws(
+      () => assertNoReceiptOverlap(tempDir, targetConfig, proposedChange, '{"custom": "base", "model": "openai/gpt-4"}', 'opencode'),
+      /Outstanding receipt/
+    );
+
+    // For 'claude-code', the same change does NOT collide because host isolation partitions the receipts
+    assert.doesNotThrow(() => {
+      assertNoReceiptOverlap(tempDir, targetConfig, proposedChange, '{"custom": "base", "model": "openai/gpt-4"}', 'claude-code');
+    });
+
+    // 4. Managed file evidence tracking and restoration
+    const managedFilePath = join(tempDir, 'CLAUDE.md');
+    writeFileSync(managedFilePath, '# Managed Instructions');
+
+    const managedFileEvidence: ManagedFileEvidence = {
+      path: managedFilePath,
+      kind: 'instructions',
+      before: { absent: true },
+      after: { content: '# Managed Instructions' }
+    };
+
+    const receiptClaude = createSuccessorReceipt(
+      snapshotClaude,
+      undefined,
+      '{"custom": "base", "default_agent": "lead"}',
+      {},
+      undefined,
+      { host: 'claude-code', managedFiles: [managedFileEvidence] }
+    );
+    assert.equal(receiptClaude.host, 'claude-code');
+    assert.equal(receiptClaude.managedFiles?.length, 1);
+
+    const pendingClaude = writePendingSuccessor(snapshotClaude, receiptClaude);
+    writeFileSync(targetConfig, '{"custom": "base", "default_agent": "lead"}');
+    finalizeSuccessor(pendingClaude, '{"custom": "base", "default_agent": "lead"}');
+
+    const discoveredClaude = readReceiptForRestore(pendingClaude.path, targetConfig) as typeof receiptClaude;
+
+    // Test planV2Restore detects managed files
+    const restorePlan = planV2Restore(discoveredClaude, '{"custom": "base", "default_agent": "lead"}');
+    assert.ok(restorePlan.actions.some(a => a.includes('remove installer-created instructions')));
+
+    // Apply managed file plan
+    const restoreResult = applyManagedFilePlan(discoveredClaude, tempDir);
+    assert.equal(existsSync(managedFilePath), false);
+    assert.ok(restoreResult.modified.some(m => m.includes('removed')));
+    assert.equal(restoreResult.backups.length, 1);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('installer and update flows support --host selection and multi-host dispatch', async () => {
+  const tempProject = createTempDir('flow-multihost-test');
+  const tempHome = createTempDir('flow-home');
+  const logs: string[] = [];
+  const ask = async (_q: string, suggested?: string) => suggested ?? '';
+
+  try {
+    // Test installer flow for non-opencode host (e.g. antigravity)
+    let installedHost: string | undefined;
+    clearRegisteredAdapters();
+    registerHostAdapter({
+      host: 'antigravity',
+      install: async () => { installedHost = 'antigravity'; }
+    });
+
+    const exitCode = await runInstallerFlow(
+      { scope: 'project', project: tempProject, host: 'antigravity' },
+      {
+        ask,
+        output: msg => logs.push(msg),
+        error: msg => logs.push(`ERR: ${msg}`),
+        home: tempHome
+      }
+    );
+    assert.equal(exitCode, 0);
+    assert.equal(installedHost, 'antigravity');
+    assert.ok(logs.some(l => l.includes('Host Configuration: Google Antigravity')));
+
+    // Test update flow for non-opencode host
+    let updatedHost: string | undefined;
+    registerHostAdapter({
+      host: 'antigravity',
+      install: async () => {},
+      update: async () => { updatedHost = 'antigravity'; }
+    });
+
+    const updateExitCode = await runUpdateFlow(
+      { scope: 'project', project: tempProject, host: 'antigravity' },
+      {
+        ask,
+        output: msg => logs.push(msg),
+        error: msg => logs.push(`ERR: ${msg}`),
+        home: tempHome
+      }
+    );
+    assert.equal(updateExitCode, 0);
+    assert.equal(updatedHost, 'antigravity');
+  } finally {
+    clearRegisteredAdapters();
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});

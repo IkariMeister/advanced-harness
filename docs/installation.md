@@ -51,11 +51,13 @@ The installer asks for project or global scope, reads existing `opencode.json`/`
 Examples:
 
 ```text
-npm run harness:install -- --scope global
-npm run harness:install -- --scope project --project "C:/Users/you/Projects/android-app"
-npm run harness:install -- --scope project --project "$HOME/Projects/android-app"
+npm run harness:install -- --host opencode --scope global
+npm run harness:install -- --host claude-code,antigravity --scope project --project "C:/Users/you/Projects/android-app"
+npm run harness:install -- --host all --scope project --project "$HOME/Projects/android-app"
 npm run harness:install -- --help
 ```
+
+`--host <opencode|claude-code|antigravity|codex|cursor|all>` selects which agent hosts to install or configure. When omitted in interactive CLI mode, the installer prompts with `[opencode]` default on Enter. Multiple hosts can coexist in the same workspace; `AGENTS.md` remains host-neutral context, and host-specific files (e.g. `CLAUDE.md`, `.claude/`, `.agents/`, `.cursor/`, `.codex/`) do not clobber each other.
 
 `--project` is only for project scope. `--config <file>` selects an explicit `opencode.json` or `opencode.jsonc` within that scope, including the project's `.opencode` folder. This resolves a filename ambiguity when both JSON and JSONC exist. Paths supplied at prompts accept leading `~` or `$HOME`. Scope/destination are always shown before confirmation. Run in an interactive terminal; piped input is refused. This is setup, not the separate runtime approval terminal removed from the product plan.
 

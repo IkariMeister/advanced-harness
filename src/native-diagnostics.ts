@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout } from 'node:timers/promises';
-import { modelReference, nativeRoles, type ConfigSource } from './native-installer.ts';
+import { discoverConfigurations, modelReference, nativeRoles, type ConfigSource, type NativeRole } from './native-installer.ts';
 
 type Row = Record<string, unknown>;
 export type Snapshot = { agents: Row[]; models: Row[]; providers: Row[] };
@@ -126,4 +126,123 @@ export function printReport(report: Report): void {
   console.log('Catalog presence is NOT proof of account entitlement or successful inference. No paid model requests were sent.');
   console.log('Select Lead (not "Harness") in a NEW session; only Lead is primary. Existing session agent/model selections are unchanged.');
   console.log('If the UI disagrees with this server, check its project/server connection. Restarting the shared service may interrupt work; do it deliberately, not automatically.');
+}
+
+import { HOST_CAPABILITIES, HOST_MODEL_PRESETS, getHostAdapter, type HostId, type HostRolePreset } from './host-registry.ts';
+
+export interface HostDiagnosticReport {
+  host: HostId;
+  displayName: string;
+  ok: boolean;
+  installed: boolean;
+  issues: string[];
+  notes: string[];
+  disclosures: string[];
+  rolePresets: Record<NativeRole, HostRolePreset>;
+  opencodeReport?: Report;
+}
+
+export async function diagnoseHost(
+  host: HostId,
+  options: { project?: string; executable?: string; server?: string; globalDirectory?: string }
+): Promise<HostDiagnosticReport> {
+  const cap = HOST_CAPABILITIES[host];
+  const presets = HOST_MODEL_PRESETS[host];
+  const home = homedir();
+  const project = options.project ? resolve(options.project) : undefined;
+  const issues: string[] = [];
+  const notes: string[] = [];
+
+  let installed = false;
+  if (host === 'opencode') {
+    const globalDir = options.globalDirectory ?? resolve(join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode'));
+    const sources = expectedAgents(discoverConfigurations(project, globalDir));
+    installed = Object.keys(sources).length > 0;
+    if (!installed) {
+      notes.push('OpenCode configuration not found in inspected project or global directory.');
+    }
+    const adapter = getHostAdapter(host);
+    if (adapter?.doctor) {
+      const res = await adapter.doctor({ project });
+      issues.push(...res.issues);
+      notes.push(...res.notes);
+      return { host, displayName: cap.displayName, ok: res.ok, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets };
+    }
+    return {
+      host,
+      displayName: cap.displayName,
+      ok: issues.length === 0,
+      installed,
+      issues,
+      notes,
+      disclosures: cap.disclosures,
+      rolePresets: presets,
+    };
+  }
+
+  // Non-OpenCode hosts
+  if (project) {
+    installed = cap.configLocations.project.some(rel => existsSync(join(project, rel)));
+  }
+  if (!installed) {
+    installed = cap.configLocations.global.some(rel => existsSync(rel.replace(/^(?:~|\$HOME)(?=[/\\]|$)/, home)));
+  }
+
+  if (!installed) {
+    notes.push(`${cap.displayName} configuration files not detected in this scope.`);
+    notes.push(`Target configuration locations: ${cap.configLocations.project.join(', ')}`);
+  } else {
+    notes.push(`${cap.displayName} configuration footprint detected.`);
+  }
+
+  notes.push(`Subagent isolation model: ${cap.isolationModel}`);
+  notes.push(`Permission enforcement model: ${cap.permissionModel}`);
+  notes.push(`gh pr merge guard: ${cap.ghPrMergeGuard}`);
+
+  const adapter = getHostAdapter(host);
+  if (adapter?.doctor) {
+    const res = await adapter.doctor({ project });
+    issues.push(...res.issues);
+    notes.push(...res.notes);
+    return { host, displayName: cap.displayName, ok: res.ok, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets };
+  }
+
+  return {
+    host,
+    displayName: cap.displayName,
+    ok: issues.length === 0,
+    installed,
+    issues,
+    notes,
+    disclosures: cap.disclosures,
+    rolePresets: presets,
+  };
+}
+
+export function printHostDiagnosticReport(report: HostDiagnosticReport): void {
+  console.log(`\n=== Host Diagnostics: ${report.displayName} [${report.host}] ===`);
+  console.log(`Status: ${report.ok ? 'HEALTHY' : 'NEEDS ATTENTION'} (Installed: ${report.installed ? 'Yes' : 'Not detected'})`);
+  if (report.notes.length) {
+    console.log('Notes:');
+    for (const note of report.notes) console.log(`  • ${note}`);
+  }
+  if (report.issues.length) {
+    console.log('Issues:');
+    for (const issue of report.issues) console.log(`  FAIL: ${issue}`);
+  }
+  console.log('Fixed Role / Model Presets:');
+  for (const role of nativeRoles) {
+    const p = report.rolePresets[role];
+    if (!p) continue;
+    const details = [
+      p.model ? `model: ${p.model}` : '',
+      p.variant ? `variant: ${p.variant}` : '',
+      p.reasoningTier ? `reasoning: ${p.reasoningTier}` : '',
+      p.tier ? `tier: ${p.tier}` : '',
+      p.notes ? `(${p.notes})` : '',
+    ].filter(Boolean).join(', ');
+    console.log(`  [${role}]: ${details}`);
+  }
+  console.log('Capability & Enforcement Disclosures:');
+  for (const disc of report.disclosures) console.log(`  ℹ ${disc}`);
 }

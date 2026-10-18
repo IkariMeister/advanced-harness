@@ -8,7 +8,9 @@ import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from './receipt-lineage.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 
-export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string }
+import { parseHostSelection, askHostSelection, getHostAdapter, HOST_CAPABILITIES, HOST_MODEL_PRESETS, type HostId } from './host-registry.ts';
+
+export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string }
 export interface InstallerFlowDependencies {
   ask: Ask;
   output(message: string): void;
@@ -35,12 +37,39 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const cwd = deps.cwd ?? process.cwd();
   const home = deps.home ?? homedir();
   const env = deps.environment ?? process.env;
+
+  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
+
   let scope = options.scope;
   while (!scope || !['project', 'global'].includes(scope)) scope = (await ask('Install scope: project or global', 'project')) || 'project';
   if (scope === 'global' && options.project) throw new Error('--project cannot be combined with global scope.');
   const expand = (path: string) => path.replace(/^(?:~|\$HOME)(?=[/\\]|$)/, home);
   const project = scope === 'project' ? resolve(cwd, expand(options.project ?? ((await ask('Project directory', cwd)) || cwd))) : undefined;
   if (project && (!existsSync(project) || !statSync(project).isDirectory())) throw new Error('Project directory does not exist or is not a directory. Create/select it before installing.');
+
+  // Process non-OpenCode hosts
+  for (const host of selectedHosts) {
+    if (host === 'opencode') continue;
+    output(`\n--- Host Configuration: ${HOST_CAPABILITIES[host].displayName} [${host}] ---`);
+    const adapter = getHostAdapter(host);
+    if (adapter) {
+      await adapter.install({ project, scope: scope as 'project' | 'global' });
+      output(`Installed ${HOST_CAPABILITIES[host].displayName} native adapter.`);
+    } else {
+      output(`Multi-host foundation initialized for ${HOST_CAPABILITIES[host].displayName}.`);
+      output(`Native file emitter adapter is tracked in BH-025/BH-026.`);
+      output('Fixed Model Presets:');
+      for (const [r, p] of Object.entries(HOST_MODEL_PRESETS[host])) {
+        output(`  ${r}: ${p.model || p.tier} (${p.notes || p.reasoningTier || 'preset'})`);
+      }
+    }
+  }
+
+  if (!selectedHosts.includes('opencode')) {
+    output('\nOpenCode was not selected for installation. Multi-host configuration complete.');
+    return 0;
+  }
+
   const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
   const sources = discoverConfigurations(project, globalDirectory);
   const target = options.config ? resolve(cwd, expand(options.config)) : project ? projectConfiguration(project, sources) : chooseConfiguration(globalDirectory);
@@ -50,7 +79,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   assertSafeFilesystemPath(target, 'file');
   const original = existsSync(target) ? readFileSync(target, 'utf8') : undefined;
   const backupParent = deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups');
-  const history = discoverReceiptChain(backupParent, target);
+  const history = discoverReceiptChain(backupParent, target, 'opencode');
   if (!sources.some(source => source.path === target) && original !== undefined) sources.push({ path: target, text: original, value: parseConfiguration(original, target) });
   const conflicts = findMarkdownConflicts(sources, target, globalDirectory, project);
   if (conflicts.length) throw new Error(`Existing named Markdown agents may override inline installation. Resolve intentionally, then rerun; no files were changed:\n${conflicts.join('\n')}`);
@@ -96,7 +125,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   updated = update(original ?? '{}\n', definitions, assignments, setDefault, setLeadModel, replaceModels, reconciliation);
   const provenanceChanged = history.head?.receipt.version === 2 && nativeRoles.some(role => JSON.stringify(plans[role]?.provenance ?? []) !== JSON.stringify(history.head!.receipt.version === 2 ? history.head!.receipt.permissions.find(p => p.path[1] === role)?.owned ?? [] : []));
   const needsReceipt = updated !== (original ?? '{}\n') || provenanceChanged;
-  const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans) : undefined;
+  const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans, undefined, { host: 'opencode' }) : undefined;
   output('\nAssignments:');
   for (const role of nativeRoles) {
     const saved = parseConfiguration(updated, target).agents as Record<string, Record<string, unknown>>;

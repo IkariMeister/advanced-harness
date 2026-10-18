@@ -2,21 +2,22 @@ import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { adoptExisting, assertSafeFilesystemPath, configurationField, persistAdoptionReceipt, readInstallationReceipt, planUninstall } from '../src/installation-receipt.ts';
+import { adoptExisting, assertSafeFilesystemPath, configurationField, persistAdoptionReceipt, readInstallationReceipt, planUninstall, effectiveReceiptHost } from '../src/installation-receipt.ts';
 import { saveInstallation } from '../src/native-installer.ts';
 import { adoptionPreviewAction, selectAdoptionFields } from '../src/adoption-prompts.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
 import { revalidateRestoreReceipt } from '../src/receipt-lineage.ts';
+import { parseHostSelection, isSupportedHost, type HostId } from '../src/host-registry.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:uninstall -- --config <opencode.json|opencode.jsonc> --receipt <receipt> | --adopt-existing [--before-config <known-before-config>]');
+  console.log('Usage: npm run harness:uninstall -- --config <opencode.json|opencode.jsonc> --receipt <receipt> [--host <host>] | --adopt-existing [--before-config <known-before-config>]');
 } else {
   const options: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (['--adopt-existing'].includes(arg)) { if (options[arg]) throw new Error(`Duplicate ${arg}`); options[arg] = true; }
-    else if (['--config', '--receipt', '--before-config'].includes(arg)) {
+    else if (['--config', '--receipt', '--before-config', '--host'].includes(arg)) {
       if (options[arg] || !args[i + 1] || args[i + 1]!.startsWith('--')) throw new Error(`Missing or duplicate value for ${arg}`);
       options[arg] = args[++i]!;
     } else throw new Error(`Unknown option: ${arg}`);
@@ -59,10 +60,19 @@ if (args.includes('--help')) {
     } else {
       if (!receiptPath) throw new Error('A valid receipt is required; use --adopt-existing for unmanaged installations.');
       receipt = readInstallationReceipt(receiptPath, target);
+      const effectiveHost = effectiveReceiptHost(receipt);
+      if (options['--host']) {
+        const expectedHost = parseHostSelection(String(options['--host']))[0];
+        if (effectiveHost !== expectedHost) {
+          throw new Error(`Receipt host mismatch: receipt belongs to host "${effectiveHost}", but --host "${expectedHost}" was specified.`);
+        }
+      }
     }
     if (!options['--adopt-existing']) {
       const status = await runUninstallFlow({
         receipt: receipt!, current,
+        backupParent,
+        host: effectiveReceiptHost(receipt!),
         confirm: message => terminal.question(message),
         output: message => console.log(message),
         error: message => console.error(message),

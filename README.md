@@ -18,28 +18,30 @@ The TypeScript code covers native installation, diagnostics, project-context set
 
 ## Scope
 
-- OpenCode V2 on Windows and macOS; product V1 means the first harness release, not OpenCode V1.
-- Interactive project/global installation across projects, preserving unrelated OpenCode configuration.
+- Multi-host foundation across 5 hosts: OpenCode V2, Claude Code, Google Antigravity, OpenAI Codex, and Cursor IDE (`--host <opencode|claude-code|antigravity|codex|cursor|all>`).
+- Interactive project/global installation across projects, preserving host-neutral `AGENTS.md` and enabling coexistence without hosts clobbering each other.
 - Customizable agents, explicit model/reasoning assignments, and machine-local provider mappings.
+- Host-scoped V2 receipts, backups, and uninstall tracking footprint per `(target, host)`.
 - One active feature per project as an operational convention; no custom locking service.
 - Local memory shared across a project's worktrees; no cross-machine unfinished-state synchronization required.
 - Initial stack: Android, Jetpack Compose, Gradle, Roborazzi, and the existing private E2E framework.
 - Reusable integrations are configured globally; each project may independently select GitHub CLI/MCP, Jira, one design source, or none. Missing services are raised only when a task needs them. Do not combine Figma and Stitch silently.
 - Windows connection: ChatGPT sign-in in OpenCode. Mac connection: LiteLLM with explicit deployment mappings.
-- Future concurrency, team sharing, and other agent hosts are deferred.
+- Future team sharing and remote synchronization are deferred.
 
-## Agents and fixed models
+## Agents and fixed per-host model presets
 
-| Agent | Responsibility | OpenAI model | Reasoning |
-| --- | --- | --- | --- |
-| Lead | Coordinate the workflow, approvals, and progress | `openai/gpt-6-astra` | `medium` |
-| Operator | Local Git, worktrees, shared memory, cleanup | `openai/gpt-5.3-codex-spark` | `low` |
-| External | MCP, service APIs, remote Git, Jira, GitHub, design services | `openai/gpt-5.3-codex-spark` | `low` |
-| Researcher | Inspect the codebase and relevant local context | `openai/gpt-6-luna` | `medium` |
-| Planner | Prepare and revise the implementation plan | `openai/gpt-6.1-sol` | `medium` |
-| Implementer | Write approved code, tests, and fixes | `openai/gpt-6-luna` | `low` |
-| Reviewer | Code review, Gradle build/lint/tests, Roborazzi | `openai/gpt-6.1-sol` | `low` |
-| QA | Runtime/design/E2E verification | `openai/gpt-6-luna` | `low` |
+The 8-role engineering workflow provides fixed default role and model presets tailored for each host:
+
+| Host | Lead | Operator / External | Researcher / Implementer / QA | Planner / Reviewer |
+| --- | --- | --- | --- | --- |
+| **OpenCode V2** | `openai/gpt-6-astra` (`medium`) | `openai/gpt-5.3-codex-spark` (`low`) | `openai/gpt-6-luna` | `openai/gpt-6.1-sol` |
+| **Claude Code** | `sonnet` | `haiku` | `sonnet` | `opus` |
+| **Antigravity** | `inherit` (session model) | `flash_lite` | `flash` | `pro` |
+| **OpenAI Codex**| `openai/gpt-6-astra` | `openai/gpt-5.3-codex-spark` | `openai/gpt-6-luna` | `openai/gpt-6.1-sol` |
+| **Cursor IDE**  | `standard` | `fast` | `standard` | `high-reasoning` |
+
+All hosts enforce the explicit guard preventing any agent from executing `gh pr merge` / `gh.exe pr merge`. Runtime diagnostics (`npm run harness:doctor`) report health, configuration footprint, and host-specific capability/permission disclosures.
 
 These assignments are preferences to validate against the active connection, not evidence of access. Spark was rejected by the tested ChatGPT connection. Setup must ask for an explicitly approved replacement or supported connection before Operator/External can be used; no silent fallback. LiteLLM endpoints, deployment IDs, and reasoning mappings must be supplied explicitly. Selecting a primary agent does not necessarily change the session's selected model; verify both.
 
@@ -163,3 +165,8 @@ These commands check repository code and template contracts; they do not install
 - [Permissions](https://opencode.ai/v2/docs/permissions)
 - [MCP servers](https://opencode.ai/v2/docs/mcp-servers)
 - [Configuration](https://opencode.ai/v2/docs/config)
+
+## License
+
+This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
+
