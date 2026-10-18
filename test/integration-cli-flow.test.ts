@@ -47,6 +47,39 @@ test('injected production integration cancellation leaves project context and re
   assert.equal(existsSync(join(root, 'recovery')), false);
 });
 
+test('integration cancellation preserves alternate context and unrelated files under paths with spaces', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'integration flow spaces '));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project with spaces');
+  mkdirSync(join(project, '.git'), { recursive: true });
+  mkdirSync(join(project, 'docs'), { recursive: true });
+  const agents = join(project, 'AGENTS.md');
+  const unrelated = join(project, 'unrelated config.json');
+  const context = join(project, 'docs', 'Alternate context.md');
+  const originalAgents = '# Existing project guidance\n';
+  const originalUnrelated = '{"untouched":true}\n';
+  const originalContext = '# Alternate context\n';
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(agents, originalAgents);
+  writeFileSync(unrelated, originalUnrelated);
+  writeFileSync(context, originalContext);
+  const recovery = join(root, 'recovery with spaces');
+  const ask = async (question: string) => {
+    if (question.startsWith('GitHub backend')) return 'none';
+    if (question.startsWith('jira: alias')) return 'none';
+    if (question.startsWith('Design source')) return 'none';
+    if (question.startsWith('Type integrations')) return 'cancel';
+    throw new Error(`Unexpected prompt: ${question}`);
+  };
+  await runIntegrationFlow({ scope: 'project', project, context: 'docs/Alternate context.md' }, {
+    ask, output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery,
+  });
+  assert.equal(readFileSync(agents, 'utf8'), originalAgents);
+  assert.equal(readFileSync(unrelated, 'utf8'), originalUnrelated);
+  assert.equal(readFileSync(context, 'utf8'), originalContext);
+  assert.equal(existsSync(recovery), false);
+});
+
 test('injected global none selection saves preferences only and leaves runtime config untouched', async t => {
   const { root } = fixture(t); const xdg = join(root, 'xdg'); const configDirectory = join(xdg, 'opencode'); mkdirSync(configDirectory, { recursive: true });
   const config = join(configDirectory, 'opencode.json'); const original = '{\n  "model": "custom/root"\n}\n';
@@ -183,4 +216,3 @@ test('integration production flow aborts without config or preference writes whe
   assert.equal(existsSync(join(configDir, 'harness.integrations.json')), false);
   assert.deepEqual((await import('node:fs')).readdirSync(recovery).sort(), beforeReceipts);
 });
-

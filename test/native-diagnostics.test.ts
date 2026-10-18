@@ -122,6 +122,22 @@ test('CLI transport errors suppress potentially sensitive raw stderr', async () 
   await assert.rejects(query('/api/agent'), error => error instanceof Error && /Raw output suppressed/.test(error.message) && !error.message.includes('ENOENT'));
 });
 
+test('doctor CLI precedence is explicit executable, OPENCODE_BIN, then platform discovery', async () => {
+  const { findOpenCode } = await import('../src/native-diagnostics.ts');
+  const previous = process.env.OPENCODE_BIN;
+  try {
+    process.env.OPENCODE_BIN = 'environment-opencode';
+    assert.equal(findOpenCode('explicit-opencode'), 'explicit-opencode');
+    assert.equal(findOpenCode(), 'environment-opencode');
+    delete process.env.OPENCODE_BIN;
+    const discovered = findOpenCode();
+    assert.equal(discovered, process.platform === 'win32' ? (discovered.endsWith('opencode-cli.exe') ? discovered : 'opencode') : 'opencode');
+  } finally {
+    if (previous === undefined) delete process.env.OPENCODE_BIN;
+    else process.env.OPENCODE_BIN = previous;
+  }
+});
+
 test('doctor help is noninteractive; invalid project fails safely before querying a service', () => {
   const script = fileURLToPath(new URL('../scripts/diagnose-native-harness.ts', import.meta.url));
   assert.match(execFileSync(process.execPath, [script, '--help'], { encoding: 'utf8' }), /never reloads/);
