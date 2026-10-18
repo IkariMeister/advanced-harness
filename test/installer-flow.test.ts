@@ -239,15 +239,16 @@ test('global installer selects default, XDG, and injected config directories and
     throw new Error(`Unexpected prompt: ${question}`);
   };
   for (const [label, deps, expected] of [
-    ['home default', {}, join(home, '.config', 'opencode')],
-    ['XDG', { xdgConfigHome: xdg }, join(xdg, 'opencode')],
-    ['injected override', { xdgConfigHome: xdg }, override],
+    ['home default', { environment: {} }, join(home, '.config', 'opencode')],
+    ['XDG', { environment: { XDG_CONFIG_HOME: xdg } }, join(xdg, 'opencode')],
+    ['injected override', { environment: { XDG_CONFIG_HOME: join(root, 'decoy config') }, xdgConfigHome: xdg }, override],
   ] as const) {
     const config = label === 'injected override' ? join(override, 'opencode.json') : undefined;
     const recovery = join(root, `recovery ${label}`);
     const output: string[] = [];
     await runInstallerFlow({ scope: 'global', ...(config ? { config } : {}) }, {
       ask: answer, output: text => output.push(text), error: () => {}, home,
+      environment: deps.environment,
       ...(deps.xdgConfigHome ? { xdgConfigHome: deps.xdgConfigHome } : {}),
       recoveryDirectory: recovery,
     });
