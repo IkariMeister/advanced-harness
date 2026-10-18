@@ -6,7 +6,7 @@ An **OpenCode-native Android engineering workflow**: Lead coordinates specialize
 
 The simplified direction was approved on 2026-10-08. There is **no separate harness host, approval terminal, custom IPC, approval-token system, or SQLite workflow engine in the product plan**. Shell, Git, and MCP integrations are required; screenshots, videos, and other evidence are useful but optional unless explicitly requested.
 
-The workflow specification is in [`docs/opencode-native-workflow.md`](docs/opencode-native-workflow.md). Native agent templates are in [`agents/`](agents/README.md). The [interactive installer, diagnostics, and receipt-backed uninstall/adoption workflow](docs/installation.md), [context-only project setup](docs/project-setup.md), and [optional global connections/project selections](docs/configuration.md) are implemented locally with automated tests. Uninstall/adoption still needs the documented isolated interactive QA; it is not validated for live cleanup. Cloning this repository does not activate agents or configure MCP connections. Machine-specific model/service access, live setup migration, broader role permissions, and the full publishing/merge/cleanup lifecycle still need validation; see [the recovery backlog](docs/backlog.md).
+The workflow specification is in [`docs/opencode-native-workflow.md`](docs/opencode-native-workflow.md). Native agent templates are in [`agents/`](agents/README.md). The [interactive installer, diagnostics, and receipt-backed uninstall/adoption workflow](docs/installation.md), [context-only project setup](docs/project-setup.md), and [optional global connections/project selections](docs/configuration.md) are implemented locally with automated tests. Uninstall/adoption still needs the documented isolated interactive QA; it is not validated for live cleanup. Cloning this repository does not activate agents or configure MCP connections. Machine-specific model/service access, live setup migration, broader role permissions, and the full publishing/merge/cleanup lifecycle still need validation; see [GitHub issues](https://github.com/IkariMeister/advanced-harness/issues).
 
 Five native project commands implement the human-approved task workflows in [task workflows](docs/task-workflows.md): `/start-issue`, `/review-pr`, `/report-defect`, `/assess-debt`, and `/grill-me`. Command Markdown is a prompt template, not an independently enforced approval gate. Arguments provide context, never approval. Project commands/arguments override global commands with the same names.
 
@@ -91,8 +91,8 @@ One canonical local `MEMORY.md` per project is shared across worktrees, for exam
 
 ## Delivery plan
 
-All known pending work, validation gaps, deferred features, and the latest recovery
-snapshot are tracked in [the backlog](docs/backlog.md). Start there when resuming;
+All known pending work, validation gaps, deferred features, and tracking
+states are tracked in [GitHub issues](https://github.com/IkariMeister/advanced-harness/issues). Start there when resuming;
 entries do not authorize implementation or replace current human approvals.
 
 1. **Specification and native templates:** conversational Lead approvals, eight role prompts, and native permission examples are implemented. Discovery/model catalogs and a captured delegated shell smoke have passed in the tested installation; broader role/tool behavior remains unverified. Source prompt changes are not automatically deployed.
