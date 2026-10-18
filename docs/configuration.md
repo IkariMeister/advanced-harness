@@ -4,11 +4,11 @@
 
 | Settings | Location |
 | --- | --- |
-| Reusable MCP connections and agent permissions | Global OpenCode `~/.config/opencode/opencode.json(c)` (or `$XDG_CONFIG_HOME/opencode`) |
-| Default GitHub backend/host or MCP alias; optional Jira/design aliases | Global `harness.integrations.json` in that same directory |
-| Repository, chosen optional services, Jira project/status mapping, build/test/device/worktree/memory settings | Project `AGENTS.md` or an explicitly referenced Markdown context file |
+| Reusable MCP connections and agent permissions | Global host configuration (e.g. `~/.config/opencode/opencode.json(c)` for OpenCode, or host-specific config for Claude Code, Antigravity, Codex, Cursor) |
+| Default GitHub backend/host or MCP alias; optional Jira/design aliases | Global `harness.integrations.json` |
+| Repository, chosen optional services, Jira project/status mapping, build/test/device/worktree/memory settings | Project `AGENTS.md` (host-neutral project context, shared across all installed hosts) |
 
-Global preferences contain **no repository names, Jira project keys/status mappings, or credentials**. Credentials stay in OpenCode/GitHub CLI stores or environment references. Project settings never require a separate machine-local profile.
+Global preferences contain **no repository names, Jira project keys/status mappings, or credentials**. Credentials stay in host/GitHub CLI stores or environment references. Project settings live in the host-neutral `AGENTS.md` and are preserved without modification across multiple hosts in the same workspace. Each host operates with its own scoped receipts, backups, and configurations without clobbering other hosts.
 
 ## 1. Global connections/defaults
 
@@ -19,6 +19,8 @@ npm run harness:integrations -- --scope global
 ```
 
 Global scope is the default suggestion when no `--project` is supplied. Every selection is optional:
+
+Integration setup currently configures OpenCode only. `--host opencode` (the default) is supported; unsupported hosts and `all`/multi-host selections fail before discovery, checks, or writes. This does not imply that integration adapters exist for the other installation hosts.
 
 - GitHub: **`gh`**, **`mcp`**, or **`none`**.
 - Jira: existing MCP alias, supplied new server, or **`none`**.

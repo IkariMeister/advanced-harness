@@ -29,6 +29,7 @@ import {
 import { checkRemoteHead, compareInstalledAndSource, readSourceVersion, type Runner } from './harness-version.ts';
 import { planUpdate } from './update-planner.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
+import { parseHostSelection, askHostSelection, getHostAdapter, HOST_CAPABILITIES, type HostId } from './host-registry.ts';
 
 export interface UpdateFlowOptions {
   scope?: string;
@@ -36,6 +37,7 @@ export interface UpdateFlowOptions {
   config?: string;
   opencode?: string;
   checkRemote?: boolean;
+  host?: string;
 }
 
 export interface UpdateFlowDependencies {
@@ -66,6 +68,8 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   const env = deps.environment ?? process.env;
   const harnessRoot = deps.harnessRoot ?? resolve(fileURLToPath(new URL('..', import.meta.url)));
 
+  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
+
   let scope = options.scope;
   while (!scope || !['project', 'global'].includes(scope)) {
     scope = (await ask('Update scope: project or global', 'project')) || 'project';
@@ -78,6 +82,25 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   const project = scope === 'project' ? resolve(cwd, expand(options.project ?? ((await ask('Project directory', cwd)) || cwd))) : undefined;
   if (project && (!existsSync(project) || !statSync(project).isDirectory())) {
     throw new Error('Project directory does not exist or is not a directory. Select a valid directory before updating.');
+  }
+
+  // Process non-OpenCode hosts
+  for (const host of selectedHosts) {
+    if (host === 'opencode') continue;
+    output(`\n--- Host Update: ${HOST_CAPABILITIES[host].displayName} [${host}] ---`);
+    const adapter = getHostAdapter(host);
+    if (adapter?.update) {
+      await adapter.update({ project, scope: scope as 'project' | 'global' });
+      output(`Updated ${HOST_CAPABILITIES[host].displayName} native adapter.`);
+    } else {
+      output(`Multi-host update foundation active for ${HOST_CAPABILITIES[host].displayName}.`);
+      output(`Native update adapter is tracked in BH-025/BH-026.`);
+    }
+  }
+
+  if (!selectedHosts.includes('opencode')) {
+    output('\nOpenCode was not selected for update. Multi-host update complete.');
+    return 0;
   }
 
   const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
@@ -97,7 +120,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
 
   const original = readFileSync(target, 'utf8');
   const backupParent = deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups');
-  const history = discoverReceiptChain(backupParent, target);
+  const history = discoverReceiptChain(backupParent, target, 'opencode');
 
   if (!sources.some(source => source.path === target)) {
     sources.push({ path: target, text: original, value: parseConfiguration(original, target) });
@@ -273,7 +296,8 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     original,
     updated,
     reconciliationPlans,
-    harnessVersionStamp
+    harnessVersionStamp,
+    { host: 'opencode' }
   );
 
   const pending = (deps.writePending ?? writePendingSuccessor)(history, successor);

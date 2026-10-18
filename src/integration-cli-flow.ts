@@ -11,7 +11,9 @@ import { askGlobalIntegrations, askProjectIntegrations, checkSelectedIntegration
 import { contextData, contextPath, prepareContextFiles, readContext, updateContext } from './project-context.ts';
 import { DiagnosticError } from './native-diagnostics.ts';
 
-export interface IntegrationFlowOptions { scope?: string; project?: string; context?: string; config?: string; check?: boolean; opencode?: string; server?: string }
+import { parseHostSelection, type HostId } from './host-registry.ts';
+
+export interface IntegrationFlowOptions { scope?: string; project?: string; context?: string; config?: string; check?: boolean; opencode?: string; server?: string; host?: string | undefined }
 export interface IntegrationFlowDependencies {
   ask: Ask; output(message: string): void; error(message: string): void;
   cwd?: string; home?: string; xdgConfigHome?: string; recoveryDirectory?: string; environment?: NodeJS.ProcessEnv;
@@ -25,6 +27,9 @@ export async function runIntegrationFlow(options: IntegrationFlowOptions, deps: 
   while (!scope || !['global', 'project'].includes(scope)) scope = (await ask('Configuration scope: global or project', 'global')).trim() || 'global';
   if (scope === 'global' && (options.context || (!check && options.project))) throw new Error('Global setup does not take project/context settings. Use project scope separately.');
   if (options.config && (scope !== 'global' || check)) throw new Error('--config selects only a global setup target.');
+  const selectedHosts = options.host ? parseHostSelection(options.host) : ['opencode' as const];
+  if (selectedHosts.some(host => host !== 'opencode')) throw new Error(`Integration setup currently supports only OpenCode; unsupported selection: ${selectedHosts.filter(host => host !== 'opencode').join(', ')}. No discovery, checks, or writes performed.`);
+  const host: HostId = 'opencode';
   const global = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
   const preferencesPath = join(global, 'harness.integrations.json');
   const originalPreferences = existsSync(preferencesPath) ? readFileSync(preferencesPath, 'utf8') : undefined;
@@ -50,7 +55,7 @@ export async function runIntegrationFlow(options: IntegrationFlowOptions, deps: 
     output('Each integration may be none. New entries are disabled remote OAuth servers; no connections will be attempted. No repository/Jira project data belongs in global preferences.');
     const draft = await askGlobalIntegrations(servers, defaults, ask); settings = draft.settings;
     if ((draft.choices.length || settings.github?.backend === 'gh') && findMarkdownConflicts(sources, target, global).length) throw new Error('Resolve competing global named Markdown agent definitions before writing role permissions.');
-    const active = draft.choices.length > 0 || settings.github?.backend === 'gh'; history = active ? discoverReceiptChain(recoveryDirectory, target) : undefined;
+    const active = draft.choices.length > 0 || settings.github?.backend === 'gh'; history = active ? discoverReceiptChain(recoveryDirectory, target, host) : undefined;
     const reconciliation = history ? receiptReconciliationOptions(history) : {};
     const plans: Partial<Record<NativeRole, ReconciliationResult>> = {}; reconciliation.onPermissionPlan = (role, plan) => { plans[role] = plan; };
     let updated = updateConnectionConfig(original ?? '{}\n', sources, draft.choices, settings.github?.backend === 'gh', reconciliation);
@@ -61,7 +66,7 @@ export async function runIntegrationFlow(options: IntegrationFlowOptions, deps: 
     for (const role of nativeRoles) if (plans[role]) output(`${role} permission preview: ${JSON.stringify(plans[role]!.preview)}`);
     const predecessor = history?.head?.receipt;
     const provenanceChanged = predecessor?.version === 2 && nativeRoles.some(role => plans[role] && JSON.stringify(plans[role]!.provenance) !== JSON.stringify(predecessor.permissions.find(p => p.path[1] === role)?.owned ?? []));
-    if (history && (createReceipt(target, original, updated).changes.length || provenanceChanged)) receiptWrite = { receipt: createSuccessorReceipt(history, original, updated, plans), file: { path: target, original, updated } };
+    if (history && (createReceipt(target, original, updated).changes.length || provenanceChanged)) receiptWrite = { receipt: createSuccessorReceipt(history, original, updated, plans, undefined, { host }), file: { path: target, original, updated } };
     if (updated !== (original ?? '{}\n')) files.push({ path: target, original, updated });
     const updatedPreferences = JSON.stringify(settings, null, 2) + '\n';
     if (updatedPreferences !== originalPreferences) files.push({ path: preferencesPath, original: originalPreferences, updated: updatedPreferences });
