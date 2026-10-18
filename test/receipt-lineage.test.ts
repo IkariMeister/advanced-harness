@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
+import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, planV2Restore, prepareManagedFilePlan, applyManagedFilePlan } from '../src/receipt-lineage.ts';
 import { adoptExisting, createReceipt, planUninstall, readInstallationReceipt, writeAdoptionReceipt, writeInstallationReceipt } from '../src/installation-receipt.ts';
 import { reconcilePermissions, type PermissionRule, type ReconciliationResult } from '../src/permission-reconciliation.ts';
 import { loadNativeDefinitions, nativeRoles, parseConfiguration, updateNativeConfiguration, type NativeRole } from '../src/native-installer.ts';
@@ -230,4 +230,99 @@ test('unrelated heads, pending overlaps and cyclic references are rejected', t =
   assert.throws(() => discoverReceiptChain(directory, target), /Pending/);
   writeFileSync(pending.path, JSON.stringify({ ...receipt, predecessor: { file: pending.path.split(/[\\/]/).at(-1), identity: receipt.id, digest: '0'.repeat(64) } }));
   assert.throws(() => discoverReceiptChain(directory, target), /altered|Cyclic/);
+});
+
+test('managed receipt restore handles digest-only lineage conservatively and blocks all writes on conflict', async t => {
+  const { directory, target } = fixture(t);
+  const managed = join(directory, 'managed.md');
+  writeFileSync(managed, 'installed');
+  const snapshot = discoverReceiptChain(directory, target);
+  const receipt = createSuccessorReceipt(snapshot, '{}', '{"model":"p/m"}', {}, undefined, { managedFiles: [
+    { path: managed, kind: 'instructions', before: { digest: 'a'.repeat(64) }, after: { content: 'installed' } },
+  ] });
+  const pending = writePendingSuccessor(snapshot, receipt);
+  writeFileSync(target, '{"model":"p/m"}'); finalizeSuccessor(pending, '{"model":"p/m"}');
+  const loaded = readInstallationReceipt(pending.path, target);
+  const plan = planUninstall(loaded, '{"model":"p/m"}');
+  assert.ok(plan.conflicts.some(conflict => conflict.includes('digest-only')));
+  let saves = 0;
+  const backups = join(directory, 'backups');
+  const status = await runUninstallFlow({ receipt: loaded, current: '{"model":"p/m"}', confirm: async () => { assert.fail('conflict must block confirmation'); }, output: () => {}, error: () => {}, save: () => { saves++; }, backupParent: backups });
+  assert.equal(status, 1); assert.equal(saves, 0); assert.equal(existsSync(backups), false);
+});
+
+test('managed file backup identities distinguish equal basenames and preflight every target before mutation', async t => {
+  const { directory, target } = fixture(t);
+  const left = join(directory, 'left', 'same.txt'), right = join(directory, 'right', 'same.txt');
+  const { mkdirSync } = await import('node:fs'); mkdirSync(join(directory, 'left')); mkdirSync(join(directory, 'right'));
+  writeFileSync(left, 'left-installed'); writeFileSync(right, 'right-installed');
+  const snapshot = discoverReceiptChain(directory, target);
+  const receipt = createSuccessorReceipt(snapshot, '{}', '{"model":"p/m"}', {}, undefined, { managedFiles: [
+    { path: left, kind: 'instructions', before: { content: 'left-before' }, after: { content: 'left-installed' } },
+    { path: right, kind: 'instructions', before: { content: 'right-before' }, after: { content: 'right-installed' } },
+  ] });
+  const pending = writePendingSuccessor(snapshot, receipt); writeFileSync(target, '{"model":"p/m"}'); finalizeSuccessor(pending, '{"model":"p/m"}');
+  const loaded = readInstallationReceipt(pending.path, target);
+  const backups = join(directory, 'backups');
+  await runUninstallFlow({ receipt: loaded, current: '{"model":"p/m"}', confirm: async () => 'uninstall', output: () => {}, error: message => assert.fail(message), save: () => {}, backupParent: backups });
+  const backupPaths = readdirSync(join(backups, readdirSync(backups)[0]!)).map(name => join(backups, readdirSync(backups)[0]!, name));
+  assert.equal(new Set(backupPaths).size, 2); assert.notEqual(backupPaths[0], backupPaths[1]);
+});
+
+test('managed restore cancellation has no writes/backups and confirmation-time drift blocks every write', async t => {
+  const { directory, target } = fixture(t);
+  const file = join(directory, 'managed.md'); writeFileSync(file, 'installed');
+  const snapshot = discoverReceiptChain(directory, target);
+  const receipt = createSuccessorReceipt(snapshot, undefined, '{"model":"p/m"}', {}, undefined, { managedFiles: [
+    { path: file, kind: 'instructions', before: { absent: true }, after: { content: 'installed' } },
+  ] });
+  const pending = writePendingSuccessor(snapshot, receipt); writeFileSync(target, '{"model":"p/m"}'); finalizeSuccessor(pending, '{"model":"p/m"}');
+  const loaded = readInstallationReceipt(pending.path, target), backups = join(directory, 'backups');
+  const cancelled = await runUninstallFlow({ receipt: loaded, current: '{"model":"p/m"}', confirm: async () => 'cancel', output: () => {}, error: () => {}, save: () => assert.fail('cancel must not save'), backupParent: backups });
+  assert.equal(cancelled, 0); assert.equal(readFileSync(file, 'utf8'), 'installed'); assert.equal(existsSync(backups), false);
+  let saves = 0;
+  const stale = await runUninstallFlow({ receipt: loaded, current: '{"model":"p/m"}', confirm: async () => { writeFileSync(file, 'user edit'); return 'uninstall'; }, output: () => {}, error: () => {}, save: () => { saves++; }, backupParent: backups });
+  assert.equal(stale, 1); assert.equal(saves, 0); assert.equal(readFileSync(file, 'utf8'), 'user edit'); assert.equal(existsSync(backups), false);
+});
+
+test('unsafe backup destination is rejected in uninstall preflight before configuration save', async t => {
+  const { directory, target } = fixture(t);
+  const file = join(directory, 'managed.md'); writeFileSync(file, 'installed');
+  const snapshot = discoverReceiptChain(directory, target);
+  const receipt = createSuccessorReceipt(snapshot, undefined, '{"model":"p/m"}', {}, undefined, { managedFiles: [
+    { path: file, kind: 'instructions', before: { absent: true }, after: { content: 'installed' } },
+  ] });
+  const pending = writePendingSuccessor(snapshot, receipt); writeFileSync(target, '{"model":"p/m"}'); finalizeSuccessor(pending, '{"model":"p/m"}');
+  const loaded = readInstallationReceipt(pending.path, target);
+  const invalidBackupParent = join(directory, 'not-a-directory'); writeFileSync(invalidBackupParent, 'file');
+  let saves = 0; const errors: string[] = [];
+  const status = await runUninstallFlow({ receipt: loaded, current: '{"model":"p/m"}', confirm: async () => 'uninstall', output: () => {}, error: message => errors.push(message), save: () => { saves++; }, backupParent: invalidBackupParent });
+  assert.equal(status, 1); assert.equal(saves, 0); assert.deepEqual(readdirSync(directory).filter(name => name.startsWith('20')), []);
+  assert.ok(errors.some(message => message.includes('preflight failed'))); assert.equal(readFileSync(file, 'utf8'), 'installed');
+});
+
+test('failure creating the second managed backup reports the first completed restore and backup', async t => {
+  const { directory, target } = fixture(t);
+  const first = join(directory, 'first', 'same.txt'), second = join(directory, 'second', 'same.txt');
+  const { mkdirSync } = await import('node:fs'); mkdirSync(join(directory, 'first')); mkdirSync(join(directory, 'second'));
+  writeFileSync(first, 'first-installed'); writeFileSync(second, 'second-installed');
+  const snapshot = discoverReceiptChain(directory, target);
+  const receipt = createSuccessorReceipt(snapshot, undefined, '{"model":"p/m"}', {}, undefined, { managedFiles: [
+    { path: first, kind: 'instructions', before: { content: 'first-before' }, after: { content: 'first-installed' } },
+    { path: second, kind: 'instructions', before: { content: 'second-before' }, after: { content: 'second-installed' } },
+  ] });
+  const prepared = prepareManagedFilePlan(receipt, directory);
+  let backups = 0;
+  assert.throws(() => applyManagedFilePlan(receipt, directory, prepared, { writeBackup: (path, content) => {
+    if (++backups === 2) throw new Error('injected second backup failure');
+    writeFileSync(path, content, { flag: 'wx', mode: 0o600 });
+  } }), error => {
+    assert.match(String(error), /partially completed/);
+    assert.match(String(error), /first.*restored/);
+    assert.match(String(error), /Backups:.*same\.txt/);
+    assert.match(String(error), /injected second backup failure/);
+    return true;
+  });
+  assert.equal(readFileSync(first, 'utf8'), 'first-before');
+  assert.equal(readFileSync(second, 'utf8'), 'second-installed');
 });

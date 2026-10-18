@@ -59,6 +59,22 @@ npm run harness:install -- --help
 
 `--host <opencode|claude-code|antigravity|codex|cursor|all>` selects which agent hosts to install or configure. When omitted in interactive CLI mode, the installer prompts with `[opencode]` default on Enter. Multiple hosts can coexist in the same workspace; `AGENTS.md` remains host-neutral context, and host-specific files (e.g. `CLAUDE.md`, `.claude/`, `.agents/`, `.cursor/`, `.codex/`) do not clobber each other.
 
+Integration configuration (`harness:integrations`) currently supports OpenCode only. Its `--host` option accepts `opencode`; unsupported hosts and multi-host selections (including `all`) are rejected before discovery, checks, or writes. This does not change multi-host installation support or its per-host receipt/configuration isolation.
+
+Uninstall preflights all receipt and managed-file restore states before confirmation, then revalidates before writes. Digest-only prior content cannot authorize reconstruction or deletion. Same-basename backups are distinguished by target identity. Cancellation and no-op restores create no backups. A later unexpected I/O failure can still leave a partially completed multi-file restore; output identifies completed changes and backups for recovery rather than claiming transactionality.
+
+### Isolated interactive restore smoke (manual)
+
+Prerequisites: Node.js 24.x, a usable interactive TTY, and an explicitly disposable fixture root under the approved temporary directory. Never point this smoke at a real user configuration or managed file. Create two nested fixture files with the same basename, make an OpenCode test configuration and matching v2 receipt, and run the uninstall CLI against only that fixture.
+
+1. Type anything other than `uninstall`; expect cancellation and byte-for-byte unchanged config/files, with no backup directory.
+2. Repeat with valid receipt contents and type `uninstall`; expect only evidenced fixture state restored and distinct exact backups for the two same-basename files.
+3. Change one fixture file after preview but before confirmation; expect a stale-evidence stop before any config/managed/backup writes.
+4. Supply a digest-only prior state; expect a blocked restore without deletion/reconstruction. A digest-only after state may proceed only when the live content matches it and prior content is recoverable.
+5. Repeat `npm run harness:integrations -- --host claude-code --scope global` and `--host all`; expect immediate unsupported-host rejection before discovery/checks/writes. OpenCode remains supported.
+
+Do not use redirected stdin as interactive evidence. Record fixture location, command, and observed results; clean up only the explicitly disposable fixture after verifying no recovery evidence needs preservation.
+
 `--project` is only for project scope. `--config <file>` selects an explicit `opencode.json` or `opencode.jsonc` within that scope, including the project's `.opencode` folder. This resolves a filename ambiguity when both JSON and JSONC exist. Paths supplied at prompts accept leading `~` or `$HOME`. Scope/destination are always shown before confirmation. Run in an interactive terminal; piped input is refused. This is setup, not the separate runtime approval terminal removed from the product plan.
 
 ## What configuration is read

@@ -20,6 +20,8 @@ npm run harness:integrations -- --scope global
 
 Global scope is the default suggestion when no `--project` is supplied. Every selection is optional:
 
+Integration setup currently configures OpenCode only. `--host opencode` (the default) is supported; unsupported hosts and `all`/multi-host selections fail before discovery, checks, or writes. This does not imply that integration adapters exist for the other installation hosts.
+
 - GitHub: **`gh`**, **`mcp`**, or **`none`**.
 - Jira: existing MCP alias, supplied new server, or **`none`**.
 - Design: **`figma`**, **`stitch`**, or **`none`**. No silent combination/fallback.

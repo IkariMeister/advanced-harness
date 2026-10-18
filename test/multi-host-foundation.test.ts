@@ -33,6 +33,7 @@ import { assertNoReceiptOverlap, effectiveReceiptHost } from '../src/installatio
 import { diagnoseHost } from '../src/native-diagnostics.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
+import { runIntegrationFlow } from '../src/integration-cli-flow.ts';
 import { nativeRoles } from '../src/native-installer.ts';
 
 function createTempDir(prefix: string): string {
@@ -342,4 +343,13 @@ test('installer and update flows support --host selection and multi-host dispatc
     rmSync(tempProject, { recursive: true, force: true });
     rmSync(tempHome, { recursive: true, force: true });
   }
+});
+
+test('integration CLI flow rejects unsupported and multi-host selections before filesystem discovery or checks', async () => {
+  let asks = 0;
+  const deps = { ask: async () => { asks++; return 'none'; }, output: () => {}, error: () => {}, cwd: 'Z:\\does-not-exist', home: 'Z:\\does-not-exist' };
+  for (const host of ['claude-code', 'opencode,codex', 'all']) {
+    await assert.rejects(runIntegrationFlow({ scope: 'global', host }, deps), /only OpenCode/);
+  }
+  assert.equal(asks, 0);
 });

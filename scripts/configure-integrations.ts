@@ -1,11 +1,10 @@
 import { createInterface } from 'node:readline/promises';
 import type { Ask } from '../src/native-installer.ts';
 import { runIntegrationFlow } from '../src/integration-cli-flow.ts';
-import { askHostSelection } from '../src/host-registry.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:integrations -- [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--scope global|project] [--project <checkout>] [--context <project Markdown>] [--config <global opencode.json/jsonc>] [--check] [--opencode <CLI>] [--server <URL>]');
+  console.log('Usage: npm run harness:integrations -- [--host opencode] [--scope global|project] [--project <checkout>] [--context <project Markdown>] [--config <global opencode.json/jsonc>] [--check] [--opencode <CLI>] [--server <URL>]');
   console.log('Every integration is optional. Global scope manages reusable connections/defaults; project scope writes context only. New remote MCP entries stay disabled. Checks require separate read-only approval.');
 } else {
   const options: Record<string, string> = {}; let check = false;
@@ -22,7 +21,7 @@ if (args.includes('--help')) {
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   const ask: Ask = async (question, suggested) => (await terminal.question(`${question}${suggested ? ` [${suggested}]` : ''}: `)).trim();
   try {
-    const host = options['--host'] ? options['--host'] : (await askHostSelection(ask, 'opencode'))[0];
+    const host = options['--host'] ?? 'opencode';
     process.exitCode = await runIntegrationFlow({ ...(options['--scope'] ? { scope: options['--scope'] } : {}), ...(options['--project'] ? { project: options['--project'] } : {}), ...(options['--context'] ? { context: options['--context'] } : {}), ...(options['--config'] ? { config: options['--config'] } : {}), ...(options['--opencode'] ? { opencode: options['--opencode'] } : {}), ...(options['--server'] ? { server: options['--server'] } : {}), host, check }, { ask, output: message => console.log(message), error: message => console.error(message) });
   } finally { terminal.close(); }
 }

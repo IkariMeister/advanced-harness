@@ -11,7 +11,7 @@ import { askGlobalIntegrations, askProjectIntegrations, checkSelectedIntegration
 import { contextData, contextPath, prepareContextFiles, readContext, updateContext } from './project-context.ts';
 import { DiagnosticError } from './native-diagnostics.ts';
 
-import { parseHostSelection, askHostSelection, type HostId } from './host-registry.ts';
+import { parseHostSelection, type HostId } from './host-registry.ts';
 
 export interface IntegrationFlowOptions { scope?: string; project?: string; context?: string; config?: string; check?: boolean; opencode?: string; server?: string; host?: string | undefined }
 export interface IntegrationFlowDependencies {
@@ -27,7 +27,9 @@ export async function runIntegrationFlow(options: IntegrationFlowOptions, deps: 
   while (!scope || !['global', 'project'].includes(scope)) scope = (await ask('Configuration scope: global or project', 'global')).trim() || 'global';
   if (scope === 'global' && (options.context || (!check && options.project))) throw new Error('Global setup does not take project/context settings. Use project scope separately.');
   if (options.config && (scope !== 'global' || check)) throw new Error('--config selects only a global setup target.');
-  const host: HostId = options.host ? parseHostSelection(options.host)[0]! : 'opencode';
+  const selectedHosts = options.host ? parseHostSelection(options.host) : ['opencode' as const];
+  if (selectedHosts.some(host => host !== 'opencode')) throw new Error(`Integration setup currently supports only OpenCode; unsupported selection: ${selectedHosts.filter(host => host !== 'opencode').join(', ')}. No discovery, checks, or writes performed.`);
+  const host: HostId = 'opencode';
   const global = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
   const preferencesPath = join(global, 'harness.integrations.json');
   const originalPreferences = existsSync(preferencesPath) ? readFileSync(preferencesPath, 'utf8') : undefined;
