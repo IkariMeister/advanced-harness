@@ -1,23 +1,23 @@
 # Working on Advanced Harness
 
-## Recovery and backlog
+## Recovery and tracking
 
 Before planning changes to this harness repository, read:
 
-1. `docs/backlog.md` — known pending work, stable IDs, and the dated recovery snapshot.
+1. GitHub issues — known pending work, stable IDs, and current tracking state.
 2. `README.md` — product scope and delivery overview.
 3. `docs/configuration.md` — global connections/preferences versus project context.
 
-Use these files rather than assuming previous chat context or the user's memory is
+Use these sources rather than assuming previous chat context or the user's memory is
 available. Inspect current Git/configuration and relevant service state before
 acting on a dated snapshot. Distinguish reported observations from fresh verification.
 
-Backlog entries and old snapshots are not authorization to implement, execute
+Issue entries and old snapshots are not authorization to implement, execute
 project commands, change machine settings, publish, merge, or delete anything.
 Confirm the latest scoped plan/approval when that context is missing. Never infer
 successful checks, model entitlement, tool access, or completed external actions.
 
-Keep `docs/backlog.md` current when an agreed feature, blocker, validation result,
+Keep GitHub issues current when an agreed feature, blocker, validation result,
 deferral, or next action changes. Preserve stable IDs and unresolved work. Record
 commit/PR references only after they exist; keep credentials out of recovery notes.
 For project-scoped delivery tracking, mark an item complete when its PR is confirmed

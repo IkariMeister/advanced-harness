@@ -90,7 +90,7 @@ On OpenCode 2.0.26, an approved isolated diagnostic captured identical native to
 names (including `shell`) in standalone External and a Lead-delegated External child.
 Both completed `gh --version` with an exact-command one-time ASK reply. The earlier
 session-specific blocker was not reproduced; its cause remains unknown. See BH-009
-in [the backlog](backlog.md) for evidence paths and remaining validation gaps.
+in [GitHub issue #15](https://github.com/IkariMeister/advanced-harness/issues/15) for evidence paths and remaining validation gaps.
 
 References: [V2 tools](https://opencode.ai/v2/docs/tools),
 [permissions](https://opencode.ai/v2/docs/permissions), and
