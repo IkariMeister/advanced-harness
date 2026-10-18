@@ -202,11 +202,28 @@ export function parseMemoryEntryLine(line: string): MemoryEntry | undefined {
 }
 
 export function parseSharedMemory(text: string): MemoryEntry[] {
-  const lines = text.split(/\r?\n/);
+  const lines = text.split(/\r\n|\n/);
+  if (lines[0]?.startsWith('\uFEFF')) lines[0] = lines[0].slice(1);
   const entries: MemoryEntry[] = [];
-  for (const line of lines) {
-    const entry = parseMemoryEntryLine(line);
-    if (entry) entries.push(entry);
+  let headerSeen = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.includes('\r')) throw new Error(`Unsupported shared MEMORY.md content on line ${i + 1}.`);
+    if (!line.trim()) continue;
+    if (line.trim() === '# Shared Operator memory' && !headerSeen && entries.length === 0) {
+      headerSeen = true;
+      continue;
+    }
+    try {
+      const entry = parseMemoryEntryLine(line);
+      if (entry) {
+        entries.push(entry);
+        continue;
+      }
+    } catch {
+      throw new Error(`Invalid shared MEMORY.md entry on line ${i + 1}.`);
+    }
+    throw new Error(`Unsupported shared MEMORY.md content on line ${i + 1}.`);
   }
   return entries;
 }
@@ -394,20 +411,75 @@ export function planRulePromotion(options: {
     const eol = original.includes('\r\n') ? '\r\n' : '\n';
     const sectionHeader = '## Promoted Project Rules';
     const newRuleBlock = promotedRules.join(eol);
-
-    if (original.includes(sectionHeader)) {
-      // Append to existing section
-      const parts = original.split(sectionHeader);
-      updatedAgentsText = parts[0] + sectionHeader + eol + newRuleBlock + eol + parts.slice(1).join(sectionHeader);
-    } else {
-      // Append section before first embedded harness section or at bottom
-      const harnessMarker = '<!-- advanced-harness:';
-      const markerIndex = original.indexOf(harnessMarker);
-      if (markerIndex !== -1) {
-        updatedAgentsText = original.slice(0, markerIndex) + sectionHeader + eol + newRuleBlock + eol + eol + original.slice(markerIndex);
-      } else {
-        updatedAgentsText = original + (original.endsWith('\n') ? '' : eol) + eol + sectionHeader + eol + newRuleBlock + eol;
+    const lines = original.split(/\r\n|\n/);
+    const offsets: number[] = [];
+    let offset = 0;
+    for (const line of lines) {
+      offsets.push(offset);
+      const nextBreak = original.indexOf('\n', offset);
+      offset = nextBreak < 0 ? original.length + 1 : nextBreak + 1;
+      if (line.includes('\r') && nextBreak > 0) offset = nextBreak + 1;
+    }
+    const starts = new Map<string, number[]>();
+    const ends = new Map<string, number[]>();
+    const fences: boolean[] = [];
+    let fenced = false;
+    const eligible: number[] = [];
+    const embeddedStack: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (/^\s*(```+|~~~+)/.test(line)) { fenced = !fenced; fences[i] = true; continue; }
+      fences[i] = fenced;
+      if (fenced) continue;
+      const marker = line.match(/^\s*<!-- advanced-harness:(project|integrations):(start|end) -->\s*$/);
+      if (marker) {
+        const [, kind, side] = marker;
+        const map = side === 'start' ? starts : ends;
+        const list = map.get(kind!) ?? []; list.push(i); map.set(kind!, list);
+        if (side === 'start') {
+          if (embeddedStack.length) throw new Error('Malformed embedded harness section boundaries; refusing rule promotion.');
+          embeddedStack.push(kind!);
+        } else if (embeddedStack.pop() !== kind) {
+          throw new Error('Malformed embedded harness section boundaries; refusing rule promotion.');
+        }
+        continue;
       }
+      if (/^\s*<!-- advanced-harness:/.test(line)) throw new Error('Malformed embedded harness section boundaries; refusing rule promotion.');
+      if (!embeddedStack.length && line.trim() === sectionHeader) eligible.push(i);
+    }
+    if (fenced) throw new Error('Malformed fenced code block; refusing rule promotion.');
+    if (embeddedStack.length) throw new Error('Malformed embedded harness section boundaries; refusing rule promotion.');
+    for (const kind of ['project', 'integrations']) {
+      if ((starts.get(kind)?.length ?? 0) !== (ends.get(kind)?.length ?? 0) || (starts.get(kind)?.length ?? 0) > 1) {
+        throw new Error('Malformed embedded harness section boundaries; refusing rule promotion.');
+      }
+    }
+    if (eligible.length > 1) throw new Error('Ambiguous duplicate Promoted Project Rules headings; refusing rule promotion.');
+
+    const protectedLine = (index: number) => fences[index] || lines[index]!.includes('<!-- advanced-harness:');
+    if (eligible.length === 1) {
+      const headerIndex = eligible[0]!;
+      let boundary = lines.length;
+      for (let i = headerIndex + 1; i < lines.length; i++) {
+        const embeddedStart = /^\s*<!-- advanced-harness:(?:project|integrations):start -->\s*$/.test(lines[i]!);
+        if ((!fences[i] && embeddedStart) || (!protectedLine(i) && /^#{1,2}\s/.test(lines[i]!))) { boundary = i; break; }
+      }
+      let insertAt = boundary;
+      while (insertAt > headerIndex + 1 && !lines[insertAt - 1]!.trim()) insertAt--;
+      const insertionOffset = offsets[insertAt] ?? original.length;
+      const prefix = original.slice(0, insertionOffset);
+      const separator = prefix.length > 0 && !prefix.endsWith('\n') ? eol : '';
+      const insertion = `${separator}${newRuleBlock}${eol}`;
+      updatedAgentsText = prefix + insertion + original.slice(insertionOffset);
+    } else {
+      const firstEmbedded = lines.findIndex((line, i) => !fences[i] && /^\s*<!-- advanced-harness:(?:project|integrations):start -->\s*$/.test(line));
+      const insertionIndex = firstEmbedded >= 0 ? firstEmbedded : lines.length;
+      const insertionOffset = offsets[insertionIndex] ?? original.length;
+      const prefix = original.slice(0, insertionOffset);
+      const leading = prefix.length === 0 || prefix.endsWith(eol + eol) ? '' : prefix.endsWith(eol) ? eol : eol + eol;
+      const trailing = insertionIndex < lines.length ? `${eol}${eol}` : eol;
+      const block = `${leading}${sectionHeader}${eol}${newRuleBlock}${trailing}`;
+      updatedAgentsText = prefix + block + original.slice(insertionOffset);
     }
   }
 

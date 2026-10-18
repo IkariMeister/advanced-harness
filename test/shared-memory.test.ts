@@ -157,6 +157,25 @@ test('Memory entry validation and parsing enforce structure, rejection of secret
   }
 });
 
+test('shared memory parser accepts generated and entry-only files but rejects unsupported lines with safe line numbers', () => {
+  const entry: MemoryEntry = { source: 'Human', scope: 'Setup', confirmation: 'approved', fact: 'Use the selected context.' };
+  const formatted = formatSharedMemory([entry]);
+  assert.deepEqual(parseSharedMemory(formatted), [entry]);
+  assert.deepEqual(parseSharedMemory(formatted.replace(/\n/g, '\r\n')), [entry]);
+  assert.deepEqual(parseSharedMemory(`\uFEFF${formatted}`), [entry]);
+  assert.deepEqual(parseSharedMemory(''), []);
+  assert.deepEqual(parseSharedMemory('\n  \n'), []);
+  assert.deepEqual(parseSharedMemory('\n- [Source: Human; scope: Setup; confirmation: approved] Use the selected context.'), [entry]);
+  for (const malformed of ['legacy private note', '# Different memory format', '- not a structured entry']) {
+    assert.throws(() => parseSharedMemory(`\n${malformed}`), /line 2/);
+  }
+  assert.throws(() => parseSharedMemory(`\nprivate-key-material`), err => {
+    assert.match((err as Error).message, /line 2/);
+    assert.doesNotMatch((err as Error).message, /private-key-material/);
+    return true;
+  });
+});
+
 test('deduplicateMemoryEntries removes normalized duplicate entries idempotently', () => {
   const entries: MemoryEntry[] = [
     { source: 'Human', scope: 'Setup', confirmation: 'approved', fact: 'Path is X' },
@@ -401,4 +420,106 @@ Some initial rules.
       dispositions: [{ type: 'promote', entry: entries[0]!, targetRuleText: path }],
     }), /machine-local worktree or operational paths/);
   }
+});
+
+test('promotion finds standalone headings outside code/config and preserves embedded content and newline bytes', () => {
+  const entry: MemoryEntry = { source: 'Human', scope: 'Rules', confirmation: 'approved', fact: 'Keep the release checklist current.' };
+  const source = [
+    '# Guide',
+    '',
+    '```md',
+    '## Promoted Project Rules',
+    '- literal fenced text',
+    '```',
+    '',
+    '<!-- advanced-harness:project:start -->',
+    '## Promoted Project Rules',
+    '```json',
+    '{"value":"keep bytes"}',
+    '```',
+    '<!-- advanced-harness:project:end -->',
+    '',
+    '## Promoted Project Rules',
+    '- Existing rule.',
+    '',
+    '## Next section',
+    'Leave unchanged.',
+    '',
+  ].join('\r\n');
+  const plan = planRulePromotion({ memoryEntries: [entry], agentsText: source, dispositions: [{ type: 'promote', entry }] });
+  assert.equal(plan.updatedAgentsText.split('## Promoted Project Rules').length - 1, 3);
+  assert.match(plan.updatedAgentsText, /## Promoted Project Rules\r\n- Existing rule\.\r\n- Keep the release checklist current\.\r\n\r\n## Next section/);
+  assert.ok(plan.updatedAgentsText.includes('## Promoted Project Rules\r\n```json\r\n{"value":"keep bytes"}\r\n```'));
+  assert.ok(plan.updatedAgentsText.endsWith('\r\n'));
+});
+
+test('promotion inserts safely at embedded-section boundary or EOF and rejects ambiguity/malformed boundaries', () => {
+  const entry: MemoryEntry = { source: 'Human', scope: 'Rules', confirmation: 'approved', fact: 'Keep the release checklist current.' };
+  const promote = (agentsText: string) => planRulePromotion({ memoryEntries: [entry], agentsText, dispositions: [{ type: 'promote', entry }] });
+  const embedded = '<!-- advanced-harness:project:start -->\n{}\n<!-- advanced-harness:project:end -->';
+  const inserted = promote(`# Guide\n\n${embedded}`).updatedAgentsText;
+  assert.ok(inserted.indexOf('## Promoted Project Rules') < inserted.indexOf(embedded));
+  assert.ok(inserted.endsWith(embedded));
+  const eof = promote('# Guide');
+  assert.ok(eof.updatedAgentsText.endsWith('- Keep the release checklist current.\n'));
+  assert.throws(() => promote('## Promoted Project Rules\n\n## Promoted Project Rules'), /Ambiguous duplicate/);
+  assert.throws(() => promote('<!-- advanced-harness:project:start -->\nunfinished'), /Malformed embedded harness section/);
+  assert.throws(() => promote('```\nunfinished'), /Malformed fenced code block/);
+});
+
+test('promotion keeps existing section insertion outside embedded block and separates unterminated final rule', () => {
+  const entry: MemoryEntry = { source: 'Human', scope: 'Rules', confirmation: 'approved', fact: 'Add the release checklist.' };
+  for (const eol of ['\n', '\r\n']) {
+    const promote = (agentsText: string) => planRulePromotion({ memoryEntries: [entry], agentsText, dispositions: [{ type: 'promote', entry }] });
+    const embedded = [
+      '<!-- advanced-harness:project:start -->',
+      '## Advanced Harness project settings',
+      '```json',
+      '{"keep":"these exact bytes"}',
+      '```',
+      '<!-- advanced-harness:project:end -->',
+    ].join(eol);
+    const existing = ['# Guide', '## Promoted Project Rules', '- Existing rule.', embedded, '## After', 'Untouched.'].join(eol);
+    const plan = promote(existing);
+    const applied = applyApprovedRulePromotion(plan, true);
+    assert.ok(applied.indexOf('- Add the release checklist.') < applied.indexOf('<!-- advanced-harness:project:start -->'));
+    assert.ok(applied.includes(embedded), 'embedded block must remain byte-for-byte unchanged');
+    assert.ok(applied.includes(`- Existing rule.${eol}- Add the release checklist.${eol}${embedded}`));
+    assert.ok(applied.includes(`${eol}## After${eol}Untouched.`));
+
+    const unterminated = ['# Guide', '## Promoted Project Rules', '- Existing rule.'].join(eol);
+    const eofPlan = promote(unterminated);
+    const eofApplied = applyApprovedRulePromotion(eofPlan, true);
+    assert.ok(eofApplied.includes(`- Existing rule.${eol}- Add the release checklist.${eol}`));
+    assert.ok(eofApplied.endsWith(`- Add the release checklist.${eol}`));
+  }
+});
+
+test('promotion ignores fenced embedded-marker examples as boundaries and keeps insertion outside fences', () => {
+  const entry: MemoryEntry = { source: 'Human', scope: 'Rules', confirmation: 'approved', fact: 'Add the release checklist.' };
+  for (const eol of ['\n', '\r\n']) {
+    const fenceExample = ['```md', '<!-- advanced-harness:project:start -->', '## Example settings', '```'].join(eol);
+    const embedded = ['<!-- advanced-harness:project:start -->', '## Actual settings', '{"keep":true}', '<!-- advanced-harness:project:end -->'].join(eol);
+    const source = ['# Guide', '## Promoted Project Rules', '- Existing rule.', fenceExample, embedded, '## After', 'Untouched.'].join(eol);
+    const plan = planRulePromotion({ memoryEntries: [entry], agentsText: source, dispositions: [{ type: 'promote', entry }] });
+    const updated = applyApprovedRulePromotion(plan, true);
+    assert.ok(updated.includes(fenceExample), 'fenced example remains byte-for-byte unchanged');
+    assert.ok(updated.includes(embedded), 'actual embedded section remains byte-for-byte unchanged');
+    const ruleIndex = updated.indexOf('- Add the release checklist.');
+    const fenceEnd = updated.indexOf(eol + '```', updated.indexOf('```md')) + eol.length + 3;
+    assert.ok(ruleIndex >= fenceEnd, 'rule follows the fenced marker example');
+    assert.ok(ruleIndex < updated.indexOf(embedded), 'rule precedes the actual embedded section');
+  }
+});
+
+test('malformed legacy memory is preserved on serialized write even without a baseline', (t) => {
+  const { memoryPath } = createFixture(t);
+  mkdirSync(join(memoryPath, '..'), { recursive: true });
+  const legacy = '# Old operator notes\nSensitive legacy body must stay untouched.\n';
+  writeFileSync(memoryPath, legacy);
+  assert.throws(() => readSharedMemory(memoryPath), /Unsupported shared MEMORY.md content on line 1/);
+  assert.throws(() => writeSharedMemorySerialized(memoryPath, [], undefined), /Unsupported shared MEMORY.md content on line 1/);
+  assert.equal(readFileSync(memoryPath, 'utf8'), legacy);
+  assert.equal(existsSync(`${memoryPath}.lock`), false);
+  assert.deepEqual(readdirSync(join(memoryPath, '..')).filter(name => name.endsWith('.tmp')), []);
 });

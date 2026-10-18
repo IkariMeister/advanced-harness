@@ -940,6 +940,46 @@ setup, OAuth, and project-context portability on macOS. Never copy Windows crede
 
 ## BH-012 — Shared memory, bootstrap, and approved instruction consolidation
 
+2026-10-18 accepted review fixes (implementation/verification update; PR publication
+remains External-owned and unverified here): promotion now recognizes only standalone
+`## Promoted Project Rules` headings outside fenced code and embedded harness sections,
+preserves surrounding/configuration bytes and LF/CRLF convention, and rejects duplicate
+eligible headings or malformed fence/embedded boundaries. Shared-memory parsing now
+accepts the generated header, blank lines, structured-entry-only/empty files, LF/CRLF,
+and one initial BOM; unsupported legacy/nonblank content fails with a line number and
+without echoing its contents. Existing malformed memory is refused by serialized write
+before replacement, including when no baseline was supplied; lock/temp cleanup is
+covered. Added production-plan/apply, parser, and read/write preservation regressions.
+Focused test suite passed 12/12; `npm run typecheck` passed; full `npm test` passed
+(218 passed, 0 failed, 1 opt-in live test skipped). `npm ci` was approved and completed
+(6 packages installed; audit reported 0 vulnerabilities). Independent review remains
+pending. Existing deferred Medium test-readiness hang finding
+below remains deferred and untouched. No live MEMORY/AGENTS, Git, publication, or merge
+operations were performed.
+
+2026-10-18 accepted independent-review follow-up: fixed two reproduced insertion
+defects in an existing promotion section. Its next boundary is now the embedded harness
+section start (rather than an internal heading inside that protected block), so the
+new rule remains outside and embedded bytes are unchanged. Appending after an existing
+rule without a final newline now inserts the required separator. Regression tests run
+the actual plan/apply path for LF and CRLF, both layouts, and unchanged surrounding
+content. Focused suite passed 13/13; `npm run typecheck` passed; full `npm test` passed
+(219 passed, 0 failed, 1 opt-in live test skipped). Both accepted findings are fixed
+within scope; publication, independent re-review, and merge remain unverified/pending.
+
+2026-10-18 accepted fenced-marker review follow-up: existing-section boundary matching
+now ignores embedded start-marker examples while the scanner is inside fenced code;
+the real, out-of-fence embedded boundary still applies. Added plan/apply regression
+coverage for LF and CRLF, verifying the example and actual embedded block remain
+unchanged and the promoted rule lands outside the fence before the real block. During
+test authoring, read-only byte inspection found exactly one NUL (at byte 28525) in the
+new regression's temporary diagnostic assertion; the surrounding source was UTF-8
+otherwise with no other control bytes. A guarded, targeted repair removed only that
+NUL-containing diagnostic line and its assertion, preserving all prior test/source
+work; subsequent byte inspection found no NUL/control bytes. Focused tests passed
+14/14; `npm run typecheck` passed; full suite passed (220 passed, 0 failed, 1 opt-in
+live test skipped). Independent re-review, publication, and merge remain pending.
+
 Implementation and verification status (2026-10-17; Windows only):
 - Implemented pure TypeScript shared-memory, bootstrap readiness, and instruction consolidation module `src/shared-memory.ts`:
   - Bootstrap & path validation (`validateBootstrapContext`, `checkBootstrapReadiness`): enforces worktree and memory paths outside checkout, `memoryPath` ending in `MEMORY.md` outside worktree parent, allows existing worktrees and untouched canonical changes without blocking bootstrap, stopping only on missing/invalid config or target branch/worktree collision.
