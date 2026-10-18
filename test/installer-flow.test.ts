@@ -222,3 +222,38 @@ test('installer flow retries invalid scope/model/variant inputs and honors defau
   assert.equal(existsSync(join(project, 'opencode.jsonc')), false);
 });
 
+test('global installer selects default, XDG, and injected config directories and cancels without writes', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness global paths '));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = join(root, 'home with spaces');
+  const xdg = join(root, 'xdg config with spaces');
+  const override = join(xdg, 'opencode');
+  const unrelated = join(home, 'unrelated.json');
+  mkdirSync(home, { recursive: true });
+  writeFileSync(unrelated, '{"keep":true}\n');
+  const answer = async (question: string) => {
+    if (question.includes(': model ID')) return 'local/model';
+    if (question.includes(': reasoning variant')) return '-';
+    if (/Replace|Make Lead|Also set/.test(question)) return 'no';
+    if (question.startsWith('Type install')) return 'cancel';
+    throw new Error(`Unexpected prompt: ${question}`);
+  };
+  for (const [label, deps, expected] of [
+    ['home default', {}, join(home, '.config', 'opencode')],
+    ['XDG', { xdgConfigHome: xdg }, join(xdg, 'opencode')],
+    ['injected override', { xdgConfigHome: xdg }, override],
+  ] as const) {
+    const config = label === 'injected override' ? join(override, 'opencode.json') : undefined;
+    const recovery = join(root, `recovery ${label}`);
+    const output: string[] = [];
+    await runInstallerFlow({ scope: 'global', ...(config ? { config } : {}) }, {
+      ask: answer, output: text => output.push(text), error: () => {}, home,
+      ...(deps.xdgConfigHome ? { xdgConfigHome: deps.xdgConfigHome } : {}),
+      recoveryDirectory: recovery,
+    });
+    assert.ok(output.some(line => line.includes(`Target: ${config ?? join(expected, 'opencode.jsonc')}`)));
+    assert.equal(existsSync(expected), false);
+    assert.equal(existsSync(recovery), false);
+  }
+  assert.equal(readFileSync(unrelated, 'utf8'), '{"keep":true}\n');
+});
