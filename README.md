@@ -163,3 +163,7 @@ These commands check repository code and template contracts; they do not install
 - [Permissions](https://opencode.ai/v2/docs/permissions)
 - [MCP servers](https://opencode.ai/v2/docs/mcp-servers)
 - [Configuration](https://opencode.ai/v2/docs/config)
+
+## License
+
+This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
