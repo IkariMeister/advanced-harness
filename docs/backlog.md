@@ -102,7 +102,7 @@ invented. Links point to the current implementation/specification.
 | BH-019 | P1 | Per-agent tool availability and ownership | Capability docs complete; approved External source-permission follow-up implemented and local checks pass; independent reviews and final implementation approval pending |
 | BH-020 | Complete (implementation/verification; merged) | Safe harness update workflow | Harness PR #35 merged at `d8c4ac4`; review follow-up is on `feature/bh020-review-fixes`, with no new PR open yet |
 | BH-021 | P1 | Safe harness uninstall and cleanup | Inventory managed footprint, preview removal, preserve unrelated state, and report partial failure |
-| BH-022 | Complete (implementation/verification; PR open) | GitHub Actions CI validation | PR #39 OPEN: https://github.com/IkariMeister/advanced-harness/pull/39; head `feature/bh022-ci` at `395fd26`; merge pending/unverified |
+| BH-022 | Complete (implementation/verification; PR open) | GitHub Actions CI validation | PR #39 OPEN: https://github.com/IkariMeister/advanced-harness/pull/39; branch `feature/bh022-ci` (initial publication `395fd26`, updated for PR review follow-up); merge pending/unverified |
 
 ### BH-020 accepted PR #35 review findings (2026-10-17)
 
@@ -887,11 +887,12 @@ Added `.github/workflows/ci.yml` defining automated CI on GitHub Actions:
 - Triggers on `push` and `pull_request` targeting `main`, plus manual `workflow_dispatch`.
 - Concurrency group cancels superseded in-progress PR runs while allowing `main` branch runs to complete.
 - Runs on `ubuntu-latest` with least-privilege `contents: read` permissions.
+- Checks out repository with `fetch-depth: 0` so committed-range checks have required Git history.
 - Sets up Node.js 24.x (`actions/setup-node@v4`) with npm dependency caching.
-- Validates repository health through `npm ci`, `git diff --check`, `npm run typecheck`, and `npm test`.
+- Validates repository health through `npm ci`, committed-range `git diff --check` (`base...HEAD` on PRs, `before..HEAD` on pushes, `HEAD~1..HEAD` fallback), `npm run typecheck`, and `npm test`.
 - All offline test suites run; live OpenCode test (`native-diagnostics-live.test.ts`) is automatically skipped when `HARNESS_LIVE_OPENCODE` is unset.
-- Verification: `npm run typecheck` passed (exit 0); full automated test suite passed (207 passed, 0 failed, 1 opt-in live test skipped); `git diff --check` passed clean.
-- External confirmed PR #39 is **OPEN**, targeting `main`, from `feature/bh022-ci` at `395fd26`: https://github.com/IkariMeister/advanced-harness/pull/39. Merge is pending human review and approval.
+- Verification: `npm run typecheck` passed (exit 0); full automated test suite passed (207 passed, 0 failed, 1 opt-in live test skipped); `git diff --check origin/main...HEAD` passed clean.
+- External confirmed PR #39 is **OPEN**, targeting `main`, from branch `feature/bh022-ci` (initial publication commit `395fd26`, PR-record commit `f4a0b8e`, updated with PR #39 review fixes): https://github.com/IkariMeister/advanced-harness/pull/39. Merge is pending human review and approval.
 
 ## BH-010 — Interruption/resume and uncertain external outcomes
 

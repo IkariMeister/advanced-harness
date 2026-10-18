@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4
@@ -32,7 +34,18 @@ jobs:
         run: npm ci
 
       - name: Check formatting and conflict markers
-        run: git diff --check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$PR_BASE_SHA" ]; then
+            git diff --check "$PR_BASE_SHA...HEAD"
+          elif [ "$EVENT_NAME" = "push" ] && [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            git diff --check "$PUSH_BEFORE_SHA..HEAD"
+          else
+            git diff --check HEAD~1..HEAD
+          fi
 
       - name: Run typecheck
         run: npm run typecheck
