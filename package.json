@@ -15,6 +15,7 @@
     "harness:update": "node scripts/update-native-harness.ts",
     "harness:setup": "node scripts/setup-native-project.ts",
     "harness:integrations": "node scripts/configure-integrations.ts",
+    "harness:pr-feedback-permissions": "node scripts/add-pr-feedback-permissions.ts",
     "harness:deploy-prompts": "node scripts/deploy-native-prompts.ts"
   },
   "dependencies": {

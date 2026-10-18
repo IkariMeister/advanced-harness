@@ -100,12 +100,28 @@ test('global integration production flow adds managed GH sources then repeats wi
     if (question.startsWith('Remove obsolete')) return 'no'; if (question.startsWith('Type integrations')) return 'integrations';
     throw new Error(`Unexpected integration prompt: ${question}`);
   };
-  assert.equal(await runIntegrationFlow({ scope: 'global', config }, { ask: choices, output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery }), 0);
+  const preview: string[] = [];
+  assert.equal(await runIntegrationFlow({ scope: 'global', config }, { ask: choices, output: text => preview.push(text), error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery }), 0);
   const once = readFileSync(config, 'utf8'); const filesOnce = (await import('node:fs')).readdirSync(recovery).sort();
   const saved = JSON.parse(once); const external = saved.agents.external.permissions as { resource: string; effect: string }[];
+  assert.ok(external.some(rule => rule.resource === 'gh pr view' && rule.effect === 'allow'));
+  assert.ok(external.some(rule => rule.resource === 'gh pr view *' && rule.effect === 'allow'));
+  assert.ok(external.some(rule => rule.resource === 'gh *' && rule.effect === 'ask'));
+  assert.ok(!external.some(rule => rule.resource.startsWith('gh api') && rule.effect === 'allow'));
   assert.ok(external.some(rule => rule.resource === 'gh pr create' && rule.effect === 'allow'));
   assert.ok(external.some(rule => rule.resource === 'gh pr merge' && rule.effect === 'deny'));
+  assert.ok(preview.some(line => line.includes('external permission preview:') && line.includes('gh pr view')));
   assert.equal(await runIntegrationFlow({ scope: 'global', config }, { ask: choices, output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery }), 0);
+  assert.equal(readFileSync(config, 'utf8'), once);
+  assert.deepEqual((await import('node:fs')).readdirSync(recovery).sort(), filesOnce);
+
+  const cancel = async (question: string) => question.startsWith('GitHub backend') ? 'gh'
+    : question.startsWith('GitHub hostname') ? 'github.com'
+    : question.startsWith('jira: alias') || question.startsWith('Design source') ? 'none'
+    : question.startsWith('Remove obsolete') ? 'no'
+    : question.startsWith('Type integrations') ? 'cancel'
+    : (() => { throw new Error(`Unexpected cancellation prompt: ${question}`); })();
+  assert.equal(await runIntegrationFlow({ scope: 'global', config }, { ask: cancel, output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery }), 0);
   assert.equal(readFileSync(config, 'utf8'), once);
   assert.deepEqual((await import('node:fs')).readdirSync(recovery).sort(), filesOnce);
   assert.equal(nativeRoles.length, 8);
@@ -183,4 +199,3 @@ test('integration production flow aborts without config or preference writes whe
   assert.equal(existsSync(join(configDir, 'harness.integrations.json')), false);
   assert.deepEqual((await import('node:fs')).readdirSync(recovery).sort(), beforeReceipts);
 });
-
