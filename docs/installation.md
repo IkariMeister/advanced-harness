@@ -52,14 +52,14 @@ Examples:
 
 ```text
 npm run harness:install -- --host opencode --scope global
-npm run harness:install -- --host claude-code,antigravity --scope project --project "C:/Users/you/Projects/android-app"
-npm run harness:install -- --host all --scope project --project "$HOME/Projects/android-app"
+npm run harness:install -- --host claude-code,antigravity --scope project --project "C:/Users/you/Projects/android-app" # blocked: integrations #43/#44
+npm run harness:install -- --host all --scope project --project "$HOME/Projects/android-app" # blocked until #43-#46
 npm run harness:install -- --help
 ```
 
-`--host <opencode|claude-code|antigravity|codex|cursor|all>` selects which agent hosts to install or configure. When omitted in interactive CLI mode, the installer prompts with `[opencode]` default on Enter. Multiple hosts can coexist in the same workspace; `AGENTS.md` remains host-neutral context, and host-specific files (e.g. `CLAUDE.md`, `.claude/`, `.agents/`, `.cursor/`, `.codex/`) do not clobber each other.
+`--host <opencode|claude-code|antigravity|codex|cursor|all>` accepts host selections, but only OpenCode installation is implemented. Any selection containing a non-OpenCode host—including `all` or a mixed selection—is rejected before adapters or filesystem mutations, with issue handoffs #43 (Claude Code), #44 (Antigravity), #45 (Codex), and #46 (Cursor). Workflow artifact compilation is a pure library operation, not installation; caller-bound invocation artifacts are never automatically written as reusable commands.
 
-Integration configuration (`harness:integrations`) currently supports OpenCode only. Its `--host` option accepts `opencode`; unsupported hosts and multi-host selections (including `all`) are rejected before discovery, checks, or writes. This does not change multi-host installation support or its per-host receipt/configuration isolation.
+Integration configuration (`harness:integrations`) currently supports OpenCode only. Its `--host` option accepts `opencode`; unsupported hosts and multi-host selections (including `all`) are rejected before discovery, checks, or writes. Native deployment for other hosts, including per-host receipt/configuration isolation, remains deferred to issues #43–#46.
 
 Uninstall preflights all receipt and managed-file restore states before confirmation, then revalidates before writes. Digest-only prior content cannot authorize reconstruction or deletion. Same-basename backups are distinguished by target identity. Cancellation and no-op restores create no backups. A later unexpected I/O failure can still leave a partially completed multi-file restore; output identifies completed changes and backups for recovery rather than claiming transactionality.
 

@@ -1,23 +1,135 @@
 ---
+schemaVersion: 2
 description: Coordinates the native workflow and human decisions in this conversation
 mode: primary
 model: openai/gpt-6-astra#medium
-permissions:
-  - { action: "*", resource: "*", effect: deny }
-  - { action: read, resource: "*", effect: allow }
-  - { action: glob, resource: "*", effect: allow }
-  - { action: grep, resource: "*", effect: allow }
-  - { action: read, resource: "*.env", effect: ask }
-  - { action: read, resource: "*.env.*", effect: ask }
-  - { action: external_directory, resource: "*", effect: ask }
-  - { action: question, resource: "*", effect: allow }
-  - { action: subagent, resource: operator, effect: allow }
-  - { action: subagent, resource: external, effect: allow }
-  - { action: subagent, resource: researcher, effect: allow }
-  - { action: subagent, resource: planner, effect: allow }
-  - { action: subagent, resource: implementer, effect: allow }
-  - { action: subagent, resource: reviewer, effect: allow }
-  - { action: subagent, resource: qa, effect: allow }
+policy:
+  schemaVersion: 1
+  resolution: ordered-last-match
+  rules:
+    - capability: all
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: "*"
+    - capability: file.read
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: read
+    - capability: file.find
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: glob
+    - capability: file.search
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: grep
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env.*"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: directory.external
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: external_directory
+    - capability: user.question
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: question
+    - capability: agent.delegate
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: operator
+      effect: allow
+      binding:
+        host: opencode
+        action: subagent
+    - capability: agent.delegate
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: external
+      effect: allow
+      binding:
+        host: opencode
+        action: subagent
+    - capability: agent.delegate
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: researcher
+      effect: allow
+      binding:
+        host: opencode
+        action: subagent
+    - capability: agent.delegate
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: planner
+      effect: allow
+      binding:
+        host: opencode
+        action: subagent
+    - capability: agent.delegate
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: implementer
+      effect: allow
+      binding:
+        host: opencode
+        action: subagent
+    - capability: agent.delegate
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: reviewer
+      effect: allow
+      binding:
+        host: opencode
+        action: subagent
+    - capability: agent.delegate
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: qa
+      effect: allow
+      binding:
+        host: opencode
+        action: subagent
 ---
 
 Coordinate the OpenCode-native engineering workflow. Shell, Git, filesystem, and

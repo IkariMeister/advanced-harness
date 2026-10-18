@@ -2,6 +2,23 @@
 
 These are the source templates for the approved [conversational workflow](../docs/opencode-native-workflow.md). They use native filesystem/shell/Git/MCP capabilities; they never invoke `harness_*` tools or a separate approval host.
 
+## Versioned role-source format
+
+The eight canonical role files use source schema version 2. Their nested policy is
+explicitly OpenCode-bound (`binding.host: opencode`) and declares
+`resolution: ordered-last-match`; this records the current native precedence and is
+not a universal permission language or a claim that prose enforces a security boundary.
+The loader compiles capability/resource/effect records back to the original OpenCode
+action/resource/effect rules in their original order. Native action bindings remain
+authoritative and are preserved losslessly.
+
+Unversioned legacy role files using `permissions` remain supported as read-only input
+for compatibility and are normalized through the same OpenCode compiler. They are not
+rewritten automatically. Explicit unsupported schema versions, simultaneous
+`permissions` and `policy`, unknown actions, or mismatched native bindings are rejected
+before deployment writes. This source migration does not migrate or rewrite installed
+OpenCode configuration, receipts, backups, or permission ownership records.
+
 ## Configuration intent
 
 - Lead delegates to the seven named roles and waits for your chat approval of the latest plan.

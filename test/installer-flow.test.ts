@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { loadNativeDefinitions, nativeRoles, parseConfiguration } from '../src/native-installer.ts';
+import { applyOpenCodeCommandDeployment } from '../src/workflow-commands.ts';
 
 test('injected production installer flow writes a fresh configuration and finalizes its receipt', async t => {
   const root = mkdtempSync(join(tmpdir(), 'harness-flow-'));
@@ -71,6 +72,122 @@ test('injected installer cancellation makes no configuration or recovery writes'
   await runInstallerFlow({ scope: 'project', project }, { ask: async question => answer(question), output: () => {}, error: () => {}, home: root, recoveryDirectory: join(root, 'recovery') });
   assert.equal(existsSync(join(project, 'opencode.json')), false);
   assert.equal(existsSync(join(root, 'recovery')), false);
+});
+
+test('installer deploys missing and explicitly selected command files when configuration needs no receipt', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-command-only-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const config = join(project, 'opencode.json');
+  const original = JSON.stringify({ agents: Object.fromEntries(nativeRoles.map(role => [role, { model: 'local/model' }])) });
+  writeFileSync(config, original);
+  const commandDir = join(project, '.opencode', 'commands'); mkdirSync(commandDir, { recursive: true });
+  writeFileSync(join(commandDir, 'start-issue.md'), 'user-customized command\n');
+  const ask = async (question: string) => {
+    if (question.includes(': model ID')) return 'local/model';
+    if (question.includes(': reasoning variant')) return '-';
+    if (/Replace existing |Make Lead|Also set|Replace customized\/unattributed/.test(question)) return 'no';
+    if (question.includes('Replace customized workflow command start-issue')) return 'yes';
+    if (question.startsWith('Type install')) return 'install';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+  const outputs: string[] = [];
+  await runInstallerFlow({ scope: 'project', project }, {
+    ask, output: message => outputs.push(message), error: message => outputs.push(message), home: root,
+    recoveryDirectory: join(root, 'recovery'),
+    updateConfiguration: () => original,
+    verify: async () => { throw new Error('No config update should require runtime verification'); }
+  });
+  assert.equal(readFileSync(config, 'utf8'), original);
+  assert.match(readFileSync(join(commandDir, 'start-issue.md'), 'utf8'), /description: Start approved work on a Jira issue/);
+  assert.ok(existsSync(join(commandDir, 'review-pr.md')));
+  assert.ok(outputs.some(line => line.includes('Workflow command backup:')));
+  assert.equal(existsSync(join(root, 'recovery')), true);
+});
+
+test('installer cancellation after selecting customized command replacement writes neither config nor commands', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-command-replace-cancel-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const commandDir = join(project, '.opencode', 'commands'); mkdirSync(commandDir, { recursive: true });
+  const custom = 'preserve this customized command';
+  writeFileSync(join(commandDir, 'start-issue.md'), custom);
+  let replacementSelected = false;
+  const ask = async (question: string) => {
+    if (question.includes(': model ID')) return 'local/model';
+    if (question.includes(': reasoning variant')) return '-';
+    if (/Replace existing |Make Lead|Also set|Replace customized\/unattributed/.test(question)) return 'no';
+    if (question.includes('Replace customized workflow command start-issue')) { replacementSelected = true; return 'yes'; }
+    if (question.startsWith('Type install')) return 'cancel';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+  await runInstallerFlow({ scope: 'project', project }, {
+    ask, output: () => {}, error: () => {}, home: root, recoveryDirectory: join(root, 'recovery')
+  });
+  assert.equal(replacementSelected, true);
+  assert.equal(readFileSync(join(commandDir, 'start-issue.md'), 'utf8'), custom);
+  assert.equal(existsSync(join(commandDir, 'review-pr.md')), false);
+  assert.equal(existsSync(join(project, 'opencode.json')), false);
+  assert.equal(existsSync(join(root, 'recovery')), false);
+});
+
+test('production installer detects a command target changed after preview and preserves the concurrent edit', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-command-race-flow-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const original = JSON.stringify({ agents: Object.fromEntries(nativeRoles.map(role => [role, { model: 'local/model' }])) });
+  const config = join(project, 'opencode.json'); writeFileSync(config, original);
+  let raced = false;
+  const ask = async (question: string) => {
+    if (question.includes(': model ID')) return 'local/model';
+    if (question.includes(': reasoning variant')) return '-';
+    if (/Replace existing |Make Lead|Also set|Replace customized/.test(question)) return 'no';
+    if (question.startsWith('Type install')) {
+      const commandDir = join(project, '.opencode', 'commands'); mkdirSync(commandDir, { recursive: true });
+      writeFileSync(join(commandDir, 'start-issue.md'), 'concurrent edit'); raced = true;
+      return 'install';
+    }
+    throw new Error(`Unexpected question: ${question}`);
+  };
+  await assert.rejects(runInstallerFlow({ scope: 'project', project }, {
+    ask, output: () => {}, error: () => {}, home: root, recoveryDirectory: join(root, 'recovery'),
+    updateConfiguration: () => original
+  }), /changed after preview/i);
+  assert.equal(raced, true);
+  assert.equal(readFileSync(join(project, '.opencode', 'commands', 'start-issue.md'), 'utf8'), 'concurrent edit');
+  assert.equal(existsSync(join(project, '.opencode', 'commands', 'review-pr.md')), false);
+  assert.equal(readFileSync(config, 'utf8'), original);
+});
+
+test('production installer reports completed command and backup paths when a later command write fails', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-command-partial-flow-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const original = JSON.stringify({ agents: Object.fromEntries(nativeRoles.map(role => [role, { model: 'local/model' }])) });
+  writeFileSync(join(project, 'opencode.json'), original);
+  const commandDir = join(project, '.opencode', 'commands'); mkdirSync(commandDir, { recursive: true });
+  writeFileSync(join(commandDir, 'start-issue.md'), 'custom prior command');
+  const output: string[] = [];
+  const ask = async (question: string) => {
+    if (question.includes(': model ID')) return 'local/model';
+    if (question.includes(': reasoning variant')) return '-';
+    if (/Replace existing |Make Lead|Also set|Replace customized\/unattributed/.test(question)) return 'no';
+    if (question.includes('Replace customized workflow command start-issue')) return 'yes';
+    if (question.startsWith('Type install')) return 'install';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+  await assert.rejects(runInstallerFlow({ scope: 'project', project }, {
+    ask, output: message => output.push(message), error: message => output.push(message), home: root,
+    recoveryDirectory: join(root, 'recovery'), updateConfiguration: () => original,
+    applyWorkflowCommands: (items, selected, backups, onWritten) => applyOpenCodeCommandDeployment(items, selected, backups, (path, backup) => {
+      onWritten?.(path, backup);
+      if (path.endsWith('start-issue.md')) mkdirSync(join(commandDir, 'review-pr.md'));
+    })
+  }));
+  assert.ok(output.some(line => line.includes(`Workflow command written: ${join(commandDir, 'start-issue.md')}`)));
+  assert.ok(output.some(line => line.includes('Workflow command backup:')));
+  assert.ok(output.some(line => line.includes('completed file paths/backups are listed above')));
+  assert.ok(existsSync(join(commandDir, 'review-pr.md')));
 });
 
 test('injected installer explicitly replaces a preserved model only after its role-specific confirmation', async t => {

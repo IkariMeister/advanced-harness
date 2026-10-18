@@ -29,7 +29,10 @@ import {
 import { checkRemoteHead, compareInstalledAndSource, readSourceVersion, type Runner } from './harness-version.ts';
 import { planUpdate } from './update-planner.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
-import { parseHostSelection, askHostSelection, getHostAdapter, HOST_CAPABILITIES, type HostId } from './host-registry.ts';
+import { applyOpenCodeCommandDeployment, planOpenCodeCommandDeployment, type WorkflowCommandId } from './workflow-commands.ts';
+import { formatClaudePermissionPreflight, preflightClaudePermissions } from './claude-permission-preflight.ts';
+import { loadRoleDefinitions } from './role-definitions.ts';
+import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, type HostId } from './host-registry.ts';
 
 export interface UpdateFlowOptions {
   scope?: string;
@@ -49,6 +52,8 @@ export interface UpdateFlowDependencies {
   xdgConfigHome?: string;
   recoveryDirectory?: string;
   agentsDirectory?: string;
+  workflowCommandsDirectory?: string;
+  applyWorkflowCommands?: typeof applyOpenCodeCommandDeployment;
   harnessRoot?: string;
   environment?: NodeJS.ProcessEnv;
   runCommand?: Runner;
@@ -84,23 +89,17 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     throw new Error('Project directory does not exist or is not a directory. Select a valid directory before updating.');
   }
 
-  // Process non-OpenCode hosts
-  for (const host of selectedHosts) {
-    if (host === 'opencode') continue;
-    output(`\n--- Host Update: ${HOST_CAPABILITIES[host].displayName} [${host}] ---`);
-    const adapter = getHostAdapter(host);
-    if (adapter?.update) {
-      await adapter.update({ project, scope: scope as 'project' | 'global' });
-      output(`Updated ${HOST_CAPABILITIES[host].displayName} native adapter.`);
-    } else {
-      output(`Multi-host update foundation active for ${HOST_CAPABILITIES[host].displayName}.`);
-      output(`Native update adapter is tracked in BH-025/BH-026.`);
+  if (selectedHosts.some(host => host !== 'opencode')) {
+    for (const host of selectedHosts.filter(host => host !== 'opencode')) {
+      const issue = host === 'claude-code' ? '#43' : host === 'antigravity' ? '#44' : host === 'codex' ? '#45' : '#46';
+      errorOutput(`Update blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
     }
-  }
-
-  if (!selectedHosts.includes('opencode')) {
-    output('\nOpenCode was not selected for update. Multi-host update complete.');
-    return 0;
+    if (selectedHosts.includes('claude-code')) {
+    const definitions = loadRoleDefinitions(deps.agentsDirectory ?? join(harnessRoot, 'agents'));
+    const report = preflightClaudePermissions(definitions);
+    for (const line of formatClaudePermissionPreflight(report)) errorOutput(line);
+    }
+    return 2;
   }
 
   const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
@@ -273,6 +272,17 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     reconciliation
   );
 
+  const commandSource = deps.workflowCommandsDirectory ?? join(harnessRoot, 'commands');
+  const commandDirectory = join(project ?? globalDirectory, project ? '.opencode' : '', 'commands');
+  const commandPlan = planOpenCodeCommandDeployment(commandSource, commandDirectory);
+  const commandSelections: WorkflowCommandId[] = [];
+  output('\nWorkflow command update preview:');
+  for (const item of commandPlan) {
+    output(`  ${item.id}: ${item.status}${item.status === 'customized' ? ' (preserved unless explicitly replaced)' : ''}`);
+    if (item.status === 'missing') commandSelections.push(item.id);
+    else if (item.status === 'customized' && /^(y|yes)$/i.test(await ask(`Replace customized workflow command ${item.id}?`, 'no'))) commandSelections.push(item.id);
+  }
+
   output('\nSummary of Planned Updates:');
   output(`  Roles updating prompt: ${updatePrompts.length ? updatePrompts.join(', ') : 'none'}`);
   output(`  Configuration file: ${target}`);
@@ -327,6 +337,16 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     output(`Backup created: ${backup}`);
   }
   output(`Successor receipt finalized at: ${receiptPath}`);
+
+  try {
+    (deps.applyWorkflowCommands ?? applyOpenCodeCommandDeployment)(commandPlan, commandSelections, backupParent, (path, commandBackup) => {
+      output(`Workflow command updated: ${path}`);
+      if (commandBackup) output(`Workflow command backup: ${commandBackup}`);
+    });
+  } catch (err) {
+    errorOutput(`Configuration updated, but workflow command deployment failed or was partial; completed file paths/backups are listed above: ${String(err)}`);
+    throw err;
+  }
 
   // Runtime diagnostic verification
   const directory = project ?? cwd;
