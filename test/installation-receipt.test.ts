@@ -3,10 +3,20 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { makeTempRoot } from './temp-directory.ts';
 import { adoptExisting, assertNoReceiptOverlap, completePendingReceipt, configurationField, createReceipt, persistAdoptionReceipt, planUninstall, readInstallationReceipt, recoverFailedInstallation, writeInstallationReceipt, writePendingReceipt } from '../src/installation-receipt.ts';
 import { parseConfiguration } from '../src/native-installer.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
+
+test('uninstall CLI documents scoped receipt discovery and validates scope arguments', () => {
+  const script = join(process.cwd(), 'scripts', 'uninstall-native-harness.ts');
+  const help = execFileSync(process.execPath, [script, '--help'], { encoding: 'utf8' });
+  assert.match(help, /--scope global\|project/);
+  assert.match(help, /--receipt/);
+  assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'other'], { stdio: 'pipe' }), /--scope must be global or project/);
+  assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'project'], { stdio: 'pipe' }), /--project is required/);
+});
 
 test('receipt-backed plan restores changed supported fields and preserves unmanaged settings', () => {
   const before = '{\r\n  // retained\r\n  "custom": [1,2],\r\n  "agents": {"lead": {"color":"blue","model":"old/model"}}\r\n}\r\n';
