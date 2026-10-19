@@ -11,7 +11,7 @@ export type HarnessVersionStamp = { version: string; commit: string; dirty?: boo
 export type PermissionEvidence = { path: string[]; order: PermissionRule[]; owned: AttributedRule[]; opaque?: FieldChange };
 export type ManagedFileEvidence = {
   path: string;
-  kind: 'config' | 'instructions' | 'rules' | 'skills' | 'settings';
+  kind: 'config' | 'instructions' | 'rules' | 'skills' | 'settings' | 'commands';
   before: { absent: true } | { digest?: string; content?: string };
   after: { absent: true } | { digest?: string; content?: string };
 };
@@ -45,7 +45,7 @@ export function validateV2Receipt(value: unknown, target: string, allowPending =
   if (managedFiles !== undefined) {
     if (!Array.isArray(managedFiles)) throw new Error('Invalid managedFiles array in v2 receipt.');
     for (const f of managedFiles) {
-      if (!record(f) || typeof f.path !== 'string' || !['config', 'instructions', 'rules', 'skills', 'settings'].includes(String(f.kind)) || !record(f.before) || !record(f.after)) {
+      if (!record(f) || typeof f.path !== 'string' || !['config', 'instructions', 'rules', 'skills', 'settings', 'commands'].includes(String(f.kind)) || !record(f.before) || !record(f.after)) {
         throw new Error('Invalid managedFiles evidence item.');
       }
       for (const state of [f.before, f.after]) {

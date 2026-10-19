@@ -326,3 +326,18 @@ test('failure creating the second managed backup reports the first completed res
   assert.equal(readFileSync(first, 'utf8'), 'first-before');
   assert.equal(readFileSync(second, 'utf8'), 'second-installed');
 });
+
+test('validateV2Receipt accepts commands kind and rejects unknown kinds', t => {
+  const { directory, target } = fixture(t);
+  const snapshot = discoverReceiptChain(directory, target);
+  const validReceipt = createSuccessorReceipt(snapshot, undefined, '{"model":"p/m"}', {}, undefined, { managedFiles: [
+    { path: join(directory, 'cmd.md'), kind: 'commands', before: { absent: true }, after: { content: 'cmd' } },
+  ] });
+  assert.equal(validReceipt.managedFiles?.[0]?.kind, 'commands');
+
+  assert.throws(() => {
+    createSuccessorReceipt(snapshot, undefined, '{"model":"p/m"}', {}, undefined, { managedFiles: [
+      { path: join(directory, 'cmd.md'), kind: 'unknown-kind' as never, before: { absent: true }, after: { content: 'cmd' } },
+    ] });
+  }, /Invalid managedFiles evidence item/);
+});
