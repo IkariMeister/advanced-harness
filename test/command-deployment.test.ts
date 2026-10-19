@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
-import { readReceiptForRestore } from '../src/receipt-lineage.ts';
+import { discoverReceiptChain, readReceiptForRestore } from '../src/receipt-lineage.ts';
 import { canonicalWorkflowCommands, loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution } from '../src/command-deployment.ts';
 
 test('loadWorkflowCommands loads all 6 canonical commands', () => {
@@ -478,9 +478,11 @@ test('original managed-file baseline is preserved across upgrades (v1 -> v2 -> u
   // Check active receipt head: grill-me.md must have before.content === 'INITIAL CUSTOM CONTENT'
   // and other commands (e.g. start-issue.md) must have before.absent === true
   const { readdirSync } = await import('node:fs');
-  const receiptFiles = readdirSync(recovery).filter(n => n.endsWith('.json')).sort();
+  const receiptFiles = readdirSync(recovery).filter(n => n.endsWith('.json'));
   assert.equal(receiptFiles.length, 2);
-  const headReceiptDoc = readReceiptForRestore(join(recovery, receiptFiles[1]!), join(project, 'opencode.jsonc'));
+  const chain = discoverReceiptChain(recovery, join(project, 'opencode.jsonc'), 'opencode');
+  assert.ok(chain.head);
+  const headReceiptDoc = readReceiptForRestore(join(recovery, chain.head.file), join(project, 'opencode.jsonc'));
   assert.equal(headReceiptDoc.version, 2);
   assert.ok(headReceiptDoc.managedFiles);
 
