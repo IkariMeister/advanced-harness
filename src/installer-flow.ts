@@ -9,6 +9,7 @@ import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receip
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 
 import { parseHostSelection, askHostSelection, getHostAdapter, HOST_CAPABILITIES, HOST_MODEL_PRESETS, type HostId } from './host-registry.ts';
+import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string }
 export interface InstallerFlowDependencies {
@@ -20,6 +21,7 @@ export interface InstallerFlowDependencies {
   xdgConfigHome?: string;
   recoveryDirectory?: string;
   agentsDirectory?: string;
+  commandsDirectory?: string;
   environment?: NodeJS.ProcessEnv;
   loadDefinitions?: typeof loadNativeDefinitions;
   updateConfiguration?: typeof updateNativeConfiguration;
@@ -123,9 +125,47 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     state.removeObsolete = [...(state.removeObsolete ?? []), obsolete.rule];
   }
   updated = update(original ?? '{}\n', definitions, assignments, setDefault, setLeadModel, replaceModels, reconciliation);
+
+  // Workflow slash commands prompt and planning
+  const commandsTargetDir = project ? join(project, '.opencode', 'commands') : join(globalDirectory, 'commands');
+  const commandsSourceDir = deps.commandsDirectory ?? fileURLToPath(new URL('../.opencode/commands/', import.meta.url));
+  const deployCommandsAnswer = await ask('Install workflow slash commands (/start-issue, /review-pr, etc.)?', 'yes');
+  const shouldDeployCommands = /^(y|yes)$/i.test(deployCommandsAnswer);
+
+  let commandFilesToWrite: CommandFilePlan[] = [];
+  let commandEvidence: ReturnType<typeof filterCommandPlanForExecution>['managedEvidence'] = [];
+  let commandPlan: CommandDeploymentPlan | undefined;
+
+  if (shouldDeployCommands) {
+    const loadedCommands = loadWorkflowCommands(commandsSourceDir);
+    commandPlan = planCommandDeployment(loadedCommands, commandsTargetDir);
+    let overwriteDiffers = false;
+    if (commandPlan.hasDiffers) {
+      const differingCount = commandPlan.files.filter(f => f.status === 'differs').length;
+      overwriteDiffers = /^(y|yes)$/i.test(await ask(`Overwrite ${differingCount} customized/differing command file(s)?`, 'no'));
+    }
+    const filtered = filterCommandPlanForExecution(commandPlan, overwriteDiffers);
+    commandFilesToWrite = filtered.filesToWrite;
+    commandEvidence = filtered.managedEvidence;
+  }
+
+  const existingManagedFiles = history.head?.receipt.version === 2 && history.head.receipt.managedFiles ? history.head.receipt.managedFiles : [];
+  // Merge newly managed files with any previous managed files (updating by path)
+  const combinedManagedFiles = [...existingManagedFiles];
+  for (const ev of commandEvidence) {
+    const idx = combinedManagedFiles.findIndex(m => m.path === ev.path);
+    if (idx >= 0) {
+      combinedManagedFiles[idx] = ev;
+    } else {
+      combinedManagedFiles.push(ev);
+    }
+  }
+
   const provenanceChanged = history.head?.receipt.version === 2 && nativeRoles.some(role => JSON.stringify(plans[role]?.provenance ?? []) !== JSON.stringify(history.head!.receipt.version === 2 ? history.head!.receipt.permissions.find(p => p.path[1] === role)?.owned ?? [] : []));
-  const needsReceipt = updated !== (original ?? '{}\n') || provenanceChanged;
-  const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans, undefined, { host: 'opencode' }) : undefined;
+  const configChanged = updated !== (original ?? '{}\n');
+  const commandsChanged = commandFilesToWrite.length > 0;
+  const needsReceipt = configChanged || provenanceChanged || commandsChanged;
+  const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans, undefined, { host: 'opencode', ...(combinedManagedFiles.length ? { managedFiles: combinedManagedFiles } : {}) }) : undefined;
   output('\nAssignments:');
   for (const role of nativeRoles) {
     const saved = parseConfiguration(updated, target).agents as Record<string, Record<string, unknown>>;
@@ -138,24 +178,42 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (collisions.length) output(`Existing roles updated: ${collisions.join(', ')}. Models/custom fields are preserved unless individually selected; unchanged attributable fields are refreshed. Permissions are reconciled as previewed.`);
   output('Preserved hidden/disabled flags, ancestor definitions, and runtime overrides may affect discovery. Verify effective agents after installation.');
   output(`Default agent: ${setDefault ? 'set to lead' : 'preserved'}; root default model: ${setLeadModel ? assignments.lead.split('#')[0] : 'preserved'}.`);
+  if (shouldDeployCommands && commandPlan) {
+    output(`Workflow commands target: ${commandsTargetDir}`);
+    for (const f of commandPlan.files) {
+      const willWrite = commandFilesToWrite.some(w => w.filename === f.filename);
+      output(`  ${f.filename}: ${f.status}${willWrite && f.status === 'differs' ? ' (overwrite)' : (!willWrite && f.status === 'differs' ? ' (preserved)' : '')}`);
+    }
+  } else {
+    output('Workflow commands: skipped.');
+  }
   output('Providers, credentials, MCP servers, plugins, and unrelated agents/settings will not be changed.');
   output('Assignments are stored inline in agents; no plugin or separate approval host is installed.');
-  if (original !== undefined) output(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
+  if (original !== undefined && configChanged) output(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
   output('After writing, runtime verification may start the OpenCode service. It will not restart/reload it or send paid model requests.');
   if (await ask('Type install to apply these changes', 'cancel') !== 'install') { output('Cancelled. No files were changed.'); return 0; }
-  if (!receipt) { output('Configuration already matches; no configuration, backup, or receipt writes are needed.'); return 0; }
-  const pending = (deps.writePending ?? writePendingSuccessor)(history, receipt);
+  if (!receipt && !configChanged && !commandsChanged) { output('Configuration and workflow commands already match; no configuration, backup, or receipt writes are needed.'); return 0; }
+  const pending = (deps.writePending ?? writePendingSuccessor)(history, receipt!);
   const receiptPath = pending.path;
   let backup: string | undefined;
-  try { revalidatePendingSuccessor(pending); backup = (deps.save ?? saveInstallation)(target, original, updated, backupParent); }
+  try {
+    revalidatePendingSuccessor(pending);
+    if (configChanged) {
+      backup = (deps.save ?? saveInstallation)(target, original, updated, backupParent);
+    }
+    if (commandFilesToWrite.length > 0) {
+      applyCommandDeployment(commandFilesToWrite, commandsTargetDir);
+    }
+  }
   catch (err) {
     if (recoverFailedSuccessor(pending, original) !== 'cleared') errorOutput(`Configuration write may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
     throw err;
   }
-  const finalText = readFileSync(target, 'utf8');
+  const finalText = existsSync(target) ? readFileSync(target, 'utf8') : updated;
   try { (deps.finalize ?? finalizeSuccessor)(pending, updated); }
   catch (err) { errorOutput(`Configuration saved but receipt finalization failed; pending evidence retained at ${receiptPath}. Resolve recovery before any further update or restore.`); throw err; }
-  output(`Configuration written (runtime not yet verified): ${target}`);
+  if (configChanged) output(`Configuration written (runtime not yet verified): ${target}`);
+  if (commandFilesToWrite.length > 0) output(`Workflow commands deployed: ${commandsTargetDir}`);
   if (backup) output(`Backup: ${backup}`);
   output(`Private uninstall receipt retained at ${receiptPath}`);
   const directory = project ?? cwd;

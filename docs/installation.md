@@ -53,7 +53,7 @@ npm ci
 npm run harness:install
 ```
 
-The installer asks for project or global scope, reads existing `opencode.json`/`opencode.jsonc` files, and asks for a model and reasoning variant for **each of the eight agents**. Existing role model assignments, including expanded model objects and variants, are preserved by default; a separate per-role confirmation is required to replace one. Nothing is written until you review the assignments and type `install`. Enter at a model prompt explicitly accepts its displayed suggestion; there is no automatic substitution on model-access failure.
+The installer asks for project or global scope, reads existing `opencode.json`/`opencode.jsonc` files, and asks for a model and reasoning variant for **each of the eight agents**. Existing role model assignments, including expanded model objects and variants, are preserved by default; a separate per-role confirmation is required to replace one. It also prompts whether to install the canonical workflow slash commands (`/start-issue`, `/review-pr`, `/address-pr-feedback`, `/report-defect`, `/assess-debt`, `/grill-me`) into `<project>/.opencode/commands/` or `<globalConfig>/commands/`. Differing existing command files prompt for explicit confirmation before overwriting; identical files are skipped. Deployed command files are tracked under `managedFiles` in the v2 installation receipt, allowing `harness:uninstall` to cleanly remove them or restore prior customized content. Nothing is written until you review the assignments and type `install`. Enter at a model prompt explicitly accepts its displayed suggestion; there is no automatic substitution on model-access failure.
 
 Examples:
 
