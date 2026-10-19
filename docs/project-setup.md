@@ -1,28 +1,30 @@
-# Android project setup
+# Project setup
 
 From the Advanced Harness checkout with Node.js 24:
 
 ```powershell
 Set-Location "$HOME/Documents/Advanced Harness"
-npm run harness:setup -- --project "C:/path/to/android-checkout"
+npm run harness:setup -- --global
+npm run harness:setup -- --project "C:/path/to/project-checkout"
 ```
 
-Or run `npm run harness:setup` and enter the project path interactively. Leading `~` and `$HOME` are expanded in prompted paths. Setup requires a Git checkout/worktree root with root Gradle build/settings files, not an Android module directory. Git worktree `.git` files are supported. Use `--help` for invocation details. Piped input is refused.
+Or run `npm run harness:setup` and select scope interactively (`global` or `project`). Leading `~` and `$HOME` are expanded in prompted paths. Setup supports any Git checkout/worktree root as well as non-Git project directories. Android Gradle build/settings files and `package.json` scripts are detected heuristically for check suggestions, but neither is required. Git worktree `.git` files are supported. Use `--help` for invocation details. Piped input is refused.
 
-Project settings are stored **only in project context**: `AGENTS.md` by default, or a Markdown file selected with `--context docs/HARNESS.md`. An alternate file receives an explicit reference from `AGENTS.md`. There is no required machine-local JSON profile.
+Project settings are stored **only in project context**: `AGENTS.md` by default, or a Markdown file selected with `--context docs/HARNESS.md`. An alternate file receives an explicit reference from `AGENTS.md`. In global scope, defaults are saved to `~/.config/opencode/harness.project.json`. There is no required machine-local JSON profile in the project checkout.
 
 ## What setup asks
 
+- **Setup scope**: `global` or `project` (defaults to `global` when running interactively without arguments).
 - **Base branch**: explicitly confirm the repository's base (for example `main` or `develop`). The suggested name is not a Git-verified branch.
 - **Command shell**: `powershell`, `bash`, or `cmd`. This selects suggested syntax only; it does not select/validate the actual execution shell, check readiness, or convert commands already entered/saved. Expected wrappers are `./gradlew` for Bash, ` .\gradlew.bat` for PowerShell, and `gradlew.bat` for cmd. Confirm that the execution environment matches. Windows defaults to PowerShell; macOS defaults to Bash-compatible syntax.
-- **Build, lint, unit, Roborazzi, runtime, and E2E commands**: each is a single shell command line, run later from the active application worktree root. Enter accepts the suggestion; `-` leaves that check **unconfigured**. Existing unconfigured checks remain unconfigured on repeat setup unless you change them.
-- **Device preference**: `physical-first` (default), `emulator`, or `ask`, plus an optional serial. This records a preference, not a device connection/validation. `-` removes the serial so QA can select at runtime.
+- **Build, lint, unit, Roborazzi, runtime, and E2E commands**: each is a single shell command line, run later from the active application worktree root. Enter accepts the suggestion; `-` leaves that check **unconfigured**. Existing unconfigured checks remain unconfigured on repeat setup unless you change them. Non-Android projects automatically omit `roborazzi` and leave it unconfigured.
+- **Device preference**: for Android/Gradle projects, `physical-first` (default), `emulator`, or `ask`, plus an optional serial. This records a preference, not a device connection/validation. `-` removes the serial so QA can select at runtime. Non-Android projects default device preference to `ask` without prompting.
 - **Worktree parent**: defaults to `$HOME/Projects/advanced-harness-worktrees/<project-id>`.
 - **Shared memory**: defaults to `$HOME/Projects/advanced-harness-data/<project-id>/MEMORY.md`. The ID includes a short canonical-path hash to avoid collisions between different checkouts with the same name. Clones intended to share memory can explicitly select the same agreed path.
 
 Worktree and memory paths must be outside the app checkout, must not contain it, and shared memory must not sit within the worktree parent. Paths are saved only: setup creates no worktrees, branches, memory files, devices, or operational directories. Task bootstrap later creates the feature worktree and initializes `MEMORY.md` without blocking on existing worktrees unless target branch or worktree names collide.
 
-## Gradle inspection and suggestions
+## Project inspection and suggestions
 
 Setup reads bounded root/module `build.gradle(.kts)` and `settings.gradle(.kts)` files and root `AGENTS.md`. It skips symlink entries and generated/hidden/source directories; inspection is limited to 2,000 entries and three nested directory levels. Text files over 1 MiB are refused. Textual inspection may miss modules declared through aliases or convention plugins, deeper trees, or beyond scan limits. It does **not** execute Gradle scripts, Git, shell commands, device commands, or private E2E tooling.
 
