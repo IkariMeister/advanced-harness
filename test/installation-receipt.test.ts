@@ -8,6 +8,7 @@ import { makeTempRoot } from './temp-directory.ts';
 import { adoptExisting, assertNoReceiptOverlap, completePendingReceipt, configurationField, createReceipt, persistAdoptionReceipt, planUninstall, readInstallationReceipt, recoverFailedInstallation, writeInstallationReceipt, writePendingReceipt } from '../src/installation-receipt.ts';
 import { parseConfiguration } from '../src/native-installer.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
+import { selectUninstallTarget } from '../src/uninstall-target.ts';
 
 test('uninstall CLI documents scoped receipt discovery and validates scope arguments', () => {
   const script = join(process.cwd(), 'scripts', 'uninstall-native-harness.ts');
@@ -16,6 +17,28 @@ test('uninstall CLI documents scoped receipt discovery and validates scope argum
   assert.match(help, /--receipt/);
   assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'other'], { stdio: 'pipe' }), /--scope must be global or project/);
   assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'project'], { stdio: 'pipe' }), /--project is required/);
+});
+
+test('uninstall target selection matches installer JSONC and project-root rules and preserves explicit fixture paths', () => {
+  const root = makeTempRoot('harness-uninstall-target-');
+  const home = join(root, 'home');
+  const global = join(root, 'xdg');
+  const project = join(root, 'project');
+  mkdirSync(join(global, 'opencode'), { recursive: true });
+  mkdirSync(project, { recursive: true });
+  const globalJsonc = join(global, 'opencode', 'opencode.jsonc');
+  const projectRoot = join(project, 'opencode.jsonc');
+  writeFileSync(globalJsonc, '{}');
+  writeFileSync(projectRoot, '{}');
+
+  assert.equal(selectUninstallTarget({ scope: 'global', home, cwd: root, xdgConfigHome: global }), globalJsonc);
+  assert.equal(selectUninstallTarget({ scope: 'project', project, home, cwd: root, xdgConfigHome: global }), projectRoot);
+  assert.equal(selectUninstallTarget({ config: projectRoot, home, cwd: root, xdgConfigHome: global }), projectRoot);
+  assert.equal(selectUninstallTarget({ config: join(root, 'fixture', 'opencode.json'), home, cwd: root }), join(root, 'fixture', 'opencode.json'));
+
+  writeFileSync(join(project, 'opencode.json'), '{}');
+  assert.throws(() => selectUninstallTarget({ scope: 'project', project, home, cwd: root, xdgConfigHome: global }), /Both opencode.json and opencode.jsonc exist/);
+  rmSync(root, { recursive: true, force: true });
 });
 
 test('receipt-backed plan restores changed supported fields and preserves unmanaged settings', () => {
