@@ -501,4 +501,3 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   output('Setup choices saved, not runtime-validated. Run harness:doctor in this project, then approve command/device/integration validation with Lead.');
   return 0;
 }
-

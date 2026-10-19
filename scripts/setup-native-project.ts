@@ -51,4 +51,3 @@ if (args.includes('--help')) {
     terminal.close();
   }
 }
-

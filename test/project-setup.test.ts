@@ -411,4 +411,3 @@ test('CLI script parses --global and refuses invalid flag combinations', () => {
   // Conflicting options: --global and --scope project
   assert.throws(() => execFileSync(process.execPath, [script, '--global', '--scope', 'project'], { encoding: 'utf8', stdio: 'pipe' }), /Conflicting options/);
 });
-
