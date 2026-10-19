@@ -1,17 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempRoot } from './temp-directory.ts';
 import { contextData, contextPath, prepareContextFiles, updateContext } from '../src/project-context.ts';
 import { askGlobalIntegrations, askProjectIntegrations, checkSelectedIntegrations, emptyGlobalIntegrations, legacyIntegrationContext, optionalDiscoveryPrompt, parseGlobalIntegrations, validateGlobalIntegrations, validateProjectIntegrations, type GlobalIntegrations } from '../src/integration-context.ts';
 import { nativeToolDiscoveryGuidance, updateConnectionConfig } from '../src/integration-setup.ts';
 import { saveSetup } from '../src/project-setup.ts';
 
 function fixture(t: { after: (callback: () => void) => void }) {
-  const root = mkdtempSync(join(tmpdir(), 'harness-context-'));
+  const root = makeTempRoot('harness-context-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }

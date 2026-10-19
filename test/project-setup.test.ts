@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempRoot } from './temp-directory.ts';
 import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, inspectProject, parseProfile, prepareSetup, saveSetup, setupConfirmation, suggestedCommands, updateProjectInstructions, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
 import { contextData, updateContext } from '../src/project-context.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
-  const root = mkdtempSync(join(tmpdir(), 'harness-project-setup-'));
+  const root = makeTempRoot('harness-project-setup-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'android-app');
   mkdirSync(join(project, '.git'), { recursive: true });

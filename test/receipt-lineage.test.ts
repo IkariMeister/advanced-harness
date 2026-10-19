@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync, existsSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync, unlinkSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempRoot } from './temp-directory.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, planV2Restore, prepareManagedFilePlan, applyManagedFilePlan } from '../src/receipt-lineage.ts';
 import { adoptExisting, createReceipt, planUninstall, readInstallationReceipt, writeAdoptionReceipt, writeInstallationReceipt } from '../src/installation-receipt.ts';
 import { reconcilePermissions, type PermissionRule, type ReconciliationResult } from '../src/permission-reconciliation.ts';
@@ -12,7 +12,7 @@ import { updateConnectionConfig } from '../src/integration-setup.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
 
 function fixture(t: test.TestContext) {
-  const directory = mkdtempSync(join(tmpdir(), 'harness-lineage-'));
+  const directory = makeTempRoot('harness-lineage-');
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return { directory, target: join(directory, 'opencode.jsonc') };
 }

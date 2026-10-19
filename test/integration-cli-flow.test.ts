@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { makeTempRoot } from './temp-directory.ts';
 import { runIntegrationFlow } from '../src/integration-cli-flow.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { nativeRoles } from '../src/native-installer.ts';
 
 function fixture(t: { after(fn: () => void): void }) {
-  const root = mkdtempSync(join(tmpdir(), 'integration-flow-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = makeTempRoot('integration-flow-'); t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project); mkdirSync(join(project, '.git'));
   return { root, project };
 }
@@ -48,7 +48,7 @@ test('injected production integration cancellation leaves project context and re
 });
 
 test('integration cancellation preserves alternate context and unrelated files under paths with spaces', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'integration flow spaces '));
+  const root = makeTempRoot('integration flow spaces ');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project with spaces');
   mkdirSync(join(project, '.git'), { recursive: true });
@@ -59,7 +59,6 @@ test('integration cancellation preserves alternate context and unrelated files u
   const originalAgents = '# Existing project guidance\n';
   const originalUnrelated = '{"untouched":true}\n';
   const originalContext = '# Alternate context\n';
-  const { writeFileSync } = await import('node:fs');
   writeFileSync(agents, originalAgents);
   writeFileSync(unrelated, originalUnrelated);
   writeFileSync(context, originalContext);

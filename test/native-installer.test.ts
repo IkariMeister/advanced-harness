@@ -1,17 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempRoot } from './temp-directory.ts';
 import { askAssignments, chooseConfiguration, configuredModels, discoverConfigurations, findMarkdownConflicts, loadNativeDefinitions, modelReference, nativeRoles, parseConfiguration, projectConfiguration, saveInstallation, suggestedModel, updateNativeConfiguration, type ConfigSource, type NativeRole } from '../src/native-installer.ts';
 
 const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
 const assignments = Object.fromEntries(nativeRoles.map(role => [role, `local/${role}#low`])) as Record<NativeRole, string>;
 const source = (value: Record<string, unknown>): ConfigSource => ({ path: 'test.jsonc', text: JSON.stringify(value), value });
 function fixture(t: { after: (fn: () => void) => void }) {
-  const root = mkdtempSync(join(tmpdir(), 'advanced-harness-installer-'));
+  const root = makeTempRoot('advanced-harness-installer-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
