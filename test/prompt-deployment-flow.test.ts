@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { makeTempRoot } from './temp-directory.ts';
 import { runPromptDeploymentFlow } from '../src/prompt-deployment-flow.ts';
 import { parsePromptDeploymentArgs } from '../src/prompt-deployment-cli.ts';
 import { nativeRoles, parseConfiguration, type NativeDefinition } from '../src/native-installer.ts';
@@ -17,7 +17,7 @@ test('CLI argument adapter maps explicit option flags to production flow fields'
   });
 });
 function fixture(t: { after(fn: () => void): void }) {
-  const root = mkdtempSync(join(tmpdir(), 'prompt-flow-'));
+  const root = makeTempRoot('prompt-flow-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project');
   const target = join(project, 'opencode.json');

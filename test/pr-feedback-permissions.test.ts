@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { readdirSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempRoot } from './temp-directory.ts';
 import test from 'node:test';
 import { configurationField, createReceipt, modifyJsonc } from '../src/installation-receipt.ts';
 import { loadNativeDefinitions, nativeRoles, parseConfiguration, updateNativeConfiguration } from '../src/native-installer.ts';
@@ -15,7 +15,7 @@ const permissionPath = ['agents', 'external', 'permissions'];
 const answer = 'add-pr-feedback-permissions';
 
 function fixture(t: { after(fn: () => void): void }, denyView = false) {
-  const root = mkdtempSync(join(tmpdir(), 'pr-feedback-permissions-'));
+  const root = makeTempRoot('pr-feedback-permissions-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const configDirectory = join(root, 'opencode'); mkdirSync(configDirectory);
   const config = join(configDirectory, 'opencode.json');

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempRoot } from './temp-directory.ts';
 import { planPromptDeployment, deployPrompts } from '../src/prompt-deployment.ts';
 import { loadNativeDefinitions, nativeRoles, parseConfiguration, type NativeDefinition, type NativeRole } from '../src/native-installer.ts';
 import { discoverReceiptChain } from '../src/receipt-lineage.ts';
@@ -11,7 +11,7 @@ import { discoverReceiptChain } from '../src/receipt-lineage.ts';
 const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
 
 function fixture(t: { after: (fn: () => void) => void }) {
-  const root = mkdtempSync(join(tmpdir(), 'harness-prompt-deploy-'));
+  const root = makeTempRoot('harness-prompt-deploy-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
