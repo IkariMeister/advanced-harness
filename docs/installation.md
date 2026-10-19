@@ -98,6 +98,71 @@ The installer does not invent provider deployment IDs, create model connections,
 
 Making Lead the default agent and changing the root default model are **separate opt-ins**. The existing root model is preserved unless you choose to change it. OpenCode's root model does not retain a reasoning variant, and existing session selections are unaffected: start a new session and verify/select Lead's assigned model and variant explicitly.
 
+## LiteLLM integration & macOS setup
+
+On macOS (and other environments using custom model proxies), OpenCode connects to models through a local or remote **LiteLLM proxy** (or OpenAI-compatible endpoint). The harness does not invent deployment mappings or proxy URLs; they must be explicitly declared in your global or project `opencode.json(c)`.
+
+### 1. Declaring the LiteLLM provider in OpenCode
+
+In your global configuration (`~/.config/opencode/opencode.json` or `$XDG_CONFIG_HOME/opencode/opencode.json`), declare the LiteLLM provider endpoint under `providers`:
+
+```json
+{
+  "$schema": "https://opencode.ai/v2/config.schema.json",
+  "providers": {
+    "litellm": {
+      "type": "openai",
+      "baseURL": "http://localhost:4000/v1",
+      "apiKey": "{env:LITELLM_API_KEY}",
+      "models": {
+        "gpt-4o": { "name": "GPT-4o (LiteLLM)" },
+        "gpt-4o-mini": { "name": "GPT-4o Mini (LiteLLM)" },
+        "claude-3-7-sonnet": { "name": "Claude 3.7 Sonnet (LiteLLM)" },
+        "claude-3-5-haiku": { "name": "Claude 3.5 Haiku (LiteLLM)" }
+      }
+    }
+  }
+}
+```
+
+> [!IMPORTANT]
+> - **Keep credentials in environment references**: Use `{env:LITELLM_API_KEY}` or your shell environment instead of hardcoding raw bearer tokens or API keys into configuration files.
+> - **Exact model deployment IDs**: LiteLLM aliases must match the actual deployment identifiers configured on your LiteLLM proxy instance.
+> - **Discovery precedence**: When running `npm run harness:install`, the installer automatically parses models declared under `providers.<provider>.models` and presents them as numbered choices for role assignment.
+
+### 2. Mapping roles to LiteLLM models
+
+When running `npm run harness:install -- --host opencode`, assign each of the 8 roles to your verified LiteLLM models:
+
+| Role | Responsibility | Suggested LiteLLM model | Reasoning variant |
+| --- | --- | --- | --- |
+| **Lead** | Coordinates subagents, plan approvals | `litellm/gpt-4o` or `litellm/claude-3-7-sonnet` | `-` (or `medium`) |
+| **Operator** | Local Git, worktree management, memory | `litellm/gpt-4o-mini` or `litellm/claude-3-5-haiku` | `-` |
+| **External** | GitHub CLI (`gh`), MCP, Jira | `litellm/gpt-4o-mini` or `litellm/claude-3-5-haiku` | `-` |
+| **Researcher**| Codebase exploration, search | `litellm/gpt-4o` or `litellm/claude-3-7-sonnet` | `-` |
+| **Implementer**| Code modifications, unit tests | `litellm/gpt-4o` or `litellm/claude-3-7-sonnet` | `-` |
+| **QA** | Runtime verification, smoke tests | `litellm/gpt-4o` or `litellm/claude-3-7-sonnet` | `-` |
+| **Planner** | Architecture, task breakdown | `litellm/gpt-4o` or `litellm/claude-3-7-sonnet` | `-` |
+| **Reviewer** | Code review, lint, test inspection | `litellm/gpt-4o` or `litellm/claude-3-7-sonnet` | `-` |
+
+### 3. Verifying LiteLLM readiness
+
+Before using the agents, verify the LiteLLM connection without sending expensive test requests:
+
+1. **Verify proxy health**:
+   ```sh
+   curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4000/health
+   ```
+2. **Verify model catalog**:
+   Open OpenCode and check `/models`, or run the diagnostic tool:
+   ```sh
+   npm run harness:doctor
+   ```
+   `harness:doctor` inspects the active provider list and catalog to confirm that `litellm/*` deployments are visible to OpenCode.
+3. **Conversational smoke test**:
+   Start a new session in OpenCode with **Lead**, verify that the model in the chat UI displays `litellm/...`, and confirm that subagents invoke with their assigned LiteLLM models.
+
+
 ## What is installed and preserved
 
 The selected config receives inline V2 `agents` definitions: description, primary/subagent mode, selected model, role permissions, and the native conversational system prompt. Inline definitions avoid the historical `agent/` versus `agents/` file-layout discrepancy. No harness plugin, host, IPC service, workflow database, or Markdown agent copies are installed.
