@@ -18,6 +18,56 @@ test('uninstall CLI documents scoped receipt discovery and validates scope argum
   assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'project'], { stdio: 'pipe' }), /--project is required/);
 });
 
+test('uninstall CLI discovers configuration across global jsonc and project locations', () => {
+  const root = makeTempRoot('harness-uninstall-target-');
+  const script = join(process.cwd(), 'scripts', 'uninstall-native-harness.ts');
+  const home = join(root, 'home');
+  const xdg = join(root, 'xdg');
+
+  // Test Case 1: Global scope with opencode.jsonc
+  const globalDir = join(xdg, 'opencode');
+  mkdirSync(globalDir, { recursive: true });
+  writeFileSync(join(globalDir, 'opencode.jsonc'), '{"model":"global/test"}');
+
+  // Running without TTY should fail with "Interactive terminal required", proving it resolved target correctly
+  assert.throws(
+    () => execFileSync(process.execPath, [script, '--scope', 'global'], {
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+      stdio: 'pipe',
+    }),
+    /Interactive terminal required/
+  );
+
+  // Test Case 2: Project scope with project-root opencode.jsonc
+  const projectRootOnly = join(root, 'project-root');
+  mkdirSync(projectRootOnly, { recursive: true });
+  writeFileSync(join(projectRootOnly, 'opencode.jsonc'), '{"model":"project/test"}');
+
+  assert.throws(
+    () => execFileSync(process.execPath, [script, '--scope', 'project', '--project', projectRootOnly], {
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+      stdio: 'pipe',
+    }),
+    /Interactive terminal required/
+  );
+
+  // Test Case 3: Project scope with project .opencode/opencode.json
+  const projectNested = join(root, 'project-nested');
+  const dotOpencode = join(projectNested, '.opencode');
+  mkdirSync(dotOpencode, { recursive: true });
+  writeFileSync(join(dotOpencode, 'opencode.json'), '{"model":"nested/test"}');
+
+  assert.throws(
+    () => execFileSync(process.execPath, [script, '--scope', 'project', '--project', projectNested], {
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+      stdio: 'pipe',
+    }),
+    /Interactive terminal required/
+  );
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('receipt-backed plan restores changed supported fields and preserves unmanaged settings', () => {
   const before = '{\r\n  // retained\r\n  "custom": [1,2],\r\n  "agents": {"lead": {"color":"blue","model":"old/model"}}\r\n}\r\n';
   const after = before.replace('"old/model"', '"new/model"');

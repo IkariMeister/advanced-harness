@@ -341,4 +341,3 @@ test('validateV2Receipt accepts commands kind and rejects unknown kinds', t => {
     ] });
   }, /Invalid managedFiles evidence item/);
 });
-

@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { adoptExisting, assertSafeFilesystemPath, configurationField, persistAdoptionReceipt, readInstallationReceipt, planUninstall, effectiveReceiptHost } from '../src/installation-receipt.ts';
-import { saveInstallation } from '../src/native-installer.ts';
+import { chooseConfiguration, discoverConfigurations, projectConfiguration, saveInstallation } from '../src/native-installer.ts';
 import { adoptionPreviewAction, selectAdoptionFields } from '../src/adoption-prompts.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
 import { discoverReceiptChain, readReceiptForRestore, revalidateRestoreReceipt } from '../src/receipt-lineage.ts';
@@ -33,7 +33,12 @@ if (args.includes('--help')) {
   const globalDirectory = resolve(join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode'));
   const project = options['--project'] ? resolve(String(options['--project'])) : undefined;
   const scope = String(options['--scope'] ?? (project ? 'project' : 'global'));
-  const target = options['--config'] ? resolve(String(options['--config'])) : join(scope === 'global' ? globalDirectory : join(project!, '.opencode'), 'opencode.json');
+  const sources = discoverConfigurations(project, globalDirectory);
+  const target = options['--config']
+    ? resolve(String(options['--config']))
+    : scope === 'project'
+      ? projectConfiguration(project!, sources)
+      : chooseConfiguration(globalDirectory);
   if (!['opencode.json', 'opencode.jsonc'].includes(basename(target))) throw new Error('Target must be opencode.json or opencode.jsonc.');
   const targetDirectory = dirname(target);
   const allowedDirectories = scope === 'global' ? [globalDirectory] : [project!, join(project!, '.opencode')];

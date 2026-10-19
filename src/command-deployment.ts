@@ -134,11 +134,34 @@ export function filterCommandPlanForExecution(
   return { filesToWrite, managedEvidence };
 }
 
+export function preflightCommandDeployment(
+  filesToWrite: readonly CommandFilePlan[],
+  destinationDirectory: string
+): void {
+  assertSafeFilesystemPath(destinationDirectory, 'directory');
+  for (const f of filesToWrite) {
+    assertSafeFilesystemPath(f.targetPath, 'file');
+    const exists = existsSync(f.targetPath);
+    if (f.status === 'new' && exists) {
+      throw new Error(`File was created concurrently before deployment: ${f.targetPath}`);
+    }
+    if (f.status === 'differs') {
+      if (!exists) {
+        throw new Error(`File was removed concurrently before deployment: ${f.targetPath}`);
+      }
+      const current = readFileSync(f.targetPath, 'utf8');
+      if (current !== f.currentContent) {
+        throw new Error(`File changed concurrently before deployment: ${f.targetPath}`);
+      }
+    }
+  }
+}
+
 export function applyCommandDeployment(
   filesToWrite: readonly CommandFilePlan[],
   destinationDirectory: string
 ): { writtenPaths: string[] } {
-  assertSafeFilesystemPath(destinationDirectory, 'directory');
+  preflightCommandDeployment(filesToWrite, destinationDirectory);
   if (!existsSync(destinationDirectory)) {
     mkdirSync(destinationDirectory, { recursive: true, mode: 0o755 });
   }

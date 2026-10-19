@@ -370,3 +370,201 @@ test('harness uninstall cleanly removes new command files and restores overwritt
     assert.equal(existsSync(join(commandsDir, name)), false);
   }
 });
+
+test('commands installation honors displayed yes default on Enter', async t => {
+  const root = makeTempRoot('harness-cmd-deploy-enter-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project');
+  mkdirSync(project);
+  const recovery = join(root, 'recovery');
+  const commandsDir = join(project, '.opencode', 'commands');
+
+  const answer = (question: string) => {
+    if (question.includes(': model ID')) return 'local/model#low';
+    if (question.includes(': reasoning variant')) return '-';
+    // Empty string simulates pressing Enter at prompt
+    if (question.startsWith('Install workflow slash commands')) return '';
+    if (/Replace|Make Lead|Also set/.test(question)) return 'no';
+    if (question.startsWith('Type install')) return 'install';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+
+  const status = await runInstallerFlow(
+    { scope: 'project', project },
+    {
+      ask: async q => answer(q),
+      output: () => {},
+      error: () => {},
+      home: root,
+      recoveryDirectory: recovery,
+      verify: async () => ({ ok: true, checks: [] } as never),
+      printReport: () => {},
+    }
+  );
+
+  assert.equal(status, 0);
+  assert.ok(existsSync(commandsDir));
+  for (const name of canonicalWorkflowCommands) {
+    assert.ok(existsSync(join(commandsDir, name)));
+  }
+});
+
+test('original managed-file baseline is preserved across upgrades (v1 -> v2 -> uninstall)', async t => {
+  const root = makeTempRoot('harness-cmd-upgrade-baseline-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project');
+  const commandsDir = join(project, '.opencode', 'commands');
+  mkdirSync(commandsDir, { recursive: true });
+  // Custom file originally exists before any harness install
+  writeFileSync(join(commandsDir, 'grill-me.md'), 'INITIAL CUSTOM CONTENT');
+  const recovery = join(root, 'recovery');
+  const backupParent = join(root, 'backups');
+
+  // Step 1: First install - overwrite custom grill-me
+  const answer1 = (question: string) => {
+    if (question.includes(': model ID')) return 'local/model#low';
+    if (question.includes(': reasoning variant')) return '-';
+    if (question.startsWith('Install workflow slash commands')) return 'yes';
+    if (question.startsWith('Overwrite ')) return 'yes';
+    if (/Replace|Make Lead|Also set/.test(question)) return 'no';
+    if (question.startsWith('Type install')) return 'install';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+
+  await runInstallerFlow(
+    { scope: 'project', project },
+    {
+      ask: async q => answer1(q),
+      output: () => {},
+      error: () => {},
+      home: root,
+      recoveryDirectory: recovery,
+      verify: async () => ({ ok: true, checks: [] } as never),
+      printReport: () => {},
+    }
+  );
+
+  // Step 2: Second install (upgrade). Modify template in source directory to simulate new version v2
+  const fakeCommandsDir = join(root, 'fake-commands');
+  mkdirSync(fakeCommandsDir);
+  for (const name of canonicalWorkflowCommands) {
+    writeFileSync(join(fakeCommandsDir, name), `VERSION 2 of ${name}\n`);
+  }
+
+  const answer2 = (question: string) => {
+    if (question.includes(': model ID')) return 'local/model#low';
+    if (question.includes(': reasoning variant')) return '-';
+    if (question.startsWith('Install workflow slash commands')) return 'yes';
+    if (question.startsWith('Overwrite ')) return 'yes';
+    if (/Replace|Make Lead|Also set/.test(question)) return 'no';
+    if (question.startsWith('Type install')) return 'install';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+
+  await runInstallerFlow(
+    { scope: 'project', project },
+    {
+      ask: async q => answer2(q),
+      output: () => {},
+      error: () => {},
+      home: root,
+      recoveryDirectory: recovery,
+      commandsDirectory: fakeCommandsDir,
+      verify: async () => ({ ok: true, checks: [] } as never),
+      printReport: () => {},
+    }
+  );
+
+  // Check active receipt head: grill-me.md must have before.content === 'INITIAL CUSTOM CONTENT'
+  // and other commands (e.g. start-issue.md) must have before.absent === true
+  const { readdirSync } = await import('node:fs');
+  const receiptFiles = readdirSync(recovery).filter(n => n.endsWith('.json')).sort();
+  assert.equal(receiptFiles.length, 2);
+  const headReceiptDoc = readReceiptForRestore(join(recovery, receiptFiles[1]!), join(project, 'opencode.jsonc'));
+  assert.equal(headReceiptDoc.version, 2);
+  assert.ok(headReceiptDoc.managedFiles);
+
+  const grillEntry = headReceiptDoc.managedFiles.find(f => f.path.endsWith('grill-me.md'));
+  assert.ok(grillEntry);
+  assert.ok('content' in grillEntry.before);
+  assert.equal(grillEntry.before.content, 'INITIAL CUSTOM CONTENT');
+  assert.ok('content' in grillEntry.after);
+  assert.equal(grillEntry.after.content, 'VERSION 2 of grill-me.md\n');
+
+  const startEntry = headReceiptDoc.managedFiles.find(f => f.path.endsWith('start-issue.md'));
+  assert.ok(startEntry);
+  assert.ok('absent' in startEntry.before);
+  assert.equal(startEntry.before.absent, true);
+  assert.ok('content' in startEntry.after);
+  assert.equal(startEntry.after.content, 'VERSION 2 of start-issue.md\n');
+
+  // Step 3: Uninstall against active head
+  const configFile = join(project, 'opencode.jsonc');
+  const currentConfig = readFileSync(configFile, 'utf8');
+
+  const uninstallStatus = await runUninstallFlow({
+    receipt: headReceiptDoc,
+    current: currentConfig,
+    confirm: async () => 'uninstall',
+    output: () => {},
+    error: err => { throw new Error(err); },
+    save: updated => writeFileSync(configFile, updated, 'utf8'),
+    backupParent,
+    host: 'opencode',
+  });
+
+  assert.equal(uninstallStatus, 0);
+  // grill-me.md must be restored to INITIAL CUSTOM CONTENT
+  assert.equal(readFileSync(join(commandsDir, 'grill-me.md'), 'utf8'), 'INITIAL CUSTOM CONTENT');
+  // start-issue.md must be removed
+  assert.equal(existsSync(join(commandsDir, 'start-issue.md')), false);
+});
+
+test('partial command deployment failure retains pending recovery evidence', async t => {
+  const root = makeTempRoot('harness-cmd-partial-fail-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project');
+  const commandsDir = join(project, '.opencode', 'commands');
+  mkdirSync(commandsDir, { recursive: true });
+  const recovery = join(root, 'recovery');
+
+  const answer = (question: string) => {
+    if (question.includes(': model ID')) return 'local/model#low';
+    if (question.includes(': reasoning variant')) return '-';
+    if (question.startsWith('Install workflow slash commands')) return 'yes';
+    if (/Replace|Make Lead|Also set/.test(question)) return 'no';
+    if (question.startsWith('Type install')) return 'install';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+
+  const errors: string[] = [];
+  await assert.rejects(
+    runInstallerFlow(
+      { scope: 'project', project },
+      {
+        ask: async q => answer(q),
+        output: () => {},
+        error: text => errors.push(text),
+        home: root,
+        recoveryDirectory: recovery,
+        applyCommands: (files, destDir) => {
+          // Write the first file, then simulate an unexpected I/O failure on the second file
+          const first = files[0]!;
+          writeFileSync(first.targetPath, first.newContent, 'utf8');
+          throw new Error('injected write failure on second command file');
+        },
+        verify: async () => ({ ok: true, checks: [] } as never),
+        printReport: () => {},
+      }
+    ),
+    /injected write failure/
+  );
+
+  // Check that pending recovery receipt is retained because the first command was written
+  const { readdirSync } = await import('node:fs');
+  const receipts = readdirSync(recovery).filter(n => n.endsWith('.json'));
+  assert.equal(receipts.length, 1);
+  const receipt = JSON.parse(readFileSync(join(recovery, receipts[0]!), 'utf8'));
+  assert.equal(receipt.status, 'pending');
+  assert.ok(errors.some(e => e.includes('pending recovery evidence retained')));
+});

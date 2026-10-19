@@ -9,7 +9,7 @@ import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receip
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 
 import { parseHostSelection, askHostSelection, getHostAdapter, HOST_CAPABILITIES, HOST_MODEL_PRESETS, type HostId } from './host-registry.ts';
-import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
+import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string }
 export interface InstallerFlowDependencies {
@@ -26,6 +26,7 @@ export interface InstallerFlowDependencies {
   loadDefinitions?: typeof loadNativeDefinitions;
   updateConfiguration?: typeof updateNativeConfiguration;
   save?: typeof saveInstallation;
+  applyCommands?: typeof applyCommandDeployment;
   writePending?: typeof writePendingSuccessor;
   finalize?: typeof finalizeSuccessor;
   verify?: typeof verifyRuntime;
@@ -129,8 +130,8 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   // Workflow slash commands prompt and planning
   const commandsTargetDir = project ? join(project, '.opencode', 'commands') : join(globalDirectory, 'commands');
   const commandsSourceDir = deps.commandsDirectory ?? fileURLToPath(new URL('../.opencode/commands/', import.meta.url));
-  const deployCommandsAnswer = await ask('Install workflow slash commands (/start-issue, /review-pr, etc.)?', 'yes');
-  const shouldDeployCommands = /^(y|yes)$/i.test(deployCommandsAnswer);
+  const deployCommandsAnswer = (await ask('Install workflow slash commands (/start-issue, /review-pr, etc.)?', 'yes')).trim();
+  const shouldDeployCommands = deployCommandsAnswer === '' || /^(y|yes)$/i.test(deployCommandsAnswer);
 
   let commandFilesToWrite: CommandFilePlan[] = [];
   let commandEvidence: ReturnType<typeof filterCommandPlanForExecution>['managedEvidence'] = [];
@@ -142,7 +143,8 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     let overwriteDiffers = false;
     if (commandPlan.hasDiffers) {
       const differingCount = commandPlan.files.filter(f => f.status === 'differs').length;
-      overwriteDiffers = /^(y|yes)$/i.test(await ask(`Overwrite ${differingCount} customized/differing command file(s)?`, 'no'));
+      const overwriteAnswer = (await ask(`Overwrite ${differingCount} customized/differing command file(s)?`, 'no')).trim();
+      overwriteDiffers = /^(y|yes)$/i.test(overwriteAnswer);
     }
     const filtered = filterCommandPlanForExecution(commandPlan, overwriteDiffers);
     commandFilesToWrite = filtered.filesToWrite;
@@ -150,12 +152,13 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   }
 
   const existingManagedFiles = history.head?.receipt.version === 2 && history.head.receipt.managedFiles ? history.head.receipt.managedFiles : [];
-  // Merge newly managed files with any previous managed files (updating by path)
-  const combinedManagedFiles = [...existingManagedFiles];
+  // Merge newly managed files with previous managed files, preserving original `before` baseline
+  const combinedManagedFiles = structuredClone(existingManagedFiles);
   for (const ev of commandEvidence) {
-    const idx = combinedManagedFiles.findIndex(m => m.path === ev.path);
-    if (idx >= 0) {
-      combinedManagedFiles[idx] = ev;
+    const existing = combinedManagedFiles.find(m => m.path === ev.path);
+    if (existing) {
+      // Preserve earliest before baseline across upgrades; update only latest after state
+      existing.after = structuredClone(ev.after);
     } else {
       combinedManagedFiles.push(ev);
     }
@@ -198,15 +201,31 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   let backup: string | undefined;
   try {
     revalidatePendingSuccessor(pending);
+    if (commandFilesToWrite.length > 0) {
+      preflightCommandDeployment(commandFilesToWrite, commandsTargetDir);
+    }
     if (configChanged) {
       backup = (deps.save ?? saveInstallation)(target, original, updated, backupParent);
     }
     if (commandFilesToWrite.length > 0) {
-      applyCommandDeployment(commandFilesToWrite, commandsTargetDir);
+      (deps.applyCommands ?? applyCommandDeployment)(commandFilesToWrite, commandsTargetDir);
     }
   }
   catch (err) {
-    if (recoverFailedSuccessor(pending, original) !== 'cleared') errorOutput(`Configuration write may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
+    // Check if any command files or config actually changed
+    const configMatchesOriginal = (existsSync(target) ? readFileSync(target, 'utf8') : undefined) === original;
+    const commandFilesUnchanged = commandFilesToWrite.every(f => {
+      const exists = existsSync(f.targetPath);
+      if (f.status === 'new') return !exists;
+      if (f.status === 'differs') return exists && readFileSync(f.targetPath, 'utf8') === f.currentContent;
+      return true;
+    });
+
+    if (configMatchesOriginal && commandFilesUnchanged) {
+      recoverFailedSuccessor(pending, original);
+    } else {
+      errorOutput(`Configuration or command writes may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
+    }
     throw err;
   }
   const finalText = existsSync(target) ? readFileSync(target, 'utf8') : updated;
