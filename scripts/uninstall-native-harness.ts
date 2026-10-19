@@ -1,13 +1,14 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { adoptExisting, assertSafeFilesystemPath, configurationField, persistAdoptionReceipt, readInstallationReceipt, planUninstall, effectiveReceiptHost } from '../src/installation-receipt.ts';
-import { chooseConfiguration, discoverConfigurations, projectConfiguration, saveInstallation } from '../src/native-installer.ts';
+import { saveInstallation } from '../src/native-installer.ts';
 import { adoptionPreviewAction, selectAdoptionFields } from '../src/adoption-prompts.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
 import { discoverReceiptChain, readReceiptForRestore, revalidateRestoreReceipt } from '../src/receipt-lineage.ts';
 import { parseHostSelection, type HostId } from '../src/host-registry.ts';
+import { selectUninstallTarget } from '../src/uninstall-target.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
@@ -22,27 +23,19 @@ if (args.includes('--help')) {
       options[arg] = args[++i]!;
     } else throw new Error(`Unknown option: ${arg}`);
   }
-  if (options['--scope'] && !['global', 'project'].includes(String(options['--scope']))) throw new Error('--scope must be global or project.');
-  if (options['--scope'] === 'project' && !options['--project']) throw new Error('--project is required with --scope project.');
-  if (options['--scope'] === 'global' && options['--project']) throw new Error('--project cannot be combined with --scope global.');
   if (options['--adopt-existing'] && options['--receipt']) throw new Error('--adopt-existing is a separate mode and cannot be combined with --receipt.');
   if (options['--before-config'] && !options['--adopt-existing']) throw new Error('--before-config requires --adopt-existing.');
   const selectedHosts = options['--host'] ? parseHostSelection(String(options['--host'])) : undefined;
   if (selectedHosts && selectedHosts.length !== 1) throw new Error('--host must select exactly one host for uninstall.');
   const home = homedir();
-  const globalDirectory = resolve(join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode'));
-  const project = options['--project'] ? resolve(String(options['--project'])) : undefined;
-  const scope = String(options['--scope'] ?? (project ? 'project' : 'global'));
-  const sources = discoverConfigurations(project, globalDirectory);
-  const target = options['--config']
-    ? resolve(String(options['--config']))
-    : scope === 'project'
-      ? projectConfiguration(project!, sources)
-      : chooseConfiguration(globalDirectory);
-  if (!['opencode.json', 'opencode.jsonc'].includes(basename(target))) throw new Error('Target must be opencode.json or opencode.jsonc.');
-  const targetDirectory = dirname(target);
-  const allowedDirectories = scope === 'global' ? [globalDirectory] : [project!, join(project!, '.opencode')];
-  if (!allowedDirectories.some(directory => process.platform === 'win32' ? resolve(directory).toLowerCase() === targetDirectory.toLowerCase() : resolve(directory) === targetDirectory)) throw new Error('--config must select opencode.json/jsonc inside the chosen project (or its .opencode folder), or the global OpenCode directory.');
+  const target = selectUninstallTarget({
+    ...(options['--scope'] ? { scope: String(options['--scope']) } : {}),
+    ...(options['--project'] ? { project: String(options['--project']) } : {}),
+    ...(options['--config'] ? { config: String(options['--config']) } : {}),
+    home,
+    cwd: process.cwd(),
+    ...(process.env.XDG_CONFIG_HOME ? { xdgConfigHome: process.env.XDG_CONFIG_HOME } : {}),
+  });
    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Interactive terminal required; no writes made.');
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   try {
