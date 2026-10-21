@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { makeTempRoot } from './temp-directory.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { nativeRoles, parseConfiguration } from '../src/native-installer.ts';
 import { discoverReceiptChain } from '../src/receipt-lineage.ts';
@@ -28,7 +28,7 @@ function createDummyInstalledConfig(): Record<string, unknown> {
 }
 
 test('update flow cancellation makes no configuration or recovery writes', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-update-cancel-'));
+  const root = makeTempRoot('harness-update-cancel-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project');
   mkdirSync(project);
@@ -64,7 +64,7 @@ test('update flow cancellation makes no configuration or recovery writes', async
 });
 
 test('update flow default-on-Enter keeps installed system prompt', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-update-default-'));
+  const root = makeTempRoot('harness-update-default-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project');
   mkdirSync(project);
@@ -110,7 +110,7 @@ test('update flow default-on-Enter keeps installed system prompt', async t => {
 });
 
 test('missing role permission preview agrees with saved rules and final order', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-update-missing-role-'));
+  const root = makeTempRoot('harness-update-missing-role-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project);
   const config = join(project, 'opencode.json');
@@ -141,7 +141,7 @@ test('missing role permission preview agrees with saved rules and final order', 
 });
 
 test('receipt-managed prompt remains unchanged when prompt update is declined', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-update-receipt-decline-'));
+  const root = makeTempRoot('harness-update-receipt-decline-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project);
   const config = join(project, 'opencode.json');
@@ -205,7 +205,7 @@ test('receipt-managed prompt remains unchanged when prompt update is declined', 
 });
 
 test('update flow applies prompt when explicitly selected and records harness version stamp', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-update-apply-'));
+  const root = makeTempRoot('harness-update-apply-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project');
   mkdirSync(project);
@@ -259,7 +259,7 @@ test('update flow applies prompt when explicitly selected and records harness ve
 });
 
 test('update flow checkRemote reports newer remote version and prints pull guidance without pulling', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-update-remote-'));
+  const root = makeTempRoot('harness-update-remote-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project');
   mkdirSync(project);
@@ -296,7 +296,7 @@ test('update flow checkRemote reports newer remote version and prints pull guida
 });
 
 test('update flow pending-write or finalization failure retains pending recovery evidence', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-update-fail-'));
+  const root = makeTempRoot('harness-update-fail-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project');
   mkdirSync(project);

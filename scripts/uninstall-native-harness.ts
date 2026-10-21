@@ -1,38 +1,48 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { adoptExisting, assertSafeFilesystemPath, configurationField, persistAdoptionReceipt, readInstallationReceipt, planUninstall, effectiveReceiptHost } from '../src/installation-receipt.ts';
 import { saveInstallation } from '../src/native-installer.ts';
 import { adoptionPreviewAction, selectAdoptionFields } from '../src/adoption-prompts.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
-import { revalidateRestoreReceipt } from '../src/receipt-lineage.ts';
-import { parseHostSelection, isSupportedHost, type HostId } from '../src/host-registry.ts';
+import { discoverReceiptChain, readReceiptForRestore, revalidateRestoreReceipt } from '../src/receipt-lineage.ts';
+import { parseHostSelection, type HostId } from '../src/host-registry.ts';
+import { selectUninstallTarget } from '../src/uninstall-target.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:uninstall -- --config <opencode.json|opencode.jsonc> --receipt <receipt> [--host <host>] | --adopt-existing [--before-config <known-before-config>]');
+  console.log('Usage: npm run harness:uninstall -- [--scope global|project] [--project <directory>] [--config <opencode.json|opencode.jsonc>] [--receipt <receipt>] [--host <host>] | --adopt-existing [--before-config <known-before-config>]');
 } else {
   const options: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (['--adopt-existing'].includes(arg)) { if (options[arg]) throw new Error(`Duplicate ${arg}`); options[arg] = true; }
-    else if (['--config', '--receipt', '--before-config', '--host'].includes(arg)) {
+    else if (['--scope', '--project', '--config', '--receipt', '--before-config', '--host'].includes(arg)) {
       if (options[arg] || !args[i + 1] || args[i + 1]!.startsWith('--')) throw new Error(`Missing or duplicate value for ${arg}`);
       options[arg] = args[++i]!;
     } else throw new Error(`Unknown option: ${arg}`);
   }
-  if (options['--before-config'] && !options['--adopt-existing']) throw new Error('--before-config requires --adopt-existing.');
   if (options['--adopt-existing'] && options['--receipt']) throw new Error('--adopt-existing is a separate mode and cannot be combined with --receipt.');
-  const target = resolve(String(options['--config'] ?? ''));
-  if (!['opencode.json', 'opencode.jsonc'].includes(basename(target))) throw new Error('Target must be opencode.json or opencode.jsonc.');
+  if (options['--before-config'] && !options['--adopt-existing']) throw new Error('--before-config requires --adopt-existing.');
+  const selectedHosts = options['--host'] ? parseHostSelection(String(options['--host'])) : undefined;
+  if (selectedHosts && selectedHosts.length !== 1) throw new Error('--host must select exactly one host for uninstall.');
+  const home = homedir();
+  const target = selectUninstallTarget({
+    ...(options['--scope'] ? { scope: String(options['--scope']) } : {}),
+    ...(options['--project'] ? { project: String(options['--project']) } : {}),
+    ...(options['--config'] ? { config: String(options['--config']) } : {}),
+    home,
+    cwd: process.cwd(),
+    ...(process.env.XDG_CONFIG_HOME ? { xdgConfigHome: process.env.XDG_CONFIG_HOME } : {}),
+  });
    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Interactive terminal required; no writes made.');
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   try {
     assertSafeFilesystemPath(target, 'file');
     if (!existsSync(target) || !lstatSync(target).isFile() || lstatSync(target).isSymbolicLink()) throw new Error('Target must exist as a regular non-symlink file.');
     const current = readFileSync(target, 'utf8');
-    const backupParent = process.env.ADVANCED_HARNESS_RECOVERY_DIR || join(homedir(), 'Projects', 'advanced-harness-backups');
+    const backupParent = process.env.ADVANCED_HARNESS_RECOVERY_DIR || join(home, 'Projects', 'advanced-harness-backups');
     let receiptPath = String(options['--receipt'] ?? '');
     let receipt: ReturnType<typeof readInstallationReceipt> | undefined;
     if (options['--adopt-existing']) {
@@ -58,8 +68,15 @@ if (args.includes('--help')) {
         console.log(`Adoption recorded at ${receiptPath}. Configuration unchanged; no uninstall was performed.`);
       }
     } else {
-      if (!receiptPath) throw new Error('A valid receipt is required; use --adopt-existing for unmanaged installations.');
-      receipt = readInstallationReceipt(receiptPath, target);
+      if (receiptPath) receipt = readReceiptForRestore(receiptPath, target);
+      else {
+        const requestedHost = selectedHosts?.[0];
+        const snapshot = discoverReceiptChain(backupParent, target, requestedHost);
+        if (!snapshot.head) throw new Error('No active installation receipt was found for this target and host; pass --receipt or use --adopt-existing for an unmanaged installation.');
+        receiptPath = join(snapshot.directory, snapshot.head.file);
+        receipt = readReceiptForRestore(receiptPath, target);
+        console.log(`Using active receipt: ${receiptPath}`);
+      }
       const effectiveHost = effectiveReceiptHost(receipt);
       if (options['--host']) {
         const expectedHost = parseHostSelection(String(options['--host']))[0];

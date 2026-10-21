@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempRoot } from './temp-directory.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { loadNativeDefinitions, nativeRoles, parseConfiguration } from '../src/native-installer.ts';
 import { applyOpenCodeCommandDeployment } from '../src/workflow-commands.ts';
 
 test('injected production installer flow writes a fresh configuration and finalizes its receipt', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-flow-'));
+  const root = makeTempRoot('harness-flow-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project');
   mkdirSync(project);
@@ -35,6 +35,7 @@ test('injected production installer flow writes a fresh configuration and finali
     if (question.startsWith('qa: model')) return 'local/model#low';
     if (question.startsWith('qa: reasoning')) return '-';
     if (question.startsWith('Replace existing lead model?')) return 'no';
+    if (question.startsWith('Install workflow slash commands')) return 'no';
     if (question.startsWith('Make Lead')) return 'no';
     if (question.startsWith('Also set')) return 'no';
     if (question.startsWith('Replace customized')) return 'no';
@@ -59,13 +60,14 @@ test('injected production installer flow writes a fresh configuration and finali
 });
 
 test('injected installer cancellation makes no configuration or recovery writes', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-flow-cancel-'));
+  const root = makeTempRoot('harness-flow-cancel-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project');
   mkdirSync(project);
   const answer = (question: string) => {
     if (question.includes(': model ID')) return 'local/model#low';
     if (question.includes(': reasoning variant')) return 'low';
+    if (question.startsWith('Install workflow slash commands')) return 'no';
     if (question.startsWith('Make Lead') || question.startsWith('Also set') || question.startsWith('Replace') || question.startsWith('Type install')) return 'no';
     throw new Error(`Unexpected question: ${question}`);
   };
@@ -191,7 +193,7 @@ test('production installer reports completed command and backup paths when a lat
 });
 
 test('injected installer explicitly replaces a preserved model only after its role-specific confirmation', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-flow-replace-'));
+  const root = makeTempRoot('harness-flow-replace-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project);
   const config = join(project, 'opencode.json');
@@ -201,6 +203,7 @@ test('injected installer explicitly replaces a preserved model only after its ro
     if (question.includes(': reasoning variant')) return 'low';
     if (question === 'Replace existing lead model?') return 'yes';
     if (question.startsWith('Replace existing ')) return 'no';
+    if (question.startsWith('Install workflow slash commands')) return 'no';
     if (question.startsWith('Make Lead') || question.startsWith('Also set') || question.startsWith('Replace customized')) return 'no';
     if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
@@ -214,12 +217,13 @@ test('injected installer explicitly replaces a preserved model only after its ro
 });
 
 test('installer verification returns failure and inconclusive statuses instead of success', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-flow-status-'));
+  const root = makeTempRoot('harness-flow-status-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project);
   const makeAnswers = (target: string) => async (question: string) => {
     if (question.includes(': model ID')) return 'local/model';
     if (question.includes(': reasoning variant')) return '-';
+    if (question.startsWith('Install workflow slash commands')) return 'no';
     if (question.startsWith('Make Lead') || question.startsWith('Also set') || question.startsWith('Replace')) return 'no';
     if (question.startsWith('Type install')) return target;
     throw new Error(`Unexpected question: ${question}`);
@@ -235,21 +239,22 @@ test('installer verification returns failure and inconclusive statuses instead o
 });
 
 test('installer injected project and config paths use injected home/cwd', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-flow-paths-'));
+  const root = makeTempRoot('harness-flow-paths-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'sandbox-home'); const cwd = join(root, 'sandbox-cwd');
   const project = join(home, 'project'); mkdirSync(project, { recursive: true });
-  const asks = async (question: string) => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'cancel'; throw new Error(question); };
+  const asks = async (question: string) => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'cancel'; throw new Error(question); };
   await runInstallerFlow({ scope: 'project', project: '~/project', config: '$HOME/project/opencode.json' }, { ask: asks, output: () => {}, error: () => {}, home, cwd, recoveryDirectory: join(root, 'recovery') }).catch(error => { throw error; });
   assert.equal(existsSync(join(project, 'opencode.json')), false);
   assert.equal(existsSync(join(cwd, 'project')), false);
 });
 
 test('installer pending-write and finalization failures retain the expected evidence state', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-flow-failures-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = makeTempRoot('harness-flow-failures-'); t.after(() => rmSync(root, { recursive: true, force: true }));
   const makeAnswer = (config: string) => async (question: string) => {
     if (question.includes(': model ID')) return 'local/model';
     if (question.includes(': reasoning variant')) return '-';
+    if (question.startsWith('Install workflow slash commands')) return 'no';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
     if (question.startsWith('Type install')) return 'install';
     throw new Error(question);
@@ -268,10 +273,11 @@ test('installer pending-write and finalization failures retain the expected evid
 });
 
 test('repeated injected installer flow is a true no-op without a new receipt or backup', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-flow-noop-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = makeTempRoot('harness-flow-noop-'); t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project); const recovery = join(root, 'recovery');
   const answer = async (question: string) => {
     if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-';
+    if (question.startsWith('Install workflow slash commands')) return 'no';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
@@ -285,7 +291,7 @@ test('repeated injected installer flow is a true no-op without a new receipt or 
 
 test('installer obsolete owned rule defaults to keep and can be explicitly removed', async t => {
   for (const remove of [false, true]) {
-    const root = mkdtempSync(join(tmpdir(), 'harness-flow-obsolete-'));
+    const root = makeTempRoot('harness-flow-obsolete-');
     try {
       const project = join(root, 'project'); mkdirSync(project); const recovery = join(root, 'recovery');
       const source = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -293,6 +299,7 @@ test('installer obsolete owned rule defaults to keep and can be explicitly remov
       assert.ok(obsolete);
       const askInitial = async (question: string) => {
         if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-';
+        if (question.startsWith('Install workflow slash commands')) return 'no';
         if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install';
         throw new Error(question);
       };
@@ -302,6 +309,7 @@ test('installer obsolete owned rule defaults to keep and can be explicitly remov
       const askUpgrade = async (question: string) => {
         if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-';
         if (question.startsWith('Remove obsolete owned external permission')) return remove ? 'yes' : 'no';
+        if (question.startsWith('Install workflow slash commands')) return 'no';
         if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install';
         throw new Error(`Unexpected upgrade prompt: ${question}`);
       };
@@ -314,7 +322,7 @@ test('installer obsolete owned rule defaults to keep and can be explicitly remov
 });
 
 test('installer flow retries invalid scope/model/variant inputs and honors default-on-Enter', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-flow-retry-'));
+  const root = makeTempRoot('harness-flow-retry-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project);
   const scopeReplies = ['invalid-scope', ''];
@@ -340,7 +348,7 @@ test('installer flow retries invalid scope/model/variant inputs and honors defau
 });
 
 test('global installer selects default, XDG, and injected config directories and cancels without writes', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness global paths '));
+  const root = makeTempRoot('harness global paths ');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'home with spaces');
   const xdg = join(root, 'xdg config with spaces');
@@ -351,6 +359,7 @@ test('global installer selects default, XDG, and injected config directories and
   const answer = async (question: string) => {
     if (question.includes(': model ID')) return 'local/model';
     if (question.includes(': reasoning variant')) return '-';
+    if (question.startsWith('Install workflow slash commands')) return 'no';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
     if (question.startsWith('Type install')) return 'cancel';
     throw new Error(`Unexpected prompt: ${question}`);

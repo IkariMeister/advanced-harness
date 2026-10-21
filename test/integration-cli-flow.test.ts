@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { makeTempRoot } from './temp-directory.ts';
 import { runIntegrationFlow } from '../src/integration-cli-flow.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { nativeRoles } from '../src/native-installer.ts';
 
 function fixture(t: { after(fn: () => void): void }) {
-  const root = mkdtempSync(join(tmpdir(), 'integration-flow-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = makeTempRoot('integration-flow-'); t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project); mkdirSync(join(project, '.git'));
   return { root, project };
 }
@@ -48,7 +48,7 @@ test('injected production integration cancellation leaves project context and re
 });
 
 test('integration cancellation preserves alternate context and unrelated files under paths with spaces', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'integration flow spaces '));
+  const root = makeTempRoot('integration flow spaces ');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project with spaces');
   mkdirSync(join(project, '.git'), { recursive: true });
@@ -59,7 +59,6 @@ test('integration cancellation preserves alternate context and unrelated files u
   const originalAgents = '# Existing project guidance\n';
   const originalUnrelated = '{"untouched":true}\n';
   const originalContext = '# Alternate context\n';
-  const { writeFileSync } = await import('node:fs');
   writeFileSync(agents, originalAgents);
   writeFileSync(unrelated, originalUnrelated);
   writeFileSync(context, originalContext);
@@ -123,6 +122,7 @@ test('global integration production flow adds managed GH sources then repeats wi
   const config = join(configDir, 'opencode.json'); const recovery = join(root, 'recovery');
   const installerAnswers = async (question: string) => {
     if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-';
+    if (question.startsWith('Install workflow slash commands')) return 'no';
     if (/Replace existing|Make Lead|Also set|Replace customized/.test(question)) return 'no';
     if (question.startsWith('Type install')) return 'install'; throw new Error(`Unexpected installer prompt: ${question}`);
   };
@@ -165,7 +165,7 @@ test('integration source retirement asks to keep obsolete GH rules or explicitly
     const { root } = fixture(t); const xdg = join(root, 'xdg'); const configDir = join(xdg, 'opencode'); mkdirSync(configDir, { recursive: true });
     const config = join(configDir, 'opencode.json'); const recovery = join(root, 'recovery');
     await runInstallerFlow({ scope: 'global', config }, {
-      ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
+      ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
       output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery, verify: async () => ({ ok: true } as never), printReport: () => {},
     });
     const gh = async (question: string) => { if (question.startsWith('GitHub backend')) return 'gh'; if (question.startsWith('GitHub hostname')) return 'github.com'; if (question.startsWith('jira: alias')) return 'none'; if (question.startsWith('Design source')) return 'none'; if (question.startsWith('Type integrations')) return 'integrations'; throw new Error(question); };
@@ -193,7 +193,7 @@ test('integration production flow retains pending evidence on finalization failu
   const { root } = fixture(t); const xdg = join(root, 'xdg'); const configDir = join(xdg, 'opencode'); mkdirSync(configDir, { recursive: true });
   const config = join(configDir, 'opencode.json'); const recovery = join(root, 'recovery');
   await runInstallerFlow({ scope: 'global', config }, {
-    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
+    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
     output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery, verify: async () => ({ ok: true } as never), printReport: () => {},
   });
   const ask = async (question: string) => { if (question.startsWith('GitHub backend')) return 'gh'; if (question.startsWith('GitHub hostname')) return 'github.com'; if (question.startsWith('jira: alias')) return 'none'; if (question.startsWith('Design source')) return 'none'; if (question.startsWith('Type integrations')) return 'integrations'; throw new Error(question); };
@@ -208,7 +208,7 @@ test('integration production flow aborts without config or preference writes whe
   const { root } = fixture(t); const xdg = join(root, 'xdg'); const configDir = join(xdg, 'opencode'); mkdirSync(configDir, { recursive: true });
   const config = join(configDir, 'opencode.json'); const recovery = join(root, 'recovery');
   await runInstallerFlow({ scope: 'global', config }, {
-    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
+    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
     output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery, verify: async () => ({ ok: true } as never), printReport: () => {},
   });
   const beforeConfig = readFileSync(config, 'utf8');

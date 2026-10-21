@@ -7,11 +7,9 @@ import { DiagnosticError, printReport, verifyRuntime } from './native-diagnostic
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from './receipt-lineage.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
-import { applyOpenCodeCommandDeployment, planOpenCodeCommandDeployment, type WorkflowCommandId } from './workflow-commands.ts';
-import { formatClaudePermissionPreflight, preflightClaudePermissions } from './claude-permission-preflight.ts';
-import { loadRoleDefinitions } from './role-definitions.ts';
 
-import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, type HostId } from './host-registry.ts';
+import { parseHostSelection, askHostSelection, getHostAdapter, HOST_CAPABILITIES, HOST_MODEL_PRESETS, type HostId } from './host-registry.ts';
+import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string }
 export interface InstallerFlowDependencies {
@@ -23,12 +21,12 @@ export interface InstallerFlowDependencies {
   xdgConfigHome?: string;
   recoveryDirectory?: string;
   agentsDirectory?: string;
-  workflowCommandsDirectory?: string;
-  applyWorkflowCommands?: typeof applyOpenCodeCommandDeployment;
+  commandsDirectory?: string;
   environment?: NodeJS.ProcessEnv;
   loadDefinitions?: typeof loadNativeDefinitions;
   updateConfiguration?: typeof updateNativeConfiguration;
   save?: typeof saveInstallation;
+  applyCommands?: typeof applyCommandDeployment;
   writePending?: typeof writePendingSuccessor;
   finalize?: typeof finalizeSuccessor;
   verify?: typeof verifyRuntime;
@@ -52,17 +50,27 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const project = scope === 'project' ? resolve(cwd, expand(options.project ?? ((await ask('Project directory', cwd)) || cwd))) : undefined;
   if (project && (!existsSync(project) || !statSync(project).isDirectory())) throw new Error('Project directory does not exist or is not a directory. Create/select it before installing.');
 
-  if (selectedHosts.some(host => host !== 'opencode')) {
-    for (const host of selectedHosts.filter(host => host !== 'opencode')) {
-      const issue = host === 'claude-code' ? '#43' : host === 'antigravity' ? '#44' : host === 'codex' ? '#45' : '#46';
-      errorOutput(`Installation blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
+  // Process non-OpenCode hosts
+  for (const host of selectedHosts) {
+    if (host === 'opencode') continue;
+    output(`\n--- Host Configuration: ${HOST_CAPABILITIES[host].displayName} [${host}] ---`);
+    const adapter = getHostAdapter(host);
+    if (adapter) {
+      await adapter.install({ project, scope: scope as 'project' | 'global' });
+      output(`Installed ${HOST_CAPABILITIES[host].displayName} native adapter.`);
+    } else {
+      output(`Multi-host foundation initialized for ${HOST_CAPABILITIES[host].displayName}.`);
+      output(`Native file emitter adapter is tracked in BH-025/BH-026.`);
+      output('Fixed Model Presets:');
+      for (const [r, p] of Object.entries(HOST_MODEL_PRESETS[host])) {
+        output(`  ${r}: ${p.model || p.tier} (${p.notes || p.reasoningTier || 'preset'})`);
+      }
     }
-    if (selectedHosts.includes('claude-code')) {
-    const definitions = loadRoleDefinitions(deps.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)));
-    const report = preflightClaudePermissions(definitions);
-    for (const line of formatClaudePermissionPreflight(report)) errorOutput(line);
-    }
-    return 2;
+  }
+
+  if (!selectedHosts.includes('opencode')) {
+    output('\nOpenCode was not selected for installation. Multi-host configuration complete.');
+    return 0;
   }
 
   const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
@@ -118,9 +126,49 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     state.removeObsolete = [...(state.removeObsolete ?? []), obsolete.rule];
   }
   updated = update(original ?? '{}\n', definitions, assignments, setDefault, setLeadModel, replaceModels, reconciliation);
+
+  // Workflow slash commands prompt and planning
+  const commandsTargetDir = project ? join(project, '.opencode', 'commands') : join(globalDirectory, 'commands');
+  const commandsSourceDir = deps.commandsDirectory ?? fileURLToPath(new URL('../.opencode/commands/', import.meta.url));
+  const deployCommandsAnswer = (await ask('Install workflow slash commands (/start-issue, /review-pr, etc.)?', 'yes')).trim();
+  const shouldDeployCommands = deployCommandsAnswer === '' || /^(y|yes)$/i.test(deployCommandsAnswer);
+
+  let commandFilesToWrite: CommandFilePlan[] = [];
+  let commandEvidence: ReturnType<typeof filterCommandPlanForExecution>['managedEvidence'] = [];
+  let commandPlan: CommandDeploymentPlan | undefined;
+
+  if (shouldDeployCommands) {
+    const loadedCommands = loadWorkflowCommands(commandsSourceDir);
+    commandPlan = planCommandDeployment(loadedCommands, commandsTargetDir);
+    let overwriteDiffers = false;
+    if (commandPlan.hasDiffers) {
+      const differingCount = commandPlan.files.filter(f => f.status === 'differs').length;
+      const overwriteAnswer = (await ask(`Overwrite ${differingCount} customized/differing command file(s)?`, 'no')).trim();
+      overwriteDiffers = /^(y|yes)$/i.test(overwriteAnswer);
+    }
+    const filtered = filterCommandPlanForExecution(commandPlan, overwriteDiffers);
+    commandFilesToWrite = filtered.filesToWrite;
+    commandEvidence = filtered.managedEvidence;
+  }
+
+  const existingManagedFiles = history.head?.receipt.version === 2 && history.head.receipt.managedFiles ? history.head.receipt.managedFiles : [];
+  // Merge newly managed files with previous managed files, preserving original `before` baseline
+  const combinedManagedFiles = structuredClone(existingManagedFiles);
+  for (const ev of commandEvidence) {
+    const existing = combinedManagedFiles.find(m => m.path === ev.path);
+    if (existing) {
+      // Preserve earliest before baseline across upgrades; update only latest after state
+      existing.after = structuredClone(ev.after);
+    } else {
+      combinedManagedFiles.push(ev);
+    }
+  }
+
   const provenanceChanged = history.head?.receipt.version === 2 && nativeRoles.some(role => JSON.stringify(plans[role]?.provenance ?? []) !== JSON.stringify(history.head!.receipt.version === 2 ? history.head!.receipt.permissions.find(p => p.path[1] === role)?.owned ?? [] : []));
-  const needsReceipt = updated !== (original ?? '{}\n') || provenanceChanged;
-  const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans, undefined, { host: 'opencode' }) : undefined;
+  const configChanged = updated !== (original ?? '{}\n');
+  const commandsChanged = commandFilesToWrite.length > 0;
+  const needsReceipt = configChanged || provenanceChanged || commandsChanged;
+  const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans, undefined, { host: 'opencode', ...(combinedManagedFiles.length ? { managedFiles: combinedManagedFiles } : {}) }) : undefined;
   output('\nAssignments:');
   for (const role of nativeRoles) {
     const saved = parseConfiguration(updated, target).agents as Record<string, Record<string, unknown>>;
@@ -133,51 +181,60 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (collisions.length) output(`Existing roles updated: ${collisions.join(', ')}. Models/custom fields are preserved unless individually selected; unchanged attributable fields are refreshed. Permissions are reconciled as previewed.`);
   output('Preserved hidden/disabled flags, ancestor definitions, and runtime overrides may affect discovery. Verify effective agents after installation.');
   output(`Default agent: ${setDefault ? 'set to lead' : 'preserved'}; root default model: ${setLeadModel ? assignments.lead.split('#')[0] : 'preserved'}.`);
+  if (shouldDeployCommands && commandPlan) {
+    output(`Workflow commands target: ${commandsTargetDir}`);
+    for (const f of commandPlan.files) {
+      const willWrite = commandFilesToWrite.some(w => w.filename === f.filename);
+      output(`  ${f.filename}: ${f.status}${willWrite && f.status === 'differs' ? ' (overwrite)' : (!willWrite && f.status === 'differs' ? ' (preserved)' : '')}`);
+    }
+  } else {
+    output('Workflow commands: skipped.');
+  }
   output('Providers, credentials, MCP servers, plugins, and unrelated agents/settings will not be changed.');
   output('Assignments are stored inline in agents; no plugin or separate approval host is installed.');
-  if (original !== undefined) output(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
+  if (original !== undefined && configChanged) output(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
   output('After writing, runtime verification may start the OpenCode service. It will not restart/reload it or send paid model requests.');
-  const commandSource = deps.workflowCommandsDirectory ?? fileURLToPath(new URL('../commands/', import.meta.url));
-  const commandDirectory = join(project ?? globalDirectory, project ? '.opencode' : '', 'commands');
-  const commandPlan = planOpenCodeCommandDeployment(commandSource, commandDirectory);
-  const commandSelections: WorkflowCommandId[] = [];
-  output('\nWorkflow command outputs:');
-  for (const item of commandPlan) {
-    output(`  ${item.id}: ${item.status}${item.status === 'customized' ? ' (preserved unless explicitly replaced)' : ''}`);
-    if (item.status === 'missing') commandSelections.push(item.id);
-    else if (item.status === 'customized' && /^(y|yes)$/i.test(await ask(`Replace customized workflow command ${item.id}?`, 'no'))) commandSelections.push(item.id);
-  }
-  const deployCommands = () => (deps.applyWorkflowCommands ?? applyOpenCodeCommandDeployment)(commandPlan, commandSelections, backupParent, (path, commandBackup) => {
-    output(`Workflow command written: ${path}`);
-    if (commandBackup) output(`Workflow command backup: ${commandBackup}`);
-  });
   if (await ask('Type install to apply these changes', 'cancel') !== 'install') { output('Cancelled. No files were changed.'); return 0; }
-  if (!receipt) {
-    output('Configuration already matches; no configuration, backup, or receipt writes are needed.');
-    try { deployCommands(); }
-    catch (err) { errorOutput(`Workflow command deployment failed or was partial; completed file paths/backups are listed above: ${String(err)}`); throw err; }
-    return 0;
-  }
-  const pending = (deps.writePending ?? writePendingSuccessor)(history, receipt);
+  if (!receipt && !configChanged && !commandsChanged) { output('Configuration and workflow commands already match; no configuration, backup, or receipt writes are needed.'); return 0; }
+  const pending = (deps.writePending ?? writePendingSuccessor)(history, receipt!);
   const receiptPath = pending.path;
   let backup: string | undefined;
-  try { revalidatePendingSuccessor(pending); backup = (deps.save ?? saveInstallation)(target, original, updated, backupParent); }
+  try {
+    revalidatePendingSuccessor(pending);
+    if (commandFilesToWrite.length > 0) {
+      preflightCommandDeployment(commandFilesToWrite, commandsTargetDir);
+    }
+    if (configChanged) {
+      backup = (deps.save ?? saveInstallation)(target, original, updated, backupParent);
+    }
+    if (commandFilesToWrite.length > 0) {
+      (deps.applyCommands ?? applyCommandDeployment)(commandFilesToWrite, commandsTargetDir);
+    }
+  }
   catch (err) {
-    if (recoverFailedSuccessor(pending, original) !== 'cleared') errorOutput(`Configuration write may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
+    // Check if any command files or config actually changed
+    const configMatchesOriginal = (existsSync(target) ? readFileSync(target, 'utf8') : undefined) === original;
+    const commandFilesUnchanged = commandFilesToWrite.every(f => {
+      const exists = existsSync(f.targetPath);
+      if (f.status === 'new') return !exists;
+      if (f.status === 'differs') return exists && readFileSync(f.targetPath, 'utf8') === f.currentContent;
+      return true;
+    });
+
+    if (configMatchesOriginal && commandFilesUnchanged) {
+      recoverFailedSuccessor(pending, original);
+    } else {
+      errorOutput(`Configuration or command writes may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
+    }
     throw err;
   }
-  const finalText = readFileSync(target, 'utf8');
+  const finalText = existsSync(target) ? readFileSync(target, 'utf8') : updated;
   try { (deps.finalize ?? finalizeSuccessor)(pending, updated); }
   catch (err) { errorOutput(`Configuration saved but receipt finalization failed; pending evidence retained at ${receiptPath}. Resolve recovery before any further update or restore.`); throw err; }
-  output(`Configuration written (runtime not yet verified): ${target}`);
+  if (configChanged) output(`Configuration written (runtime not yet verified): ${target}`);
+  if (commandFilesToWrite.length > 0) output(`Workflow commands deployed: ${commandsTargetDir}`);
   if (backup) output(`Backup: ${backup}`);
   output(`Private uninstall receipt retained at ${receiptPath}`);
-  try {
-    deployCommands();
-  } catch (err) {
-    errorOutput(`Configuration installed, but workflow command deployment failed or was partial; completed file paths/backups are listed above: ${String(err)}`);
-    throw err;
-  }
   const directory = project ?? cwd;
   try {
     const saved = parseConfiguration(finalText, target);

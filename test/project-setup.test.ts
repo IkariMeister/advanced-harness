@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, inspectProject, parseProfile, prepareSetup, saveSetup, setupConfirmation, suggestedCommands, updateProjectInstructions, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
+import { makeTempRoot } from './temp-directory.ts';
+import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, runSetupFlow, saveSetup, setupConfirmation, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
 import { contextData, updateContext } from '../src/project-context.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
-  const root = mkdtempSync(join(tmpdir(), 'harness-project-setup-'));
+  const root = makeTempRoot('harness-project-setup-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'android-app');
   mkdirSync(join(project, '.git'), { recursive: true });
@@ -30,6 +30,7 @@ test('bounded inspection detects Gradle/modules/wrappers without executing scrip
   mkdirSync(join(project, 'build'));
   writeFileSync(join(project, 'build', 'build.gradle'), 'ignore generated files');
   const result = inspectProject(project);
+  assert.equal(result.hasGit, true);
   assert.deepEqual(result.gradleFiles.sort(), ['app/build.gradle.kts', 'settings.gradle.kts']);
   assert.deepEqual(result.androidModules, ['app']);
   assert.equal(result.roborazzi, true);
@@ -58,11 +59,47 @@ test('shell selection accepts default/saved shell and retries invalid input', as
   assert.equal(prompts.length, 2);
 });
 
-test('inspection rejects missing Git/Gradle roots instead of assuming an Android app', t => {
+test('inspection supports non-Git and non-Gradle directories, and detects package.json scripts', t => {
   const { root } = fixture(t);
-  assert.throws(() => inspectProject(root), /Git checkout/);
-  mkdirSync(join(root, '.git'));
-  assert.throws(() => inspectProject(root), /Gradle/);
+  // Non-existent directory throws
+  assert.throws(() => inspectProject(join(root, 'non-existent')), /existing repository directory/);
+
+  // Non-Git, non-Gradle directory
+  const nonGit = join(root, 'plain-dir');
+  mkdirSync(nonGit);
+  const plainResult = inspectProject(nonGit);
+  assert.equal(plainResult.hasGit, false);
+  assert.deepEqual(plainResult.gradleFiles, []);
+  assert.deepEqual(plainResult.androidModules, []);
+  assert.equal(plainResult.roborazzi, false);
+  assert.deepEqual(plainResult.wrappers, { bash: false, windows: false });
+  assert.deepEqual(suggestedCommands(plainResult, 'bash'), {});
+
+  // Git directory with package.json
+  mkdirSync(join(nonGit, '.git'));
+  writeFileSync(join(nonGit, 'package.json'), JSON.stringify({
+    name: 'test-app',
+    scripts: {
+      build: 'tsc',
+      lint: 'eslint .',
+      test: 'node --test',
+      e2e: 'playwright test'
+    }
+  }));
+  const nodeResult = inspectProject(nonGit);
+  assert.equal(nodeResult.hasGit, true);
+  assert.deepEqual(nodeResult.packageScripts, {
+    build: 'npm run build',
+    lint: 'npm run lint',
+    unit: 'npm test',
+    e2e: 'npm run e2e'
+  });
+  assert.deepEqual(suggestedCommands(nodeResult, 'bash'), {
+    build: 'npm run build',
+    lint: 'npm run lint',
+    unit: 'npm test',
+    e2e: 'npm run e2e'
+  });
 });
 
 test('profile validation leaves unknown checks unconfigured, and rejects malformed commands/device/paths', t => {
@@ -258,4 +295,119 @@ test('symlinked project configuration directory is refused without writing to it
   assert.throws(() => saveSetup(files, join(root, 'backups')), /symlinked/);
   assert.equal(existsSync(join(target, 'CONTEXT.md')), false);
   assert.equal(existsSync(join(root, 'backups')), false);
+});
+
+test('global defaults validation, parsing, and empty factory', () => {
+  const defaults = emptyGlobalProjectDefaults('/test/home');
+  assert.equal(defaults.version, 1);
+  assert.equal(defaults.baseBranch, 'main');
+  assert.equal(validateGlobalProjectDefaults(defaults), defaults);
+  assert.deepEqual(parseGlobalProjectDefaults(JSON.stringify(defaults)), defaults);
+  assert.throws(() => validateGlobalProjectDefaults({ ...defaults, version: 2 }), /Invalid/);
+  assert.throws(() => validateGlobalProjectDefaults({ ...defaults, baseBranch: 'invalid branch..' }), /Invalid/);
+  assert.throws(() => validateGlobalProjectDefaults({ ...defaults, worktreeParentDirectory: 'relative/path' }), /absolute/);
+});
+
+test('runSetupFlow in global scope configures and saves harness.project.json', async t => {
+  const root = makeTempRoot('harness-global-setup-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const xdg = join(root, 'xdg');
+  const home = join(root, 'home');
+  mkdirSync(join(xdg, 'opencode'), { recursive: true });
+  mkdirSync(home, { recursive: true });
+
+  const outputs: string[] = [];
+  const responses = [
+    'global', // scope prompt
+    'bash',   // shell
+    'main',   // baseBranch
+    'bash',   // selectedShell
+    '-', '-', '-', '-', '-', '-', // 6 checks
+    'physical-first', // device
+    '-', // serial
+    join(home, 'Projects', 'custom-worktrees'),
+    join(home, 'Projects', 'custom-data'),
+    'save', // confirm
+  ];
+
+  const code = await runSetupFlow(
+    {},
+    {
+      ask: async () => responses.shift()!,
+      output: msg => outputs.push(msg),
+      error: msg => outputs.push(`ERROR: ${msg}`),
+      home,
+      xdgConfigHome: xdg,
+      cwd: root,
+    }
+  );
+
+  assert.equal(code, 0);
+  const savedPath = join(xdg, 'opencode', 'harness.project.json');
+  assert.equal(existsSync(savedPath), true);
+  const saved = parseGlobalProjectDefaults(readFileSync(savedPath, 'utf8'));
+  assert.equal(saved.baseBranch, 'main');
+  assert.equal(saved.shell, 'bash');
+  assert.equal(saved.worktreeParentDirectory, join(home, 'Projects', 'custom-worktrees'));
+  assert.equal(saved.memoryParentDirectory, join(home, 'Projects', 'custom-data'));
+  assert.ok(outputs.some(msg => msg.includes('Global project defaults saved')));
+});
+
+test('runSetupFlow in project scope supports non-Git and non-Android directory, retrying missing path', async t => {
+  const root = makeTempRoot('harness-project-flow-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const xdg = join(root, 'xdg');
+  const home = join(root, 'home');
+  mkdirSync(join(xdg, 'opencode'), { recursive: true });
+  mkdirSync(home, { recursive: true });
+
+  const projectDir = join(root, 'plain-project');
+  mkdirSync(projectDir);
+  writeFileSync(join(projectDir, 'package.json'), JSON.stringify({ name: 'my-pkg', scripts: { build: 'tsc' } }));
+
+  const outputs: string[] = [];
+  const responses = [
+    join(root, 'does-not-exist'), // non-existent dir first -> triggers retry
+    projectDir,                   // valid dir
+    'bash',                       // shell
+    'main',                       // baseBranch
+    'npm run build',              // build check (suggested from package.json)
+    '-', '-', '-', '-',           // lint, unit, runtime, e2e (roborazzi skipped for non-Android!)
+    join(home, 'worktrees'),
+    join(home, 'data', 'MEMORY.md'),
+    'save',
+  ];
+
+  const code = await runSetupFlow(
+    { scope: 'project' },
+    {
+      ask: async () => responses.shift()!,
+      output: msg => outputs.push(msg),
+      error: msg => outputs.push(`ERROR: ${msg}`),
+      home,
+      xdgConfigHome: xdg,
+      cwd: root,
+    }
+  );
+
+  assert.equal(code, 0);
+  assert.ok(outputs.some(msg => msg.includes('does not exist or is not a directory')));
+  assert.ok(outputs.some(msg => msg.includes('No .git entry found')));
+  assert.ok(outputs.some(msg => msg.includes('Node package scripts detected: build')));
+  assert.equal(existsSync(join(projectDir, 'AGENTS.md')), true);
+  const context = readFileSync(join(projectDir, 'AGENTS.md'), 'utf8');
+  assert.ok(context.includes('npm run build'));
+});
+
+test('CLI script parses --global and refuses invalid flag combinations', () => {
+  const script = fileURLToPath(new URL('../scripts/setup-native-project.ts', import.meta.url));
+  const helpOutput = execFileSync(process.execPath, [script, '--help'], { encoding: 'utf8' });
+  assert.match(helpOutput, /--global/);
+  assert.match(helpOutput, /--scope/);
+
+  // Unknown option
+  assert.throws(() => execFileSync(process.execPath, [script, '--unknown-flag'], { encoding: 'utf8', stdio: 'pipe' }), /Unknown, duplicate, or incomplete option/);
+
+  // Conflicting options: --global and --scope project
+  assert.throws(() => execFileSync(process.execPath, [script, '--global', '--scope', 'project'], { encoding: 'utf8', stdio: 'pipe' }), /Conflicting options/);
 });

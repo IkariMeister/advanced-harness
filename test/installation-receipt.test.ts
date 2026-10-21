@@ -1,11 +1,104 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { makeTempRoot } from './temp-directory.ts';
 import { adoptExisting, assertNoReceiptOverlap, completePendingReceipt, configurationField, createReceipt, persistAdoptionReceipt, planUninstall, readInstallationReceipt, recoverFailedInstallation, writeInstallationReceipt, writePendingReceipt } from '../src/installation-receipt.ts';
 import { parseConfiguration } from '../src/native-installer.ts';
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
+import { selectUninstallTarget } from '../src/uninstall-target.ts';
+
+test('uninstall CLI documents scoped receipt discovery and validates scope arguments', () => {
+  const script = join(process.cwd(), 'scripts', 'uninstall-native-harness.ts');
+  const help = execFileSync(process.execPath, [script, '--help'], { encoding: 'utf8' });
+  assert.match(help, /--scope global\|project/);
+  assert.match(help, /--receipt/);
+  assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'other'], { stdio: 'pipe' }), /--scope must be global or project/);
+  assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'project'], { stdio: 'pipe' }), /--project is required/);
+});
+
+test('uninstall target selection matches installer JSONC and project-root rules and preserves explicit fixture paths', () => {
+  const root = makeTempRoot('harness-uninstall-target-');
+  const home = join(root, 'home');
+  const global = join(root, 'xdg');
+  const project = join(root, 'project');
+  mkdirSync(join(global, 'opencode'), { recursive: true });
+  mkdirSync(project, { recursive: true });
+  const globalJsonc = join(global, 'opencode', 'opencode.jsonc');
+  const projectRoot = join(project, 'opencode.jsonc');
+  writeFileSync(globalJsonc, '{}');
+  writeFileSync(projectRoot, '{}');
+
+  assert.equal(selectUninstallTarget({ scope: 'global', home, cwd: root, xdgConfigHome: global }), globalJsonc);
+  assert.equal(selectUninstallTarget({ scope: 'project', project, home, cwd: root, xdgConfigHome: global }), projectRoot);
+  assert.equal(selectUninstallTarget({ config: projectRoot, home, cwd: root, xdgConfigHome: global }), projectRoot);
+  assert.equal(selectUninstallTarget({ config: join(root, 'fixture', 'opencode.json'), home, cwd: root }), join(root, 'fixture', 'opencode.json'));
+
+  writeFileSync(join(project, 'opencode.json'), '{}');
+  assert.throws(() => selectUninstallTarget({ scope: 'project', project, home, cwd: root, xdgConfigHome: global }), /Both opencode.json and opencode.jsonc exist/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('uninstall CLI documents scoped receipt discovery and validates scope arguments', () => {
+  const script = join(process.cwd(), 'scripts', 'uninstall-native-harness.ts');
+  const help = execFileSync(process.execPath, [script, '--help'], { encoding: 'utf8' });
+  assert.match(help, /--scope global\|project/);
+  assert.match(help, /--receipt/);
+  assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'other'], { stdio: 'pipe' }), /--scope must be global or project/);
+  assert.throws(() => execFileSync(process.execPath, [script, '--scope', 'project'], { stdio: 'pipe' }), /--project is required/);
+});
+
+test('uninstall CLI discovers configuration across global jsonc and project locations', () => {
+  const root = makeTempRoot('harness-uninstall-target-');
+  const script = join(process.cwd(), 'scripts', 'uninstall-native-harness.ts');
+  const home = join(root, 'home');
+  const xdg = join(root, 'xdg');
+
+  // Test Case 1: Global scope with opencode.jsonc
+  const globalDir = join(xdg, 'opencode');
+  mkdirSync(globalDir, { recursive: true });
+  writeFileSync(join(globalDir, 'opencode.jsonc'), '{"model":"global/test"}');
+
+  // Running without TTY should fail with "Interactive terminal required", proving it resolved target correctly
+  assert.throws(
+    () => execFileSync(process.execPath, [script, '--scope', 'global'], {
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+      stdio: 'pipe',
+    }),
+    /Interactive terminal required/
+  );
+
+  // Test Case 2: Project scope with project-root opencode.jsonc
+  const projectRootOnly = join(root, 'project-root');
+  mkdirSync(projectRootOnly, { recursive: true });
+  writeFileSync(join(projectRootOnly, 'opencode.jsonc'), '{"model":"project/test"}');
+
+  assert.throws(
+    () => execFileSync(process.execPath, [script, '--scope', 'project', '--project', projectRootOnly], {
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+      stdio: 'pipe',
+    }),
+    /Interactive terminal required/
+  );
+
+  // Test Case 3: Project scope with project .opencode/opencode.json
+  const projectNested = join(root, 'project-nested');
+  const dotOpencode = join(projectNested, '.opencode');
+  mkdirSync(dotOpencode, { recursive: true });
+  writeFileSync(join(dotOpencode, 'opencode.json'), '{"model":"nested/test"}');
+
+  assert.throws(
+    () => execFileSync(process.execPath, [script, '--scope', 'project', '--project', projectNested], {
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+      stdio: 'pipe',
+    }),
+    /Interactive terminal required/
+  );
+
+  rmSync(root, { recursive: true, force: true });
+});
 
 test('receipt-backed plan restores changed supported fields and preserves unmanaged settings', () => {
   const before = '{\r\n  // retained\r\n  "custom": [1,2],\r\n  "agents": {"lead": {"color":"blue","model":"old/model"}}\r\n}\r\n';
@@ -33,7 +126,7 @@ test('receipt restore preserves BOM, CRLF, comments, unmanaged fields, and exact
 });
 
 test('receipt is private, versioned, target-bound and malformed/foreign receipts fail closed', t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-receipt-'));
+  const root = makeTempRoot('harness-receipt-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const receipt = createReceipt(join(root, 'opencode.jsonc'), '{}', '{"model":"provider/model"}');
   const path = writeInstallationReceipt(root, receipt);
@@ -52,7 +145,7 @@ test('conflicting edits block whole receipt-backed mutation', () => {
 });
 
 test('expanded model evidence survives receipt persistence and restores its original representation', t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-model-receipt-'));
+  const root = makeTempRoot('harness-model-receipt-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const target = join(root, 'opencode.jsonc');
   const model = { providerID: 'company', model: 'original', variant: 'low', custom: 'preserve' };
@@ -95,7 +188,7 @@ test('CLI flow propagates unexpected planning errors', async () => {
 });
 
 test('supported receipt fields roundtrip and dangling default-agent restoration blocks the entire plan', t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-receipt-paths-'));
+  const root = makeTempRoot('harness-receipt-paths-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const target = join(root, 'opencode.json');
   const before = JSON.stringify({ model: 'old/provider', default_agent: 'lead', agents: { lead: { description: 'prior', mode: 'all', model: 'old/provider', permissions: [], system: 'prior' } } });
@@ -123,7 +216,7 @@ test('adoption requires explicit per-field selection and records selected before
 });
 
 test('pending evidence precedes save; unchanged failure clears it and partial mutation retains it', t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-pending-'));
+  const root = makeTempRoot('harness-pending-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const target = join(root, 'opencode.json'), before = '{"model":"old/p"}', after = '{"model":"new/p"}';
   writeFileSync(target, before);
@@ -141,7 +234,7 @@ test('pending evidence precedes save; unchanged failure clears it and partial mu
 });
 
 test('receipt overlap is target/field aware and skips completed history restored to baseline', t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-overlap-'));
+  const root = makeTempRoot('harness-overlap-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const target = join(root, 'opencode.json'), other = join(root, 'other.json');
   const current = '{"model":"new/p","agents":{"lead":{"mode":"all"}}}';
@@ -238,7 +331,7 @@ test('container cleanup removes only selected commas across comments and preserv
 });
 
 test('adoption without evidence defaults to unmanaged, explicit evidence restores only same paths, and never changes config', t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-adoption-'));
+  const root = makeTempRoot('harness-adoption-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const target = join(root, 'opencode.json');
   const current = '{"agents":{"lead":{"model":"new/p","permissions":["ask"]}},"model":"new/p"}';
@@ -274,7 +367,7 @@ test('adoption supports a bounded bulk field selection without inventing absent 
 });
 
 test('adoption acknowledgment, cancellation, and evidence/config concurrency are fail-safe', t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-adoption-guard-'));
+  const root = makeTempRoot('harness-adoption-guard-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const target = join(root, 'opencode.json'), beforePath = join(root, 'before.json');
   const current = '{"model":"new/p"}', before = '{"model":"old/p"}';
@@ -293,7 +386,7 @@ test('adoption acknowledgment, cancellation, and evidence/config concurrency are
 });
 
 test('receipt validation rejects duplicate JSON keys, forged paths/containers, invalid types and provenance', t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-receipt-strict-'));
+  const root = makeTempRoot('harness-receipt-strict-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const target = join(root, 'opencode.json'); writeFileSync(target, '{}');
   const valid = createReceipt(target, '{"model":"old/p"}', '{"model":"new/p"}');
@@ -323,7 +416,7 @@ test('receipt validation rejects duplicate JSON keys, forged paths/containers, i
 });
 
 test('symlink ancestors and recovery output paths are refused without following links', t => {
-  const root = mkdtempSync(join(tmpdir(), 'harness-symlink-'));
+  const root = makeTempRoot('harness-symlink-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const real = join(root, 'real'); mkdirSync(real);
   const target = join(real, 'opencode.json'); writeFileSync(target, '{"model":"new/p"}');
