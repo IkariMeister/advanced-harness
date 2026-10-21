@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadNativeDefinitions } from '../src/native-installer.ts';
+import type { PermissionRule } from '../src/permission-reconciliation.ts';
 
 const roles = ['lead', 'operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const;
 const expectedAssignments = {
@@ -16,7 +17,9 @@ const expectedAssignments = {
   qa: { model: 'openai/gpt-6-luna', reasoning: 'low' },
 } as const;
 const template = (role: typeof roles[number]) => readFileSync(new URL(`../agents/${role}.md`, import.meta.url), 'utf8');
-const permissionLines = (role: typeof roles[number]) => template(role).split('\n').filter(line => line.startsWith('  - { action:'));
+const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
+const permissionRules = (role: typeof roles[number]) => definitions[role].permissions as PermissionRule[];
+const hasRule = (role: typeof roles[number], action: string, resource: string, effect: PermissionRule['effect']) => permissionRules(role).some(rule => rule.action === action && rule.resource === resource && rule.effect === effect);
 
 test('native roles preserve fixed model variants and deny before native exceptions', () => {
   for (const role of roles) {
@@ -24,54 +27,52 @@ test('native roles preserve fixed model variants and deny before native exceptio
     const assigned = expectedAssignments[role];
     assert.ok(text.includes(`model: ${assigned.model}#${assigned.reasoning}\n`), role);
     assert.ok(text.includes(`mode: ${role === 'lead' ? 'primary' : 'subagent'}\n`), role);
-    assert.equal(permissionLines(role)[0], '  - { action: "*", resource: "*", effect: deny }');
+    assert.deepEqual(permissionRules(role)[0], { action: '*', resource: '*', effect: 'deny' });
     assert.ok(!text.includes('harness_status') && !text.includes('harness_action'), role);
-    assert.ok(permissionLines(role).some(line => line.includes('action: read,') && line.includes('effect: allow')), role);
+    assert.ok(hasRule(role, 'read', '*', 'allow'), role);
   }
 });
 
 test('native Lead delegates only to named roles and owns conversational approvals', () => {
   const text = template('lead');
-  assert.deepEqual([...text.matchAll(/action: subagent, resource: (\w+), effect: allow/g)].map(match => match[1]), roles.filter(role => role !== 'lead'));
+  assert.deepEqual(permissionRules('lead').filter(rule => rule.action === 'subagent' && rule.effect === 'allow').map(rule => rule.resource), roles.filter(role => role !== 'lead'));
   assert.match(text, /WAIT for explicit human approval/);
   assert.match(text, /final approval before pushing\/opening a PR/);
   assert.match(text, /missing, ask again/);
   assert.match(text, /Evidence capture\/publication is optional/);
-  assert.ok(!permissionLines('lead').some(line => /action: (shell|edit|execute|webfetch|websearch),/.test(line)));
-  for (const role of roles.filter(role => role !== 'lead')) assert.ok(!permissionLines(role).some(line => line.includes('action: subagent,')), role);
+  assert.ok(!permissionRules('lead').some(rule => ['shell', 'edit', 'execute', 'webfetch', 'websearch'].includes(rule.action)));
+  for (const role of roles.filter(role => role !== 'lead')) assert.ok(!permissionRules(role).some(rule => rule.action === 'subagent'), role);
 });
 
 test('native operational roles expose shell and keep edit defaults role-scoped', () => {
   for (const role of ['operator', 'external', 'implementer', 'reviewer', 'qa'] as const) {
-    assert.ok(permissionLines(role).includes('  - { action: shell, resource: "*", effect: ask }'), role);
+    assert.ok(hasRule(role, 'shell', '*', 'ask'), role);
   }
   for (const role of ['researcher', 'planner'] as const) {
-    assert.ok(!permissionLines(role).some(line => /action: (shell|edit),/.test(line)), role);
+    assert.ok(!permissionRules(role).some(rule => ['shell', 'edit'].includes(rule.action)), role);
   }
-  assert.ok(permissionLines('implementer').includes('  - { action: edit, resource: "*", effect: allow }'));
-  assert.ok(permissionLines('operator').includes('  - { action: edit, resource: "*", effect: ask }'));
-  for (const role of ['external', 'reviewer', 'qa'] as const) assert.ok(!permissionLines(role).some(line => line.includes('action: edit,')), role);
+  assert.ok(hasRule('implementer', 'edit', '*', 'allow'));
+  assert.ok(hasRule('operator', 'edit', '*', 'ask'));
+  for (const role of ['external', 'reviewer', 'qa'] as const) assert.ok(!permissionRules(role).some(rule => rule.action === 'edit'), role);
 });
 
 test('External source permission exceptions are narrowly scoped and merge stays denied', () => {
-  const lines = permissionLines('external');
-  assert.ok(lines.includes('  - { action: shell, resource: "*", effect: ask }'));
-  assert.ok(lines.includes('  - { action: shell, resource: "git push", effect: allow }'));
-  assert.ok(lines.includes('  - { action: shell, resource: "git push *", effect: allow }'));
+  assert.ok(hasRule('external', 'shell', '*', 'ask'));
+  assert.ok(hasRule('external', 'shell', 'git push', 'allow'));
+  assert.ok(hasRule('external', 'shell', 'git push *', 'allow'));
   for (const executable of ['gh', 'gh.exe']) {
     for (const command of ['pr view', 'pr create', 'pr edit', 'pr comment', 'pr review', 'issue create', 'issue edit', 'issue comment', 'workflow run', 'run rerun', 'run cancel']) {
-      assert.ok(lines.includes(`  - { action: shell, resource: "${executable} ${command}", effect: allow }`));
-      assert.ok(lines.includes(`  - { action: shell, resource: "${executable} ${command} *", effect: allow }`));
+      assert.ok(hasRule('external', 'shell', `${executable} ${command}`, 'allow'));
+      assert.ok(hasRule('external', 'shell', `${executable} ${command} *`, 'allow'));
     }
-    assert.ok(lines.includes(`  - { action: shell, resource: "${executable} pr merge", effect: deny }`));
-    assert.ok(lines.includes(`  - { action: shell, resource: "${executable} pr merge *", effect: deny }`));
-    assert.ok(!lines.includes(`  - { action: shell, resource: "${executable} *", effect: allow }`));
+    assert.ok(hasRule('external', 'shell', `${executable} pr merge`, 'deny'));
+    assert.ok(hasRule('external', 'shell', `${executable} pr merge *`, 'deny'));
+    assert.ok(!permissionRules('external').some(rule => rule.action === 'shell' && rule.resource === `${executable} *` && rule.effect === 'allow'));
   }
-  assert.ok(lines.includes('  - { action: execute, resource: "*", effect: allow }'));
+  assert.ok(hasRule('external', 'execute', '*', 'allow'));
 });
 
 test('Lead and External require evidence for missing native tools without broadening access', () => {
-  const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
   for (const role of ['lead', 'external'] as const) {
     const text = definitions[role].system.replace(/\s+/g, ' ');
     assert.match(text, /Native shell[\s\S]*separate from the[\s\S]*Code Mode catalog/, role);
@@ -87,13 +88,13 @@ test('Lead and External require evidence for missing native tools without broade
   assert.match(definitions.lead.system, /child's self-report is not tool-exposure evidence/);
   assert.match(definitions.external.system, /tools actually exposed within approved scope/);
   assert.match(definitions.external.system, /diagnostic approval does not authorize publishing/);
-  assert.ok(permissionLines('external').includes('  - { action: shell, resource: "*", effect: ask }'));
-  assert.ok(!permissionLines('lead').some(line => /action: (shell|execute),/.test(line)));
+  assert.ok(hasRule('external', 'shell', '*', 'ask'));
+  assert.ok(!permissionRules('lead').some(rule => ['shell', 'execute'].includes(rule.action)));
 });
 
 test('native MCP and web permissions belong only to External and do not imply connections', () => {
   for (const role of roles) {
-    const externalLines = permissionLines(role).filter(line => /action: (execute|webfetch|websearch),|action: "(jira|github|figma|stitch)_\*"/.test(line));
+    const externalLines = permissionRules(role).filter(rule => ['execute', 'webfetch', 'websearch'].includes(rule.action) || /^(jira|github|figma|stitch)_\*$/.test(rule.action));
     assert.equal(externalLines.length, role === 'external' ? 7 : 0, role);
   }
 });
@@ -120,7 +121,7 @@ test('native implementation and verification templates require human scope and t
   assert.match(template('implementer'), /without\nchanging files/);
   assert.match(template('planner'), /waits for explicit\nhuman approval/);
   for (const role of ['implementer', 'reviewer', 'qa', 'external'] as const) assert.match(template(role), /optional unless/, role);
-  for (const role of ['operator', 'implementer', 'reviewer', 'qa'] as const) assert.ok(permissionLines(role).includes('  - { action: shell, resource: "gh *", effect: deny }'), role);
+  for (const role of ['operator', 'implementer', 'reviewer', 'qa'] as const) assert.ok(hasRule(role, 'shell', 'gh *', 'deny'), role);
 });
 
 test('all native roles distinguish offered tools, configured policy, invocation, and ownership', () => {

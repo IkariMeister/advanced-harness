@@ -1,73 +1,571 @@
 ---
+schemaVersion: 2
 description: Owns MCP, Jira/GitHub/design services, remote Git, and approved publishing
 mode: subagent
 model: openai/gpt-5.3-codex-spark#low
-permissions:
-  - { action: "*", resource: "*", effect: deny }
-  - { action: read, resource: "*", effect: allow }
-  - { action: glob, resource: "*", effect: allow }
-  - { action: grep, resource: "*", effect: allow }
-  - { action: read, resource: "*.env", effect: ask }
-  - { action: read, resource: "*.env.*", effect: ask }
-  - { action: external_directory, resource: "*", effect: ask }
-  - { action: shell, resource: "*", effect: ask }
-  - { action: shell, resource: "git push", effect: allow }
-  - { action: shell, resource: "git push *", effect: allow }
-  - { action: shell, resource: "gh pr view", effect: allow }
-  - { action: shell, resource: "gh pr view *", effect: allow }
-  - { action: shell, resource: "gh pr create", effect: allow }
-  - { action: shell, resource: "gh pr create *", effect: allow }
-  - { action: shell, resource: "gh pr edit", effect: allow }
-  - { action: shell, resource: "gh pr edit *", effect: allow }
-  - { action: shell, resource: "gh pr comment", effect: allow }
-  - { action: shell, resource: "gh pr comment *", effect: allow }
-  - { action: shell, resource: "gh pr review", effect: allow }
-  - { action: shell, resource: "gh pr review *", effect: allow }
-  - { action: shell, resource: "gh issue create", effect: allow }
-  - { action: shell, resource: "gh issue create *", effect: allow }
-  - { action: shell, resource: "gh issue edit", effect: allow }
-  - { action: shell, resource: "gh issue edit *", effect: allow }
-  - { action: shell, resource: "gh issue comment", effect: allow }
-  - { action: shell, resource: "gh issue comment *", effect: allow }
-  - { action: shell, resource: "gh workflow run", effect: allow }
-  - { action: shell, resource: "gh workflow run *", effect: allow }
-  - { action: shell, resource: "gh run rerun", effect: allow }
-  - { action: shell, resource: "gh run rerun *", effect: allow }
-  - { action: shell, resource: "gh run cancel", effect: allow }
-  - { action: shell, resource: "gh run cancel *", effect: allow }
-  - { action: shell, resource: "gh pr merge", effect: deny }
-  - { action: shell, resource: "gh pr merge *", effect: deny }
-  - { action: shell, resource: "gh.exe pr view", effect: allow }
-  - { action: shell, resource: "gh.exe pr view *", effect: allow }
-  - { action: shell, resource: "gh.exe pr create", effect: allow }
-  - { action: shell, resource: "gh.exe pr create *", effect: allow }
-  - { action: shell, resource: "gh.exe pr edit", effect: allow }
-  - { action: shell, resource: "gh.exe pr edit *", effect: allow }
-  - { action: shell, resource: "gh.exe pr comment", effect: allow }
-  - { action: shell, resource: "gh.exe pr comment *", effect: allow }
-  - { action: shell, resource: "gh.exe pr review", effect: allow }
-  - { action: shell, resource: "gh.exe pr review *", effect: allow }
-  - { action: shell, resource: "gh.exe issue create", effect: allow }
-  - { action: shell, resource: "gh.exe issue create *", effect: allow }
-  - { action: shell, resource: "gh.exe issue edit", effect: allow }
-  - { action: shell, resource: "gh.exe issue edit *", effect: allow }
-  - { action: shell, resource: "gh.exe issue comment", effect: allow }
-  - { action: shell, resource: "gh.exe issue comment *", effect: allow }
-  - { action: shell, resource: "gh.exe workflow run", effect: allow }
-  - { action: shell, resource: "gh.exe workflow run *", effect: allow }
-  - { action: shell, resource: "gh.exe run rerun", effect: allow }
-  - { action: shell, resource: "gh.exe run rerun *", effect: allow }
-  - { action: shell, resource: "gh.exe run cancel", effect: allow }
-  - { action: shell, resource: "gh.exe run cancel *", effect: allow }
-  - { action: shell, resource: "gh.exe pr merge", effect: deny }
-  - { action: shell, resource: "gh.exe pr merge *", effect: deny }
-  - { action: webfetch, resource: "*", effect: ask }
-  - { action: websearch, resource: "*", effect: ask }
-  - { action: execute, resource: "*", effect: allow }
-  - { action: "jira_*", resource: "*", effect: ask }
-  - { action: "github_*", resource: "*", effect: ask }
-  - { action: "figma_*", resource: "*", effect: ask }
-  - { action: "stitch_*", resource: "*", effect: ask }
+policy:
+  schemaVersion: 1
+  resolution: ordered-last-match
+  rules:
+    - capability: all
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: "*"
+    - capability: file.read
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: read
+    - capability: file.find
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: glob
+    - capability: file.search
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: grep
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env.*"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: directory.external
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: external_directory
+    - capability: shell.run
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git push
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git push *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr view
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr view *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr create
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr create *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr edit
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr edit *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr comment
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr comment *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr review
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr review *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh issue create
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh issue create *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh issue edit
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh issue edit *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh issue comment
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh issue comment *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh workflow run
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh workflow run *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh run rerun
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh run rerun *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh run cancel
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh run cancel *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr merge
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh pr merge *
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr view
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr view *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr create
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr create *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr edit
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr edit *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr comment
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr comment *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr review
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr review *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe issue create
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe issue create *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe issue edit
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe issue edit *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe issue comment
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe issue comment *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe workflow run
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe workflow run *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe run rerun
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe run rerun *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe run cancel
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe run cancel *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr merge
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh.exe pr merge *
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: web.fetch
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: webfetch
+    - capability: web.search
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: websearch
+    - capability: code-mode.execute
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: execute
+    - capability: mcp.tool
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: jira_*
+    - capability: mcp.tool
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: github_*
+    - capability: mcp.tool
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: figma_*
+    - capability: mcp.tool
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: stitch_*
 ---
 
 Own MCP, external-service APIs, remote Git, Jira/GitHub, and design-service access

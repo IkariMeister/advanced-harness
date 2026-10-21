@@ -18,7 +18,7 @@ The TypeScript code covers native installation, diagnostics, project-context set
 
 ## Scope
 
-- Multi-host foundation across 5 hosts: OpenCode V2, Claude Code, Google Antigravity, OpenAI Codex, and Cursor IDE (`--host <opencode|claude-code|antigravity|codex|cursor|all>`).
+- Host-neutral workflow artifacts compile deterministically for OpenCode V2, Claude Code, Google Antigravity, OpenAI Codex, and Cursor IDE. Native role/permission/MCP/runtime deployment is OpenCode-only; Claude Code, Antigravity, Codex, and Cursor integrations are tracked separately as issues #43–#46. Installer/update fail closed for any selection containing an unsupported host, including `all`, before adapter invocation or file mutation.
 - Interactive project/global installation across projects, preserving host-neutral `AGENTS.md` and enabling coexistence without hosts clobbering each other.
 - Customizable agents, explicit model/reasoning assignments, and machine-local provider mappings.
 - Host-scoped V2 receipts, backups, and uninstall tracking footprint per `(target, host)`.
@@ -41,7 +41,7 @@ The 8-role engineering workflow provides fixed default role and model presets ta
 | **OpenAI Codex**| `openai/gpt-6-astra` | `openai/gpt-5.3-codex-spark` | `openai/gpt-6-luna` | `openai/gpt-6.1-sol` |
 | **Cursor IDE**  | `standard` | `fast` | `standard` | `high-reasoning` |
 
-All hosts enforce the explicit guard preventing any agent from executing `gh pr merge` / `gh.exe pr merge`. Runtime diagnostics (`npm run harness:doctor`) report health, configuration footprint, and host-specific capability/permission disclosures.
+OpenCode's native role rules explicitly deny `gh pr merge` / `gh.exe pr merge`. Non-OpenCode workflow artifact compilation does not deploy native role permissions, MCP configuration, or runtime enforcement; install/update remain blocked for those hosts pending issues #43–#46. Claude Code source-policy preflight findings remain separately reported by `harness:doctor`, without claims of runtime enforcement. Other hosts' merge protections are not inferred from this OpenCode rule.
 
 These assignments are preferences to validate against the active connection, not evidence of access. Spark was rejected by the tested ChatGPT connection. Setup must ask for an explicitly approved replacement or supported connection before Operator/External can be used; no silent fallback. LiteLLM endpoints, deployment IDs, and reasoning mappings must be supplied explicitly. Selecting a primary agent does not necessarily change the session's selected model; verify both.
 

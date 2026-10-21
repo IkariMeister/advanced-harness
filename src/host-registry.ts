@@ -108,8 +108,8 @@ export const HOST_MODEL_PRESETS: Record<HostId, Record<NativeRole, HostRolePrese
 export interface HostCapabilityProfile {
   host: HostId;
   displayName: string;
-  isolationModel: 'native-subagents' | 'cli-profile-exec' | 'in-session-phases';
-  permissionModel: 'native-allow-ask-deny' | 'settings-permissions-and-disallowed-tools' | 'hooks-and-subagent-tool-groups' | 'execpolicy-and-sandbox' | 'command-allowlist-and-prompt-phases';
+  isolationModel: 'native-subagents' | 'cli-profile-exec' | 'in-session-phases' | 'not-deployed';
+  permissionModel: 'native-allow-ask-deny' | 'settings-permissions-and-disallowed-tools' | 'hooks-and-subagent-tool-groups' | 'execpolicy-and-sandbox' | 'command-allowlist-and-prompt-phases' | 'not-deployed';
   configLocations: {
     project: string[];
     global: string[];
@@ -138,65 +138,65 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
   'claude-code': {
     host: 'claude-code',
     displayName: 'Claude Code',
-    isolationModel: 'native-subagents',
-    permissionModel: 'settings-permissions-and-disallowed-tools',
+    isolationModel: 'not-deployed',
+    permissionModel: 'not-deployed',
     configLocations: {
       project: ['CLAUDE.md', '.claude/agents', '.claude/commands', '.claude/settings.json', '.mcp.json'],
       global: ['~/.claude/settings.json', '~/.claude.json'],
     },
-    ghPrMergeGuard: 'Deny rule in .claude/settings.json (permissions.deny) and role disallowedTools',
+    ghPrMergeGuard: 'No Claude Code merge guard is deployed; static source-policy preflight reports blockers and integration is tracked in issue #43.',
     disclosures: [
-      'Lead coordinates via marked orchestration block in CLAUDE.md.',
-      '7 specialized child roles defined in .claude/agents/*.md with role-scoped tools / disallowedTools.',
-      'Tool permissions configured in .claude/settings.json (gh pr merge denied).',
+      'Planned Lead coordination via a marked orchestration block in CLAUDE.md is not deployed by this harness.',
+      'Workflow artifact compilation can emit documented command Markdown; no native role files or permission scope are deployed by this harness.',
+      'Claude Code permission priority is deny > ask > allow; source ordered-last-match behavior is not assumed equivalent.',
+      'Subagent disallowedTools Bash(pattern) removes Bash rather than proving equivalent resource-pattern scoping.',
+      'Installer/update block Claude selection pending native integration issue #43; source-policy preflight is diagnostic only and no runtime enforcement is claimed.',
     ],
   },
   antigravity: {
     host: 'antigravity',
     displayName: 'Google Antigravity',
-    isolationModel: 'native-subagents',
-    permissionModel: 'hooks-and-subagent-tool-groups',
+    isolationModel: 'not-deployed',
+    permissionModel: 'not-deployed',
     configLocations: {
       project: ['.agents/rules', '.agents/skills', 'mcp_config.json', 'hooks.json'],
       global: ['~/.gemini/antigravity/mcp_config.json', '~/.gemini/antigravity/hooks.json'],
     },
-    ghPrMergeGuard: 'Pre-tool hook in hooks.json rejecting gh pr merge commands',
+    ghPrMergeGuard: 'No Antigravity merge guard is deployed; native integration is tracked in issue #44.',
     disclosures: [
-      'Lead coordinates child roles via define_subagent and invoke_subagent APIs.',
-      'Subagent tool groups (enable_write_tools, enable_mcp_tools, Workspace mode) enforce role ownership.',
-      'Workflow commands exposed as native skills in .agents/skills/<cmd>/SKILL.md.',
+      'Workflow artifacts can be compiled as .agents/skills/<name>/SKILL.md; artifacts are not installed by this harness.',
+      'Native roles, permissions, hooks, MCP configuration, and runtime behavior are not deployed; integration is tracked in issue #44.',
     ],
   },
   codex: {
     host: 'codex',
     displayName: 'OpenAI Codex',
-    isolationModel: 'cli-profile-exec',
-    permissionModel: 'execpolicy-and-sandbox',
+    isolationModel: 'not-deployed',
+    permissionModel: 'not-deployed',
     configLocations: {
       project: ['.codex/config.toml'],
       global: ['~/.codex/config.toml'],
     },
-    ghPrMergeGuard: 'execpolicy deny rule for gh pr merge in .codex/config.toml',
+    ghPrMergeGuard: 'No Codex merge guard is deployed; native integration is tracked in issue #45.',
     disclosures: [
-      'Named role profiles defined in .codex/config.toml ([profiles.<role>]).',
-      'Execution supported via codex exec --profile <role> or session checkpoints.',
-      'Human-approval boundaries enforced by execpolicy and sandbox settings.',
+      'Workflow artifacts can be compiled as .agents/skills/<name>/SKILL.md; artifacts are not installed by this harness.',
+      'Codex skill invocation is not treated as parameter binding; caller-bound workflow artifacts are invocation-specific.',
+      'Native role profiles, permissions, MCP configuration, and runtime behavior are not deployed; integration is tracked in issue #45.',
     ],
   },
   cursor: {
     host: 'cursor',
     displayName: 'Cursor IDE',
-    isolationModel: 'in-session-phases',
-    permissionModel: 'command-allowlist-and-prompt-phases',
+    isolationModel: 'not-deployed',
+    permissionModel: 'not-deployed',
     configLocations: {
-      project: ['.cursor/rules', '.cursor/commands', '.cursor/mcp.json'],
+      project: ['.cursor/rules', '.cursor/skills', '.cursor/mcp.json'],
       global: ['~/.cursor/mcp.json'],
     },
-    ghPrMergeGuard: 'Command allowlist / terminal guard in .cursor/settings and rule prompts',
+    ghPrMergeGuard: 'No Cursor merge guard is deployed; native integration is tracked in issue #46.',
     disclosures: [
-      'Cursor executes workflow roles as structured in-session phases rather than isolated subagent processes.',
-      'Rules defined in .cursor/rules/*.mdc with alwaysApply for Lead coordination.',
-      'Workflow commands emitted in .cursor/commands/*.md.',
+      'Workflow artifacts can be compiled as .cursor/skills/<name>/SKILL.md with manual-only invocation metadata; artifacts are not installed.',
+      'Native roles, permissions, MCP configuration, and runtime behavior are not deployed; integration is tracked in issue #46.',
     ],
   },
 };

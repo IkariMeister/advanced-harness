@@ -58,6 +58,7 @@ test('update flow cancellation makes no configuration or recovery writes', async
 
   assert.equal(status, 0);
   assert.equal(readFileSync(config, 'utf8'), initialJson);
+  assert.equal(existsSync(join(project, '.opencode', 'commands', 'start-issue.md')), false);
   assert.equal(existsSync(join(root, 'recovery')), false);
   assert.ok(output.some(line => line.includes('Update cancelled. No files or receipts were modified.')));
 });
