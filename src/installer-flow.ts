@@ -8,8 +8,10 @@ import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from './receipt-lineage.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 
-import { parseHostSelection, askHostSelection, getHostAdapter, HOST_CAPABILITIES, HOST_MODEL_PRESETS, type HostId } from './host-registry.ts';
+import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
+import { formatClaudePermissionPreflight, preflightClaudePermissions } from './claude-permission-preflight.ts';
+import { loadRoleDefinitions } from './role-definitions.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string }
 export interface InstallerFlowDependencies {
@@ -50,27 +52,17 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const project = scope === 'project' ? resolve(cwd, expand(options.project ?? ((await ask('Project directory', cwd)) || cwd))) : undefined;
   if (project && (!existsSync(project) || !statSync(project).isDirectory())) throw new Error('Project directory does not exist or is not a directory. Create/select it before installing.');
 
-  // Process non-OpenCode hosts
-  for (const host of selectedHosts) {
-    if (host === 'opencode') continue;
-    output(`\n--- Host Configuration: ${HOST_CAPABILITIES[host].displayName} [${host}] ---`);
-    const adapter = getHostAdapter(host);
-    if (adapter) {
-      await adapter.install({ project, scope: scope as 'project' | 'global' });
-      output(`Installed ${HOST_CAPABILITIES[host].displayName} native adapter.`);
-    } else {
-      output(`Multi-host foundation initialized for ${HOST_CAPABILITIES[host].displayName}.`);
-      output(`Native file emitter adapter is tracked in BH-025/BH-026.`);
-      output('Fixed Model Presets:');
-      for (const [r, p] of Object.entries(HOST_MODEL_PRESETS[host])) {
-        output(`  ${r}: ${p.model || p.tier} (${p.notes || p.reasoningTier || 'preset'})`);
-      }
+  if (selectedHosts.some(host => host !== 'opencode')) {
+    for (const host of selectedHosts.filter(host => host !== 'opencode')) {
+      const issue = host === 'claude-code' ? '#43' : host === 'antigravity' ? '#44' : host === 'codex' ? '#45' : '#46';
+      errorOutput(`Installation blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
     }
-  }
-
-  if (!selectedHosts.includes('opencode')) {
-    output('\nOpenCode was not selected for installation. Multi-host configuration complete.');
-    return 0;
+    if (selectedHosts.includes('claude-code')) {
+      const definitions = loadRoleDefinitions(deps.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)));
+      const report = preflightClaudePermissions(definitions);
+      for (const line of formatClaudePermissionPreflight(report)) errorOutput(line);
+    }
+    return 2;
   }
 
   const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));

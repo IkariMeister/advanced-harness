@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { makeTempRoot } from './temp-directory.ts';
 import { applyOpenCodeCommandDeployment, bindWorkflowArguments, emitOpenCodeCommand, loadWorkflowCommand, loadWorkflowCommands, planOpenCodeCommandDeployment, workflowCommandIds } from '../src/workflow-commands.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { nativeRoles } from '../src/native-installer.ts';
@@ -18,7 +18,7 @@ test('canonical workflow definitions strictly load six commands and match genera
   for (const id of workflowCommandIds) assert.equal(emitOpenCodeCommand(commands[id]), file(openCodeDir, id));
   assert.equal(commands['report-defect'].arguments.mode, 'positional');
   assert.deepEqual(commands['report-defect'].arguments, { mode: 'positional', names: ['parent', 'description'], remainder: 2 });
-  const temp = mkdtempSync(join(tmpdir(), 'workflow-schema-extra-'));
+  const temp = makeTempRoot('workflow-schema-extra-');
   try {
     for (const id of workflowCommandIds) writeFileSync(join(temp, `${id}.md`), file(commandsDir, id));
     writeFileSync(join(temp, 'unexpected.md'), 'not a command');
@@ -70,7 +70,7 @@ test('source metadata is not leaked and OpenCode generation retains description 
 });
 
 test('production update consumes canonical command sources and preserves customized generated files', async t => {
-  const temp = mkdtempSync(join(tmpdir(), 'workflow-command-update-'));
+  const temp = makeTempRoot('workflow-command-update-');
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const project = join(temp, 'project'), source = join(temp, 'commands'), outputDir = join(project, '.opencode', 'commands');
   mkdirSync(project, { recursive: true }); mkdirSync(source, { recursive: true }); mkdirSync(outputDir, { recursive: true });
@@ -103,7 +103,7 @@ test('production update consumes canonical command sources and preserves customi
 });
 
 test('command deployment rejects targets changed after preview without writing', t => {
-  const temp = mkdtempSync(join(tmpdir(), 'workflow-command-race-'));
+  const temp = makeTempRoot('workflow-command-race-');
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const output = join(temp, 'out'); mkdirSync(output);
   const plan = planOpenCodeCommandDeployment(fileURLToPath(commandsDir), output);
@@ -114,7 +114,7 @@ test('command deployment rejects targets changed after preview without writing',
 });
 
 test('later command write failure reports completed outputs and their backups immediately', t => {
-  const temp = mkdtempSync(join(tmpdir(), 'workflow-command-partial-'));
+  const temp = makeTempRoot('workflow-command-partial-');
   t.after(() => rmSync(temp, { recursive: true, force: true }));
   const output = join(temp, 'out'); mkdirSync(output);
   const prior = 'user version to back up';

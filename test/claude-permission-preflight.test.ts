@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { makeTempRoot } from './temp-directory.ts';
 import { preflightClaudePermissions } from '../src/claude-permission-preflight.ts';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 import { nativeRoles } from '../src/native-role-types.ts';
@@ -89,7 +89,7 @@ test('preflight reports no blockers only for an empty policy and never claims ru
 });
 
 test('Claude doctor separates source-policy blockers from installed footprint and runtime verification', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'claude-policy-doctor-'));
+  const root = makeTempRoot('claude-policy-doctor-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const report = await diagnoseHost('claude-code', { project: root, agentsDirectory });
   assert.equal(report.installed, false);
@@ -102,7 +102,7 @@ test('Claude doctor separates source-policy blockers from installed footprint an
 });
 
 test('Claude and multi-host install/update stop before adapters or any OpenCode writes', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'claude-policy-flow-'));
+  const root = makeTempRoot('claude-policy-flow-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project);
   const recovery = join(root, 'recovery');
