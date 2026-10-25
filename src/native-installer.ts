@@ -2,14 +2,25 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, 
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, parse as pathParse, resolve } from 'node:path';
 import { applyEdits, modify, parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
-import { parseDocument } from 'yaml';
 import { reconcilePermissions, type PermissionRule, type ReconciliationResult, type AttributedRule } from './permission-reconciliation.ts';
+import { compileOpenCodeRoles } from './opencode-role-compiler.ts';
+import { loadRoleDefinitions } from './role-definitions.ts';
+import { modelReference, nativeRoles, type NativeRole } from './native-role-types.ts';
 
-export const nativeRoles = ['lead', 'operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const;
-export type NativeRole = typeof nativeRoles[number];
+export { modelReference, nativeRoles };
+export type { NativeRole };
 export type ConfigSource = { path: string; text: string; value: Record<string, unknown> };
 export type NativeDefinition = { description: string; mode: string; model: string; permissions: unknown[]; system: string };
 export type Ask = (question: string, suggested?: string) => Promise<string>;
+
+export class RoleCapabilityCompilationError extends Error {
+  readonly diagnostics: import('./capability-policy.ts').CapabilityDiagnostic[];
+  constructor(diagnostics: import('./capability-policy.ts').CapabilityDiagnostic[]) {
+    super(`OpenCode role capability compilation failed: ${diagnostics.map(item => `${item.code}${item.role ? ` (${item.role})` : ''}: ${item.message}`).join('; ')}`);
+    this.name = 'RoleCapabilityCompilationError';
+    this.diagnostics = diagnostics;
+  }
+}
 
 function object(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -74,15 +85,6 @@ export function projectConfiguration(project: string, sources: readonly ConfigSo
   return chooseConfiguration(resolve(project));
 }
 
-export function modelReference(value: unknown): string | undefined {
-  if (object(value) && typeof value.providerID === 'string' && typeof value.model === 'string') {
-    const variant = typeof value.variant === 'string' && value.variant ? `#${value.variant}` : '';
-    value = `${value.providerID}/${value.model}${variant}`;
-  }
-  if (typeof value !== 'string' || !/^[^\s/#]+\/[^\s#]+(?:#[^\s/#]+)?$/.test(value)) return undefined;
-  return value;
-}
-
 export function configuredModels(sources: readonly ConfigSource[]): string[] {
   const models = new Set<string>();
   const add = (value: unknown) => { const reference = modelReference(value); if (reference) models.add(reference); };
@@ -115,15 +117,9 @@ export function suggestedModel(role: NativeRole, sources: readonly ConfigSource[
 }
 
 export function loadNativeDefinitions(directory: string): Record<NativeRole, NativeDefinition> {
-  return Object.fromEntries(nativeRoles.map(role => {
-    const text = readFileSync(join(directory, `${role}.md`), 'utf8');
-    const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(text);
-    if (!match) throw new Error(`Missing native frontmatter: ${role}`);
-    const document = parseDocument(match[1]!);
-    const header: unknown = document.toJSON();
-    if (document.errors.length || !object(header) || typeof header.description !== 'string' || header.mode !== (role === 'lead' ? 'primary' : 'subagent') || !modelReference(header.model) || !Array.isArray(header.permissions)) throw new Error(`Invalid native template: ${role}`);
-    return [role, { description: header.description, mode: header.mode, model: header.model as string, permissions: header.permissions, system: match[2]!.trim() }];
-  })) as Record<NativeRole, NativeDefinition>;
+  const result = compileOpenCodeRoles(loadRoleDefinitions(directory));
+  if (!result.definitions) throw new RoleCapabilityCompilationError(result.diagnostics);
+  return result.definitions;
 }
 
 export async function askAssignments(definitions: Record<NativeRole, NativeDefinition>, sources: readonly ConfigSource[], ask: Ask): Promise<Record<NativeRole, string>> {

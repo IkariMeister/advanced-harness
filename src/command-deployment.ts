@@ -23,7 +23,7 @@ export type LoadedCommand = {
 export type CommandFilePlan = {
   filename: WorkflowCommandName;
   targetPath: string;
-  status: 'new' | 'identical' | 'differs';
+  status: 'new' | 'identical' | 'outdated' | 'differs';
   currentContent?: string;
   newContent: string;
 };
@@ -36,6 +36,7 @@ export type CommandDeploymentPlan = {
 };
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+const canonicalTarget = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 
 export function loadWorkflowCommands(sourceDirectory: string): LoadedCommand[] {
   assertSafeFilesystemPath(sourceDirectory, 'directory');
@@ -52,9 +53,19 @@ export function loadWorkflowCommands(sourceDirectory: string): LoadedCommand[] {
 
 export function planCommandDeployment(
   commands: readonly LoadedCommand[],
-  destinationDirectory: string
+  destinationDirectory: string,
+  priorManagedFiles?: readonly ManagedFileEvidence[]
 ): CommandDeploymentPlan {
   const safeDestDir = assertSafeFilesystemPath(destinationDirectory, 'directory');
+  const priorByTarget = new Map<string, ManagedFileEvidence>();
+  if (priorManagedFiles) {
+    for (const f of priorManagedFiles) {
+      if (f.kind === 'commands') {
+        priorByTarget.set(canonicalTarget(f.path), f);
+      }
+    }
+  }
+
   const files: CommandFilePlan[] = commands.map(cmd => {
     const targetPath = assertSafeFilesystemPath(join(safeDestDir, cmd.filename), 'file');
     const exists = existsSync(targetPath);
@@ -76,6 +87,20 @@ export function planCommandDeployment(
         newContent: cmd.content,
       };
     }
+    const prior = priorByTarget.get(canonicalTarget(targetPath));
+    if (prior && !('absent' in prior.after)) {
+      const matchesPriorContent = prior.after.content !== undefined && currentContent === prior.after.content;
+      const matchesPriorDigest = prior.after.digest !== undefined && hash(currentContent) === prior.after.digest;
+      if (matchesPriorContent || matchesPriorDigest) {
+        return {
+          filename: cmd.filename,
+          targetPath,
+          status: 'outdated',
+          currentContent,
+          newContent: cmd.content,
+        };
+      }
+    }
     return {
       filename: cmd.filename,
       targetPath,
@@ -86,7 +111,7 @@ export function planCommandDeployment(
   });
 
   const hasDiffers = files.some(f => f.status === 'differs');
-  const hasWrites = files.some(f => f.status === 'new' || f.status === 'differs');
+  const hasWrites = files.some(f => f.status === 'new' || f.status === 'outdated' || f.status === 'differs');
 
   return {
     destinationDirectory: safeDestDir,
@@ -121,7 +146,7 @@ export function filterCommandPlanForExecution(
         before: { absent: true },
         after: { content: f.newContent, digest: hash(f.newContent) },
       });
-    } else if (f.status === 'differs' && overwriteDiffers) {
+    } else if (f.status === 'outdated' || (f.status === 'differs' && overwriteDiffers)) {
       managedEvidence.push({
         path: f.targetPath,
         kind: 'commands',
@@ -145,7 +170,7 @@ export function preflightCommandDeployment(
     if (f.status === 'new' && exists) {
       throw new Error(`File was created concurrently before deployment: ${f.targetPath}`);
     }
-    if (f.status === 'differs') {
+    if (f.status === 'differs' || f.status === 'outdated') {
       if (!exists) {
         throw new Error(`File was removed concurrently before deployment: ${f.targetPath}`);
       }
@@ -174,7 +199,7 @@ export function applyCommandDeployment(
     if (f.status === 'new' && exists) {
       throw new Error(`File was created concurrently before deployment: ${f.targetPath}`);
     }
-    if (f.status === 'differs') {
+    if (f.status === 'differs' || f.status === 'outdated') {
       if (!exists) {
         throw new Error(`File was removed concurrently before deployment: ${f.targetPath}`);
       }

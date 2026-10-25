@@ -455,7 +455,11 @@ test('original managed-file baseline is preserved across upgrades (v1 -> v2 -> u
     if (question.includes(': model ID')) return 'local/model#low';
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'yes';
-    if (question.startsWith('Overwrite ')) return 'yes';
+    if (question.startsWith('Overwrite ')) {
+      // grill-me was customized from the beginning, so it prompts to overwrite 1 file
+      assert.ok(question.includes('Overwrite 1 customized/differing command file'));
+      return 'yes';
+    }
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
     if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);

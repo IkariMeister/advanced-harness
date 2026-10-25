@@ -2,6 +2,12 @@
 
 **Status:** approved direction, 2026-10-08. Native template configuration and a real-project pilot still need validation.
 
+The eight role sources use schema-versioned OpenCode-bound policy records. Their
+`ordered-last-match` resolution and native action bindings are preserved when compiled
+to OpenCode; this is not a host-neutral enforcement model. Unversioned legacy sources
+remain read-only compatible inputs. Source migration does not change installed
+configuration, permission receipts, or other host mappings.
+
 Task-specific workflow definitions for Jira issue work, teammate PR reviews, reported
 defects, and technical debt are documented in [task workflows](task-workflows.md).
 These are definitions only, not executable commands; command names and syntax remain

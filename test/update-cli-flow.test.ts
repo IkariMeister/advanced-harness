@@ -58,6 +58,7 @@ test('update flow cancellation makes no configuration or recovery writes', async
 
   assert.equal(status, 0);
   assert.equal(readFileSync(config, 'utf8'), initialJson);
+  assert.equal(existsSync(join(project, '.opencode', 'commands', 'start-issue.md')), false);
   assert.equal(existsSync(join(root, 'recovery')), false);
   assert.ok(output.some(line => line.includes('Update cancelled. No files or receipts were modified.')));
 });
@@ -332,4 +333,226 @@ test('update flow pending-write or finalization failure retains pending recovery
   );
 
   assert.ok(output.some(line => line.includes('receipt finalization failed; pending evidence retained')));
+});
+
+test('update flow adds missing commands, records managedFiles in receipt, and uninstall removes them', async t => {
+  const root = makeTempRoot('harness-update-missing-commands-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project');
+  mkdirSync(project);
+  const config = join(project, 'opencode.json');
+  const dummy = createDummyInstalledConfig();
+  writeFileSync(config, JSON.stringify(dummy, null, 2));
+  const recovery = join(root, 'recovery');
+  const commandsDir = join(project, '.opencode', 'commands');
+
+  const answer = (question: string) => {
+    if (question.startsWith('Check remote')) return 'no';
+    if (question.includes('system prompt to latest')) return 'no';
+    if (question.startsWith('Type update')) return 'update';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+
+  const status = await runUpdateFlow(
+    { scope: 'project', project },
+    {
+      ask: async q => answer(q),
+      output: () => {},
+      error: () => {},
+      home: root,
+      recoveryDirectory: recovery,
+      runCommand: (cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : '',
+      verify: async () => ({ ok: true, checks: [] } as never),
+      printReport: () => {},
+    }
+  );
+
+  assert.equal(status, 0);
+  assert.ok(existsSync(commandsDir));
+  assert.ok(existsSync(join(commandsDir, 'start-issue.md')));
+
+  const chain = discoverReceiptChain(recovery, config, 'opencode');
+  assert.ok(chain.head);
+  assert.equal(chain.head.receipt.version, 2);
+  assert.ok(Array.isArray(chain.head.receipt.managedFiles));
+  assert.equal(chain.head.receipt.managedFiles.length, 6);
+  for (const f of chain.head.receipt.managedFiles) {
+    assert.equal(f.kind, 'commands');
+    assert.ok('absent' in f.before && f.before.absent === true);
+    assert.ok('content' in f.after && typeof f.after.content === 'string');
+    assert.ok('digest' in f.after && typeof f.after.digest === 'string');
+  }
+
+  // Now run uninstall - all added commands must be removed cleanly
+  const { runUninstallFlow } = await import('../src/uninstall-cli-flow.ts');
+  const { readReceiptForRestore } = await import('../src/receipt-lineage.ts');
+  const receipt = readReceiptForRestore(join(recovery, chain.head.file), config);
+  const currentConfig = readFileSync(config, 'utf8');
+
+  const uninstallStatus = await runUninstallFlow({
+    receipt,
+    current: currentConfig,
+    confirm: async () => 'uninstall',
+    output: () => {},
+    error: err => { throw new Error(err); },
+    save: updated => writeFileSync(config, updated, 'utf8'),
+    backupParent: join(root, 'backups'),
+    host: 'opencode',
+  });
+
+  assert.equal(uninstallStatus, 0);
+  assert.equal(existsSync(join(commandsDir, 'start-issue.md')), false);
+});
+
+test('update flow auto-updates untouched older generated commands and updates receipt after state', async t => {
+  const root = makeTempRoot('harness-update-outdated-commands-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project');
+  mkdirSync(project);
+  const config = join(project, 'opencode.json');
+  const dummy = createDummyInstalledConfig();
+  writeFileSync(config, JSON.stringify(dummy, null, 2));
+  const recovery = join(root, 'recovery');
+  const commandsDir = join(project, '.opencode', 'commands');
+  mkdirSync(commandsDir, { recursive: true });
+
+  const oldContent = '---\ndescription: Start approved work on a Jira issue\n---\nOld start issue content\n';
+  const { createHash } = await import('node:crypto');
+  const oldHash = createHash('sha256').update(oldContent).digest('hex');
+  writeFileSync(join(commandsDir, 'start-issue.md'), oldContent);
+
+  // Initial receipt with start-issue as managed file
+  const beforeConfig = readFileSync(config, 'utf8');
+  const permissionPlans = Object.fromEntries(nativeRoles.map(role => {
+    const rules = ((parseConfiguration(beforeConfig, config).agents as Record<string, Record<string, unknown>>)[role]?.permissions ?? []) as import('../src/permission-reconciliation.ts').PermissionRule[];
+    return [role, { rules, provenance: [], preview: { additions: [], removals: [], retainedObsolete: [], order: rules, conflicts: [] } }];
+  })) as never;
+  const initialReceipt = createSuccessorReceipt(
+    discoverReceiptChain(recovery, config, 'opencode'),
+    undefined,
+    beforeConfig,
+    permissionPlans,
+    undefined,
+    {
+      host: 'opencode',
+      managedFiles: [
+        {
+          path: join(commandsDir, 'start-issue.md'),
+          kind: 'commands',
+          before: { absent: true },
+          after: { content: oldContent, digest: oldHash },
+        }
+      ]
+    }
+  );
+  const pendingInitial = writePendingSuccessor(discoverReceiptChain(recovery, config, 'opencode'), initialReceipt);
+  finalizeSuccessor(pendingInitial, beforeConfig);
+
+  const answer = (question: string) => {
+    if (question.startsWith('Check remote')) return 'no';
+    if (question.includes('system prompt to latest')) return 'no';
+    if (question.includes('Replace customized workflow command')) {
+      throw new Error(`Untouched older command should not prompt for replacement: ${question}`);
+    }
+    if (question.startsWith('Type update')) return 'update';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+
+  const output: string[] = [];
+  const status = await runUpdateFlow(
+    { scope: 'project', project },
+    {
+      ask: async q => answer(q),
+      output: text => output.push(text),
+      error: text => output.push(text),
+      home: root,
+      recoveryDirectory: recovery,
+      runCommand: (cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : '',
+      verify: async () => ({ ok: true, checks: [] } as never),
+      printReport: () => {},
+    }
+  );
+
+  assert.equal(status, 0);
+  assert.ok(output.some(line => line.includes('start-issue: outdated')));
+  assert.notEqual(readFileSync(join(commandsDir, 'start-issue.md'), 'utf8'), oldContent);
+
+  const chain = discoverReceiptChain(recovery, config, 'opencode');
+  assert.ok(chain.head);
+  const headReceipt = chain.head.receipt;
+  assert.equal(headReceipt.version, 2);
+  const startIssueEntry = headReceipt.managedFiles?.find(f => f.path.endsWith('start-issue.md'));
+  assert.ok(startIssueEntry);
+  assert.ok('absent' in startIssueEntry.before && startIssueEntry.before.absent === true);
+  assert.ok('content' in startIssueEntry.after && startIssueEntry.after.content !== oldContent);
+  assert.equal(startIssueEntry.after.content, readFileSync(join(commandsDir, 'start-issue.md'), 'utf8'));
+
+  // Uninstall restores clean state (removes start-issue since before was absent)
+  const { runUninstallFlow } = await import('../src/uninstall-cli-flow.ts');
+  const { readReceiptForRestore } = await import('../src/receipt-lineage.ts');
+  const receipt = readReceiptForRestore(join(recovery, chain.head.file), config);
+  const uninstallStatus = await runUninstallFlow({
+    receipt,
+    current: readFileSync(config, 'utf8'),
+    confirm: async () => 'uninstall',
+    output: () => {},
+    error: err => { throw new Error(err); },
+    save: updated => writeFileSync(config, updated, 'utf8'),
+    backupParent: join(root, 'backups'),
+    host: 'opencode',
+  });
+  assert.equal(uninstallStatus, 0);
+  assert.equal(existsSync(join(commandsDir, 'start-issue.md')), false);
+});
+
+test('update flow partial command write failure retains pending recovery evidence', async t => {
+  const root = makeTempRoot('harness-update-partial-fail-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project');
+  mkdirSync(project);
+  const config = join(project, 'opencode.json');
+  const dummy = createDummyInstalledConfig();
+  writeFileSync(config, JSON.stringify(dummy, null, 2));
+  const recovery = join(root, 'recovery');
+  const commandsDir = join(project, '.opencode', 'commands');
+  mkdirSync(commandsDir, { recursive: true });
+
+  const answer = (question: string) => {
+    if (question.startsWith('Check remote')) return 'no';
+    if (question.includes('system prompt to latest')) return 'no';
+    if (question.startsWith('Type update')) return 'update';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+
+  const errors: string[] = [];
+  await assert.rejects(
+    runUpdateFlow(
+      { scope: 'project', project },
+      {
+        ask: async q => answer(q),
+        output: () => {},
+        error: text => errors.push(text),
+        home: root,
+        recoveryDirectory: recovery,
+        applyWorkflowCommands: (plan, selections, backupParent, onFileWritten) => {
+          // Write one command to simulate partial success
+          const target = join(commandsDir, 'start-issue.md');
+          writeFileSync(target, 'partial command written', 'utf8');
+          onFileWritten?.(target);
+          throw new Error('simulated disk full during command writes');
+        },
+        runCommand: (cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : '',
+        verify: async () => ({ ok: true, checks: [] } as never),
+        printReport: () => {},
+      }
+    ),
+    /simulated disk full/
+  );
+
+  const { readdirSync } = await import('node:fs');
+  const receipts = readdirSync(recovery).filter(n => n.endsWith('.json'));
+  assert.equal(receipts.length, 1);
+  const receipt = JSON.parse(readFileSync(join(recovery, receipts[0]!), 'utf8'));
+  assert.equal(receipt.status, 'pending');
+  assert.ok(errors.some(e => e.includes('pending recovery evidence retained')));
 });

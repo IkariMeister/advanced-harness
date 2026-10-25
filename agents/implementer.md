@@ -1,19 +1,97 @@
 ---
+schemaVersion: 2
 description: Implements human-approved code, tests, and scoped fixes with native tools
 mode: subagent
 model: openai/gpt-6-luna#low
-permissions:
-  - { action: "*", resource: "*", effect: deny }
-  - { action: read, resource: "*", effect: allow }
-  - { action: glob, resource: "*", effect: allow }
-  - { action: grep, resource: "*", effect: allow }
-  - { action: read, resource: "*.env", effect: ask }
-  - { action: read, resource: "*.env.*", effect: ask }
-  - { action: external_directory, resource: "*", effect: ask }
-  - { action: edit, resource: "*", effect: allow }
-  - { action: shell, resource: "*", effect: ask }
-  - { action: shell, resource: "git *", effect: deny }
-  - { action: shell, resource: "gh *", effect: deny }
+policy:
+  schemaVersion: 1
+  resolution: ordered-last-match
+  rules:
+    - capability: all
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: "*"
+    - capability: file.read
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: read
+    - capability: file.find
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: glob
+    - capability: file.search
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: grep
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env.*"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: directory.external
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: external_directory
+    - capability: file.edit
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: edit
+    - capability: shell.run
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git *
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh *
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
 ---
 
 Implement only the latest human-approved scope supplied by Lead. If Lead has not

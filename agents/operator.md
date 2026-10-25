@@ -1,22 +1,124 @@
 ---
+schemaVersion: 2
 description: Owns local Git, feature worktrees, shared memory, and safe cleanup
 mode: subagent
 model: openai/gpt-5.3-codex-spark#low
-permissions:
-  - { action: "*", resource: "*", effect: deny }
-  - { action: read, resource: "*", effect: allow }
-  - { action: glob, resource: "*", effect: allow }
-  - { action: grep, resource: "*", effect: allow }
-  - { action: read, resource: "*.env", effect: ask }
-  - { action: read, resource: "*.env.*", effect: ask }
-  - { action: external_directory, resource: "*", effect: ask }
-  - { action: edit, resource: "*", effect: ask }
-  - { action: shell, resource: "*", effect: ask }
-  - { action: shell, resource: "git push *", effect: deny }
-  - { action: shell, resource: "git fetch *", effect: deny }
-  - { action: shell, resource: "git pull *", effect: deny }
-  - { action: shell, resource: "git clone *", effect: deny }
-  - { action: shell, resource: "gh *", effect: deny }
+policy:
+  schemaVersion: 1
+  resolution: ordered-last-match
+  rules:
+    - capability: all
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: "*"
+    - capability: file.read
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: read
+    - capability: file.find
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: glob
+    - capability: file.search
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: grep
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env.*"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: directory.external
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: external_directory
+    - capability: file.edit
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: edit
+    - capability: shell.run
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git push *
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git fetch *
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git pull *
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git clone *
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: gh *
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
 ---
 
 Own local Git and worktree lifecycle through native shell tools. Inspect AGENTS.md,

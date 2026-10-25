@@ -4,7 +4,10 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { discoverConfigurations, modelReference, nativeRoles, type ConfigSource, type NativeRole } from './native-installer.ts';
+import { loadRoleDefinitions } from './role-definitions.ts';
+import { preflightClaudePermissions, type ClaudePermissionPreflightReport } from './claude-permission-preflight.ts';
 
 type Row = Record<string, unknown>;
 export type Snapshot = { agents: Row[]; models: Row[]; providers: Row[] };
@@ -140,11 +143,12 @@ export interface HostDiagnosticReport {
   disclosures: string[];
   rolePresets: Record<NativeRole, HostRolePreset>;
   opencodeReport?: Report;
+  sourcePolicy?: ClaudePermissionPreflightReport;
 }
 
 export async function diagnoseHost(
   host: HostId,
-  options: { project?: string; executable?: string; server?: string; globalDirectory?: string }
+  options: { project?: string; executable?: string; server?: string; globalDirectory?: string; agentsDirectory?: string }
 ): Promise<HostDiagnosticReport> {
   const cap = HOST_CAPABILITIES[host];
   const presets = HOST_MODEL_PRESETS[host];
@@ -152,6 +156,10 @@ export async function diagnoseHost(
   const project = options.project ? resolve(options.project) : undefined;
   const issues: string[] = [];
   const notes: string[] = [];
+  const sourcePolicy = host === 'claude-code'
+    ? preflightClaudePermissions(loadRoleDefinitions(options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url))))
+    : undefined;
+  if (sourcePolicy) notes.push('Source-policy compatibility is a static translation preflight, separate from installed configuration footprint; runtime enforcement is unverified.');
 
   let installed = false;
   if (host === 'opencode') {
@@ -166,7 +174,7 @@ export async function diagnoseHost(
       const res = await adapter.doctor({ project });
       issues.push(...res.issues);
       notes.push(...res.notes);
-      return { host, displayName: cap.displayName, ok: res.ok, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets };
+      return { host, displayName: cap.displayName, ok: res.ok && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, ...(sourcePolicy ? { sourcePolicy } : {}) };
     }
     return {
       host,
@@ -177,6 +185,7 @@ export async function diagnoseHost(
       notes,
       disclosures: cap.disclosures,
       rolePresets: presets,
+      ...(sourcePolicy ? { sourcePolicy } : {}),
     };
   }
 
@@ -195,27 +204,30 @@ export async function diagnoseHost(
     notes.push(`${cap.displayName} configuration footprint detected.`);
   }
 
-  notes.push(`Subagent isolation model: ${cap.isolationModel}`);
-  notes.push(`Permission enforcement model: ${cap.permissionModel}`);
-  notes.push(`gh pr merge guard: ${cap.ghPrMergeGuard}`);
+  if (cap.isolationModel === 'not-deployed') notes.push(`Native role isolation is not deployed; planned host integration is tracked separately.`);
+  else notes.push(`Subagent isolation model: ${cap.isolationModel}`);
+  if (cap.permissionModel === 'not-deployed') notes.push(`Native permission enforcement is not deployed; workflow artifacts do not establish permissions.`);
+  else notes.push(`Permission enforcement model: ${cap.permissionModel}`);
+    notes.push(`gh pr merge guard disclosure: ${cap.ghPrMergeGuard}`);
 
   const adapter = getHostAdapter(host);
   if (adapter?.doctor) {
     const res = await adapter.doctor({ project });
     issues.push(...res.issues);
     notes.push(...res.notes);
-    return { host, displayName: cap.displayName, ok: res.ok, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets };
+    return { host, displayName: cap.displayName, ok: res.ok && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, ...(sourcePolicy ? { sourcePolicy } : {}) };
   }
 
   return {
     host,
     displayName: cap.displayName,
-    ok: issues.length === 0,
+    ok: issues.length === 0 && sourcePolicy?.status !== 'blocked',
     installed,
     issues,
     notes,
     disclosures: cap.disclosures,
     rolePresets: presets,
+    ...(sourcePolicy ? { sourcePolicy } : {}),
   };
 }
 
@@ -229,6 +241,13 @@ export function printHostDiagnosticReport(report: HostDiagnosticReport): void {
   if (report.issues.length) {
     console.log('Issues:');
     for (const issue of report.issues) console.log(`  FAIL: ${issue}`);
+  }
+  if (report.sourcePolicy) {
+    console.log(`Source-policy compatibility: ${report.sourcePolicy.status.toUpperCase()} (runtime verified: no; separate from installation footprint)`);
+    for (const finding of report.sourcePolicy.findings) {
+      console.log(`  ${finding.code} [${finding.status}] ${finding.role} rules ${finding.ruleIndexes.map(index => index + 1).join(',')} (zero-based ${finding.ruleIndexes.join(',')}): ${finding.message}`);
+      for (const url of finding.referenceUrls) console.log(`    Reference: ${url}`);
+    }
   }
   console.log('Fixed Role / Model Presets:');
   for (const role of nativeRoles) {

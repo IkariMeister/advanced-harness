@@ -119,7 +119,7 @@ test('HOST_MODEL_PRESETS covers all 8 roles across all 5 hosts', () => {
   assert.equal(HOST_MODEL_PRESETS.cursor.planner.model, 'high-reasoning');
 });
 
-test('HOST_CAPABILITIES provides accurate disclosures and gh pr merge guards for each host', () => {
+test('HOST_CAPABILITIES distinguishes deployed OpenCode enforcement from deferred host plans', () => {
   for (const host of supportedHosts) {
     const cap = HOST_CAPABILITIES[host];
     assert.ok(cap, `Missing capability definition for ${host}`);
@@ -131,10 +131,13 @@ test('HOST_CAPABILITIES provides accurate disclosures and gh pr merge guards for
   }
 
   assert.equal(HOST_CAPABILITIES.opencode.isolationModel, 'native-subagents');
-  assert.equal(HOST_CAPABILITIES['claude-code'].isolationModel, 'native-subagents');
-  assert.equal(HOST_CAPABILITIES.antigravity.isolationModel, 'native-subagents');
-  assert.equal(HOST_CAPABILITIES.codex.isolationModel, 'cli-profile-exec');
-  assert.equal(HOST_CAPABILITIES.cursor.isolationModel, 'in-session-phases');
+  for (const host of ['claude-code', 'antigravity', 'codex', 'cursor'] as const) {
+    assert.equal(HOST_CAPABILITIES[host].isolationModel, 'not-deployed');
+    assert.equal(HOST_CAPABILITIES[host].permissionModel, 'not-deployed');
+    assert.match(HOST_CAPABILITIES[host].ghPrMergeGuard, /No .* merge guard is deployed/);
+    assert.ok(HOST_CAPABILITIES[host].disclosures.some(note => /not deployed|no native role files/i.test(note)));
+  }
+  assert.equal(HOST_CAPABILITIES.cursor.configLocations.project.includes('.cursor/skills'), true);
 });
 
 test('detectInstalledHosts accurately scans project and home config files', () => {
@@ -288,14 +291,14 @@ test('multi-host receipt lineage: host isolation, managedFiles restore, and asse
   }
 });
 
-test('installer and update flows support --host selection and multi-host dispatch', async () => {
+test('installer and update flows fail closed for non-OpenCode hosts before adapters or writes', async () => {
   const tempProject = createTempDir('flow-multihost-test');
   const tempHome = createTempDir('flow-home');
   const logs: string[] = [];
   const ask = async (_q: string, suggested?: string) => suggested ?? '';
 
   try {
-    // Test installer flow for non-opencode host (e.g. antigravity)
+    // Registered adapters are not evidence of production deployment support.
     let installedHost: string | undefined;
     clearRegisteredAdapters();
     registerHostAdapter({
@@ -312,9 +315,9 @@ test('installer and update flows support --host selection and multi-host dispatc
         home: tempHome
       }
     );
-    assert.equal(exitCode, 0);
-    assert.equal(installedHost, 'antigravity');
-    assert.ok(logs.some(l => l.includes('Host Configuration: Google Antigravity')));
+    assert.equal(exitCode, 2);
+    assert.equal(installedHost, undefined);
+    assert.ok(logs.some(l => l.includes('issue #44')));
 
     // Test update flow for non-opencode host
     let updatedHost: string | undefined;
@@ -333,8 +336,8 @@ test('installer and update flows support --host selection and multi-host dispatc
         home: tempHome
       }
     );
-    assert.equal(updateExitCode, 0);
-    assert.equal(updatedHost, 'antigravity');
+    assert.equal(updateExitCode, 2);
+    assert.equal(updatedHost, undefined);
   } finally {
     clearRegisteredAdapters();
     rmSync(tempProject, { recursive: true, force: true });
