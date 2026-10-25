@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parseDocument } from 'yaml';
 import { stringify as stringifyYaml } from 'yaml';
 import { saveInstallation } from './native-installer.ts';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
+import type { ManagedFileEvidence } from './receipt-lineage.ts';
 
 export const workflowCommandIds = ['start-issue', 'review-pr', 'address-pr-feedback', 'report-defect', 'assess-debt', 'grill-me'] as const;
 export type WorkflowCommandId = typeof workflowCommandIds[number];
@@ -134,30 +136,101 @@ export function compileWorkflowArtifacts(
   return { artifacts, diagnostics: [...new Set(diagnostics)], deploymentReady: hosts.length > 0 && hosts.every(host => host === 'opencode') && diagnostics.length === 0, runtimeVerified: false };
 }
 
-export interface WorkflowCommandDeploymentItem { id: WorkflowCommandId; target: string; current?: string; updated: string; status: 'missing' | 'current' | 'customized' }
+export interface WorkflowCommandDeploymentItem { id: WorkflowCommandId; target: string; current?: string; updated: string; status: 'missing' | 'current' | 'outdated' | 'customized' }
+
+const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+const canonicalTarget = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 
 /** Plan project/global OpenCode command outputs without modifying user files. */
-export function planOpenCodeCommandDeployment(sourceDirectory: string, outputDirectory: string): WorkflowCommandDeploymentItem[] {
+export function planOpenCodeCommandDeployment(
+  sourceDirectory: string,
+  outputDirectory: string,
+  priorManagedFiles?: readonly ManagedFileEvidence[]
+): WorkflowCommandDeploymentItem[] {
   const commands = loadWorkflowCommands(sourceDirectory);
+  const priorByTarget = new Map<string, ManagedFileEvidence>();
+  if (priorManagedFiles) {
+    for (const f of priorManagedFiles) {
+      if (f.kind === 'commands') {
+        priorByTarget.set(canonicalTarget(f.path), f);
+      }
+    }
+  }
+
   return workflowCommandIds.map(id => {
     const target = join(outputDirectory, `${id}.md`);
     assertSafeFilesystemPath(target, 'file');
     const current = existsSync(target) ? readFileSync(target, 'utf8') : undefined;
     const updated = emitOpenCodeCommand(commands[id]);
-    return { id, target, ...(current === undefined ? {} : { current }), updated, status: current === undefined ? 'missing' : current === updated ? 'current' : 'customized' };
+    if (current === undefined) {
+      return { id, target, updated, status: 'missing' };
+    }
+    if (current === updated) {
+      return { id, target, current, updated, status: 'current' };
+    }
+    const prior = priorByTarget.get(canonicalTarget(target));
+    if (prior && !('absent' in prior.after)) {
+      const matchesPriorContent = prior.after.content !== undefined && current === prior.after.content;
+      const matchesPriorDigest = prior.after.digest !== undefined && hash(current) === prior.after.digest;
+      if (matchesPriorContent || matchesPriorDigest) {
+        return { id, target, current, updated, status: 'outdated' };
+      }
+    }
+    return { id, target, current, updated, status: 'customized' };
   });
 }
 
-/** Apply only previewed selections; customized outputs require explicit caller selection. */
-export function applyOpenCodeCommandDeployment(items: readonly WorkflowCommandDeploymentItem[], selected: readonly WorkflowCommandId[], backupParent: string, onFileWritten?: (path: string, backup?: string) => void): { updated: string[]; backups: string[] } {
+/** Preflight command targets before any writes occur. */
+export function preflightOpenCodeCommandDeployment(
+  items: readonly WorkflowCommandDeploymentItem[],
+  selected: readonly WorkflowCommandId[]
+): void {
   const selectedSet = new Set(selected);
-  const updates: string[] = [], backups: string[] = [];
   for (const item of items) {
     if (!selectedSet.has(item.id) || item.status === 'current') continue;
     assertSafeFilesystemPath(item.target, 'file');
     const current = existsSync(item.target) ? readFileSync(item.target, 'utf8') : undefined;
-    if (current !== item.current) throw new Error(`Workflow command changed after preview: ${item.target}. Review again; no command output was written.`);
+    if (current !== item.current) {
+      throw new Error(`Workflow command changed after preview: ${item.target}. Review again; no command output was written.`);
+    }
   }
+}
+
+/** Construct merged ManagedFileEvidence array preserving earliest before state. */
+export function buildOpenCodeCommandManagedEvidence(
+  items: readonly WorkflowCommandDeploymentItem[],
+  selected: readonly WorkflowCommandId[],
+  existingManagedFiles: readonly ManagedFileEvidence[] = []
+): ManagedFileEvidence[] {
+  const selectedSet = new Set(selected);
+  const combined: ManagedFileEvidence[] = structuredClone([...existingManagedFiles]);
+
+  for (const item of items) {
+    if (!selectedSet.has(item.id) || item.status === 'current') continue;
+    const newEvidence: ManagedFileEvidence = {
+      path: item.target,
+      kind: 'commands',
+      before: item.current === undefined
+        ? { absent: true }
+        : { content: item.current, digest: hash(item.current) },
+      after: { content: item.updated, digest: hash(item.updated) },
+    };
+    const existing = combined.find(m => canonicalTarget(m.path) === canonicalTarget(item.target));
+    if (existing) {
+      existing.after = structuredClone(newEvidence.after);
+    } else {
+      combined.push(newEvidence);
+    }
+  }
+
+  return combined;
+}
+
+/** Apply only previewed selections; customized outputs require explicit caller selection. */
+export function applyOpenCodeCommandDeployment(items: readonly WorkflowCommandDeploymentItem[], selected: readonly WorkflowCommandId[], backupParent: string, onFileWritten?: (path: string, backup?: string) => void): { updated: string[]; backups: string[] } {
+  preflightOpenCodeCommandDeployment(items, selected);
+  const selectedSet = new Set(selected);
+  const updates: string[] = [], backups: string[] = [];
   for (const item of items) {
     if (!selectedSet.has(item.id) || item.status === 'current') continue;
     const backup = saveInstallation(item.target, item.current, item.updated, backupParent);

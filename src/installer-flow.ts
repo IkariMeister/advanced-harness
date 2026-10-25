@@ -125,13 +125,15 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const deployCommandsAnswer = (await ask('Install workflow slash commands (/start-issue, /review-pr, etc.)?', 'yes')).trim();
   const shouldDeployCommands = deployCommandsAnswer === '' || /^(y|yes)$/i.test(deployCommandsAnswer);
 
+  const existingManagedFiles = history.head?.receipt.version === 2 && history.head.receipt.managedFiles ? history.head.receipt.managedFiles : [];
+
   let commandFilesToWrite: CommandFilePlan[] = [];
   let commandEvidence: ReturnType<typeof filterCommandPlanForExecution>['managedEvidence'] = [];
   let commandPlan: CommandDeploymentPlan | undefined;
 
   if (shouldDeployCommands) {
     const loadedCommands = loadWorkflowCommands(commandsSourceDir);
-    commandPlan = planCommandDeployment(loadedCommands, commandsTargetDir);
+    commandPlan = planCommandDeployment(loadedCommands, commandsTargetDir, existingManagedFiles);
     let overwriteDiffers = false;
     if (commandPlan.hasDiffers) {
       const differingCount = commandPlan.files.filter(f => f.status === 'differs').length;
@@ -143,7 +145,6 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     commandEvidence = filtered.managedEvidence;
   }
 
-  const existingManagedFiles = history.head?.receipt.version === 2 && history.head.receipt.managedFiles ? history.head.receipt.managedFiles : [];
   // Merge newly managed files with previous managed files, preserving original `before` baseline
   const combinedManagedFiles = structuredClone(existingManagedFiles);
   for (const ev of commandEvidence) {
@@ -177,7 +178,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     output(`Workflow commands target: ${commandsTargetDir}`);
     for (const f of commandPlan.files) {
       const willWrite = commandFilesToWrite.some(w => w.filename === f.filename);
-      output(`  ${f.filename}: ${f.status}${willWrite && f.status === 'differs' ? ' (overwrite)' : (!willWrite && f.status === 'differs' ? ' (preserved)' : '')}`);
+      output(`  ${f.filename}: ${f.status}${f.status === 'outdated' ? ' (update)' : willWrite && f.status === 'differs' ? ' (overwrite)' : (!willWrite && f.status === 'differs' ? ' (preserved)' : '')}`);
     }
   } else {
     output('Workflow commands: skipped.');
@@ -209,7 +210,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     const commandFilesUnchanged = commandFilesToWrite.every(f => {
       const exists = existsSync(f.targetPath);
       if (f.status === 'new') return !exists;
-      if (f.status === 'differs') return exists && readFileSync(f.targetPath, 'utf8') === f.currentContent;
+      if (f.status === 'differs' || f.status === 'outdated') return exists && readFileSync(f.targetPath, 'utf8') === f.currentContent;
       return true;
     });
 

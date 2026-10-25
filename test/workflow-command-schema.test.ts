@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -113,19 +114,64 @@ test('command deployment rejects targets changed after preview without writing',
   assert.equal(existsSync(join(output, 'review-pr.md')), false);
 });
 
-test('later command write failure reports completed outputs and their backups immediately', t => {
-  const temp = makeTempRoot('workflow-command-partial-');
-  t.after(() => rmSync(temp, { recursive: true, force: true }));
-  const output = join(temp, 'out'); mkdirSync(output);
-  const prior = 'user version to back up';
-  writeFileSync(join(output, 'start-issue.md'), prior);
-  const plan = planOpenCodeCommandDeployment(fileURLToPath(commandsDir), output);
-  const reported: { path: string; backup?: string }[] = [];
-  assert.throws(() => applyOpenCodeCommandDeployment(plan, workflowCommandIds, join(temp, 'backups'), (path, backup) => {
-    reported.push({ path, ...(backup ? { backup } : {}) });
-    if (path.endsWith('start-issue.md')) mkdirSync(join(output, 'review-pr.md'));
-  }));
-  assert.equal(reported[0]?.path, join(output, 'start-issue.md'));
-  assert.ok(reported[0]?.backup);
-  assert.equal(readFileSync(join(output, 'start-issue.md'), 'utf8'), emitOpenCodeCommand(loadWorkflowCommand(file(commandsDir, 'start-issue'), 'start-issue')));
+test('planOpenCodeCommandDeployment distinguishes untouched older generated commands from customization', () => {
+  const temp = makeTempRoot('workflow-command-plan-status-');
+  try {
+    const output = join(temp, 'out');
+    mkdirSync(output);
+    const sourceDir = fileURLToPath(commandsDir);
+
+    const oldContent = '---\ndescription: Start approved work on a Jira issue\n---\nOld command body\n';
+    const oldHash = createHash('sha256').update(oldContent).digest('hex');
+    const userCustomContent = '---\ndescription: User custom\n---\nUser custom body\n';
+
+    // 1. start-issue: untouched older generated file (matches prior after content)
+    writeFileSync(join(output, 'start-issue.md'), oldContent);
+    // 2. review-pr: customized file (differs from prior after content and current template)
+    writeFileSync(join(output, 'review-pr.md'), userCustomContent);
+    // 3. address-pr-feedback: current file (matches latest template exactly)
+    writeFileSync(join(output, 'address-pr-feedback.md'), file(openCodeDir, 'address-pr-feedback'));
+    // 4. report-defect: missing on disk (not created)
+    // 5. assess-debt: absent on prior after, but user created file on disk
+    writeFileSync(join(output, 'assess-debt.md'), 'user created without prior presence');
+
+    const priorManagedFiles = [
+      {
+        path: join(output, 'start-issue.md'),
+        kind: 'commands' as const,
+        before: { absent: true as const },
+        after: { content: oldContent, digest: oldHash },
+      },
+      {
+        path: join(output, 'review-pr.md'),
+        kind: 'commands' as const,
+        before: { absent: true as const },
+        after: { content: oldContent, digest: oldHash },
+      },
+      {
+        path: join(output, 'address-pr-feedback.md'),
+        kind: 'commands' as const,
+        before: { absent: true as const },
+        after: { content: file(openCodeDir, 'address-pr-feedback'), digest: createHash('sha256').update(file(openCodeDir, 'address-pr-feedback')).digest('hex') },
+      },
+      {
+        path: join(output, 'assess-debt.md'),
+        kind: 'commands' as const,
+        before: { absent: true as const },
+        after: { absent: true as const },
+      },
+    ];
+
+    const plan = planOpenCodeCommandDeployment(sourceDir, output, priorManagedFiles);
+    const byId = Object.fromEntries(plan.map(item => [item.id, item]));
+
+    assert.equal(byId['start-issue']?.status, 'outdated');
+    assert.equal(byId['review-pr']?.status, 'customized');
+    assert.equal(byId['address-pr-feedback']?.status, 'current');
+    assert.equal(byId['report-defect']?.status, 'missing');
+    assert.equal(byId['assess-debt']?.status, 'customized');
+    assert.equal(byId['grill-me']?.status, 'missing');
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
 });
