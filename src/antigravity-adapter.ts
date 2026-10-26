@@ -1,8 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
-import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, writePendingSuccessor, type ManagedFileEvidence } from './receipt-lineage.ts';
+import {
+  createSuccessorReceipt,
+  discoverReceiptChain,
+  finalizeSuccessor,
+  recoverFailedSuccessor,
+  revalidatePendingSuccessor,
+  writePendingSuccessor,
+  type ManagedFileEvidence,
+} from './receipt-lineage.ts';
 import { saveInstallation, type Ask } from './native-installer.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import {
@@ -33,6 +42,17 @@ export interface AntigravityDoctorResult {
   notes: string[];
 }
 
+export interface AntigravityDeploymentItem {
+  relativePath: string;
+  absolutePath: string;
+  content: string;
+  currentContent: string | undefined;
+  status: 'new' | 'current' | 'outdated' | 'customized';
+  kind: 'rules' | 'commands' | 'config' | 'instructions';
+}
+
+const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+
 export function planAntigravityDeployment(
   scope: 'project' | 'global',
   projectRoot: string | undefined,
@@ -42,13 +62,19 @@ export function planAntigravityDeployment(
   priorManagedFiles?: readonly ManagedFileEvidence[]
 ): {
   targetConfig: string;
-  filesToDeploy: Array<{ relativePath: string; absolutePath: string; content: string; kind: 'rules' | 'commands' | 'config' | 'instructions' }>;
+  filesToDeploy: AntigravityDeploymentItem[];
 } {
   const roles = loadRoleDefinitions(agentsDir);
   const leadRule = compileLeadOrchestrationRule(roles);
   const commands = loadWorkflowCommands(commandsDir);
 
-  const filesToDeploy: Array<{ relativePath: string; absolutePath: string; content: string; kind: 'rules' | 'commands' | 'config' | 'instructions' }> = [];
+  const rawFiles: Array<{
+    relativePath: string;
+    absolutePath: string;
+    content: string;
+    kind: 'rules' | 'commands' | 'config' | 'instructions';
+    isMergedConfig?: boolean;
+  }> = [];
 
   let targetConfig: string;
   let guardScriptPath: string;
@@ -76,7 +102,7 @@ export function planAntigravityDeployment(
     guardScriptPath = join(projectRoot, '.agents', 'scripts', 'antigravity-merge-guard.mjs');
 
     // 1. Lead rule
-    filesToDeploy.push({
+    rawFiles.push({
       relativePath: leadRule.path,
       absolutePath: join(projectRoot, leadRule.path),
       content: leadRule.content,
@@ -86,7 +112,7 @@ export function planAntigravityDeployment(
     // 2. Workflow skills (all 6)
     for (const cmdId of workflowCommandIds) {
       const skill = compileAntigravitySkill(cmdId, commands[cmdId], 'project');
-      filesToDeploy.push({
+      rawFiles.push({
         relativePath: skill.relativePath,
         absolutePath: join(projectRoot, skill.relativePath),
         content: skill.content,
@@ -95,7 +121,7 @@ export function planAntigravityDeployment(
     }
 
     // 3. Standalone merge guard script (.agents/scripts/antigravity-merge-guard.mjs)
-    filesToDeploy.push({
+    rawFiles.push({
       relativePath: '.agents/scripts/antigravity-merge-guard.mjs',
       absolutePath: guardScriptPath,
       content: getAntigravityMergeGuardMjsSource(),
@@ -105,22 +131,24 @@ export function planAntigravityDeployment(
     // 4. hooks.json with resolved absolute path to guard script
     const existingHooks = existsSync(targetConfig) ? readFileSync(targetConfig, 'utf8') : undefined;
     const hooksMerged = mergeAntigravityHooksConfig(existingHooks, guardScriptPath, getPriorContent(targetConfig));
-    filesToDeploy.push({
+    rawFiles.push({
       relativePath: '.agents/hooks.json',
       absolutePath: targetConfig,
       content: JSON.stringify(hooksMerged, null, 2) + '\n',
       kind: 'config',
+      isMergedConfig: true,
     });
 
     // 5. mcp_config.json
     const mcpTarget = join(projectRoot, '.agents', 'mcp_config.json');
     const existingMcp = existsSync(mcpTarget) ? readFileSync(mcpTarget, 'utf8') : undefined;
     const mcpMerged = mergeAntigravityMcpConfig(existingMcp, {}, getPriorContent(mcpTarget));
-    filesToDeploy.push({
+    rawFiles.push({
       relativePath: '.agents/mcp_config.json',
       absolutePath: mcpTarget,
       content: JSON.stringify(mcpMerged, null, 2) + '\n',
       kind: 'config',
+      isMergedConfig: true,
     });
   } else {
     // Global scope: ~/.gemini/config/
@@ -130,7 +158,7 @@ export function planAntigravityDeployment(
 
     // 1. Lead rule in global rules
     const leadRulePath = join(baseDir, 'rules', 'advanced-harness-lead.md');
-    filesToDeploy.push({
+    rawFiles.push({
       relativePath: 'rules/advanced-harness-lead.md',
       absolutePath: leadRulePath,
       content: leadRule.content,
@@ -140,7 +168,7 @@ export function planAntigravityDeployment(
     // 2. Workflow skills (all 6) in global skills directory
     for (const cmdId of workflowCommandIds) {
       const skill = compileAntigravitySkill(cmdId, commands[cmdId], 'global');
-      filesToDeploy.push({
+      rawFiles.push({
         relativePath: skill.relativePath,
         absolutePath: join(baseDir, skill.relativePath),
         content: skill.content,
@@ -149,7 +177,7 @@ export function planAntigravityDeployment(
     }
 
     // 3. Standalone merge guard script (scripts/antigravity-merge-guard.mjs)
-    filesToDeploy.push({
+    rawFiles.push({
       relativePath: 'scripts/antigravity-merge-guard.mjs',
       absolutePath: guardScriptPath,
       content: getAntigravityMergeGuardMjsSource(),
@@ -159,26 +187,79 @@ export function planAntigravityDeployment(
     // 4. hooks.json
     const existingHooks = existsSync(targetConfig) ? readFileSync(targetConfig, 'utf8') : undefined;
     const hooksMerged = mergeAntigravityHooksConfig(existingHooks, guardScriptPath, getPriorContent(targetConfig));
-    filesToDeploy.push({
+    rawFiles.push({
       relativePath: 'hooks.json',
       absolutePath: targetConfig,
       content: JSON.stringify(hooksMerged, null, 2) + '\n',
       kind: 'config',
+      isMergedConfig: true,
     });
 
     // 5. mcp_config.json
     const mcpTarget = join(baseDir, 'mcp_config.json');
     const existingMcp = existsSync(mcpTarget) ? readFileSync(mcpTarget, 'utf8') : undefined;
     const mcpMerged = mergeAntigravityMcpConfig(existingMcp, {}, getPriorContent(mcpTarget));
-    filesToDeploy.push({
+    rawFiles.push({
       relativePath: 'mcp_config.json',
       absolutePath: mcpTarget,
       content: JSON.stringify(mcpMerged, null, 2) + '\n',
       kind: 'config',
+      isMergedConfig: true,
     });
   }
 
+  const filesToDeploy: AntigravityDeploymentItem[] = rawFiles.map(f => {
+    assertSafeFilesystemPath(f.absolutePath, 'file');
+    const currentContent = existsSync(f.absolutePath) ? readFileSync(f.absolutePath, 'utf8') : undefined;
+    let status: AntigravityDeploymentItem['status'];
+
+    if (currentContent === undefined) {
+      status = 'new';
+    } else if (currentContent === f.content) {
+      status = 'current';
+    } else if (f.isMergedConfig) {
+      // Merged config already resolved and preserved unrelated settings
+      status = 'outdated';
+    } else {
+      const canonical = process.platform === 'win32' ? resolve(f.absolutePath).toLowerCase() : resolve(f.absolutePath);
+      const prior = priorByPath.get(canonical);
+      if (prior && !('absent' in prior.after)) {
+        const matchesPriorContent = prior.after.content !== undefined && currentContent === prior.after.content;
+        const matchesPriorDigest = prior.after.digest !== undefined && hash(currentContent) === prior.after.digest;
+        if (matchesPriorContent || matchesPriorDigest) {
+          status = 'outdated';
+        } else {
+          status = 'customized';
+        }
+      } else {
+        // File exists on disk but was never managed by a prior receipt
+        status = 'customized';
+      }
+    }
+
+    return {
+      relativePath: f.relativePath,
+      absolutePath: f.absolutePath,
+      content: f.content,
+      currentContent,
+      status,
+      kind: f.kind,
+    };
+  });
+
   return { targetConfig, filesToDeploy };
+}
+
+export function preflightAntigravityDeployment(files: readonly AntigravityDeploymentItem[]): void {
+  for (const f of files) {
+    assertSafeFilesystemPath(f.absolutePath, 'file');
+    const currentOnDisk = existsSync(f.absolutePath) ? readFileSync(f.absolutePath, 'utf8') : undefined;
+    if (currentOnDisk !== f.currentContent) {
+      throw new Error(
+        `Configuration or artifact changed while confirmation was open: ${f.relativePath}. Rerun the installer; nothing was overwritten.`
+      );
+    }
+  }
 }
 
 export async function installAntigravity(options: AntigravityAdapterInstallOptions): Promise<number> {
@@ -202,10 +283,29 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
 
   const plan = planAntigravityDeployment(scope, project, home, agentsDir, commandsDir, priorManagedFiles);
 
+  const selectedFilesToWrite: AntigravityDeploymentItem[] = [];
+
   output('\nFiles to deploy:');
   for (const f of plan.filesToDeploy) {
-    const exists = existsSync(f.absolutePath);
-    output(`  ${f.relativePath} (${exists ? 'update/preserve' : 'new'})`);
+    const statusLabel = f.status === 'new'
+      ? 'new'
+      : f.status === 'current'
+      ? 'current (up to date)'
+      : f.status === 'outdated'
+      ? 'update'
+      : 'customized/unowned';
+    output(`  ${f.relativePath} (${statusLabel})`);
+
+    if (f.status === 'new' || f.status === 'outdated') {
+      selectedFilesToWrite.push(f);
+    } else if (f.status === 'customized') {
+      const answer = (await ask(`Overwrite customized/unowned file ${f.relativePath}? (yes/no)`, 'no')).trim().toLowerCase();
+      if (answer === 'yes' || answer === 'y') {
+        selectedFilesToWrite.push(f);
+      } else {
+        output(`  Preserving customized file: ${f.relativePath}`);
+      }
+    }
   }
 
   const confirm = (await ask('\nConfirm installation of Antigravity harness configuration? (yes/no)', 'yes')).trim().toLowerCase();
@@ -214,25 +314,22 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     return 1;
   }
 
-  // Preflight all paths safely
-  for (const f of plan.filesToDeploy) {
-    assertSafeFilesystemPath(f.absolutePath, 'file');
-  }
+  // Preflight all planned files against snapshot taken before confirmation
+  preflightAntigravityDeployment(plan.filesToDeploy);
 
   const targetInitial = existsSync(plan.targetConfig) ? readFileSync(plan.targetConfig, 'utf8') : undefined;
-
   const targetFileInPlan = plan.filesToDeploy.find(f => f.absolutePath === plan.targetConfig);
   const targetFinal = targetFileInPlan?.content ?? (targetInitial ?? '');
 
   const newManagedEvidence: ManagedFileEvidence[] = [];
-
-  for (const f of plan.filesToDeploy) {
-    const current = existsSync(f.absolutePath) ? readFileSync(f.absolutePath, 'utf8') : undefined;
+  for (const f of selectedFilesToWrite) {
     newManagedEvidence.push({
       path: f.absolutePath,
       kind: f.kind,
-      before: current === undefined ? { absent: true } : { content: current },
-      after: { content: f.content },
+      before: f.currentContent === undefined
+        ? { absent: true }
+        : { content: f.currentContent, digest: hash(f.currentContent) },
+      after: { content: f.content, digest: hash(f.content) },
     });
   }
 
@@ -250,6 +347,14 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     }
   }
 
+  const configChanged = targetFinal !== (targetInitial ?? '');
+  const hasWrites = selectedFilesToWrite.length > 0;
+
+  if (!hasWrites && !configChanged) {
+    output('Configuration and artifacts already match; no files, backups, or receipts were modified.');
+    return 0;
+  }
+
   const successor = createSuccessorReceipt(
     snapshot,
     targetInitial,
@@ -260,10 +365,29 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   );
 
   const pending = writePendingSuccessor(snapshot, successor);
+  const receiptPath = pending.path;
 
-  for (const f of plan.filesToDeploy) {
-    const current = existsSync(f.absolutePath) ? readFileSync(f.absolutePath, 'utf8') : undefined;
-    saveInstallation(f.absolutePath, current, f.content, backupParent);
+  try {
+    revalidatePendingSuccessor(pending);
+    preflightAntigravityDeployment(plan.filesToDeploy);
+
+    for (const f of selectedFilesToWrite) {
+      saveInstallation(f.absolutePath, f.currentContent, f.content, backupParent);
+    }
+  } catch (err) {
+    const targetUnchanged = (existsSync(plan.targetConfig) ? readFileSync(plan.targetConfig, 'utf8') : undefined) === targetInitial;
+    const allFilesUnchanged = selectedFilesToWrite.every(f => {
+      const exists = existsSync(f.absolutePath);
+      if (f.currentContent === undefined) return !exists;
+      return exists && readFileSync(f.absolutePath, 'utf8') === f.currentContent;
+    });
+
+    if (targetUnchanged && allFilesUnchanged) {
+      recoverFailedSuccessor(pending, targetInitial);
+    } else {
+      error(`Configuration or artifact writes may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
+    }
+    throw err;
   }
 
   finalizeSuccessor(pending, targetFinal);

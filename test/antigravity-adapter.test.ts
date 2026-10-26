@@ -299,3 +299,164 @@ test('installAntigravity in global scope deploys skills and script into global c
     rmSync(tempHome, { recursive: true, force: true });
   }
 });
+
+test('installAntigravity preserves customized/unowned rules, skills, and guard scripts by default', async () => {
+  const tempProject = makeTempRoot('ag-project-preserve-');
+  const tempHome = makeTempRoot('ag-home-preserve-');
+  const recoveryDir = join(tempHome, 'backups');
+
+  // Pre-create customized rule, skill, and script
+  const rulePath = join(tempProject, '.agents', 'rules', 'advanced-harness-lead.md');
+  const skillPath = join(tempProject, '.agents', 'skills', 'start-issue', 'SKILL.md');
+  const scriptPath = join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs');
+
+  mkdirSync(join(tempProject, '.agents', 'rules'), { recursive: true });
+  mkdirSync(join(tempProject, '.agents', 'skills', 'start-issue'), { recursive: true });
+  mkdirSync(join(tempProject, '.agents', 'scripts'), { recursive: true });
+
+  writeFileSync(rulePath, '# Custom Lead Rule\nuser custom content\n');
+  writeFileSync(skillPath, '---\nname: start-issue\ndescription: custom\n---\ncustom skill body\n');
+  writeFileSync(scriptPath, '// custom merge guard script\nprocess.exit(0);\n');
+
+  const askedQuestions: string[] = [];
+
+  try {
+    const exitCode = await installAntigravity({
+      scope: 'project',
+      project: tempProject,
+      home: tempHome,
+      recoveryDirectory: recoveryDir,
+      agentsDirectory: rolesDir,
+      commandsDirectory: commandsDir,
+      ask: async (question, suggested) => {
+        askedQuestions.push(question);
+        // Default answer for customized files is 'no', final confirmation is 'yes'
+        return suggested ?? 'no';
+      },
+      output: () => {},
+      error: () => {},
+    });
+
+    assert.equal(exitCode, 0);
+
+    // Verify prompts were asked for customized files
+    assert.ok(askedQuestions.some(q => q.includes('Overwrite customized/unowned file') && q.includes('advanced-harness-lead.md')));
+    assert.ok(askedQuestions.some(q => q.includes('Overwrite customized/unowned file') && q.includes('start-issue')));
+    assert.ok(askedQuestions.some(q => q.includes('Overwrite customized/unowned file') && q.includes('antigravity-merge-guard.mjs')));
+
+    // Verify files were preserved untouched
+    assert.equal(readFileSync(rulePath, 'utf8'), '# Custom Lead Rule\nuser custom content\n');
+    assert.equal(readFileSync(skillPath, 'utf8'), '---\nname: start-issue\ndescription: custom\n---\ncustom skill body\n');
+    assert.equal(readFileSync(scriptPath, 'utf8'), '// custom merge guard script\nprocess.exit(0);\n');
+
+    // Verify non-customized skills and configs were still deployed
+    assert.ok(existsSync(join(tempProject, '.agents', 'skills', 'review-pr', 'SKILL.md')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'hooks.json')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'mcp_config.json')));
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('installAntigravity overwrites customized files when explicitly approved and updates receipt-owned files', async () => {
+  const tempProject = makeTempRoot('ag-project-overwrite-');
+  const tempHome = makeTempRoot('ag-home-overwrite-');
+  const recoveryDir = join(tempHome, 'backups');
+
+  // Pre-create customized skill
+  const skillPath = join(tempProject, '.agents', 'skills', 'start-issue', 'SKILL.md');
+  mkdirSync(join(tempProject, '.agents', 'skills', 'start-issue'), { recursive: true });
+  writeFileSync(skillPath, '---\nname: start-issue\ndescription: custom\n---\ncustom skill body\n');
+
+  try {
+    // 1. Install with explicit 'yes' to overwrite customized skill
+    const exitCode = await installAntigravity({
+      scope: 'project',
+      project: tempProject,
+      home: tempHome,
+      recoveryDirectory: recoveryDir,
+      agentsDirectory: rolesDir,
+      commandsDirectory: commandsDir,
+      ask: async (question) => {
+        if (question.includes('Overwrite customized/unowned file')) return 'yes';
+        return 'yes';
+      },
+      output: () => {},
+      error: () => {},
+    });
+
+    assert.equal(exitCode, 0);
+    const updatedContent = readFileSync(skillPath, 'utf8');
+    assert.ok(!updatedContent.includes('custom skill body'), 'Custom content should have been overwritten');
+    assert.ok(updatedContent.includes('---'), 'Should contain generated skill frontmatter');
+
+    // 2. Second run without changes should detect 'current' (idempotent, no writes)
+    let promptAsked = false;
+    const secondCode = await installAntigravity({
+      scope: 'project',
+      project: tempProject,
+      home: tempHome,
+      recoveryDirectory: recoveryDir,
+      agentsDirectory: rolesDir,
+      commandsDirectory: commandsDir,
+      ask: async () => {
+        promptAsked = true;
+        return 'yes';
+      },
+      output: () => {},
+      error: () => {},
+    });
+
+    assert.equal(secondCode, 0);
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('installAntigravity aborts and writes nothing if files diverge during confirmation', async () => {
+  const tempProject = makeTempRoot('ag-project-concurrent-');
+  const tempHome = makeTempRoot('ag-home-concurrent-');
+  const recoveryDir = join(tempHome, 'backups');
+
+  // Pre-create lead rule
+  const rulePath = join(tempProject, '.agents', 'rules', 'advanced-harness-lead.md');
+  mkdirSync(join(tempProject, '.agents', 'rules'), { recursive: true });
+  writeFileSync(rulePath, '# Initial content\n');
+
+  try {
+    await assert.rejects(
+      async () => {
+        await installAntigravity({
+          scope: 'project',
+          project: tempProject,
+          home: tempHome,
+          recoveryDirectory: recoveryDir,
+          agentsDirectory: rolesDir,
+          commandsDirectory: commandsDir,
+          ask: async (question) => {
+            if (question.includes('Confirm installation')) {
+              // Mutate a planned file while confirmation prompt is open
+              writeFileSync(rulePath, '# Mutated concurrently while prompt was open\n');
+            }
+            return 'yes';
+          },
+          output: () => {},
+          error: () => {},
+        });
+      },
+      /Configuration or artifact changed while confirmation was open/
+    );
+
+    // Verify concurrently changed file was NOT overwritten
+    assert.equal(readFileSync(rulePath, 'utf8'), '# Mutated concurrently while prompt was open\n');
+
+    // Verify no pending receipt was left behind
+    const backupEntries = existsSync(recoveryDir) ? rmSync : null;
+    assert.ok(!existsSync(join(tempProject, '.agents', 'hooks.json')), 'hooks.json must not have been created');
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
