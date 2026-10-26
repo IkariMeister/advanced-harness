@@ -39,7 +39,7 @@ const validated = new WeakMap<object, { snapshot: ReceiptSnapshot; serialized: s
 export function validateV2Receipt(value: unknown, target: string, allowPending = false): V2Receipt {
   if (!record(value) || Object.keys(value).some(k => !['version', 'id', 'target', 'complete', 'status', 'provenance', 'changes', 'createdContainers', 'predecessor', 'permissions', 'harnessVersion', 'host', 'managedFiles'].includes(k))) throw new Error('Unsupported v2 receipt fields.');
   const { id, predecessor, permissions, harnessVersion, host, managedFiles, ...base } = value;
-  validateLegacyReceipt({ ...base, version: 1 }, target, allowPending);
+  validateLegacyReceipt({ ...base, version: 1, ...(managedFiles ? { managedFiles } : {}) }, target, allowPending);
   if (value.version !== 2 || value.provenance !== 'installer' || !['pending', 'complete'].includes(String(value.status)) || typeof id !== 'string' || !uuid.test(id) || !Array.isArray(permissions)) throw new Error('Invalid v2 receipt identity/status.');
   if (host !== undefined && !isSupportedHost(host)) throw new Error(`Invalid receipt host: ${String(host)}`);
   if (managedFiles !== undefined) {

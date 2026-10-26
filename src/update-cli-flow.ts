@@ -38,7 +38,7 @@ import {
 } from './workflow-commands.ts';
 import { formatClaudePermissionPreflight, preflightClaudePermissions } from './claude-permission-preflight.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
-import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, type HostId } from './host-registry.ts';
+import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
 
 export interface UpdateFlowOptions {
   scope?: string;
@@ -95,17 +95,36 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     throw new Error('Project directory does not exist or is not a directory. Select a valid directory before updating.');
   }
 
-  if (selectedHosts.some(host => host !== 'opencode')) {
-    for (const host of selectedHosts.filter(host => host !== 'opencode')) {
-      const issue = host === 'claude-code' ? '#43' : host === 'antigravity' ? '#44' : host === 'codex' ? '#45' : '#46';
+  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity'];
+  const unsupportedHosts = selectedHosts.filter(host => !supportedNativeHosts.includes(host));
+
+  if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
+    for (const host of selectedHosts.filter(host => host !== 'opencode' && host !== 'antigravity')) {
+      const issue = host === 'claude-code' ? '#43' : host === 'codex' ? '#45' : '#46';
       errorOutput(`Update blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
     }
+    if (selectedHosts.length > 1 && unsupportedHosts.length === 0) {
+      errorOutput('Multi-host simultaneous update is not supported. Update each host deliberately.');
+    }
     if (selectedHosts.includes('claude-code')) {
-    const definitions = loadRoleDefinitions(deps.agentsDirectory ?? join(harnessRoot, 'agents'));
-    const report = preflightClaudePermissions(definitions);
-    for (const line of formatClaudePermissionPreflight(report)) errorOutput(line);
+      const definitions = loadRoleDefinitions(deps.agentsDirectory ?? join(harnessRoot, 'agents'));
+      const report = preflightClaudePermissions(definitions);
+      for (const line of formatClaudePermissionPreflight(report)) errorOutput(line);
     }
     return 2;
+  }
+
+  if (selectedHosts.includes('antigravity')) {
+    const adapter = getHostAdapter('antigravity');
+    if (!adapter || !adapter.update) throw new Error('Antigravity host adapter update is not available.');
+    const result = await adapter.update({
+      scope: scope as 'project' | 'global',
+      project,
+      ask,
+      output,
+      error: errorOutput,
+    });
+    return typeof result === 'number' ? result : 0;
   }
 
   const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));

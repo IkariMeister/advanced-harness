@@ -22,7 +22,7 @@ Global scope is the default suggestion when no `--project` is supplied. Every se
 
 Integration setup currently configures OpenCode only. `--host opencode` (the default) is supported; unsupported hosts and `all`/multi-host selections fail before discovery, checks, or writes. This does not imply that integration adapters exist for the other installation hosts.
 
-Workflow source compilation can emit deterministic host-specific command/skill artifacts, but that library output is not installation. Native role, permission, MCP, and runtime integrations for Claude Code, Antigravity, Codex, and Cursor are tracked in issues #43–#46. Installer and updater reject any selection containing one of those hosts before invoking adapters or mutating files; do not treat generated caller-bound invocation artifacts as installed reusable commands.
+Workflow source compilation can emit deterministic host-specific command/skill artifacts, but that library output is not installation. Native role, permission, MCP, and runtime integrations for Claude Code, Codex, and Cursor are tracked in issues #43, #45, and #46 (Antigravity native adapter is implemented in issue #44). Installer and updater reject any selection containing an unsupported host before invoking adapters or mutating files; do not treat generated caller-bound invocation artifacts as installed reusable commands.
 
 - GitHub: **`gh`**, **`mcp`**, or **`none`**.
 - Jira: existing MCP alias, supplied new server, or **`none`**.

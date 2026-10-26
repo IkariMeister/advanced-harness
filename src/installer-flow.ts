@@ -8,7 +8,7 @@ import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from './receipt-lineage.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 
-import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, type HostId } from './host-registry.ts';
+import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 import { formatClaudePermissionPreflight, preflightClaudePermissions } from './claude-permission-preflight.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
@@ -52,10 +52,17 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const project = scope === 'project' ? resolve(cwd, expand(options.project ?? ((await ask('Project directory', cwd)) || cwd))) : undefined;
   if (project && (!existsSync(project) || !statSync(project).isDirectory())) throw new Error('Project directory does not exist or is not a directory. Create/select it before installing.');
 
-  if (selectedHosts.some(host => host !== 'opencode')) {
-    for (const host of selectedHosts.filter(host => host !== 'opencode')) {
-      const issue = host === 'claude-code' ? '#43' : host === 'antigravity' ? '#44' : host === 'codex' ? '#45' : '#46';
+  // Hosts that require native adapter delegation or are blocked
+  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity'];
+  const unsupportedHosts = selectedHosts.filter(host => !supportedNativeHosts.includes(host));
+
+  if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
+    for (const host of selectedHosts.filter(host => host !== 'opencode' && host !== 'antigravity')) {
+      const issue = host === 'claude-code' ? '#43' : host === 'codex' ? '#45' : '#46';
       errorOutput(`Installation blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
+    }
+    if (selectedHosts.length > 1 && unsupportedHosts.length === 0) {
+      errorOutput('Multi-host simultaneous installation is not supported. Install each host deliberately.');
     }
     if (selectedHosts.includes('claude-code')) {
       const definitions = loadRoleDefinitions(deps.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -63,6 +70,19 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
       for (const line of formatClaudePermissionPreflight(report)) errorOutput(line);
     }
     return 2;
+  }
+
+  if (selectedHosts.includes('antigravity')) {
+    const adapter = getHostAdapter('antigravity');
+    if (!adapter) throw new Error('Antigravity host adapter is not registered.');
+    const result = await adapter.install({
+      scope: scope as 'project' | 'global',
+      project,
+      ask,
+      output,
+      error: errorOutput,
+    });
+    return typeof result === 'number' ? result : 0;
   }
 
   const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));

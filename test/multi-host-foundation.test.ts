@@ -131,7 +131,11 @@ test('HOST_CAPABILITIES distinguishes deployed OpenCode enforcement from deferre
   }
 
   assert.equal(HOST_CAPABILITIES.opencode.isolationModel, 'native-subagents');
-  for (const host of ['claude-code', 'antigravity', 'codex', 'cursor'] as const) {
+  assert.equal(HOST_CAPABILITIES.antigravity.isolationModel, 'lead-driven-subagents');
+  assert.equal(HOST_CAPABILITIES.antigravity.permissionModel, 'hooks-and-subagent-tool-groups');
+  assert.match(HOST_CAPABILITIES.antigravity.ghPrMergeGuard, /PreToolUse/);
+
+  for (const host of ['claude-code', 'codex', 'cursor'] as const) {
     assert.equal(HOST_CAPABILITIES[host].isolationModel, 'not-deployed');
     assert.equal(HOST_CAPABILITIES[host].permissionModel, 'not-deployed');
     assert.match(HOST_CAPABILITIES[host].ghPrMergeGuard, /No .* merge guard is deployed/);
@@ -291,7 +295,7 @@ test('multi-host receipt lineage: host isolation, managedFiles restore, and asse
   }
 });
 
-test('installer and update flows fail closed for non-OpenCode hosts before adapters or writes', async () => {
+test('installer and update flows fail closed for non-implemented hosts before adapters or writes', async () => {
   const tempProject = createTempDir('flow-multihost-test');
   const tempHome = createTempDir('flow-home');
   const logs: string[] = [];
@@ -302,12 +306,12 @@ test('installer and update flows fail closed for non-OpenCode hosts before adapt
     let installedHost: string | undefined;
     clearRegisteredAdapters();
     registerHostAdapter({
-      host: 'antigravity',
-      install: async () => { installedHost = 'antigravity'; }
+      host: 'claude-code',
+      install: async () => { installedHost = 'claude-code'; }
     });
 
     const exitCode = await runInstallerFlow(
-      { scope: 'project', project: tempProject, host: 'antigravity' },
+      { scope: 'project', project: tempProject, host: 'claude-code' },
       {
         ask,
         output: msg => logs.push(msg),
@@ -317,18 +321,18 @@ test('installer and update flows fail closed for non-OpenCode hosts before adapt
     );
     assert.equal(exitCode, 2);
     assert.equal(installedHost, undefined);
-    assert.ok(logs.some(l => l.includes('issue #44')));
+    assert.ok(logs.some(l => l.includes('issue #43')));
 
-    // Test update flow for non-opencode host
+    // Test update flow for non-opencode/non-antigravity host
     let updatedHost: string | undefined;
     registerHostAdapter({
-      host: 'antigravity',
+      host: 'claude-code',
       install: async () => {},
-      update: async () => { updatedHost = 'antigravity'; }
+      update: async () => { updatedHost = 'claude-code'; }
     });
 
     const updateExitCode = await runUpdateFlow(
-      { scope: 'project', project: tempProject, host: 'antigravity' },
+      { scope: 'project', project: tempProject, host: 'claude-code' },
       {
         ask,
         output: msg => logs.push(msg),

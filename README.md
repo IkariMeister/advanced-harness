@@ -18,7 +18,7 @@ The TypeScript code covers native installation, diagnostics, project-context set
 
 ## Scope
 
-- Host-neutral workflow artifacts compile deterministically for OpenCode V2, Claude Code, Google Antigravity, OpenAI Codex, and Cursor IDE. Native role/permission/MCP/runtime deployment is OpenCode-only; Claude Code, Antigravity, Codex, and Cursor integrations are tracked separately as issues #43–#46. Installer/update fail closed for any selection containing an unsupported host, including `all`, before adapter invocation or file mutation.
+- Host-neutral workflow artifacts compile deterministically for OpenCode V2, Claude Code, Google Antigravity, OpenAI Codex, and Cursor IDE. Native role/permission/MCP/runtime deployment is supported for OpenCode V2 and Google Antigravity; Claude Code, OpenAI Codex, and Cursor IDE integrations are tracked separately as issues #43, #45, and #46. Installer/update fail closed for any selection containing an unsupported host, including `all`, before adapter invocation or file mutation.
 - Interactive project/global installation across projects, preserving host-neutral `AGENTS.md` and enabling coexistence without hosts clobbering each other.
 - Customizable agents, explicit model/reasoning assignments, and machine-local provider mappings.
 - Host-scoped V2 receipts, backups, and uninstall tracking footprint per `(target, host)`.
@@ -41,7 +41,7 @@ The 8-role engineering workflow provides fixed default role and model presets ta
 | **OpenAI Codex**| `openai/gpt-6-astra` | `openai/gpt-5.3-codex-spark` | `openai/gpt-6-luna` | `openai/gpt-6.1-sol` |
 | **Cursor IDE**  | `standard` | `fast` | `standard` | `high-reasoning` |
 
-OpenCode's native role rules explicitly deny `gh pr merge` / `gh.exe pr merge`. Non-OpenCode workflow artifact compilation does not deploy native role permissions, MCP configuration, or runtime enforcement; install/update remain blocked for those hosts pending issues #43–#46. Claude Code source-policy preflight findings remain separately reported by `harness:doctor`, without claims of runtime enforcement. Other hosts' merge protections are not inferred from this OpenCode rule.
+OpenCode's native role rules explicitly deny `gh pr merge` / `gh.exe pr merge`. Antigravity enforces `gh pr merge` denial deterministically via a `PreToolUse` lifecycle hook (`scripts/antigravity-merge-guard.ts`). Non-OpenCode/non-Antigravity workflow artifact compilation does not deploy native role permissions, MCP configuration, or runtime enforcement; install/update remain blocked for those hosts pending issues #43, #45, and #46. Claude Code source-policy preflight findings remain separately reported by `harness:doctor`, without claims of runtime enforcement. Other hosts' merge protections are not inferred from this OpenCode/Antigravity rule.
 
 These assignments are preferences to validate against the active connection, not evidence of access. Spark was rejected by the tested ChatGPT connection. Setup must ask for an explicitly approved replacement or supported connection before Operator/External can be used; no silent fallback. LiteLLM endpoints, deployment IDs, and reasoning mappings must be supplied explicitly. Selecting a primary agent does not necessarily change the session's selected model; verify both.
 
