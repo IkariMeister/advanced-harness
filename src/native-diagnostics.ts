@@ -148,11 +148,11 @@ export interface HostDiagnosticReport {
 
 export async function diagnoseHost(
   host: HostId,
-  options: { project?: string; executable?: string; server?: string; globalDirectory?: string; agentsDirectory?: string }
+  options: { project?: string; executable?: string; server?: string; globalDirectory?: string; agentsDirectory?: string; home?: string }
 ): Promise<HostDiagnosticReport> {
   const cap = HOST_CAPABILITIES[host];
   const presets = HOST_MODEL_PRESETS[host];
-  const home = homedir();
+  const home = options.home ?? homedir();
   const project = options.project ? resolve(options.project) : undefined;
   const issues: string[] = [];
   const notes: string[] = [];

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { nativeRoles, type Ask, type NativeRole } from './native-installer.ts';
+import { installAntigravity, diagnoseAntigravity } from './antigravity-adapter.ts';
 
 export const supportedHosts = ['opencode', 'claude-code', 'antigravity', 'codex', 'cursor'] as const;
 export type HostId = typeof supportedHosts[number];
@@ -108,7 +109,7 @@ export const HOST_MODEL_PRESETS: Record<HostId, Record<NativeRole, HostRolePrese
 export interface HostCapabilityProfile {
   host: HostId;
   displayName: string;
-  isolationModel: 'native-subagents' | 'cli-profile-exec' | 'in-session-phases' | 'not-deployed';
+  isolationModel: 'native-subagents' | 'lead-driven-subagents' | 'cli-profile-exec' | 'in-session-phases' | 'not-deployed';
   permissionModel: 'native-allow-ask-deny' | 'settings-permissions-and-disallowed-tools' | 'hooks-and-subagent-tool-groups' | 'execpolicy-and-sandbox' | 'command-allowlist-and-prompt-phases' | 'not-deployed';
   configLocations: {
     project: string[];
@@ -156,16 +157,17 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
   antigravity: {
     host: 'antigravity',
     displayName: 'Google Antigravity',
-    isolationModel: 'not-deployed',
-    permissionModel: 'not-deployed',
+    isolationModel: 'lead-driven-subagents',
+    permissionModel: 'hooks-and-subagent-tool-groups',
     configLocations: {
-      project: ['.agents/rules', '.agents/skills', 'mcp_config.json', 'hooks.json'],
-      global: ['~/.gemini/antigravity/mcp_config.json', '~/.gemini/antigravity/hooks.json'],
+      project: ['.agents/rules', '.agents/skills', '.agents/hooks.json', '.agents/mcp_config.json'],
+      global: ['~/.gemini/config/hooks.json', '~/.gemini/config/mcp_config.json'],
     },
-    ghPrMergeGuard: 'No Antigravity merge guard is deployed; native integration is tracked in issue #44.',
+    ghPrMergeGuard: 'PreToolUse lifecycle hook (scripts/antigravity-merge-guard.mjs) blocks gh pr merge commands with hard deny',
     disclosures: [
-      'Workflow artifacts can be compiled as .agents/skills/<name>/SKILL.md; artifacts are not installed by this harness.',
-      'Native roles, permissions, hooks, MCP configuration, and runtime behavior are not deployed; integration is tracked in issue #44.',
+      'Lead orchestrates 7 child roles dynamically via define_subagent/invoke_subagent rules.',
+      'Role/tool-group ownership (External MCP, Implementer writes) is instruction-level enforced via Lead rules.',
+      'gh pr merge is strictly blocked by PreToolUse lifecycle hook.',
     ],
   },
   codex: {
@@ -238,6 +240,7 @@ export function detectInstalledHosts(
 
   // 3. Antigravity detection
   if (
+    existsSync(join(home, '.gemini', 'config')) ||
     existsSync(join(home, '.gemini', 'antigravity')) ||
     (project && (
       existsSync(join(project, '.agents')) ||
@@ -273,8 +276,8 @@ export function detectInstalledHosts(
 
 export interface HostAdapter {
   host: HostId;
-  install(options: { project?: string | undefined; global?: boolean | undefined; scope: 'project' | 'global' }): Promise<void>;
-  update?(options: { project?: string | undefined; global?: boolean | undefined; scope: 'project' | 'global' }): Promise<void>;
+  install(options: { project?: string | undefined; global?: boolean | undefined; scope: 'project' | 'global'; ask?: Ask; output?: (msg: string) => void; error?: (msg: string) => void }): Promise<void | number>;
+  update?(options: { project?: string | undefined; global?: boolean | undefined; scope: 'project' | 'global'; ask?: Ask; output?: (msg: string) => void; error?: (msg: string) => void }): Promise<void | number>;
   doctor?(options: { project?: string | undefined; global?: boolean | undefined }): Promise<{ ok: boolean; issues: string[]; notes: string[] }>;
 }
 
@@ -283,6 +286,38 @@ const registeredAdapters = new Map<HostId, HostAdapter>();
 export function registerHostAdapter(adapter: HostAdapter): void {
   registeredAdapters.set(adapter.host, adapter);
 }
+
+// Built-in registration for Antigravity host adapter
+registerHostAdapter({
+  host: 'antigravity',
+  async install(options) {
+    const ask: Ask = options.ask ?? (async (_q, s) => s ?? '');
+    const output = options.output ?? ((msg: string) => console.log(msg));
+    const error = options.error ?? ((msg: string) => console.error(msg));
+    return await installAntigravity({
+      scope: options.scope,
+      project: options.project,
+      ask,
+      output,
+      error,
+    });
+  },
+  async update(options) {
+    const ask: Ask = options.ask ?? (async (_q, s) => s ?? '');
+    const output = options.output ?? ((msg: string) => console.log(msg));
+    const error = options.error ?? ((msg: string) => console.error(msg));
+    return await installAntigravity({
+      scope: options.scope,
+      project: options.project,
+      ask,
+      output,
+      error,
+    });
+  },
+  async doctor(options) {
+    return await diagnoseAntigravity({ project: options.project });
+  },
+});
 
 export function getHostAdapter(host: HostId): HostAdapter | undefined {
   return registeredAdapters.get(host);

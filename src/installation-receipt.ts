@@ -163,7 +163,7 @@ export function validateLegacyReceipt(value: unknown, target: string, allowPendi
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Malformed installation receipt.');
   const receipt = value as InstallationReceipt | AdoptionReceipt;
   const status = (value as Record<string, unknown>).status;
-  const topKeys = ['version','target','complete','status','provenance','changes','createdContainers'];
+  const topKeys = ['version','target','complete','status','provenance','changes','createdContainers','managedFiles'];
   const sameTarget = typeof receipt.target === 'string' && (process.platform === 'win32' ? resolve(receipt.target).toLowerCase() === resolve(target).toLowerCase() : resolve(receipt.target) === resolve(target));
   if (Object.keys(value).some(key => !topKeys.includes(key)) || typeof receipt.target !== 'string' || !receipt.target || receipt.version !== receiptVersion || (receipt.complete !== true && !(allowPending && status === 'pending' && receipt.complete === false)) || (status !== undefined && !['pending','complete'].includes(String(status))) || !['installer', 'user-adopted'].includes(receipt.provenance) || !sameTarget || !Array.isArray(receipt.changes) || !Array.isArray(receipt.createdContainers)) throw new Error('Receipt is incomplete, unsupported, or targets a different configuration.');
   if (receipt.provenance === 'user-adopted' && (receipt.complete !== true || status !== undefined) || receipt.provenance === 'installer' && status === 'pending' && receipt.complete !== false || receipt.provenance === 'installer' && status === 'complete' && receipt.complete !== true) throw new Error('Receipt status and provenance are inconsistent.');
@@ -185,7 +185,7 @@ export function validateLegacyReceipt(value: unknown, target: string, allowPendi
   }
   if (receipt.createdContainers.some(path => path.length === 2 && !receipt.changes.some(change => change.path.length === 3 && change.path[0] === 'agents' && change.path[1] === path[1]))) throw new Error('Created role container has no attributable field changes.');
   if (receipt.createdContainers.some(path => path.length === 1 && path[0] === 'agents' && !receipt.createdContainers.some(child => child.length === 2 && child[0] === 'agents'))) throw new Error('Created agents container has no attributable created role entries.');
-  if (status !== 'pending' && !receipt.changes.length) throw new Error('Completed receipt must contain field changes.');
+  if (status !== 'pending' && !receipt.changes.length && !('managedFiles' in receipt && Array.isArray((receipt as any).managedFiles) && (receipt as any).managedFiles.length > 0)) throw new Error('Completed receipt must contain field changes.');
   return receipt;
 }
 
