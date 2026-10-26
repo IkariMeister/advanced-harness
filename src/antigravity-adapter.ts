@@ -341,28 +341,47 @@ export async function diagnoseAntigravity(options: { project?: string | undefine
       try {
         const text = readFileSync(hookPath, 'utf8');
         const parsed = JSON.parse(text);
-        if (parsed['gh-pr-merge-guard']?.PreToolUse) {
-          notes.push(`${label} PreToolUse merge guard hook is configured.`);
-          const hookList = parsed['gh-pr-merge-guard'].PreToolUse;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          issues.push(`Malformed ${label} hooks.json: root value must be a JSON object.`);
+        } else if (!parsed['gh-pr-merge-guard'] || typeof parsed['gh-pr-merge-guard'] !== 'object' || Array.isArray(parsed['gh-pr-merge-guard'])) {
+          issues.push(`${label} hooks.json missing valid gh-pr-merge-guard definition.`);
+        } else {
+          const guard = parsed['gh-pr-merge-guard'] as Record<string, unknown>;
+          if (guard.enabled !== undefined && guard.enabled !== true) {
+            issues.push(`${label} hooks.json gh-pr-merge-guard is disabled.`);
+          }
+
+          const hookList = guard.PreToolUse;
           let referencedScript: string | undefined;
-          if (Array.isArray(hookList)) {
+
+          if (Array.isArray(hookList) && hookList.length > 0) {
             for (const entry of hookList) {
-              if (Array.isArray(entry.hooks)) {
+              if (entry && typeof entry === 'object' && entry.matcher === 'run_command' && Array.isArray(entry.hooks) && entry.hooks.length > 0) {
                 for (const h of entry.hooks) {
-                  if (typeof h.command === 'string') {
-                    const match = /node\s+"([^"]+)"|node\s+([^\s]+)/.exec(h.command);
-                    if (match) referencedScript = match[1] ?? match[2];
+                  if (h && typeof h === 'object' && (h.type === undefined || h.type === 'command') && typeof h.command === 'string') {
+                    const match = /^\s*node(?:\.exe)?\s+(?:"([^"]+)"|'([^']+)'|([^\s"']+))\s*$/i.exec(h.command);
+                    const candidate = match ? (match[1] ?? match[2] ?? match[3]) : undefined;
+                    if (candidate && candidate.toLowerCase().endsWith('antigravity-merge-guard.mjs')) {
+                      referencedScript = candidate;
+                      break;
+                    }
                   }
                 }
               }
+              if (referencedScript) break;
             }
           }
-          const actualScript = referencedScript ? resolve(isProject ? baseDir : baseDir, referencedScript) : scriptPath;
-          if (!existsSync(actualScript)) {
-            issues.push(`${label} merge-guard executable referenced in hooks.json does not exist: ${actualScript}`);
+
+          if (!referencedScript) {
+            issues.push(`${label} hooks.json gh-pr-merge-guard PreToolUse is missing an enabled run_command handler for antigravity-merge-guard.mjs.`);
+          } else {
+            const actualScript = resolve(dirname(hookPath), referencedScript);
+            if (!existsSync(actualScript)) {
+              issues.push(`${label} merge-guard executable referenced in hooks.json does not exist: ${actualScript}`);
+            } else {
+              notes.push(`${label} PreToolUse merge guard hook is configured.`);
+            }
           }
-        } else {
-          issues.push(`${label} hooks.json missing gh-pr-merge-guard definition.`);
         }
       } catch (err) {
         issues.push(`Malformed ${label} hooks.json: ${err instanceof Error ? err.message : String(err)}`);

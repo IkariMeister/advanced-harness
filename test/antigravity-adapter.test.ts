@@ -176,6 +176,53 @@ test('diagnoseAntigravity reports ok: false when uninstalled or when required ar
     const diagBrokenHooks = await diagnoseAntigravity({ project: tempProject, home: tempHome });
     assert.equal(diagBrokenHooks.ok, false);
     assert.ok(diagBrokenHooks.issues.some(i => i.includes('Malformed')));
+
+    // 5. Disabled gh-pr-merge-guard -> doctor must report ok: false
+    writeFileSync(
+      join(tempProject, '.agents', 'hooks.json'),
+      JSON.stringify({
+        'gh-pr-merge-guard': {
+          enabled: false,
+          PreToolUse: [
+            {
+              matcher: 'run_command',
+              hooks: [{ command: `node "${join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs')}"` }],
+            },
+          ],
+        },
+      })
+    );
+    // recreate script so only the hook configuration is flawed
+    writeFileSync(join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs'), 'console.log();');
+    const diagDisabled = await diagnoseAntigravity({ project: tempProject, home: tempHome });
+    assert.equal(diagDisabled.ok, false);
+    assert.ok(diagDisabled.issues.some(i => i.includes('gh-pr-merge-guard is disabled')));
+
+    // 6. Empty PreToolUse -> doctor must report ok: false without substituting a default script
+    writeFileSync(
+      join(tempProject, '.agents', 'hooks.json'),
+      JSON.stringify({
+        'gh-pr-merge-guard': {
+          PreToolUse: [],
+        },
+      })
+    );
+    const diagEmptyPreToolUse = await diagnoseAntigravity({ project: tempProject, home: tempHome });
+    assert.equal(diagEmptyPreToolUse.ok, false);
+    assert.ok(diagEmptyPreToolUse.issues.some(i => i.includes('missing an enabled run_command handler')));
+
+    // 7. Wrong matcher or empty hooks -> doctor must report ok: false
+    writeFileSync(
+      join(tempProject, '.agents', 'hooks.json'),
+      JSON.stringify({
+        'gh-pr-merge-guard': {
+          PreToolUse: [{ matcher: 'run_command', hooks: [] }],
+        },
+      })
+    );
+    const diagEmptyHooks = await diagnoseAntigravity({ project: tempProject, home: tempHome });
+    assert.equal(diagEmptyHooks.ok, false);
+    assert.ok(diagEmptyHooks.issues.some(i => i.includes('missing an enabled run_command handler')));
   } finally {
     rmSync(tempProject, { recursive: true, force: true });
     rmSync(tempHome, { recursive: true, force: true });
