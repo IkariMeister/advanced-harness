@@ -113,14 +113,34 @@ test('mergeAntigravityHooksConfig preserves unrelated hooks and rejects malforme
   // Malformed JSON throws
   assert.throws(() => mergeAntigravityHooksConfig('{ bad json', '/path/to/guard.mjs'), /Malformed existing hooks\.json/);
 
-  // Conflicting unowned definition throws
-  const conflict = JSON.stringify({
+  // Conflicting unowned definition throws even if matcher is run_command
+  const conflictCustomCommand = JSON.stringify({
+    'gh-pr-merge-guard': {
+      PreToolUse: [{ matcher: 'run_command', hooks: [{ command: './custom-script.sh' }] }],
+    },
+  });
+  assert.throws(
+    () => mergeAntigravityHooksConfig(conflictCustomCommand, '/path/to/guard.mjs'),
+    /Conflicting unowned "gh-pr-merge-guard"/
+  );
+
+  // Disabled unowned definition throws
+  const conflictDisabled = JSON.stringify({
     'gh-pr-merge-guard': {
       enabled: false,
       PreToolUse: [],
     },
   });
-  assert.throws(() => mergeAntigravityHooksConfig(conflict, '/path/to/guard.mjs'), /Conflicting unowned/);
+  assert.throws(
+    () => mergeAntigravityHooksConfig(conflictDisabled, '/path/to/guard.mjs'),
+    /Conflicting unowned "gh-pr-merge-guard"/
+  );
+
+  // Updating an attributable receipt-owned definition succeeds
+  const priorOwned = compileAntigravityHooks('/old/path/guard.mjs');
+  const priorOwnedText = JSON.stringify(priorOwned, null, 2);
+  const updatedFromPrior = mergeAntigravityHooksConfig(priorOwnedText, '/new/path/guard.mjs', priorOwnedText);
+  assert.ok(updatedFromPrior['gh-pr-merge-guard'].PreToolUse?.[0]?.hooks[0]?.command.includes('/new/path/guard.mjs'));
 });
 
 test('mergeAntigravityMcpConfig preserves unrelated servers and top-level fields', () => {

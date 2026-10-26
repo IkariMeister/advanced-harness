@@ -297,6 +297,33 @@ export function compileAntigravitySkill(
 }
 
 /**
+ * Deep equality comparison for JSON-compatible values independent of object key order.
+ */
+export function isDeepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!isDeepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  const keysA = Object.keys(a as Record<string, unknown>);
+  const keysB = Object.keys(b as Record<string, unknown>);
+  if (keysA.length !== keysB.length) return false;
+
+  for (const key of keysA) {
+    if (!Object.hasOwn(b as Record<string, unknown>, key)) return false;
+    if (!isDeepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key])) return false;
+  }
+
+  return true;
+}
+
+/**
  * Merges hooks.json while strictly preserving all unrelated hooks and top-level properties.
  * Rejects ambiguous conflicts or malformed JSON before writing.
  */
@@ -327,17 +354,22 @@ export function mergeAntigravityHooksConfig(
   // Check if gh-pr-merge-guard already exists and conflicts
   if (Object.hasOwn(existing, 'gh-pr-merge-guard')) {
     const existingHook = existing['gh-pr-merge-guard'];
-    const matchesDesired = JSON.stringify(existingHook) === JSON.stringify(desiredHook['gh-pr-merge-guard']);
-    const matchesPrior = priorOwnedContent !== undefined && existingText === priorOwnedContent;
+    const matchesDesired = isDeepEqual(existingHook, desiredHook['gh-pr-merge-guard']);
 
-    // Check if existing is a valid harness-configured gh-pr-merge-guard hook
-    const isHarnessHook = existingHook && typeof existingHook === 'object' &&
-      Array.isArray((existingHook as Record<string, unknown>).PreToolUse) &&
-      ((existingHook as Record<string, unknown>).PreToolUse as unknown[]).some(
-        entry => entry && typeof entry === 'object' && (entry as Record<string, unknown>).matcher === 'run_command'
-      );
+    let priorOwnedGuard: unknown;
+    if (priorOwnedContent !== undefined && priorOwnedContent.trim()) {
+      try {
+        const priorParsed = JSON.parse(priorOwnedContent);
+        if (priorParsed && typeof priorParsed === 'object' && !Array.isArray(priorParsed)) {
+          priorOwnedGuard = (priorParsed as Record<string, unknown>)['gh-pr-merge-guard'];
+        }
+      } catch {
+        // Ignore unparseable prior evidence
+      }
+    }
+    const matchesPrior = priorOwnedGuard !== undefined && isDeepEqual(existingHook, priorOwnedGuard);
 
-    if (!matchesDesired && !matchesPrior && !isHarnessHook) {
+    if (!matchesDesired && !matchesPrior) {
       throw new Error('Conflicting unowned "gh-pr-merge-guard" definition in existing hooks.json; resolve conflict before installation.');
     }
   }
@@ -388,11 +420,24 @@ export function mergeAntigravityMcpConfig(
     existingServers = { ...(existing.mcpServers as Record<string, unknown>) };
   }
 
+  let priorOwnedServers: Record<string, unknown> | undefined;
+  if (priorOwnedContent !== undefined && priorOwnedContent.trim()) {
+    try {
+      const priorParsed = JSON.parse(priorOwnedContent);
+      if (priorParsed && typeof priorParsed === 'object' && !Array.isArray(priorParsed) &&
+          priorParsed.mcpServers && typeof priorParsed.mcpServers === 'object' && !Array.isArray(priorParsed.mcpServers)) {
+        priorOwnedServers = priorParsed.mcpServers as Record<string, unknown>;
+      }
+    } catch {
+      // Ignore unparseable prior evidence
+    }
+  }
+
   for (const [id, desired] of Object.entries(desiredServers)) {
     if (Object.hasOwn(existingServers, id)) {
       const current = existingServers[id];
-      const matchesDesired = JSON.stringify(current) === JSON.stringify(desired);
-      const matchesPrior = priorOwnedContent !== undefined && existingText === priorOwnedContent;
+      const matchesDesired = isDeepEqual(current, desired);
+      const matchesPrior = priorOwnedServers !== undefined && Object.hasOwn(priorOwnedServers, id) && isDeepEqual(current, priorOwnedServers[id]);
       if (!matchesDesired && !matchesPrior) {
         throw new Error(`Conflicting unowned MCP server "${id}" in existing mcp_config.json; resolve conflict before installation.`);
       }
