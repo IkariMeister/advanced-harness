@@ -78,6 +78,10 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     const result = await adapter.install({
       scope: scope as 'project' | 'global',
       project,
+      home,
+      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
+      agentsDirectory: deps.agentsDirectory,
+      commandsDirectory: deps.commandsDirectory,
       ask,
       output,
       error: errorOutput,

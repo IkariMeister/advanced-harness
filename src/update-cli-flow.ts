@@ -120,6 +120,10 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     const result = await adapter.update({
       scope: scope as 'project' | 'global',
       project,
+      home,
+      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
+      agentsDirectory: deps.agentsDirectory,
+      commandsDirectory: deps.workflowCommandsDirectory,
       ask,
       output,
       error: errorOutput,

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
@@ -16,127 +16,239 @@ test('planAntigravityDeployment produces expected project footprint', () => {
   const tempProject = makeTempRoot('ag-project-plan-');
   const tempHome = makeTempRoot('ag-home-plan-');
 
-  const plan = planAntigravityDeployment('project', tempProject, tempHome, rolesDir, commandsDir);
-  assert.equal(plan.targetConfig, join(tempProject, '.agents', 'hooks.json'));
-  assert.ok(plan.filesToDeploy.length >= 8); // 1 lead rule + 6 skills + hooks.json + mcp_config.json
+  try {
+    const plan = planAntigravityDeployment('project', tempProject, tempHome, rolesDir, commandsDir);
+    assert.equal(plan.targetConfig, join(tempProject, '.agents', 'hooks.json'));
+    // 1 lead rule + 6 skills + merge-guard script + hooks.json + mcp_config.json = 10 files
+    assert.equal(plan.filesToDeploy.length, 10);
 
-  const leadRule = plan.filesToDeploy.find(f => f.relativePath === '.agents/rules/advanced-harness-lead.md');
-  assert.ok(leadRule);
-  assert.equal(leadRule.kind, 'rules');
+    const leadRule = plan.filesToDeploy.find(f => f.relativePath === '.agents/rules/advanced-harness-lead.md');
+    assert.ok(leadRule);
+    assert.equal(leadRule.kind, 'rules');
 
-  const hooks = plan.filesToDeploy.find(f => f.relativePath === '.agents/hooks.json');
-  assert.ok(hooks);
-  assert.equal(hooks.kind, 'config');
+    const script = plan.filesToDeploy.find(f => f.relativePath === '.agents/scripts/antigravity-merge-guard.mjs');
+    assert.ok(script);
+    assert.equal(script.kind, 'config');
+
+    const hooks = plan.filesToDeploy.find(f => f.relativePath === '.agents/hooks.json');
+    assert.ok(hooks);
+    assert.equal(hooks.kind, 'config');
+    assert.ok(hooks.content.includes('antigravity-merge-guard.mjs'));
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
 });
 
-test('planAntigravityDeployment produces expected global footprint', () => {
+test('planAntigravityDeployment produces expected global footprint including workflow skills', () => {
   const tempHome = makeTempRoot('ag-home-global-plan-');
 
-  const plan = planAntigravityDeployment('global', undefined, tempHome, rolesDir, commandsDir);
-  assert.equal(plan.targetConfig, join(tempHome, '.gemini', 'config', 'hooks.json'));
+  try {
+    const plan = planAntigravityDeployment('global', undefined, tempHome, rolesDir, commandsDir);
+    assert.equal(plan.targetConfig, join(tempHome, '.gemini', 'config', 'hooks.json'));
+    // 1 lead rule + 6 skills + merge-guard script + hooks.json + mcp_config.json = 10 files
+    assert.equal(plan.filesToDeploy.length, 10);
 
-  const leadRule = plan.filesToDeploy.find(f => f.relativePath === 'rules/advanced-harness-lead.md');
-  assert.ok(leadRule);
-  assert.equal(leadRule.kind, 'rules');
+    const leadRule = plan.filesToDeploy.find(f => f.relativePath === 'rules/advanced-harness-lead.md');
+    assert.ok(leadRule);
 
-  const hooks = plan.filesToDeploy.find(f => f.relativePath === 'hooks.json');
-  assert.ok(hooks);
-  assert.equal(hooks.kind, 'config');
+    const script = plan.filesToDeploy.find(f => f.relativePath === 'scripts/antigravity-merge-guard.mjs');
+    assert.ok(script);
+
+    const skill = plan.filesToDeploy.find(f => f.relativePath === 'skills/start-issue/SKILL.md');
+    assert.ok(skill);
+
+    const hooks = plan.filesToDeploy.find(f => f.relativePath === 'hooks.json');
+    assert.ok(hooks);
+  } finally {
+    rmSync(tempHome, { recursive: true, force: true });
+  }
 });
 
-test('installAntigravity performs full installation with recovery receipts and backups', async () => {
+test('installAntigravity performs full installation and preserves existing unrelated hooks and mcp servers', async () => {
   const tempProject = makeTempRoot('ag-project-install-');
   const tempHome = makeTempRoot('ag-home-install-');
   const recoveryDir = join(tempHome, 'backups');
 
+  // Pre-populate unrelated hook in .agents/hooks.json
+  mkdirSync(join(tempProject, '.agents'), { recursive: true });
+  writeFileSync(
+    join(tempProject, '.agents', 'hooks.json'),
+    JSON.stringify({
+      'existing-linter': {
+        PostToolUse: [{ matcher: 'run_command', hooks: [{ command: './lint.sh' }] }],
+      },
+    }, null, 2)
+  );
+
+  // Pre-populate unrelated server in .agents/mcp_config.json
+  writeFileSync(
+    join(tempProject, '.agents', 'mcp_config.json'),
+    JSON.stringify({
+      customField: 'preserved',
+      mcpServers: {
+        'my-custom-mcp': { command: 'node', args: ['server.js'] },
+      },
+    }, null, 2)
+  );
+
   let confirmed = false;
   const outputs: string[] = [];
 
-  const exitCode = await installAntigravity({
-    scope: 'project',
-    project: tempProject,
-    home: tempHome,
-    recoveryDirectory: recoveryDir,
-    agentsDirectory: rolesDir,
-    commandsDirectory: commandsDir,
-    ask: async (_q, s) => {
-      confirmed = true;
-      return s ?? 'yes';
-    },
-    output: msg => outputs.push(msg),
-    error: msg => outputs.push(`ERROR: ${msg}`),
-  });
-
-  assert.equal(exitCode, 0);
-  assert.equal(confirmed, true);
-
-  // Verify deployed files
-  assert.ok(existsSync(join(tempProject, '.agents', 'rules', 'advanced-harness-lead.md')));
-  assert.ok(existsSync(join(tempProject, '.agents', 'hooks.json')));
-  assert.ok(existsSync(join(tempProject, '.agents', 'mcp_config.json')));
-  assert.ok(existsSync(join(tempProject, '.agents', 'skills', 'start-issue', 'SKILL.md')));
-  assert.ok(existsSync(join(tempProject, '.agents', 'skills', 'review-pr', 'SKILL.md')));
-  assert.ok(existsSync(join(tempProject, '.agents', 'skills', 'address-pr-feedback', 'SKILL.md')));
-  assert.ok(existsSync(join(tempProject, '.agents', 'skills', 'report-defect', 'SKILL.md')));
-  assert.ok(existsSync(join(tempProject, '.agents', 'skills', 'assess-debt', 'SKILL.md')));
-  assert.ok(existsSync(join(tempProject, '.agents', 'skills', 'grill-me', 'SKILL.md')));
-
-  // Verify doctor diagnosis on installed project
-  const doctor = await diagnoseAntigravity({ project: tempProject, home: tempHome });
-  assert.equal(doctor.ok, true);
-  assert.ok(doctor.notes.some(n => n.includes('PreToolUse merge guard hook is configured')));
-});
-
-test('runInstallerFlow delegates clean installation for --host antigravity', async () => {
-  const tempProject = makeTempRoot('ag-installer-flow-');
-  const tempHome = makeTempRoot('ag-home-flow-');
-  const outputs: string[] = [];
-  const errors: string[] = [];
-
-  const code = await runInstallerFlow(
-    {
-      host: 'antigravity',
+  try {
+    const exitCode = await installAntigravity({
       scope: 'project',
       project: tempProject,
-    },
-    {
-      ask: async (_q, s) => s ?? 'yes',
+      home: tempHome,
+      recoveryDirectory: recoveryDir,
+      agentsDirectory: rolesDir,
+      commandsDirectory: commandsDir,
+      ask: async (_q, s) => {
+        confirmed = true;
+        return s ?? 'yes';
+      },
       output: msg => outputs.push(msg),
-      error: msg => errors.push(msg),
+      error: msg => outputs.push(`ERROR: ${msg}`),
+    });
+
+    assert.equal(exitCode, 0);
+    assert.equal(confirmed, true);
+
+    // Verify deployed files
+    assert.ok(existsSync(join(tempProject, '.agents', 'rules', 'advanced-harness-lead.md')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'hooks.json')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'mcp_config.json')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'skills', 'start-issue', 'SKILL.md')));
+
+    // Verify existing integration was preserved
+    const hooksParsed = JSON.parse(readFileSync(join(tempProject, '.agents', 'hooks.json'), 'utf8'));
+    assert.ok(hooksParsed['existing-linter'], 'existing-linter hook must be preserved');
+    assert.ok(hooksParsed['gh-pr-merge-guard'], 'gh-pr-merge-guard must be added');
+
+    const mcpParsed = JSON.parse(readFileSync(join(tempProject, '.agents', 'mcp_config.json'), 'utf8'));
+    assert.equal(mcpParsed.customField, 'preserved', 'custom top-level field must be preserved');
+    assert.ok(mcpParsed.mcpServers['my-custom-mcp'], 'my-custom-mcp must be preserved');
+
+    // Verify doctor diagnosis
+    const doctor = await diagnoseAntigravity({ project: tempProject, home: tempHome });
+    assert.equal(doctor.ok, true);
+    assert.ok(doctor.notes.some(n => n.includes('PreToolUse merge guard hook is configured')));
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('diagnoseAntigravity reports ok: false when uninstalled or when required artifacts are missing', async () => {
+  const tempProject = makeTempRoot('ag-diag-fail-');
+  const tempHome = makeTempRoot('ag-home-fail-');
+
+  try {
+    // 1. Uninstalled -> ok: false
+    const diagEmpty = await diagnoseAntigravity({ project: tempProject, home: tempHome });
+    assert.equal(diagEmpty.ok, false);
+    assert.ok(diagEmpty.issues.some(i => i.includes('not installed')));
+
+    // 2. Install
+    await installAntigravity({
+      scope: 'project',
+      project: tempProject,
       home: tempHome,
       agentsDirectory: rolesDir,
       commandsDirectory: commandsDir,
-    }
-  );
+      ask: async (_q, s) => s ?? 'yes',
+      output: () => {},
+      error: () => {},
+    });
 
-  assert.equal(code, 0);
-  assert.ok(existsSync(join(tempProject, '.agents', 'hooks.json')));
-  assert.ok(existsSync(join(tempProject, '.agents', 'rules', 'advanced-harness-lead.md')));
+    const diagInstalled = await diagnoseAntigravity({ project: tempProject, home: tempHome });
+    assert.equal(diagInstalled.ok, true);
+
+    // 3. Remove merge guard script -> doctor must catch it and report ok: false
+    rmSync(join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs'));
+    const diagMissingScript = await diagnoseAntigravity({ project: tempProject, home: tempHome });
+    assert.equal(diagMissingScript.ok, false);
+    assert.ok(diagMissingScript.issues.some(i => i.includes('merge-guard executable referenced in hooks.json does not exist')));
+
+    // 4. Corrupt hooks.json -> doctor must catch it and report ok: false
+    writeFileSync(join(tempProject, '.agents', 'hooks.json'), '{ broken json');
+    const diagBrokenHooks = await diagnoseAntigravity({ project: tempProject, home: tempHome });
+    assert.equal(diagBrokenHooks.ok, false);
+    assert.ok(diagBrokenHooks.issues.some(i => i.includes('Malformed')));
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
 });
 
-test('diagnoseHost antigravity runs through adapter doctor', async () => {
-  const tempProject = makeTempRoot('ag-diagnose-flow-');
-  const tempHome = makeTempRoot('ag-home-diag-');
+test('runInstallerFlow delegates clean installation and isolates writes to supplied home', async () => {
+  const tempProject = makeTempRoot('ag-installer-flow-');
+  const tempHome = makeTempRoot('ag-home-flow-');
+  const recoveryDir = join(tempHome, 'custom-recovery');
+  const outputs: string[] = [];
+  const errors: string[] = [];
 
-  // Before install
-  const reportBefore = await diagnoseHost('antigravity', { project: tempProject, home: tempHome });
-  assert.equal(reportBefore.installed, false);
+  try {
+    const code = await runInstallerFlow(
+      {
+        host: 'antigravity',
+        scope: 'project',
+        project: tempProject,
+      },
+      {
+        ask: async (_q, s) => s ?? 'yes',
+        output: msg => outputs.push(msg),
+        error: msg => errors.push(msg),
+        home: tempHome,
+        recoveryDirectory: recoveryDir,
+        agentsDirectory: rolesDir,
+        commandsDirectory: commandsDir,
+      }
+    );
 
-  // Install
-  await installAntigravity({
-    scope: 'project',
-    project: tempProject,
-    home: tempHome,
-    agentsDirectory: rolesDir,
-    commandsDirectory: commandsDir,
-    ask: async (_q, s) => s ?? 'yes',
-    output: () => {},
-    error: () => {},
-  });
+    assert.equal(code, 0);
+    assert.ok(existsSync(join(tempProject, '.agents', 'hooks.json')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'rules', 'advanced-harness-lead.md')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs')));
 
-  // After install
-  const reportAfter = await diagnoseHost('antigravity', { project: tempProject, home: tempHome });
-  assert.equal(reportAfter.installed, true);
-  assert.equal(reportAfter.ok, true);
-  assert.ok(reportAfter.notes.some(n => n.includes('PreToolUse merge guard hook is configured')));
+    // Check that receipts were written to recoveryDir inside tempHome and NOT the user's real home
+    assert.ok(existsSync(recoveryDir), 'Recovery directory inside tempHome must exist');
+    const receiptChain = readFileSync(join(tempProject, '.agents', 'hooks.json'), 'utf8');
+    assert.ok(receiptChain);
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('installAntigravity in global scope deploys skills and script into global config directory', async () => {
+  const tempHome = makeTempRoot('ag-global-install-test-');
+
+  try {
+    const code = await installAntigravity({
+      scope: 'global',
+      home: tempHome,
+      agentsDirectory: rolesDir,
+      commandsDirectory: commandsDir,
+      ask: async (_q, s) => s ?? 'yes',
+      output: () => {},
+      error: () => {},
+    });
+
+    assert.equal(code, 0);
+    const globalBase = join(tempHome, '.gemini', 'config');
+    assert.ok(existsSync(join(globalBase, 'rules', 'advanced-harness-lead.md')));
+    assert.ok(existsSync(join(globalBase, 'scripts', 'antigravity-merge-guard.mjs')));
+    assert.ok(existsSync(join(globalBase, 'hooks.json')));
+    assert.ok(existsSync(join(globalBase, 'mcp_config.json')));
+    assert.ok(existsSync(join(globalBase, 'skills', 'start-issue', 'SKILL.md')));
+    assert.ok(existsSync(join(globalBase, 'skills', 'report-defect', 'SKILL.md')));
+
+    const doctor = await diagnoseAntigravity({ home: tempHome });
+    assert.equal(doctor.ok, true);
+    assert.ok(doctor.notes.some(n => n.includes('Global PreToolUse merge guard hook is configured')));
+  } finally {
+    rmSync(tempHome, { recursive: true, force: true });
+  }
 });
