@@ -140,7 +140,8 @@ test('mergeAntigravityHooksConfig preserves unrelated hooks and rejects malforme
   const priorOwned = compileAntigravityHooks('/old/path/guard.mjs');
   const priorOwnedText = JSON.stringify(priorOwned, null, 2);
   const updatedFromPrior = mergeAntigravityHooksConfig(priorOwnedText, '/new/path/guard.mjs', priorOwnedText);
-  assert.ok(updatedFromPrior['gh-pr-merge-guard'].PreToolUse?.[0]?.hooks[0]?.command.includes('/new/path/guard.mjs'));
+  const guard = updatedFromPrior['gh-pr-merge-guard'];
+  assert.ok(guard && guard.PreToolUse && guard.PreToolUse[0]?.hooks[0]?.command.includes('/new/path/guard.mjs'));
 });
 
 test('mergeAntigravityMcpConfig preserves unrelated servers and top-level fields', () => {
