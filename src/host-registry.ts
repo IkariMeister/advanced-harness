@@ -160,14 +160,14 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
     isolationModel: 'lead-driven-subagents',
     permissionModel: 'hooks-and-subagent-tool-groups',
     configLocations: {
-      project: ['.agents/rules', '.agents/skills', '.agents/hooks.json', '.agents/mcp_config.json'],
-      global: ['~/.gemini/config/hooks.json', '~/.gemini/config/mcp_config.json'],
+      project: ['.agents/rules', '.agents/skills', '.agents/scripts/antigravity-merge-guard.mjs', '.agents/hooks.json', '.agents/mcp_config.json'],
+      global: ['~/.gemini/config/rules', '~/.gemini/config/skills', '~/.gemini/config/scripts/antigravity-merge-guard.mjs', '~/.gemini/config/hooks.json', '~/.gemini/config/mcp_config.json'],
     },
-    ghPrMergeGuard: 'PreToolUse lifecycle hook (scripts/antigravity-merge-guard.mjs) blocks gh pr merge commands with hard deny',
+    ghPrMergeGuard: 'PreToolUse lifecycle hook (scripts/antigravity-merge-guard.mjs) inspects run_command calls and blocks gh pr merge / gh.exe pr merge with deny',
     disclosures: [
       'Lead orchestrates 7 child roles dynamically via define_subagent/invoke_subagent rules.',
       'Role/tool-group ownership (External MCP, Implementer writes) is instruction-level enforced via Lead rules.',
-      'gh pr merge is strictly blocked by PreToolUse lifecycle hook.',
+      'PreToolUse hook guards direct run_command calls; command patterns are workflow conventions, not a sandbox against indirect scripts, aliases, or separate processes.',
     ],
   },
   codex: {
@@ -274,11 +274,44 @@ export function detectInstalledHosts(
   return supportedHosts.filter(host => detected.has(host));
 }
 
+export interface HostAdapterInstallOptions {
+  project?: string | undefined;
+  global?: boolean | undefined;
+  scope: 'project' | 'global';
+  ask?: Ask;
+  output?: (msg: string) => void;
+  error?: (msg: string) => void;
+  home?: string | undefined;
+  recoveryDirectory?: string | undefined;
+  agentsDirectory?: string | undefined;
+  commandsDirectory?: string | undefined;
+}
+
+export interface HostAdapterUpdateOptions {
+  project?: string | undefined;
+  global?: boolean | undefined;
+  scope: 'project' | 'global';
+  ask?: Ask;
+  output?: (msg: string) => void;
+  error?: (msg: string) => void;
+  home?: string | undefined;
+  recoveryDirectory?: string | undefined;
+  agentsDirectory?: string | undefined;
+  commandsDirectory?: string | undefined;
+}
+
+export interface HostAdapterDoctorOptions {
+  project?: string | undefined;
+  global?: boolean | undefined;
+  home?: string | undefined;
+  globalDirectory?: string | undefined;
+}
+
 export interface HostAdapter {
   host: HostId;
-  install(options: { project?: string | undefined; global?: boolean | undefined; scope: 'project' | 'global'; ask?: Ask; output?: (msg: string) => void; error?: (msg: string) => void }): Promise<void | number>;
-  update?(options: { project?: string | undefined; global?: boolean | undefined; scope: 'project' | 'global'; ask?: Ask; output?: (msg: string) => void; error?: (msg: string) => void }): Promise<void | number>;
-  doctor?(options: { project?: string | undefined; global?: boolean | undefined }): Promise<{ ok: boolean; issues: string[]; notes: string[] }>;
+  install(options: HostAdapterInstallOptions): Promise<void | number>;
+  update?(options: HostAdapterUpdateOptions): Promise<void | number>;
+  doctor?(options: HostAdapterDoctorOptions): Promise<{ ok: boolean; issues: string[]; notes: string[] }>;
 }
 
 const registeredAdapters = new Map<HostId, HostAdapter>();
@@ -297,6 +330,10 @@ registerHostAdapter({
     return await installAntigravity({
       scope: options.scope,
       project: options.project,
+      home: options.home,
+      recoveryDirectory: options.recoveryDirectory,
+      agentsDirectory: options.agentsDirectory,
+      commandsDirectory: options.commandsDirectory,
       ask,
       output,
       error,
@@ -309,13 +346,21 @@ registerHostAdapter({
     return await installAntigravity({
       scope: options.scope,
       project: options.project,
+      home: options.home,
+      recoveryDirectory: options.recoveryDirectory,
+      agentsDirectory: options.agentsDirectory,
+      commandsDirectory: options.commandsDirectory,
       ask,
       output,
       error,
     });
   },
   async doctor(options) {
-    return await diagnoseAntigravity({ project: options.project });
+    return await diagnoseAntigravity({
+      project: options.project,
+      home: options.home,
+      globalDirectory: options.globalDirectory,
+    });
   },
 });
 

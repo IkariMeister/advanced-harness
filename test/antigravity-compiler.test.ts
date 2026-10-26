@@ -2,15 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
+import { loadWorkflowCommands } from '../src/workflow-commands.ts';
 import {
   compileAntigravitySubagentSpec,
   compileLeadOrchestrationRule,
   compileAntigravityHooks,
   compileAntigravityMcpConfig,
+  compileAntigravitySkill,
+  mergeAntigravityHooksConfig,
+  mergeAntigravityMcpConfig,
+  getAntigravityMergeGuardMjsSource,
 } from '../src/antigravity-compiler.ts';
 
 const rolesDir = fileURLToPath(new URL('../agents/', import.meta.url));
+const commandsDir = fileURLToPath(new URL('../commands/', import.meta.url));
 const roles = loadRoleDefinitions(rolesDir);
+const commands = loadWorkflowCommands(commandsDir);
 
 test('compileAntigravitySubagentSpec maps each role to correct tool groups and model tiers', () => {
   const operator = compileAntigravitySubagentSpec('operator', roles.operator);
@@ -63,7 +70,7 @@ test('compileLeadOrchestrationRule generates valid rule conforming to 24KB limit
 });
 
 test('compileAntigravityHooks configures PreToolUse gh pr merge guard', () => {
-  const hooks = compileAntigravityHooks('scripts/antigravity-merge-guard.ts');
+  const hooks = compileAntigravityHooks('/path/to/antigravity-merge-guard.mjs');
   assert.ok(hooks['gh-pr-merge-guard']);
   assert.equal(hooks['gh-pr-merge-guard'].enabled, true);
   assert.ok(hooks['gh-pr-merge-guard'].PreToolUse);
@@ -72,16 +79,66 @@ test('compileAntigravityHooks configures PreToolUse gh pr merge guard', () => {
   const firstHook = preToolUse[0];
   assert.ok(firstHook);
   assert.equal(firstHook.matcher, 'run_command');
-  assert.ok(firstHook.hooks[0]?.command.includes('antigravity-merge-guard.ts'));
+  assert.ok(firstHook.hooks[0]?.command.includes('antigravity-merge-guard.mjs'));
 });
 
-test('compileAntigravityMcpConfig structures servers map without inventing values', () => {
-  const mcp = compileAntigravityMcpConfig({
-    jira: { url: 'https://jira.example.com/mcp' },
-    github: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'] },
+test('compileAntigravitySkill generates reusable skill without placeholder arguments', () => {
+  const startIssue = compileAntigravitySkill('start-issue', commands['start-issue'], 'project');
+  assert.equal(startIssue.relativePath, '.agents/skills/start-issue/SKILL.md');
+  assert.ok(startIssue.content.includes('name: start-issue'));
+  assert.ok(startIssue.content.includes('user\'s current chat invocation prompt'));
+  assert.ok(!startIssue.content.includes('$ARGUMENTS'));
+  assert.ok(!startIssue.content.includes('workflow instructions'));
+
+  const defect = compileAntigravitySkill('report-defect', commands['report-defect'], 'global');
+  assert.equal(defect.relativePath, 'skills/report-defect/SKILL.md');
+  assert.ok(defect.content.includes('name: report-defect'));
+  assert.ok(defect.content.includes('parent issue key/URL'));
+  assert.ok(!defect.content.includes('$1'));
+  assert.ok(!defect.content.includes('$2'));
+  assert.ok(!defect.content.includes('issue-id'));
+});
+
+test('mergeAntigravityHooksConfig preserves unrelated hooks and rejects malformed JSON', () => {
+  const existing = JSON.stringify({
+    'lint-checker': {
+      PostToolUse: [{ matcher: 'run_command', hooks: [{ command: './scripts/lint.sh' }] }],
+    },
+  }, null, 2);
+
+  const merged = mergeAntigravityHooksConfig(existing, '/path/to/guard.mjs');
+  assert.ok(merged['lint-checker']);
+  assert.ok(merged['gh-pr-merge-guard']);
+
+  // Malformed JSON throws
+  assert.throws(() => mergeAntigravityHooksConfig('{ bad json', '/path/to/guard.mjs'), /Malformed existing hooks\.json/);
+
+  // Conflicting unowned definition throws
+  const conflict = JSON.stringify({
+    'gh-pr-merge-guard': {
+      enabled: false,
+      PreToolUse: [],
+    },
   });
-  assert.ok(mcp.mcpServers.jira);
-  assert.equal(mcp.mcpServers.jira.url, 'https://jira.example.com/mcp');
-  assert.ok(mcp.mcpServers.github);
-  assert.deepEqual(mcp.mcpServers.github.args, ['-y', '@modelcontextprotocol/server-github']);
+  assert.throws(() => mergeAntigravityHooksConfig(conflict, '/path/to/guard.mjs'), /Conflicting unowned/);
+});
+
+test('mergeAntigravityMcpConfig preserves unrelated servers and top-level fields', () => {
+  const existing = JSON.stringify({
+    customTopLevel: true,
+    mcpServers: {
+      customServer: { command: 'node', args: ['server.js'] },
+    },
+  }, null, 2);
+
+  const merged = mergeAntigravityMcpConfig(existing, {
+    newServer: { url: 'https://example.com/mcp' },
+  });
+
+  assert.equal((merged as any).customTopLevel, true);
+  assert.ok(merged.mcpServers.customServer);
+  assert.ok(merged.mcpServers.newServer);
+
+  // Malformed JSON throws
+  assert.throws(() => mergeAntigravityMcpConfig('{ bad json'), /Malformed existing mcp_config\.json/);
 });

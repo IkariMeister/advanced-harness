@@ -212,7 +212,7 @@ export async function diagnoseHost(
 
   const adapter = getHostAdapter(host);
   if (adapter?.doctor) {
-    const res = await adapter.doctor({ project });
+    const res = await adapter.doctor({ project, home, globalDirectory: options.globalDirectory });
     issues.push(...res.issues);
     notes.push(...res.notes);
     return { host, displayName: cap.displayName, ok: res.ok && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, ...(sourcePolicy ? { sourcePolicy } : {}) };
