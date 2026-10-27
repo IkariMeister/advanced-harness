@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -101,7 +101,18 @@ test('Claude doctor separates source-policy blockers from installed footprint an
   assert.ok(report.disclosures.some(note => /Project scope only/i.test(note)));
 });
 
-test('Claude single-host install/update dispatches to its adapter; multi-host and other hosts stop before adapters', async t => {
+test('Claude doctor detects an explicitly supplied global configuration footprint', async t => {
+  const root = makeTempRoot('claude-global-footprint-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = join(root, 'home');
+  mkdirSync(home);
+  writeFileSync(join(home, '.claude.json'), '{}\n');
+  const report = await diagnoseHost('claude-code', { home, agentsDirectory });
+  assert.equal(report.installed, true);
+  assert.ok(report.notes.some(note => /configuration footprint detected/i.test(note)));
+});
+
+test('Claude single-host install/update dispatches to its adapter; mixed and unsupported selections fail closed', async t => {
   const root = makeTempRoot('claude-policy-flow-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project);
@@ -123,7 +134,7 @@ test('Claude single-host install/update dispatches to its adapter; multi-host an
     }), 0);
     assert.deepEqual(calls, ['install:claude-code', 'update:claude-code']);
     calls.length = 0;
-  for (const host of ['opencode,claude-code', 'all', 'codex', 'antigravity,codex']) {
+    for (const host of ['opencode,claude-code', 'all', 'cursor', 'antigravity,codex']) {
       const installStatus = await runInstallerFlow({ scope: 'project', project, host }, {
         ask, output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery, agentsDirectory
       });

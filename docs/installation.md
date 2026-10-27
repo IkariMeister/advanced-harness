@@ -66,11 +66,11 @@ Examples:
 npm run harness:install -- --host opencode --scope global
 npm run harness:install -- --host claude-code --scope project --project "C:/Users/you/Projects/android-app" # Claude Code project scope (not runtime-validated)
 npm run harness:install -- --host claude-code,antigravity --scope project --project "C:/Users/you/Projects/android-app" # blocked: mixed-host installs are not supported
-npm run harness:install -- --host all --scope project --project "$HOME/Projects/android-app" # blocked until #45 and #46; mixed selections refused
+npm run harness:install -- --host all --scope project --project "$HOME/Projects/android-app" # mixed selections are refused
 npm run harness:install -- --help
 ```
 
-`--host <opencode|claude-code|antigravity|codex|cursor|all>` accepts host selections. OpenCode, Google Antigravity (#44), and Claude Code (#43, project scope only) are implemented as single-host installs. Codex (#45) and Cursor (#46) are not implemented. Any selection containing an unimplemented host, and any mixed or `all` selection, is rejected before adapters or filesystem mutations. Without `--host`, `harness:install` and `harness:update` prompt for a single host (Enter keeps `opencode`); a comma-separated, `all`, or unknown answer is re-asked rather than rejected, so run the command once per host. Workflow artifact compilation is a pure library operation, not installation; caller-bound invocation artifacts are never automatically written as reusable commands.
+`--host <opencode|claude-code|antigravity|codex|cursor|all>` accepts host selections. OpenCode, Google Antigravity (#44), Claude Code (#43, project scope only), and Codex (#45) are implemented as single-host installs. Cursor (#46) is not implemented. Any selection containing an unimplemented host, and any mixed or `all` selection, is rejected before adapters or filesystem mutations. Without `--host`, `harness:install` and `harness:update` prompt for a single host (Enter keeps `opencode`); a comma-separated, `all`, or unknown answer is re-asked rather than rejected, so run the command once per host. Workflow artifact compilation is a pure library operation, not installation; caller-bound invocation artifacts are never automatically written as reusable commands.
 
 Antigravity install likewise requires a typed `yes`; Enter, `no`, or any other answer cancels with no file, backup, or receipt written.
 
@@ -87,9 +87,13 @@ Per-role tools use `tools` allowlists plus `disallowedTools`. Lead can read, sea
 
 Global scope is refused. The same adapter handles `harness:update --host claude-code`, which is a no-op when everything matches. `harness:doctor --host claude-code --project <dir>` checks the files, subagent frontmatter, the Lead block, and the settings rules. It does not invoke Claude Code.
 
-Not verified here: Claude Code discovery of the subagents, `agent: lead`, `Agent(...)` delegation, `tools`/`disallowedTools` semantics, `Bash(...)` deny matching, and `$1`/`$2` placeholders in `report-defect`. Validate in a new Claude Code session with `/agents`, and check that `gh pr merge` is refused in a disposable repository, before relying on it.
+Not verified here: Claude Code discovery of subagents, `agent: lead`, `Agent(...)` delegation, `tools`/`disallowedTools` semantics, Bash deny matching, or command placeholders. Run the documented human smoke before relying on these behaviors.
 
-Integration configuration (`harness:integrations`) currently supports OpenCode only. Its `--host` option accepts `opencode`; unsupported hosts and multi-host selections (including `all`) are rejected before discovery, checks, or writes. Native deployment for other hosts, including per-host receipt/configuration isolation, remains deferred to issues #43–#46.
+### OpenAI Codex
+
+Codex install/update writes project `.codex/` or global `~/.codex/` after confirmation, requires explicit per-role model/reasoning choices, preserves shared `AGENTS.md` and customized skills, and creates cumulative recovery receipts. Selected existing MCP routes remain disabled pending validation. Codex shared sandbox/approval settings do not prove per-role isolation or universal approval. Static doctor checks do not establish Desktop runtime behavior; see [Codex configuration limits](configuration.md#openai-codex-selections).
+
+Integration configuration (`harness:integrations`) currently supports OpenCode only. Its `--host` option accepts `opencode`; unsupported hosts and multi-host selections (including `all`) are rejected before discovery, checks, or writes. This does not limit the separately implemented native installer adapters for Antigravity, project-scope Claude Code, and Codex.
 
 Uninstall preflights all receipt and managed-file restore states before confirmation, then revalidates before writes. Digest-only prior content cannot authorize reconstruction or deletion. Same-basename backups are distinguished by target identity. Cancellation and no-op restores create no backups. A later unexpected I/O failure can still leave a partially completed multi-file restore; output identifies completed changes and backups for recovery rather than claiming transactionality.
 

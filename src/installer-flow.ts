@@ -34,6 +34,7 @@ export interface InstallerFlowDependencies {
   finalize?: typeof finalizeSuccessor;
   verify?: typeof verifyRuntime;
   printReport?: typeof printReport;
+  getHostAdapter?: typeof getHostAdapter;
 }
 
 export async function runInstallerFlow(options: InstallerFlowOptions, deps: InstallerFlowDependencies): Promise<number> {
@@ -53,13 +54,13 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const project = scope === 'project' ? resolve(cwd, expand(options.project ?? ((await ask('Project directory', cwd)) || cwd))) : undefined;
   if (project && (!existsSync(project) || !statSync(project).isDirectory())) throw new Error('Project directory does not exist or is not a directory. Create/select it before installing.');
 
-  // Hosts that require native adapter delegation or are blocked
-  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity', 'claude-code'];
+  // Hosts with native adapters; unsupported selections fail closed.
+  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity', 'claude-code', 'codex'];
   const unsupportedHosts = selectedHosts.filter(host => !supportedNativeHosts.includes(host));
 
   if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
     for (const host of unsupportedHosts) {
-      const issue = host === 'codex' ? '#45' : '#46';
+      const issue = host === 'claude-code' ? '#43' : '#46';
       errorOutput(`Installation blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
     }
     if (selectedHosts.length > 1 && unsupportedHosts.length === 0) {
@@ -75,7 +76,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const stamp = toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand));
 
   if (selectedHosts.includes('claude-code')) {
-    const adapter = getHostAdapter('claude-code');
+    const adapter = (deps.getHostAdapter ?? getHostAdapter)('claude-code');
     if (!adapter) throw new Error('Claude Code host adapter is not registered.');
     const result = await adapter.install({
       scope: scope as 'project' | 'global',
@@ -93,7 +94,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   }
 
   if (selectedHosts.includes('antigravity')) {
-    const adapter = getHostAdapter('antigravity');
+    const adapter = (deps.getHostAdapter ?? getHostAdapter)('antigravity');
     if (!adapter) throw new Error('Antigravity host adapter is not registered.');
     const result = await adapter.install({
       scope: scope as 'project' | 'global',
@@ -107,6 +108,18 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
       ask,
       output,
       error: errorOutput,
+    });
+    return typeof result === 'number' ? result : 0;
+  }
+
+  if (selectedHosts.includes('codex')) {
+    const adapter = (deps.getHostAdapter ?? getHostAdapter)('codex');
+    if (!adapter) throw new Error('Codex host adapter is not registered.');
+    const result = await adapter.install({
+      scope: scope as 'project' | 'global', project, home,
+      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
+      agentsDirectory: deps.agentsDirectory, commandsDirectory: deps.commandsDirectory,
+      ask, output, error: errorOutput,
     });
     return typeof result === 'number' ? result : 0;
   }

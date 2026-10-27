@@ -22,7 +22,15 @@ Global scope is the default suggestion when no `--project` is supplied. Every se
 
 Integration setup currently configures OpenCode only. `--host opencode` (the default) is supported; unsupported hosts and `all`/multi-host selections fail before discovery, checks, or writes. This does not imply that integration adapters exist for the other installation hosts.
 
-Workflow source compilation can emit deterministic host-specific command/skill artifacts, but that library output is not installation. Claude Code has a project-scope native deployment (issue #43) that is compiled fail-closed and not runtime-validated. Native integrations for Codex and Cursor are tracked in issues #45 and #46 (Antigravity native adapter is implemented in issue #44). Installer and updater reject any selection containing an unsupported host before invoking adapters or mutating files; do not treat generated caller-bound invocation artifacts as installed reusable commands.
+Workflow source compilation can emit deterministic host-specific command/skill artifacts, but compilation alone is not installation. Native adapters are available for OpenCode, Antigravity, Claude Code (project scope; runtime-unverified), and Codex. Cursor remains tracked in issue #46. Installer and updater reject unsupported or mixed selections before mutation. Codex role ownership is instructional; shared sandbox/approval/MCP settings are inherited, not isolated per role, and runtime behavior remains unverified.
+
+### OpenAI Codex selections
+
+`harness:install --host codex` and `harness:update --host codex` write project `.codex/` or global `~/.codex/` files after explicit confirmation. Every role requires a user-supplied model ID and reasoning effort; there is no preset or fallback. Existing shared `AGENTS.md` files are never rewritten. Workflow skills use `.agents/skills/<name>/SKILL.md`; existing differing skills are preserved because that directory may be shared with other hosts.
+
+The adapter adds `sandbox_mode = "read-only"` and `approval_policy = "on-request"` only when absent; existing user values are preserved. These shared settings affect Codex as a whole, not individual role identities. They are a conservative generated baseline, **not proof that every write route requires a human approval**. Codex project configuration is subject to the host's project-trust behavior. The direct shell rule rejects identifiable `gh pr merge` / `gh.exe pr merge` prefixes only; scripts, MCP/API calls, and other indirect routes are not universally blocked.
+
+MCP entries are never invented. The installer asks for actual server IDs already present in the target config and exact tool names, then marks selected server entries `enabled = false` and adds supplied names to `disabled_tools` pending separate route validation. It does not enable/authenticate servers or claim tool-level approval behavior. Existing configuration and credentials are preserved; malformed or unsupported TOML is refused. Cancellation makes no changes or backups, repeated identical updates are idempotent, and updates create cumulative host-scoped recovery receipts.
 
 - GitHub: **`gh`**, **`mcp`**, or **`none`**.
 - Jira: existing MCP alias, supplied new server, or **`none`**.

@@ -5,6 +5,7 @@ import { nativeRoles, type Ask, type NativeRole } from './native-installer.ts';
 import type { HarnessVersionStamp } from './receipt-lineage.ts';
 import { installAntigravity, diagnoseAntigravity } from './antigravity-adapter.ts';
 import { installClaudeCode, diagnoseClaudeCode } from './claude-code-adapter.ts';
+import { installCodex, diagnoseCodex } from './codex-adapter.ts';
 
 export const supportedHosts = ['opencode', 'claude-code', 'antigravity', 'codex', 'cursor'] as const;
 export type HostId = typeof supportedHosts[number];
@@ -87,14 +88,14 @@ export const HOST_MODEL_PRESETS: Record<HostId, Record<NativeRole, HostRolePrese
     qa: { model: 'flash', tier: 'flash', notes: 'Runtime QA subagent' },
   },
   codex: {
-    lead: { model: 'openai/gpt-6-astra', reasoningTier: 'medium' },
-    operator: { model: 'openai/gpt-5.3-codex-spark', reasoningTier: 'low' },
-    external: { model: 'openai/gpt-5.3-codex-spark', reasoningTier: 'low' },
-    researcher: { model: 'openai/gpt-6-luna', reasoningTier: 'medium' },
-    planner: { model: 'openai/gpt-6.1-sol', reasoningTier: 'medium' },
-    implementer: { model: 'openai/gpt-6-luna', reasoningTier: 'low' },
-    reviewer: { model: 'openai/gpt-6.1-sol', reasoningTier: 'low' },
-    qa: { model: 'openai/gpt-6-luna', reasoningTier: 'low' },
+    lead: { model: '', notes: 'User must explicitly select a Codex model and reasoning effort.' },
+    operator: { model: '', notes: 'User must explicitly select a Codex model and reasoning effort.' },
+    external: { model: '', notes: 'User must explicitly select a Codex model and reasoning effort.' },
+    researcher: { model: '', notes: 'User must explicitly select a Codex model and reasoning effort.' },
+    planner: { model: '', notes: 'User must explicitly select a Codex model and reasoning effort.' },
+    implementer: { model: '', notes: 'User must explicitly select a Codex model and reasoning effort.' },
+    reviewer: { model: '', notes: 'User must explicitly select a Codex model and reasoning effort.' },
+    qa: { model: '', notes: 'User must explicitly select a Codex model and reasoning effort.' },
   },
   cursor: {
     lead: { model: 'standard', tier: 'standard', notes: 'In-session Lead orchestration phase' },
@@ -175,17 +176,18 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
   codex: {
     host: 'codex',
     displayName: 'OpenAI Codex',
-    isolationModel: 'not-deployed',
-    permissionModel: 'not-deployed',
+    isolationModel: 'native-subagents',
+    permissionModel: 'execpolicy-and-sandbox',
     configLocations: {
-      project: ['.codex/config.toml'],
-      global: ['~/.codex/config.toml'],
+      project: ['.codex/config.toml', '.codex/agents', '.codex/rules', '.agents/skills'],
+      global: ['~/.codex/config.toml', '~/.codex/agents', '~/.codex/rules', '~/.agents/skills'],
     },
-    ghPrMergeGuard: 'No Codex merge guard is deployed; native integration is tracked in issue #45.',
+    ghPrMergeGuard: 'Codex rules forbid identifiable direct gh pr merge forms; indirect/API routes are not universally blocked.',
     disclosures: [
-      'Workflow artifacts can be compiled as .agents/skills/<name>/SKILL.md; artifacts are not installed by this harness.',
-      'Codex skill invocation is not treated as parameter binding; caller-bound workflow artifacts are invocation-specific.',
-      'Native role profiles, permissions, MCP configuration, and runtime behavior are not deployed; integration is tracked in issue #45.',
+      'Workflow skills are installed as .agents/skills/<name>/SKILL.md; invocation binding remains caller-specific.',
+      'Lead and seven Codex subagent profiles use explicit user-selected models and reasoning settings; shared sandbox/approval/MCP configuration is inherited.',
+      'Codex role ownership is instructional, not permission isolation. Approval behavior and Desktop runtime remain unverified.',
+      'Codex agent reload semantics are unverified; use a deliberate fresh-session validation rather than assuming live reload.',
     ],
   },
   cursor: {
@@ -405,6 +407,19 @@ registerHostAdapter({
       globalDirectory: options.globalDirectory,
     });
   },
+});
+
+registerHostAdapter({
+  host: 'codex',
+  async install(options) {
+    const ask: Ask = options.ask ?? (async (_q, s) => s ?? '');
+    return await installCodex({ scope: options.scope, project: options.project, home: options.home ?? homedir(), recoveryDirectory: options.recoveryDirectory, agentsDirectory: options.agentsDirectory, commandsDirectory: options.commandsDirectory, ask, output: options.output ?? console.log, error: options.error ?? console.error });
+  },
+  async update(options) {
+    const ask: Ask = options.ask ?? (async (_q, s) => s ?? '');
+    return await installCodex({ scope: options.scope, project: options.project, home: options.home ?? homedir(), recoveryDirectory: options.recoveryDirectory, agentsDirectory: options.agentsDirectory, commandsDirectory: options.commandsDirectory, ask, output: options.output ?? console.log, error: options.error ?? console.error });
+  },
+  async doctor(options) { return await diagnoseCodex({ project: options.project, home: options.home ?? homedir(), globalDirectory: options.globalDirectory }); },
 });
 
 export function getHostAdapter(host: HostId): HostAdapter | undefined {

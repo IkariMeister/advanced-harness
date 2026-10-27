@@ -159,8 +159,8 @@ test('user content in CLAUDE.md and unrelated settings keys survive installation
   for (const rule of claudeSettingsDeny) assert.ok(settings.permissions.deny.includes(rule));
 });
 
-test('multi-host and unsupported selections still fail closed before any Claude write', async t => {
-  for (const host of ['claude-code,codex', 'opencode,claude-code', 'codex']) {
+test('mixed and unsupported selections still fail closed before any Claude write', async t => {
+  for (const host of ['claude-code,codex', 'opencode,claude-code', 'cursor']) {
     const h = harness(t, confirmOnly('yes'));
     assert.equal(await runInstallerFlow({ scope: 'project', project: h.project, host }, h.deps), 2, host);
     assert.equal(existsSync(join(h.project, 'CLAUDE.md')), false, host);
