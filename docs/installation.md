@@ -59,12 +59,28 @@ Examples:
 
 ```text
 npm run harness:install -- --host opencode --scope global
-npm run harness:install -- --host claude-code,antigravity --scope project --project "C:/Users/you/Projects/android-app" # blocked: integrations #43/#44
-npm run harness:install -- --host all --scope project --project "$HOME/Projects/android-app" # blocked until #43-#46
+npm run harness:install -- --host claude-code --scope project --project "C:/Users/you/Projects/android-app" # Claude Code project scope (not runtime-validated)
+npm run harness:install -- --host claude-code,antigravity --scope project --project "C:/Users/you/Projects/android-app" # blocked: mixed-host installs are not supported
+npm run harness:install -- --host all --scope project --project "$HOME/Projects/android-app" # blocked until #45 and #46; mixed selections refused
 npm run harness:install -- --help
 ```
 
-`--host <opencode|claude-code|antigravity|codex|cursor|all>` accepts host selections, but only OpenCode installation is implemented. Any selection containing a non-OpenCode host—including `all` or a mixed selection—is rejected before adapters or filesystem mutations, with issue handoffs #43 (Claude Code), #44 (Antigravity), #45 (Codex), and #46 (Cursor). Workflow artifact compilation is a pure library operation, not installation; caller-bound invocation artifacts are never automatically written as reusable commands.
+`--host <opencode|claude-code|antigravity|codex|cursor|all>` accepts host selections. OpenCode, Google Antigravity (#44), and Claude Code (#43, project scope only) are implemented as single-host installs. Codex (#45) and Cursor (#46) are not implemented. Any selection containing an unimplemented host, and any mixed or `all` selection, is rejected before adapters or filesystem mutations. Workflow artifact compilation is a pure library operation, not installation; caller-bound invocation artifacts are never automatically written as reusable commands.
+
+### Claude Code (project scope)
+
+`--host claude-code --scope project` shows the planned files and the fail-closed mapping, then requires a typed `yes`. Enter, `no`, or any other answer cancels with no file, backup, or receipt written. It writes:
+
+- `CLAUDE.md`: a marked Lead block (`<!-- advanced-harness:lead:start -->` … `<!-- advanced-harness:lead:end -->`) followed by `@AGENTS.md`. Content outside the markers is preserved. Malformed or duplicate markers are refused.
+- `.claude/agents/lead.md` plus `operator`, `external`, `researcher`, `planner`, `implementer`, `reviewer`, and `qa` subagents. Models follow the README presets: Lead, Researcher, Implementer, and QA `sonnet`; Operator and External `haiku`; Planner and Reviewer `opus`.
+- `.claude/commands/` with the six workflow commands.
+- `.claude/settings.json`, merged: `"agent": "lead"`, deny `Bash(gh pr merge)`/`Bash(gh pr merge *)` and the `gh.exe` variants, and prompts for `.env` reads. Unrelated keys are preserved. An existing different `agent` value blocks installation.
+
+Per-role tools use `tools` allowlists plus `disallowedTools`. Lead can read, search, ask the human, and delegate only to the seven children. Operator and Implementer can edit (prompted). External can use Bash, WebFetch, and WebSearch (prompted, with the source's allow exceptions downgraded to prompts). Operator, Implementer, Reviewer, and QA have **no Bash tool** because the source's per-role `git`/`gh` deny patterns cannot be scoped exactly in Claude Code. No MCP or Code Mode identity is mapped, so no `.mcp.json` is written. Customized files prompt with default `no`; overwrites are backed up.
+
+Global scope is refused. The same adapter handles `harness:update --host claude-code`, which is a no-op when everything matches. `harness:doctor --host claude-code --project <dir>` checks the files, subagent frontmatter, the Lead block, and the settings rules. It does not invoke Claude Code.
+
+Not verified here: Claude Code discovery of the subagents, `agent: lead`, `Agent(...)` delegation, `tools`/`disallowedTools` semantics, `Bash(...)` deny matching, and `$1`/`$2` placeholders in `report-defect`. Validate in a new Claude Code session with `/agents`, and check that `gh pr merge` is refused in a disposable repository, before relying on it.
 
 Integration configuration (`harness:integrations`) currently supports OpenCode only. Its `--host` option accepts `opencode`; unsupported hosts and multi-host selections (including `all`) are rejected before discovery, checks, or writes. Native deployment for other hosts, including per-host receipt/configuration isolation, remains deferred to issues #43–#46.
 

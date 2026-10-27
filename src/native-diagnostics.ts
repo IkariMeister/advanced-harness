@@ -159,7 +159,7 @@ export async function diagnoseHost(
   const sourcePolicy = host === 'claude-code'
     ? preflightClaudePermissions(loadRoleDefinitions(options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url))))
     : undefined;
-  if (sourcePolicy) notes.push('Source-policy compatibility is a static translation preflight, separate from installed configuration footprint; runtime enforcement is unverified.');
+  if (sourcePolicy) notes.push('Source-policy findings are static OpenCode-to-Claude translation notes, separate from the installed configuration footprint; the compiler applies fail-closed mappings and runtime enforcement is unverified.');
 
   let installed = false;
   if (host === 'opencode') {
@@ -215,7 +215,7 @@ export async function diagnoseHost(
     const res = await adapter.doctor({ project, home, globalDirectory: options.globalDirectory });
     issues.push(...res.issues);
     notes.push(...res.notes);
-    return { host, displayName: cap.displayName, ok: res.ok && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, ...(sourcePolicy ? { sourcePolicy } : {}) };
+    return { host, displayName: cap.displayName, ok: res.ok, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, ...(sourcePolicy ? { sourcePolicy } : {}) };
   }
 
   return {
