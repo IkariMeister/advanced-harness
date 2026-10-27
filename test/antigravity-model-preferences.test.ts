@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTempRoot } from './temp-directory.ts';
-import { ANTIGRAVITY_MODEL_LABELS, parseAntigravityModelPreferences, planAntigravityModelPreferenceWrites } from '../src/antigravity-model-preferences.ts';
+import { ANTIGRAVITY_MODEL_LABELS, parseAntigravityModelPreferences, planAntigravityModelPreferenceWrites, antigravityGlobalModelPreferencesPath } from '../src/antigravity-model-preferences.ts';
 import { installAntigravity } from '../src/antigravity-adapter.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { discoverReceiptChain, readReceiptForRestore } from '../src/receipt-lineage.ts';
@@ -17,6 +17,26 @@ const commandsDir = fileURLToPath(new URL('../commands/', import.meta.url));
 const prefsPath = (home: string) => join(home, '.gemini', 'config', 'harness.model-preferences.json');
 const emptyPreferences = () => ({ version: 1, preferences: Object.fromEntries(nativeRoles.map(role => [role, null])) });
 const defaultAnswer = async (_question: string, suggested?: string) => suggested ?? 'yes';
+const snapshotTree = (root: string): Array<[string, 'directory' | 'file' | 'symlink', string?]> => {
+  if (!existsSync(root)) return [];
+  const entries: Array<[string, 'directory' | 'file' | 'symlink', string?]> = [];
+  const visit = (directory: string, prefix: string) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolutePath = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        entries.push([relativePath, 'directory']);
+        visit(absolutePath, relativePath);
+      } else if (entry.isFile()) {
+        entries.push([relativePath, 'file', readFileSync(absolutePath, 'utf8')]);
+      } else {
+        entries.push([relativePath, 'symlink']);
+      }
+    }
+  };
+  visit(root, '');
+  return entries;
+};
 
 test('Antigravity desired preference format rejects malformed, incomplete, or unknown assignments', () => {
   const valid = JSON.stringify({ version: 1, preferences: Object.fromEntries(nativeRoles.map(role => [role, role === 'lead' ? 'Claude Opus 5.5' : null])) });
@@ -90,6 +110,186 @@ test('Antigravity preference cancellation writes no project/global settings, bac
   assert.equal(readFileSync(contextPath, 'utf8'), contextOriginal);
   assert.equal(readFileSync(prefsPath(home), 'utf8'), globalText);
   assert.equal(existsSync(recovery), false);
+});
+
+test('receipt-managed project context edits are refused before prompts or writes, including no-op preference plans', async t => {
+  const root = makeTempRoot('ag-model-drift-'); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); const home = join(root, 'home'); const recovery = join(root, 'recovery');
+  mkdirSync(project); mkdirSync(home);
+  const context = join(project, 'AGENTS.md'); const original = '# Existing notes\n'; writeFileSync(context, original);
+  const install = async () => installAntigravity({ scope: 'project', project, home, recoveryDirectory: recovery,
+    agentsDirectory: rolesDir, commandsDirectory: commandsDir, ask: defaultAnswer, output: () => {}, error: () => {} });
+  assert.equal(await install(), 0);
+  const installedContext = readFileSync(context, 'utf8');
+  const target = join(project, '.agents', 'hooks.json');
+  const targetBytes = readFileSync(target, 'utf8');
+  const recoveryBefore = snapshotTree(recovery);
+  writeFileSync(context, installedContext + '\nHuman change\n');
+  const changedContext = readFileSync(context, 'utf8');
+  let prompted = false;
+  await assert.rejects(installAntigravity({ scope: 'project', project, home, recoveryDirectory: recovery,
+    agentsDirectory: rolesDir, commandsDirectory: commandsDir,
+    ask: async () => { prompted = true; return ''; }, output: () => {}, error: () => {} }), /recorded predecessor after-state/);
+  assert.equal(prompted, false);
+  assert.equal(readFileSync(context, 'utf8'), changedContext);
+  assert.equal(readFileSync(target, 'utf8'), targetBytes);
+  assert.deepEqual(snapshotTree(recovery), recoveryBefore);
+});
+
+test('receipt-managed global model preference drift blocks project update without writes', async t => {
+  const root = makeTempRoot('ag-global-drift-'); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = join(root, 'home'); const recovery = join(root, 'recovery');
+  mkdirSync(home);
+  const prefs = antigravityGlobalModelPreferencesPath(home);
+  let asked = 0;
+  const install = (scope: 'global' | 'project') => installAntigravity({ scope, ...(scope === 'project' ? { project: join(root, 'project') } : {}), home, recoveryDirectory: recovery,
+    agentsDirectory: rolesDir, commandsDirectory: commandsDir, ask: async (question, suggested) => {
+      asked++;
+      return scope === 'global' && question.trimStart().startsWith('lead: desired') ? '1' : defaultAnswer(question, suggested);
+    }, output: () => {}, error: () => {} });
+  assert.equal(await install('global'), 0);
+  const original = readFileSync(prefs, 'utf8');
+  const changed = original.replace('Claude Opus 5.5', 'Human preference');
+  assert.notEqual(changed, original, 'mutate the selected preference actually recorded in the fixture'); writeFileSync(prefs, changed);
+  const entriesBefore = snapshotTree(recovery);
+  const promptCount = asked;
+  await assert.rejects(install('project'), /recorded predecessor after-state/);
+  assert.equal(asked, promptCount);
+  assert.equal(readFileSync(prefs, 'utf8'), changed);
+  assert.deepEqual(snapshotTree(recovery), entriesBefore);
+});
+
+test('missing receipt-managed context fails closed before confirmation', async t => {
+  const root = makeTempRoot('ag-missing-context-'); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); const home = join(root, 'home'); const recovery = join(root, 'recovery');
+  mkdirSync(join(project, 'docs'), { recursive: true }); mkdirSync(home);
+  const context = join(project, 'docs', 'ALT.md'); writeFileSync(context, '# Preserve\n');
+  const options = { scope: 'project' as const, project, context: 'docs/ALT.md', home, recoveryDirectory: recovery,
+    agentsDirectory: rolesDir, commandsDirectory: commandsDir, ask: defaultAnswer, output: () => {}, error: () => {} };
+  assert.equal(await installAntigravity(options), 0);
+  const target = join(project, '.agents', 'hooks.json'); const targetBytes = readFileSync(target, 'utf8');
+  const entriesBefore = snapshotTree(recovery); rmSync(context);
+  let prompted = false;
+  await assert.rejects(installAntigravity({ ...options, ask: async () => { prompted = true; return 'yes'; } }), /recorded predecessor after-state/);
+  assert.equal(prompted, false); assert.equal(existsSync(context), false);
+  assert.equal(readFileSync(target, 'utf8'), targetBytes); assert.deepEqual(snapshotTree(recovery), entriesBefore);
+});
+
+test('clean project update and subsequent uninstall restore pre-existing context', async t => {
+  const root = makeTempRoot('ag-clean-lifecycle-'); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); const home = join(root, 'home'); const recovery = join(root, 'recovery');
+  mkdirSync(join(project, 'docs'), { recursive: true }); mkdirSync(home);
+  const context = join(project, 'docs', 'clean.md'); const before = '# User-owned text\n'; writeFileSync(context, before);
+  const options = { scope: 'project' as const, project, context: 'docs/clean.md', home, recoveryDirectory: recovery,
+    agentsDirectory: rolesDir, commandsDirectory: commandsDir, ask: async (question: string, suggested?: string) => question.trimStart().startsWith('lead: desired') ? 'Personalized label' : (suggested ?? 'yes'), output: () => {}, error: () => {} };
+  assert.equal(await installAntigravity(options), 0);
+  const firstSnapshot = discoverReceiptChain(recovery, join(project, '.agents', 'hooks.json'), 'antigravity');
+  const firstReceiptCount = readdirSync(recovery).filter(name => name.startsWith('native-install-')).length;
+  assert.equal(await installAntigravity(options), 0);
+  assert.equal(readdirSync(recovery).filter(name => name.startsWith('native-install-')).length, firstReceiptCount);
+  const receipt = readReceiptForRestore(join(firstSnapshot.directory, firstSnapshot.head!.file), join(project, '.agents', 'hooks.json'));
+  const uninstall = await runUninstallFlow({ receipt, current: readFileSync(join(project, '.agents', 'hooks.json'), 'utf8'), confirm: async () => 'uninstall', output: () => {}, error: message => assert.fail(message), save: updated => saveInstallation(join(project, '.agents', 'hooks.json'), readFileSync(join(project, '.agents', 'hooks.json'), 'utf8'), updated, recovery), backupParent: recovery });
+  assert.equal(uninstall, 0); assert.equal(readFileSync(context, 'utf8'), before);
+});
+
+test('managed AGENTS reference drift and newly created context lifecycle are protected', async t => {
+  const root = makeTempRoot('ag-reference-lifecycle-'); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); const home = join(root, 'home'); const recovery = join(root, 'recovery');
+  mkdirSync(join(project, 'docs'), { recursive: true }); mkdirSync(home);
+  const agents = join(project, 'AGENTS.md'); const alternate = join(project, 'docs', 'ALT.md');
+  writeFileSync(agents, '# Original instructions\n');
+  const options = { scope: 'project' as const, project, context: 'docs/ALT.md', home, recoveryDirectory: recovery,
+    agentsDirectory: rolesDir, commandsDirectory: commandsDir, ask: defaultAnswer, output: () => {}, error: () => {} };
+  assert.equal(await installAntigravity(options), 0);
+  assert.equal(existsSync(alternate), true, 'installer creates selected missing context');
+  const target = join(project, '.agents', 'hooks.json');
+  const targetBefore = readFileSync(target, 'utf8'); const alternateBefore = readFileSync(alternate, 'utf8');
+  const managedAgents = readFileSync(agents, 'utf8');
+  const receiptBytes = snapshotTree(recovery);
+  const entriesBefore = snapshotTree(recovery);
+  const referenceChanged = readFileSync(agents, 'utf8') + '\nHuman-added instructions\n'; writeFileSync(agents, referenceChanged);
+  let prompted = false;
+  await assert.rejects(installAntigravity({ ...options, ask: async () => { prompted = true; return ''; } }), /recorded predecessor after-state/);
+  assert.equal(prompted, false); assert.equal(readFileSync(agents, 'utf8'), referenceChanged);
+  assert.equal(readFileSync(alternate, 'utf8'), alternateBefore); assert.equal(readFileSync(target, 'utf8'), targetBefore);
+  assert.deepEqual(snapshotTree(recovery), entriesBefore);
+  assert.deepEqual(snapshotTree(recovery), receiptBytes);
+  writeFileSync(agents, managedAgents);
+  // Restore the exact managed reference before exercising clean uninstall.
+  const snapshot = discoverReceiptChain(recovery, target, 'antigravity');
+  const receipt = readReceiptForRestore(join(snapshot.directory, snapshot.head!.file), target);
+  assert.equal(await runUninstallFlow({ receipt, current: readFileSync(target, 'utf8'), confirm: async () => 'uninstall', output: () => {}, error: message => assert.fail(message), save: updated => saveInstallation(target, readFileSync(target, 'utf8'), updated, recovery), backupParent: recovery }), 0);
+  assert.equal(existsSync(alternate), false, 'clean uninstall removes installer-created alternate context');
+  assert.equal(readFileSync(agents, 'utf8'), '# Original instructions\n');
+});
+
+test('predecessor edits injected during customized-artifact confirmation abort before receipts or writes', async t => {
+  const root = makeTempRoot('ag-prompt-race-'); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); const home = join(root, 'home'); const recovery = join(root, 'recovery');
+  mkdirSync(project); mkdirSync(home);
+  const agents = join(project, 'AGENTS.md');
+  const options = { scope: 'project' as const, project, home, recoveryDirectory: recovery,
+    agentsDirectory: rolesDir, commandsDirectory: commandsDir, ask: defaultAnswer, output: () => {}, error: () => {} };
+  assert.equal(await installAntigravity(options), 0);
+  const managedAgents = readFileSync(agents, 'utf8');
+  const artifact = join(project, '.agents', 'skills', 'start-issue', 'SKILL.md');
+  const artifactOriginal = readFileSync(artifact, 'utf8'); writeFileSync(artifact, `${artifactOriginal}\ncustomized\n`);
+  const artifactChanged = readFileSync(artifact, 'utf8');
+  const target = join(project, '.agents', 'hooks.json'); const targetOriginal = readFileSync(target, 'utf8');
+  const recoveryBefore = snapshotTree(recovery);
+  let injected = false;
+  await assert.rejects(installAntigravity({ ...options, ask: async question => {
+    if (question.includes('Overwrite customized/unowned file')) {
+      injected = true; writeFileSync(agents, `${managedAgents}\nHuman edit during prompt\n`); return 'yes';
+    }
+    return defaultAnswer(question);
+  } }), /recorded predecessor after-state/);
+  assert.equal(injected, true, 'customized-artifact confirmation prompt was reached');
+  assert.equal(readFileSync(agents, 'utf8'), `${managedAgents}\nHuman edit during prompt\n`);
+  assert.equal(readFileSync(artifact, 'utf8'), artifactChanged);
+  assert.equal(readFileSync(target, 'utf8'), targetOriginal);
+  assert.deepEqual(snapshotTree(recovery), recoveryBefore);
+});
+
+test('retained prior context and global suggestion edits during preference prompts are revalidated', async t => {
+  const root = makeTempRoot('ag-retained-context-'); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); const home = join(root, 'home'); const recovery = join(root, 'recovery');
+  mkdirSync(join(project, 'docs'), { recursive: true }); mkdirSync(join(home, '.gemini', 'config'), { recursive: true });
+  const retained = join(project, 'docs', 'OLD.md'); writeFileSync(retained, '# Retained context\n');
+  const globalPrefs = antigravityGlobalModelPreferencesPath(home);
+  const initialPrefs = JSON.stringify(emptyPreferences(), null, 2) + '\n'; writeFileSync(globalPrefs, initialPrefs);
+  const base = { scope: 'project' as const, project, home, recoveryDirectory: recovery, agentsDirectory: rolesDir, commandsDirectory: commandsDir, output: () => {}, error: () => {} };
+  const confirm = async (question: string, suggested?: string) => question.trimStart().startsWith('Confirm installation') ? 'yes' : (suggested ?? 'yes');
+  assert.equal(await installAntigravity({ ...base, context: 'docs/OLD.md', ask: confirm }), 0);
+  assert.equal(await installAntigravity({ ...base, context: 'docs/NEW.md', ask: confirm }), 0);
+  const oldManaged = readFileSync(retained, 'utf8'); writeFileSync(retained, `${oldManaged}\nHuman edit\n`);
+  const oldChanged = readFileSync(retained, 'utf8');
+  const target = join(project, '.agents', 'hooks.json'); const targetBytes = readFileSync(target, 'utf8');
+  const entries = snapshotTree(recovery);
+  await assert.rejects(installAntigravity({ ...base, context: 'docs/NEW.md', ask: confirm }), /recorded predecessor after-state/);
+  assert.equal(readFileSync(retained, 'utf8'), oldChanged); assert.equal(readFileSync(target, 'utf8'), targetBytes);
+  assert.deepEqual(snapshotTree(recovery), entries);
+
+  // On a separate clean project, edit a managed global suggestion while project
+  // preference questions are open; it must not be absorbed into the new receipt.
+  const project2 = join(root, 'project2'); mkdirSync(project2);
+  assert.equal(await installAntigravity({ scope: 'global', home, recoveryDirectory: recovery, agentsDirectory: rolesDir, commandsDirectory: commandsDir,
+    ask: async question => question.trimStart().startsWith('lead: desired') ? '1' : 'yes', output: () => {}, error: () => {} }), 0);
+  const managedGlobalPrefs = readFileSync(globalPrefs, 'utf8');
+  assert.ok(managedGlobalPrefs.includes('Claude Opus 5.5'));
+  const globalRecoveryBefore = snapshotTree(recovery);
+  const emptyProjectTree = snapshotTree(project2);
+  let injected = false;
+  await assert.rejects(installAntigravity({ ...base, project: project2, ask: async (question, suggested) => {
+    if (!injected && question.trimStart().startsWith('lead: desired')) {
+      injected = true; writeFileSync(globalPrefs, managedGlobalPrefs.replace('Claude Opus 5.5', 'Changed during prompt'));
+    }
+    return question.trimStart().startsWith('Confirm installation') ? 'yes' : (suggested ?? 'yes');
+  } }), /recorded predecessor after-state/);
+  assert.equal(injected, true);
+  assert.notEqual(readFileSync(globalPrefs, 'utf8'), managedGlobalPrefs);
+  assert.deepEqual(snapshotTree(recovery), globalRecoveryBefore);
+  assert.deepEqual(snapshotTree(project2), emptyProjectTree, 'no project target, artifacts, context Markdown, or AGENTS reference were created');
 });
 
 test('global model preferences are managed with earliest before-state and repeat installation is a no-op', async t => {
