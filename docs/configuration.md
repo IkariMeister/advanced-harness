@@ -105,3 +105,44 @@ permission dialog authorizes a tool operation, not a plan.
 Existing `.opencode/harness.project.json`, `.opencode/harness.integrations.json`, and local OpenCode configs are **not deleted, overwritten, or promoted globally**. If no embedded section exists, setup offers legacy data as suggestions only after you type **`migrate`**. Final setup/integrations confirmation still approves the new context section. Declining migration leaves the old files untouched and starts from current suggestions.
 
 Check mode does not automatically read legacy profiles. Rerun the respective setup intentionally to create context, review it, and decide separately whether obsolete local files/config overrides should eventually be removed. Never discard unrelated Android work.
+
+## 4. Antigravity desired model preferences
+
+Antigravity installation/update can record a desired human-readable label for each
+of the eight roles. These are instructional preferences, not runtime model
+assignments, discovered provider IDs, entitlement evidence, or access checks. The
+existing Antigravity runtime tiers remain unchanged.
+
+Global-scope choices are stored in
+`~/.gemini/config/harness.model-preferences.json` and act only as suggestions for
+project setup. Project scope never writes that global file. By default, project
+choices are stored in a dedicated marked section of `AGENTS.md`; select another
+in-project Markdown file explicitly with `--context`:
+
+Before an Antigravity install/update proceeds, receipt-managed preference files
+and context Markdown files must still match their recorded after-state. A changed,
+missing, unsafe, or unreadable managed file stops the operation rather than
+silently absorbing edits. This is a whole-file check: restore or resolve the
+file explicitly before retrying. It does not apply a general drift policy to
+other deployment artifacts.
+
+```powershell
+npm run harness:install -- --host antigravity --scope global
+npm run harness:install -- --host antigravity --scope project --project "$HOME/Projects/MarsRoverIA"
+npm run harness:install -- --host antigravity --scope project --project "$HOME/Projects/MarsRoverIA" --context docs/HARNESS.md
+npm run harness:update -- --host antigravity --scope project --project "$HOME/Projects/MarsRoverIA" --context docs/HARNESS.md
+```
+
+The three numbered UI labels shown by the prompt (Claude Opus 5.5, Claude Sonnet
+5.5, Gemini 4 Argon) are user-observed examples only. Choose an arbitrary label or
+leave a role unconfigured if appropriate; the installer does not discover or
+validate those names. The review previews all role preferences and files. Existing
+preference values are shown as defaults; Enter accepts the displayed default and
+invalid numbered choices are retried. Cancellation before final confirmation makes
+no preference, context, backup, or receipt writes. Updates preserve the earliest
+managed-file before-state in the existing receipt lifecycle; malformed preference
+data, concurrent changes, or uninstall conflicts stop rather than overwrite.
+
+These preferences do not automate switching the Lead or child model. Actual model
+selection, catalog discovery, entitlement, and exact-model binding remain separate
+unresolved validation; issue #70 acceptance remains outstanding.

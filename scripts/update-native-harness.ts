@@ -5,7 +5,7 @@ import { askHostSelection } from '../src/host-registry.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:update -- [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--scope project|global] [--project <directory>] [--config <file>] [--opencode <CLI path>] [--check-remote]');
+  console.log('Usage: npm run harness:update -- [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--scope project|global] [--project <directory>] [--config <file>] [--context <in-project Markdown>] [--opencode <CLI path>] [--check-remote]');
   console.log('Safe harness update workflow. Discovers newer versions, previews prompt & permission updates, preserves customizations, and records recovery receipts.');
 } else {
   const options: Record<string, string | boolean> = {};
@@ -16,7 +16,7 @@ if (args.includes('--help')) {
       continue;
     }
     const value = args[index + 1];
-    if (!flag || !['--scope', '--project', '--config', '--opencode', '--host'].includes(flag) || !value || value.startsWith('--') || options[flag]) {
+    if (!flag || !['--scope', '--project', '--config', '--context', '--opencode', '--host'].includes(flag) || !value || value.startsWith('--') || options[flag]) {
       throw new Error('Unknown, duplicate, or incomplete option. Run --help.');
     }
     options[flag] = value;
@@ -37,6 +37,7 @@ if (args.includes('--help')) {
         ...(options['--scope'] ? { scope: String(options['--scope']) } : {}),
         ...(options['--project'] ? { project: String(options['--project']) } : {}),
         ...(options['--config'] ? { config: String(options['--config']) } : {}),
+        ...(options['--context'] ? { context: String(options['--context']) } : {}),
         ...(options['--opencode'] ? { opencode: String(options['--opencode']) } : {}),
         ...(options['--check-remote'] ? { checkRemote: true } : {}),
         host

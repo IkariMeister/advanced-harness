@@ -3,7 +3,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { SetupFile } from './project-setup.ts';
 import { parseConfiguration } from './native-installer.ts';
 
-export type ContextSection = 'project' | 'integrations';
+export type ContextSection = 'project' | 'integrations' | 'model-preferences';
 const marker = (section: ContextSection, edge: string) => `<!-- advanced-harness:${section}:${edge} -->`;
 
 export function readContext(path: string): string | undefined {

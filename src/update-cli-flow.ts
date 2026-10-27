@@ -45,6 +45,7 @@ export interface UpdateFlowOptions {
   opencode?: string;
   checkRemote?: boolean;
   host?: string;
+  context?: string;
 }
 
 export interface UpdateFlowDependencies {
@@ -107,6 +108,9 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     return 2;
   }
 
+  if (options.context && !selectedHosts.includes('antigravity')) throw new Error('--context for model preferences is supported only with --host antigravity.');
+  if (options.context && scope !== 'project') throw new Error('--context can be used only with project scope.');
+
   if (selectedHosts.includes('claude-code')) {
     const adapter = getHostAdapter('claude-code');
     if (!adapter || !adapter.update) throw new Error('Claude Code host adapter update is not available.');
@@ -134,6 +138,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
       agentsDirectory: deps.agentsDirectory,
       commandsDirectory: deps.workflowCommandsDirectory,
+      context: options.context,
       ask,
       output,
       error: errorOutput,

@@ -12,7 +12,7 @@ import {
   writePendingSuccessor,
   type ManagedFileEvidence,
 } from './receipt-lineage.ts';
-import { saveInstallation, type Ask } from './native-installer.ts';
+import { nativeRoles, saveInstallation, type Ask, type NativeRole } from './native-installer.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import {
   compileLeadOrchestrationRule,
@@ -23,6 +23,7 @@ import {
 } from './antigravity-compiler.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import { HOST_CAPABILITIES, HOST_MODEL_PRESETS, type HostRolePreset } from './host-registry.ts';
+import { antigravityGlobalModelPreferencesPath, antigravityPreferenceEvidence, assertAntigravityPreferencePredecessorState, assertNoAntigravityPreferenceDeploymentOverlap, planAntigravityModelPreferenceWrites, preflightAntigravityPreferenceWrites } from './antigravity-model-preferences.ts';
 
 export interface AntigravityAdapterInstallOptions {
   scope: 'project' | 'global';
@@ -31,6 +32,7 @@ export interface AntigravityAdapterInstallOptions {
   recoveryDirectory?: string | undefined;
   agentsDirectory?: string | undefined;
   commandsDirectory?: string | undefined;
+  context?: string | undefined;
   ask: Ask;
   output(message: string): void;
   error(message: string): void;
@@ -281,6 +283,21 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     ? snapshot.head.receipt.managedFiles
     : [];
 
+  const globalTarget = join(home, '.gemini', 'config', 'hooks.json');
+  const globalSnapshot = scope === 'global' ? snapshot : discoverReceiptChain(backupParent, globalTarget, 'antigravity');
+  const globalManagedFiles = globalSnapshot.head?.receipt.version === 2 && globalSnapshot.head.receipt.managedFiles
+    ? globalSnapshot.head.receipt.managedFiles
+    : [];
+  const canonicalPath = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
+  const globalPreferencesPath = canonicalPath(antigravityGlobalModelPreferencesPath(home));
+  const predecessorStates = [
+    ...priorManagedFiles.filter(file => file.kind === 'instructions'),
+    ...globalManagedFiles.filter(file => canonicalPath(file.path) === globalPreferencesPath),
+  ];
+  // Check only the specific model-preference/context ownership footprint. Other
+  // customized Antigravity artifacts retain their existing explicit-overwrite flow.
+  assertAntigravityPreferencePredecessorState(predecessorStates);
+
   const plan = planAntigravityDeployment(scope, project, home, agentsDir, commandsDir, priorManagedFiles);
 
   const selectedFilesToWrite: AntigravityDeploymentItem[] = [];
@@ -308,6 +325,24 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     }
   }
 
+  const preferencePlan = await planAntigravityModelPreferenceWrites({
+    scope,
+    ...(project ? { project } : {}),
+    home,
+    ...(options.context ? { context: options.context } : {}),
+    ask,
+    output,
+    runtimeTiers: Object.fromEntries(nativeRoles.map(role => [role, HOST_MODEL_PRESETS.antigravity[role].model])) as Record<NativeRole, string>,
+  });
+  assertNoAntigravityPreferenceDeploymentOverlap(preferencePlan.paths, plan.filesToDeploy);
+  output('\nDesired model preference preview (labels only; no runtime assignment or access verification):');
+  for (const role of nativeRoles) {
+    output(`  ${role} (existing runtime tier ${HOST_MODEL_PRESETS.antigravity[role].model}, unchanged): ${preferencePlan.preferences.preferences[role] ?? 'unconfigured'}`);
+  }
+  output('Preference files to update:');
+  if (preferencePlan.writes.length) preferencePlan.writes.forEach(file => output(`  ${file.path} (${file.currentContent === undefined ? 'new' : 'update'}${file.currentContent === undefined ? '' : `; private before-state backup under ${backupParent}`})`));
+  else output('  None (preferences already match).');
+
   const confirm = (await ask('\nConfirm installation of Antigravity harness configuration? (yes/no)', 'yes')).trim().toLowerCase();
   if (confirm !== 'yes' && confirm !== 'y') {
     output('Installation canceled by user. No files written.');
@@ -316,6 +351,11 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
 
   // Preflight all planned files against snapshot taken before confirmation
   preflightAntigravityDeployment(plan.filesToDeploy);
+  preflightAntigravityPreferenceWrites(preferencePlan.writes);
+  // Customized-artifact prompts and preference questions are asynchronous. A
+  // predecessor context may have changed while either was open, including when
+  // this plan produces no preference write. Recheck before no-op or receipt work.
+  assertAntigravityPreferencePredecessorState(predecessorStates);
 
   const targetInitial = existsSync(plan.targetConfig) ? readFileSync(plan.targetConfig, 'utf8') : undefined;
   const targetFileInPlan = plan.filesToDeploy.find(f => f.absolutePath === plan.targetConfig);
@@ -332,6 +372,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
       after: { content: f.content, digest: hash(f.content) },
     });
   }
+  newManagedEvidence.push(...antigravityPreferenceEvidence(preferencePlan.writes));
 
   // Preserve earliest before baseline from prior managed files across upgrades/reinstalls
   const combinedManagedFiles = structuredClone(priorManagedFiles);
@@ -348,7 +389,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   }
 
   const configChanged = targetFinal !== (targetInitial ?? '');
-  const hasWrites = selectedFilesToWrite.length > 0;
+  const hasWrites = selectedFilesToWrite.length > 0 || preferencePlan.writes.length > 0;
 
   if (!hasWrites && !configChanged) {
     output('Configuration and artifacts already match; no files, backups, or receipts were modified.');
@@ -370,9 +411,13 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   try {
     revalidatePendingSuccessor(pending);
     preflightAntigravityDeployment(plan.filesToDeploy);
+    preflightAntigravityPreferenceWrites(preferencePlan.writes);
 
     for (const f of selectedFilesToWrite) {
       saveInstallation(f.absolutePath, f.currentContent, f.content, backupParent);
+    }
+    for (const file of preferencePlan.writes) {
+      saveInstallation(file.path, file.currentContent, file.content, backupParent);
     }
   } catch (err) {
     const targetUnchanged = (existsSync(plan.targetConfig) ? readFileSync(plan.targetConfig, 'utf8') : undefined) === targetInitial;
@@ -380,7 +425,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
       const exists = existsSync(f.absolutePath);
       if (f.currentContent === undefined) return !exists;
       return exists && readFileSync(f.absolutePath, 'utf8') === f.currentContent;
-    });
+    }) && preferencePlan.writes.every(f => (existsSync(f.path) ? readFileSync(f.path, 'utf8') : undefined) === f.currentContent);
 
     if (targetUnchanged && allFilesUnchanged) {
       recoverFailedSuccessor(pending, targetInitial);
@@ -396,6 +441,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   output('• Rules deployed for Lead orchestrator with subagent delegation contract.');
   output('• PreToolUse hook installed to block "gh pr merge".');
   output('• Workflow skills and MCP config generated.\n');
+  output('• Per-role desired model labels saved as preferences only; effective models/access are not configured or verified.');
 
   return 0;
 }

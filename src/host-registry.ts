@@ -286,6 +286,7 @@ export interface HostAdapterInstallOptions {
   recoveryDirectory?: string | undefined;
   agentsDirectory?: string | undefined;
   commandsDirectory?: string | undefined;
+  context?: string | undefined;
 }
 
 export interface HostAdapterUpdateOptions {
@@ -299,6 +300,7 @@ export interface HostAdapterUpdateOptions {
   recoveryDirectory?: string | undefined;
   agentsDirectory?: string | undefined;
   commandsDirectory?: string | undefined;
+  context?: string | undefined;
 }
 
 export interface HostAdapterDoctorOptions {
@@ -367,6 +369,7 @@ registerHostAdapter({
       recoveryDirectory: options.recoveryDirectory,
       agentsDirectory: options.agentsDirectory,
       commandsDirectory: options.commandsDirectory,
+      context: options.context,
       ask,
       output,
       error,
@@ -383,6 +386,7 @@ registerHostAdapter({
       recoveryDirectory: options.recoveryDirectory,
       agentsDirectory: options.agentsDirectory,
       commandsDirectory: options.commandsDirectory,
+      context: options.context,
       ask,
       output,
       error,
