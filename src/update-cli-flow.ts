@@ -198,6 +198,15 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   const existingConfig = parseConfiguration(original, target);
   const plan = planUpdate(existingConfig, definitions, history);
 
+  if (plan.permissionConflicts.length) {
+    errorOutput(`Update blocked: permission conflicts in ${target}. No configuration, command, backup, or recovery files were changed.`);
+    for (const conflict of plan.permissionConflicts) {
+      errorOutput(`  [${conflict.role}] ${conflict.code}: ${conflict.message}`);
+    }
+    errorOutput('Review the configuration and resolve these conflicts deliberately before rerunning the update.');
+    return 2;
+  }
+
   if (plan.migrationNotes.length) {
     output('\nMigration implications:');
     for (const note of plan.migrationNotes) {

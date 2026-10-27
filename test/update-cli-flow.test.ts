@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { makeTempRoot } from './temp-directory.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { nativeRoles, parseConfiguration } from '../src/native-installer.ts';
+import type { PermissionRule } from '../src/permission-reconciliation.ts';
 import { discoverReceiptChain } from '../src/receipt-lineage.ts';
 import { createSuccessorReceipt, finalizeSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
 import { loadNativeDefinitions, updateNativeConfiguration } from '../src/native-installer.ts';
@@ -61,6 +62,105 @@ test('update flow cancellation makes no configuration or recovery writes', async
   assert.equal(existsSync(join(project, '.opencode', 'commands', 'start-issue.md')), false);
   assert.equal(existsSync(join(root, 'recovery')), false);
   assert.ok(output.some(line => line.includes('Update cancelled. No files or receipts were modified.')));
+});
+
+test('permission conflicts block update before prompts and preserve all artifacts', async t => {
+  const root = makeTempRoot('harness-update-permission-conflict-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const config = join(project, '.opencode', 'opencode.jsonc'); mkdirSync(join(project, '.opencode'));
+  const definitions = loadNativeDefinitions(join(process.cwd(), 'agents'));
+  const dummy = createDummyInstalledConfig();
+  const agents = dummy.agents as Record<string, Record<string, unknown>>;
+  const desired = definitions.lead.permissions[0] as PermissionRule | undefined;
+  assert.ok(desired && ['allow', 'ask', 'deny'].includes(desired.effect));
+  agents.lead!.permissions = [{ ...desired, effect: desired.effect === 'deny' ? 'allow' : 'deny' } satisfies PermissionRule];
+  const recovery = join(root, 'recovery');
+  const baseline = JSON.stringify(dummy, null, 2);
+  writeFileSync(config, baseline);
+  const permissionPlans = Object.fromEntries(nativeRoles.map(role => {
+    const rules = ((parseConfiguration(baseline, config).agents as Record<string, Record<string, unknown>>)[role]?.permissions ?? []) as import('../src/permission-reconciliation.ts').PermissionRule[];
+    return [role, { rules, provenance: [], preview: { additions: [], removals: [], retainedObsolete: [], order: rules, conflicts: [] } }];
+  })) as never;
+  const chain = discoverReceiptChain(recovery, config, 'opencode');
+  finalizeSuccessor(writePendingSuccessor(chain, createSuccessorReceipt(chain, undefined, baseline, permissionPlans, undefined, { host: 'opencode' })), baseline);
+  const receiptFiles = (await import('node:fs')).readdirSync(recovery).map(name => [name, readFileSync(join(recovery, name))] as const);
+  const initial = JSON.stringify(dummy, null, 2);
+  writeFileSync(config, initial);
+  const errors: string[] = [];
+  const questions: string[] = [];
+  let updates = 0, verifications = 0;
+  const status = await runUpdateFlow({ scope: 'project', project, config, checkRemote: false }, {
+    ask: async question => { questions.push(question); throw new Error(`Unexpected prompt: ${question}`); },
+    output: () => {}, error: text => errors.push(text), home: root, recoveryDirectory: recovery,
+    updateConfiguration: ((...args: Parameters<typeof updateNativeConfiguration>) => { updates++; return updateNativeConfiguration(...args); }),
+    verify: async () => { verifications++; return { ok: true, checks: [] } as never; },
+    runCommand: (_cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : ''
+  });
+  assert.equal(status, 2);
+  assert.deepEqual(questions, []);
+  assert.equal(updates, 0); assert.equal(verifications, 0);
+  assert.equal(readFileSync(config, 'utf8'), initial);
+  assert.deepEqual((await import('node:fs')).readdirSync(recovery), receiptFiles.map(([name]) => name));
+  for (const [name, bytes] of receiptFiles) assert.deepEqual(readFileSync(join(recovery, name)), bytes);
+  assert.equal(existsSync(join(project, '.opencode', 'commands')), false);
+  assert.ok(errors.some(line => line.includes(config)));
+  assert.ok(errors.some(line => line.includes('[lead] identity:')));
+});
+
+test('global receipt-free conflict at alternate JSONC path with spaces retries invalid scope', async t => {
+  const root = makeTempRoot('harness-update-global-conflict-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const xdg = join(root, 'global settings'); mkdirSync(join(xdg, 'opencode'), { recursive: true });
+  const config = join(xdg, 'opencode', 'opencode.jsonc');
+  const project = join(root, 'unused project'); mkdirSync(project);
+  const definitions = loadNativeDefinitions(join(process.cwd(), 'agents'));
+  const dummy = createDummyInstalledConfig();
+  const agents = dummy.agents as Record<string, Record<string, unknown>>;
+  const desired = definitions.operator.permissions[0] as PermissionRule | undefined;
+  assert.ok(desired && ['allow', 'ask', 'deny'].includes(desired.effect));
+  agents.operator!.permissions = [{ ...desired, effect: desired.effect === 'deny' ? 'allow' : 'deny' } satisfies PermissionRule];
+  const initial = JSON.stringify(dummy, null, 2);
+  writeFileSync(config, initial);
+  const recovery = join(root, 'recovery');
+  const questions: string[] = [], errors: string[] = [];
+  let scopeAnswers = 0;
+  const status = await runUpdateFlow({ config, checkRemote: false }, {
+    ask: async question => {
+      questions.push(question);
+      if (question.startsWith('Update scope:')) return scopeAnswers++ === 0 ? 'invalid' : 'global';
+      throw new Error(question);
+    },
+    output: () => {}, error: text => errors.push(text), home: root, xdgConfigHome: xdg,
+    recoveryDirectory: recovery, runCommand: (_cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : ''
+  });
+  assert.equal(status, 2);
+  assert.deepEqual(questions, ['Update scope: project or global', 'Update scope: project or global']);
+  assert.equal(readFileSync(config, 'utf8'), initial);
+  assert.equal(existsSync(recovery), false);
+  assert.equal(existsSync(join(xdg, 'opencode', 'commands')), false);
+  assert.ok(errors.some(line => line.includes(`permission conflicts in ${config}`)));
+  assert.ok(errors.some(line => line.includes('[operator] identity:')));
+});
+
+test('blank and unknown final answers cancel without writes or recovery artifacts', async t => {
+  const root = makeTempRoot('harness-update-cancel-answers-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const finalAnswer of ['', 'not update']) {
+    const project = join(root, finalAnswer ? 'unknown' : 'blank'); mkdirSync(project);
+    const config = join(project, 'opencode.json');
+    const initial = JSON.stringify(createDummyInstalledConfig()); writeFileSync(config, initial);
+    const recovery = join(root, `recovery-${finalAnswer ? 'unknown' : 'blank'}`);
+    const status = await runUpdateFlow({ scope: 'project', project, checkRemote: false }, {
+      ask: async question => question.startsWith('Type update') ? finalAnswer : question.includes('system prompt to latest') ? 'no' : (() => { throw new Error(question); })(),
+      output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery,
+      runCommand: (_cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : ''
+    });
+    assert.equal(status, 0);
+    assert.equal(readFileSync(config, 'utf8'), initial);
+    assert.equal(existsSync(recovery), false);
+    assert.equal(existsSync(join(project, '.opencode', 'commands')), false);
+  }
 });
 
 test('update flow default-on-Enter keeps installed system prompt', async t => {

@@ -19,6 +19,7 @@ export type RolePromptDiff = {
 export type UpdatePlan = {
   roles: Record<NativeRole, RolePromptDiff>;
   plans: Partial<Record<NativeRole, ReconciliationResult>>;
+  permissionConflicts: Array<{ role: NativeRole; code: string; message: string }>;
   migrationNotes: string[];
   hasChanges: boolean;
 };
@@ -69,6 +70,7 @@ export function planUpdate(
   }
 
   let hasChanges = false;
+  const permissionConflicts: UpdatePlan['permissionConflicts'] = [];
 
   for (const role of nativeRoles) {
     const installed = agents[role];
@@ -150,6 +152,7 @@ export function planUpdate(
     });
 
     plans[role] = reconciliation;
+    permissionConflicts.push(...reconciliation.preview.conflicts.map(conflict => ({ role, ...conflict })));
     if (
       reconciliation.preview.additions.length ||
       reconciliation.preview.removals.length ||
@@ -162,6 +165,7 @@ export function planUpdate(
   return {
     roles,
     plans,
+    permissionConflicts,
     migrationNotes,
     hasChanges
   };
