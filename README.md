@@ -2,6 +2,8 @@
 
 An **OpenCode-native Android engineering workflow**: Lead coordinates specialized agents, you approve plans and publishing in the conversation, and agents use OpenCode's shell, Git, filesystem, and MCP tools.
 
+For private vulnerability reporting, supported versions, and execution boundaries, see the [security policy](SECURITY.md).
+
 ## Current direction and status
 
 The simplified direction was approved on 2026-10-08. There is **no separate harness host, approval terminal, custom IPC, approval-token system, or SQLite workflow engine in the product plan**. Shell, Git, and MCP integrations are required; screenshots, videos, and other evidence are useful but optional unless explicitly requested.
