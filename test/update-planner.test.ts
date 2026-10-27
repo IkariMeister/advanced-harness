@@ -117,3 +117,40 @@ test('planUpdate detects prompt and description changes and migration notes', ()
   assert.equal(plan.roles.operator.status, 'not-installed');
   assert.ok(plan.migrationNotes.some(n => n.includes('No installation receipt found')));
 });
+
+test('planUpdate reports multiple-role conflict-only plans separately and without mutating input', () => {
+  const definitions = Object.fromEntries(nativeRoles.map(role => [role, {
+    description: `Description of ${role}`, mode: role === 'lead' ? 'primary' : 'subagent',
+    model: 'openai/gpt-6-luna', permissions: [{ action: 'read', resource: 'src/*', effect: 'allow' as const }],
+    system: `System prompt for ${role}`
+  }])) as Record<string, NativeDefinition>;
+  const agents = Object.fromEntries(nativeRoles.map(role => [role, {
+    description: `Description of ${role}`, mode: role === 'lead' ? 'primary' : 'subagent',
+    model: 'custom/model', system: `System prompt for ${role}`,
+    permissions: role === 'lead' ? [
+      { action: 'read', resource: 'src/*', effect: 'deny' },
+      { action: 'read', resource: 'src/*', effect: 'allow' }
+    ] : role === 'operator' ? [
+      { action: 'read', resource: 'src/*', effect: 'deny' },
+      { action: 'read', resource: 'src/*', effect: 'deny' }
+    ] : [{ action: 'read', resource: 'src/*', effect: 'allow' }]
+  }]));
+  const config = { agents };
+  const before = structuredClone(config);
+  const snapshot: ReceiptSnapshot = { directory: '/test', target: '/test/opencode.json', fingerprint: '123', entries: [] };
+
+  const plan = planUpdate(config, definitions, snapshot);
+  assert.deepEqual(config, before);
+  assert.equal(plan.hasChanges, false);
+  assert.deepEqual(plan.permissionConflicts.map(({ role, code }) => ({ role, code })), [
+    { role: 'lead', code: 'identity' }, { role: 'lead', code: 'identity' }, { role: 'lead', code: 'identity' },
+    { role: 'operator', code: 'identity' }
+  ]);
+  assert.ok(plan.permissionConflicts.every(c => c.message.length > 0));
+
+  const withLegitimateChanges = structuredClone(config);
+  (withLegitimateChanges.agents as Record<string, { permissions: unknown[] }>).qa!.permissions = [];
+  const mixedPlan = planUpdate(withLegitimateChanges, definitions, snapshot);
+  assert.equal(mixedPlan.hasChanges, true);
+  assert.ok(mixedPlan.permissionConflicts.length > 0);
+});

@@ -267,6 +267,12 @@ npm run harness:update -- --check-remote
 4. **Safe recovery**: Updates write an exact private backup and a pending successor receipt first. On failure, pending evidence is retained. You can restore through the existing receipt chain (`npm run harness:uninstall`) to rollback cleanly.
 5. **Confirmation**: Final confirmation requires typing `update`. Cancellation leaves all files and receipts unchanged.
 
+If update planning finds any permission reconciliation conflict, the update stops
+before role, command-replacement, or final-confirmation prompts. It reports the
+configuration path and each conflict's role, code, and message, then returns status
+2. Review and resolve the permissions deliberately before rerunning. The blocked
+path does not write configuration, commands, backups, receipts, or run verification.
+
 ### If Lead is missing
 
 - Look for **Lead**, not an agent named “Harness.” Only Lead is primary; the seven others are subagents.

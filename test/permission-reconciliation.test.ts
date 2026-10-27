@@ -72,3 +72,14 @@ test('ambiguous action globs cannot bypass a user restriction', () => {
   assert.ok(result.preview.conflicts.length);
   assert.deepEqual(result.rules, [restriction]);
 });
+
+test('duplicate contradictory identities fail closed without additions or mutation', () => {
+  const duplicate = r('read', 'src/*', 'deny');
+  const existing = [duplicate, { ...duplicate }];
+  const before = structuredClone(existing);
+  const result = reconcilePermissions({ existing, desired: [{ rule: r('read', 'src/*', 'allow'), sources: ['native'] }] });
+  assert.ok(result.preview.conflicts.some(conflict => conflict.code === 'identity'));
+  assert.deepEqual(result.rules, before);
+  assert.deepEqual(result.preview.additions, []);
+  assert.deepEqual(existing, before);
+});

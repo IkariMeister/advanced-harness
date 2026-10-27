@@ -116,6 +116,13 @@ test('reinstall preserves customized model representations unless explicitly rep
   assert.equal(replaced.lead!.model, assignments.lead);
 });
 
+test('installer fails closed on duplicate permission identities', () => {
+  const rule = definitions.lead.permissions[0]!;
+  const original = JSON.stringify({ agents: { lead: { permissions: [rule, { ...rule }] } } });
+  assert.throws(() => updateNativeConfiguration(original, definitions, assignments, false), /Permission reconciliation conflict for lead/);
+  assert.equal(original, JSON.stringify({ agents: { lead: { permissions: [rule, { ...rule }] } } }));
+});
+
 test('invalid, duplicate, non-object and ambiguous configurations are never rewritten', t => {
   for (const text of ['{broken', '[]', '{"agents":[]}', '{"model":"one/a","model":"two/b"}']) assert.throws(() => parseConfiguration(text, 'test'));
   assert.throws(() => updateNativeConfiguration('{"agents":{"lead":"not-an-object"}}', definitions, assignments, false));
