@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, relative, resolve } from 'node:path';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { contextData, contextPath, prepareContextFiles, readContext, updateContext } from './project-context.ts';
@@ -44,8 +45,12 @@ function parseModelPreferenceSection(text: string | undefined, source: string): 
   return parseAntigravityModelPreferences(JSON.stringify(value), source);
 }
 
+export function antigravityGlobalModelPreferencesPath(home: string): string {
+  return join(home, '.gemini', 'config', 'harness.model-preferences.json');
+}
+
 function readGlobalPreferences(home: string): { path: string; text: string | undefined; preferences: AntigravityModelPreferences | undefined } {
-  const path = assertSafeFilesystemPath(join(home, '.gemini', 'config', 'harness.model-preferences.json'), 'file');
+  const path = assertSafeFilesystemPath(antigravityGlobalModelPreferencesPath(home), 'file');
   const text = readContext(path);
   return { path, text, preferences: text === undefined ? undefined : parseAntigravityModelPreferences(text, path) };
 }
@@ -152,6 +157,37 @@ export function preflightAntigravityPreferenceWrites(writes: readonly ModelPrefe
     assertSafeFilesystemPath(write.path, 'file');
     const current = existsSync(write.path) ? readFileSync(write.path, 'utf8') : undefined;
     if (current !== write.currentContent) throw new Error(`Model preference file changed while confirmation was open: ${write.path}. Rerun the installer; nothing was overwritten.`);
+  }
+}
+
+/**
+ * A predecessor receipt owns the whole managed preference/context file. Before
+ * asking anything or preparing a successor, require its latest recorded after
+ * state to still match exactly; do not merge or silently absorb human edits.
+ */
+export function assertAntigravityPreferencePredecessorState(
+  files: readonly Pick<ManagedFileEvidence, 'path' | 'after'>[],
+): void {
+  for (const file of files) {
+    let current: string | undefined;
+    try {
+      const path = assertSafeFilesystemPath(file.path, 'file');
+      current = readContext(path);
+    } catch (err) {
+      throw new Error(`Cannot verify managed Antigravity preference/context predecessor state at ${file.path}: ${err instanceof Error ? err.message : String(err)}. Refusing to continue; no files changed.`);
+    }
+
+    const after = file.after;
+    const matches = 'absent' in after
+      ? current === undefined
+      : after.content !== undefined
+      ? current === after.content
+      : after.digest !== undefined && current !== undefined
+      ? createHash('sha256').update(current).digest('hex') === after.digest
+      : false;
+    if (!matches) {
+      throw new Error(`Managed Antigravity preference/context file does not match its recorded predecessor after-state at ${file.path}. Resolve or restore it explicitly before retrying; no files changed.`);
+    }
   }
 }
 

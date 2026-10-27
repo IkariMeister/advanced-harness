@@ -119,6 +119,13 @@ project setup. Project scope never writes that global file. By default, project
 choices are stored in a dedicated marked section of `AGENTS.md`; select another
 in-project Markdown file explicitly with `--context`:
 
+Before an Antigravity install/update proceeds, receipt-managed preference files
+and context Markdown files must still match their recorded after-state. A changed,
+missing, unsafe, or unreadable managed file stops the operation rather than
+silently absorbing edits. This is a whole-file check: restore or resolve the
+file explicitly before retrying. It does not apply a general drift policy to
+other deployment artifacts.
+
 ```powershell
 npm run harness:install -- --host antigravity --scope global
 npm run harness:install -- --host antigravity --scope project --project "$HOME/Projects/MarsRoverIA"
