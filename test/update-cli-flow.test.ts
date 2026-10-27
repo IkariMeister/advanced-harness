@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTempRoot } from './temp-directory.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
@@ -9,6 +9,7 @@ import type { PermissionRule } from '../src/permission-reconciliation.ts';
 import { discoverReceiptChain } from '../src/receipt-lineage.ts';
 import { createSuccessorReceipt, finalizeSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
 import { loadNativeDefinitions, updateNativeConfiguration } from '../src/native-installer.ts';
+import type { HostAdapter } from '../src/host-registry.ts';
 
 function createDummyInstalledConfig(): Record<string, unknown> {
   return {
@@ -62,6 +63,39 @@ test('update flow cancellation makes no configuration or recovery writes', async
   assert.equal(existsSync(join(project, '.opencode', 'commands', 'start-issue.md')), false);
   assert.equal(existsSync(join(root, 'recovery')), false);
   assert.ok(output.some(line => line.includes('Update cancelled. No files or receipts were modified.')));
+});
+
+test('Codex context is rejected before update prompts or filesystem writes', async t => {
+  const root = makeTempRoot('codex-context-update-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  let prompts = 0;
+  await assert.rejects(runUpdateFlow({ host: 'codex', scope: 'project', project: root, context: 'local' }, {
+    ask: async () => { prompts++; return ''; }, output: () => {}, error: () => {}, home: root,
+  }), /--context for model preferences is supported only with --host antigravity/);
+  assert.equal(prompts, 0);
+  assert.deepEqual(readdirSync(root), []);
+});
+
+test('Antigravity update receives project context while ordinary Codex update remains routed', async t => {
+  const root = makeTempRoot('host-update-context-route-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const seen: string[] = [];
+  const adapters = new Map<string, HostAdapter>([
+    ['antigravity', { host: 'antigravity', install: async () => 0, update: async options => { seen.push(`antigravity:${options.context}`); return 0; } }],
+    ['codex', { host: 'codex', install: async () => 0, update: async options => { seen.push(`codex:${options.context ?? 'none'}`); return 0; } }],
+  ]);
+  const antigravity = await runUpdateFlow({ host: 'antigravity', scope: 'project', project, context: 'local' }, {
+    ask: async () => '', output: () => {}, error: () => {}, home: root,
+    getHostAdapter: host => adapters.get(host),
+  });
+  const codex = await runUpdateFlow({ host: 'codex', scope: 'project', project }, {
+    ask: async () => '', output: () => {}, error: () => {}, home: root,
+    getHostAdapter: host => adapters.get(host),
+  });
+  assert.equal(antigravity, 0);
+  assert.equal(codex, 0);
+  assert.deepEqual(seen, ['antigravity:local', 'codex:none']);
 });
 
 test('permission conflicts block update before prompts and preserve all artifacts', async t => {

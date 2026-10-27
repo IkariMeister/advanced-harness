@@ -99,7 +99,8 @@ test('HOST_MODEL_PRESETS covers all 8 roles across all 5 hosts', () => {
     for (const role of nativeRoles) {
       const preset = presets[role];
       assert.ok(preset, `Host ${host} missing preset for role ${role}`);
-      assert.ok(preset.model, `Host ${host} role ${role} missing model identifier`);
+      if (host === 'codex') assert.equal(preset.model, '', 'Codex assignments must remain user-selected, not guessed presets');
+      else assert.ok(preset.model, `Host ${host} role ${role} missing model identifier`);
     }
   }
 
@@ -143,12 +144,15 @@ test('HOST_CAPABILITIES distinguishes deployed OpenCode enforcement from deferre
   assert.equal(HOST_CAPABILITIES['claude-code'].permissionModel, 'settings-permissions-and-disallowed-tools');
   assert.match(HOST_CAPABILITIES['claude-code'].ghPrMergeGuard, /Bash\(gh pr merge\)/);
 
-  for (const host of ['codex', 'cursor'] as const) {
+  for (const host of ['cursor'] as const) {
     assert.equal(HOST_CAPABILITIES[host].isolationModel, 'not-deployed');
     assert.equal(HOST_CAPABILITIES[host].permissionModel, 'not-deployed');
     assert.match(HOST_CAPABILITIES[host].ghPrMergeGuard, /No .* merge guard is deployed/);
     assert.ok(HOST_CAPABILITIES[host].disclosures.some(note => /not deployed|no native role files/i.test(note)));
   }
+  assert.equal(HOST_CAPABILITIES.codex.isolationModel, 'native-subagents');
+  assert.equal(HOST_CAPABILITIES.codex.permissionModel, 'execpolicy-and-sandbox');
+  assert.match(HOST_CAPABILITIES.codex.ghPrMergeGuard, /indirect\/API routes are not universally blocked/);
   assert.equal(HOST_CAPABILITIES.cursor.configLocations.project.includes('.cursor/skills'), true);
 });
 
@@ -303,55 +307,52 @@ test('multi-host receipt lineage: host isolation, managedFiles restore, and asse
   }
 });
 
-test('installer and update flows fail closed for non-implemented hosts before adapters or writes', async () => {
+test('Codex install/update dispatches to its adapter while unsupported Cursor fails before writes', async () => {
   const tempProject = createTempDir('flow-multihost-test');
   const tempHome = createTempDir('flow-home');
   const logs: string[] = [];
   const ask = async (_q: string, suggested?: string) => suggested ?? '';
 
   try {
-    // Registered adapters are not evidence of production deployment support.
     let installedHost: string | undefined;
-    clearRegisteredAdapters();
-    registerHostAdapter({
-      host: 'codex',
-      install: async () => { installedHost = 'codex'; }
-    });
-
+    const codexAdapter = { host: 'codex' as const, install: async () => { installedHost = 'codex'; }, update: async () => { installedHost = 'codex-update'; } };
     const exitCode = await runInstallerFlow(
       { scope: 'project', project: tempProject, host: 'codex' },
       {
         ask,
         output: msg => logs.push(msg),
         error: msg => logs.push(`ERR: ${msg}`),
-        home: tempHome
+        home: tempHome,
+        getHostAdapter: host => host === 'codex' ? codexAdapter : undefined,
       }
     );
-    assert.equal(exitCode, 2);
-    assert.equal(installedHost, undefined);
-    assert.ok(logs.some(l => l.includes('issue #45')));
+    assert.equal(exitCode, 0);
+    assert.equal(installedHost, 'codex');
 
     // Test update flow for non-opencode/non-antigravity host
-    let updatedHost: string | undefined;
-    registerHostAdapter({
-      host: 'codex',
-      install: async () => {},
-      update: async () => { updatedHost = 'codex'; }
-    });
-
     const updateExitCode = await runUpdateFlow(
       { scope: 'project', project: tempProject, host: 'codex' },
       {
         ask,
         output: msg => logs.push(msg),
         error: msg => logs.push(`ERR: ${msg}`),
-        home: tempHome
+        home: tempHome,
+        getHostAdapter: host => host === 'codex' ? codexAdapter : undefined,
       }
     );
-    assert.equal(updateExitCode, 2);
-    assert.equal(updatedHost, undefined);
+    assert.equal(updateExitCode, 0);
+    assert.equal(installedHost, 'codex-update');
+
+    const unsupportedInstall = await runInstallerFlow({ scope: 'project', project: tempProject, host: 'cursor' }, {
+      ask, output: msg => logs.push(msg), error: msg => logs.push(`ERR: ${msg}`), home: tempHome,
+    });
+    const unsupportedUpdate = await runUpdateFlow({ scope: 'project', project: tempProject, host: 'cursor' }, {
+      ask, output: msg => logs.push(msg), error: msg => logs.push(`ERR: ${msg}`), home: tempHome,
+    });
+    assert.equal(unsupportedInstall, 2);
+    assert.equal(unsupportedUpdate, 2);
+    assert.ok(logs.some(l => l.includes('issue #46')));
   } finally {
-    clearRegisteredAdapters();
     rmSync(tempProject, { recursive: true, force: true });
     rmSync(tempHome, { recursive: true, force: true });
   }

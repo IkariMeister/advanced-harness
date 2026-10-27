@@ -69,6 +69,7 @@ export interface UpdateFlowDependencies {
   finalize?: typeof finalizeSuccessor;
   verify?: typeof verifyRuntime;
   printReport?: typeof printReport;
+  getHostAdapter?: typeof getHostAdapter;
 }
 
 export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlowDependencies): Promise<number> {
@@ -94,12 +95,12 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     throw new Error('Project directory does not exist or is not a directory. Select a valid directory before updating.');
   }
 
-  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity', 'claude-code'];
+  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity', 'claude-code', 'codex'];
   const unsupportedHosts = selectedHosts.filter(host => !supportedNativeHosts.includes(host));
 
   if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
     for (const host of unsupportedHosts) {
-      const issue = host === 'codex' ? '#45' : '#46';
+      const issue = host === 'claude-code' ? '#43' : '#46';
       errorOutput(`Update blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
     }
     if (selectedHosts.length > 1 && unsupportedHosts.length === 0) {
@@ -112,7 +113,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   if (options.context && scope !== 'project') throw new Error('--context can be used only with project scope.');
 
   if (selectedHosts.includes('claude-code')) {
-    const adapter = getHostAdapter('claude-code');
+    const adapter = (deps.getHostAdapter ?? getHostAdapter)('claude-code');
     if (!adapter || !adapter.update) throw new Error('Claude Code host adapter update is not available.');
     const result = await adapter.update({
       scope: scope as 'project' | 'global',
@@ -130,7 +131,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   }
 
   if (selectedHosts.includes('antigravity')) {
-    const adapter = getHostAdapter('antigravity');
+    const adapter = (deps.getHostAdapter ?? getHostAdapter)('antigravity');
     if (!adapter || !adapter.update) throw new Error('Antigravity host adapter update is not available.');
     const result = await adapter.update({
       scope: scope as 'project' | 'global',
@@ -144,6 +145,18 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       ask,
       output,
       error: errorOutput,
+    });
+    return typeof result === 'number' ? result : 0;
+  }
+
+  if (selectedHosts.includes('codex')) {
+    const adapter = (deps.getHostAdapter ?? getHostAdapter)('codex');
+    if (!adapter || !adapter.update) throw new Error('Codex host adapter update is not available.');
+    const result = await adapter.update({
+      scope: scope as 'project' | 'global', project, home,
+      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
+      agentsDirectory: deps.agentsDirectory, commandsDirectory: deps.workflowCommandsDirectory,
+      ask, output, error: errorOutput,
     });
     return typeof result === 'number' ? result : 0;
   }
