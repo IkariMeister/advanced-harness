@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { nativeRoles, type Ask, type NativeRole } from './native-installer.ts';
 import { installAntigravity, diagnoseAntigravity } from './antigravity-adapter.ts';
+import { installClaudeCode, diagnoseClaudeCode } from './claude-code-adapter.ts';
 
 export const supportedHosts = ['opencode', 'claude-code', 'antigravity', 'codex', 'cursor'] as const;
 export type HostId = typeof supportedHosts[number];
@@ -139,19 +140,19 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
   'claude-code': {
     host: 'claude-code',
     displayName: 'Claude Code',
-    isolationModel: 'not-deployed',
-    permissionModel: 'not-deployed',
+    isolationModel: 'native-subagents',
+    permissionModel: 'settings-permissions-and-disallowed-tools',
     configLocations: {
-      project: ['CLAUDE.md', '.claude/agents', '.claude/commands', '.claude/settings.json', '.mcp.json'],
+      project: ['CLAUDE.md', '.claude/agents', '.claude/commands', '.claude/settings.json'],
       global: ['~/.claude/settings.json', '~/.claude.json'],
     },
-    ghPrMergeGuard: 'No Claude Code merge guard is deployed; static source-policy preflight reports blockers and integration is tracked in issue #43.',
+    ghPrMergeGuard: 'Project .claude/settings.json denies Bash(gh pr merge) and gh.exe variants; prefix patterns are a workflow guardrail, not a sandbox.',
     disclosures: [
-      'Planned Lead coordination via a marked orchestration block in CLAUDE.md is not deployed by this harness.',
-      'Workflow artifact compilation can emit documented command Markdown; no native role files or permission scope are deployed by this harness.',
-      'Claude Code permission priority is deny > ask > allow; source ordered-last-match behavior is not assumed equivalent.',
-      'Subagent disallowedTools Bash(pattern) removes Bash rather than proving equivalent resource-pattern scoping.',
-      'Installer/update block Claude selection pending native integration issue #43; source-policy preflight is diagnostic only and no runtime enforcement is claimed.',
+      'Lead is the project default agent (.claude/settings.json agent: lead) and delegates only to 7 child subagents in .claude/agents via Agent(...) tool scoping.',
+      'Per-role tools use tools/disallowedTools allowlists. Operator, Implementer, Reviewer, and QA have no Bash tool because per-role Bash scoping cannot be expressed exactly.',
+      'MCP aliases (jira, github, figma, stitch) and OpenCode Code Mode have no verified Claude identity; no .mcp.json is written and External has no MCP tools.',
+      'Claude permission evaluation is deny > ask > allow; source ordered-last-match exceptions are downgraded to Claude prompts, never to allows.',
+      'Project scope only. Claude Code runtime discovery, agent selection, and model aliases are not verified by this harness.',
     ],
   },
   antigravity: {
@@ -321,6 +322,38 @@ const registeredAdapters = new Map<HostId, HostAdapter>();
 export function registerHostAdapter(adapter: HostAdapter): void {
   registeredAdapters.set(adapter.host, adapter);
 }
+
+// Install and update share one Claude Code path; HostAdapterUpdateOptions has the same fields.
+async function installClaudeCodeFromOptions(options: HostAdapterInstallOptions): Promise<number> {
+  const ask: Ask = options.ask ?? (async (_q, s) => s ?? '');
+  const output = options.output ?? ((msg: string) => console.log(msg));
+  const error = options.error ?? ((msg: string) => console.error(msg));
+  return await installClaudeCode({
+    scope: options.scope,
+    project: options.project,
+    home: options.home,
+    recoveryDirectory: options.recoveryDirectory,
+    agentsDirectory: options.agentsDirectory,
+    commandsDirectory: options.commandsDirectory,
+    ask,
+    output,
+    error,
+  });
+}
+
+// Built-in registration for Claude Code host adapter (project scope only)
+registerHostAdapter({
+  host: 'claude-code',
+  install: installClaudeCodeFromOptions,
+  update: installClaudeCodeFromOptions,
+  async doctor(options) {
+    return await diagnoseClaudeCode({
+      project: options.project,
+      agentsDirectory: undefined,
+      commandsDirectory: undefined,
+    });
+  },
+});
 
 // Built-in registration for Antigravity host adapter
 registerHostAdapter({

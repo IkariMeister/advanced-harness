@@ -36,8 +36,6 @@ import {
   preflightOpenCodeCommandDeployment,
   type WorkflowCommandId
 } from './workflow-commands.ts';
-import { formatClaudePermissionPreflight, preflightClaudePermissions } from './claude-permission-preflight.ts';
-import { loadRoleDefinitions } from './role-definitions.ts';
 import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
 
 export interface UpdateFlowOptions {
@@ -96,27 +94,39 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     throw new Error('Project directory does not exist or is not a directory. Select a valid directory before updating.');
   }
 
-  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity'];
+  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity', 'claude-code'];
   const unsupportedHosts = selectedHosts.filter(host => !supportedNativeHosts.includes(host));
 
   if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
-    for (const host of selectedHosts.filter(host => host !== 'opencode' && host !== 'antigravity')) {
-      const issue = host === 'claude-code' ? '#43' : host === 'codex' ? '#45' : '#46';
+    for (const host of unsupportedHosts) {
+      const issue = host === 'codex' ? '#45' : '#46';
       errorOutput(`Update blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
     }
     if (selectedHosts.length > 1 && unsupportedHosts.length === 0) {
       errorOutput('Multi-host simultaneous update is not supported. Update each host deliberately.');
-    }
-    if (selectedHosts.includes('claude-code')) {
-      const definitions = loadRoleDefinitions(deps.agentsDirectory ?? join(harnessRoot, 'agents'));
-      const report = preflightClaudePermissions(definitions);
-      for (const line of formatClaudePermissionPreflight(report)) errorOutput(line);
     }
     return 2;
   }
 
   if (options.context && !selectedHosts.includes('antigravity')) throw new Error('--context for model preferences is supported only with --host antigravity.');
   if (options.context && scope !== 'project') throw new Error('--context can be used only with project scope.');
+
+  if (selectedHosts.includes('claude-code')) {
+    const adapter = getHostAdapter('claude-code');
+    if (!adapter || !adapter.update) throw new Error('Claude Code host adapter update is not available.');
+    const result = await adapter.update({
+      scope: scope as 'project' | 'global',
+      project,
+      home,
+      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
+      agentsDirectory: deps.agentsDirectory,
+      commandsDirectory: deps.workflowCommandsDirectory,
+      ask,
+      output,
+      error: errorOutput,
+    });
+    return typeof result === 'number' ? result : 0;
+  }
 
   if (selectedHosts.includes('antigravity')) {
     const adapter = getHostAdapter('antigravity');

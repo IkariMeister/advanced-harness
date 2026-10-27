@@ -91,17 +91,17 @@ test('preflight reports no blockers only for an empty policy and never claims ru
 test('Claude doctor separates source-policy blockers from installed footprint and runtime verification', async t => {
   const root = makeTempRoot('claude-policy-doctor-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const report = await diagnoseHost('claude-code', { project: root, agentsDirectory });
+  const report = await diagnoseHost('claude-code', { project: root, home: root, agentsDirectory });
   assert.equal(report.installed, false);
   assert.equal(report.ok, false);
   assert.equal(report.sourcePolicy?.status, 'blocked');
   assert.equal(report.sourcePolicy?.runtimeVerified, false);
-  assert.ok(report.notes.some(note => /separate from installed configuration footprint/i.test(note)));
-  assert.doesNotMatch(HOST_CAPABILITIES['claude-code'].ghPrMergeGuard, /denied/i);
-  assert.ok(report.disclosures.some(note => /no native role files or permission scope are deployed/i.test(note)));
+  assert.ok(report.notes.some(note => /separate from the installed configuration footprint/i.test(note)));
+  assert.match(HOST_CAPABILITIES['claude-code'].ghPrMergeGuard, /Bash\(gh pr merge\)/);
+  assert.ok(report.disclosures.some(note => /Project scope only/i.test(note)));
 });
 
-test('Claude and multi-host install/update stop before adapters or any OpenCode writes', async t => {
+test('Claude single-host install/update dispatches to its adapter; multi-host and other hosts stop before adapters', async t => {
   const root = makeTempRoot('claude-policy-flow-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project);
@@ -115,7 +115,15 @@ test('Claude and multi-host install/update stop before adapters or any OpenCode 
   });
   const ask = async () => 'no';
   try {
-  for (const host of ['claude-code', 'opencode,claude-code', 'all']) {
+    assert.equal(await runInstallerFlow({ scope: 'project', project, host: 'claude-code' }, {
+      ask, output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery, agentsDirectory
+    }), 0);
+    assert.equal(await runUpdateFlow({ scope: 'project', project, host: 'claude-code' }, {
+      ask, output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery, agentsDirectory
+    }), 0);
+    assert.deepEqual(calls, ['install:claude-code', 'update:claude-code']);
+    calls.length = 0;
+  for (const host of ['opencode,claude-code', 'all', 'codex', 'antigravity,codex']) {
       const installStatus = await runInstallerFlow({ scope: 'project', project, host }, {
         ask, output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery, agentsDirectory
       });

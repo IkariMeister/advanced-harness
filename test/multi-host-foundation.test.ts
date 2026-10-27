@@ -135,7 +135,11 @@ test('HOST_CAPABILITIES distinguishes deployed OpenCode enforcement from deferre
   assert.equal(HOST_CAPABILITIES.antigravity.permissionModel, 'hooks-and-subagent-tool-groups');
   assert.match(HOST_CAPABILITIES.antigravity.ghPrMergeGuard, /PreToolUse/);
 
-  for (const host of ['claude-code', 'codex', 'cursor'] as const) {
+  assert.equal(HOST_CAPABILITIES['claude-code'].isolationModel, 'native-subagents');
+  assert.equal(HOST_CAPABILITIES['claude-code'].permissionModel, 'settings-permissions-and-disallowed-tools');
+  assert.match(HOST_CAPABILITIES['claude-code'].ghPrMergeGuard, /Bash\(gh pr merge\)/);
+
+  for (const host of ['codex', 'cursor'] as const) {
     assert.equal(HOST_CAPABILITIES[host].isolationModel, 'not-deployed');
     assert.equal(HOST_CAPABILITIES[host].permissionModel, 'not-deployed');
     assert.match(HOST_CAPABILITIES[host].ghPrMergeGuard, /No .* merge guard is deployed/);
@@ -306,12 +310,12 @@ test('installer and update flows fail closed for non-implemented hosts before ad
     let installedHost: string | undefined;
     clearRegisteredAdapters();
     registerHostAdapter({
-      host: 'claude-code',
-      install: async () => { installedHost = 'claude-code'; }
+      host: 'codex',
+      install: async () => { installedHost = 'codex'; }
     });
 
     const exitCode = await runInstallerFlow(
-      { scope: 'project', project: tempProject, host: 'claude-code' },
+      { scope: 'project', project: tempProject, host: 'codex' },
       {
         ask,
         output: msg => logs.push(msg),
@@ -321,18 +325,18 @@ test('installer and update flows fail closed for non-implemented hosts before ad
     );
     assert.equal(exitCode, 2);
     assert.equal(installedHost, undefined);
-    assert.ok(logs.some(l => l.includes('issue #43')));
+    assert.ok(logs.some(l => l.includes('issue #45')));
 
     // Test update flow for non-opencode/non-antigravity host
     let updatedHost: string | undefined;
     registerHostAdapter({
-      host: 'claude-code',
+      host: 'codex',
       install: async () => {},
-      update: async () => { updatedHost = 'claude-code'; }
+      update: async () => { updatedHost = 'codex'; }
     });
 
     const updateExitCode = await runUpdateFlow(
-      { scope: 'project', project: tempProject, host: 'claude-code' },
+      { scope: 'project', project: tempProject, host: 'codex' },
       {
         ask,
         output: msg => logs.push(msg),
