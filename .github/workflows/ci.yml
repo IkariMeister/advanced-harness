@@ -52,3 +52,27 @@ jobs:
 
       - name: Run automated tests
         run: npm test
+
+  smoke:
+    name: Smoke (${{ matrix.os }} / Node 24)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows covers the opencode.exe stub path; Ubuntu covers the POSIX shell wrapper.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run sandboxed CLI smoke suite
+        run: npm run smoke
