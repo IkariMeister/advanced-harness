@@ -145,6 +145,11 @@ The suite also made these observations, which are not asserted:
   reach GitHub, Jira, MCP servers, or `origin`.
 - Interactive TTY QA by a human, the MarsRoverIA pilot, and Android
   build/device commands.
-- The GitHub Actions job. It is planned as follow-up work. The suite is already
-  CI-ready (no secrets, no network) and needs only an `npm run smoke` step on
-  `ubuntu-latest`, plus `windows-latest` to cover the `opencode.exe` stub path.
+
+## Continuous integration
+
+The `smoke` job in `.github/workflows/ci.yml` runs `npm run smoke` on
+`ubuntu-latest` (the POSIX stub wrapper) and `windows-latest` (the
+`opencode.exe` stub). It runs on every push and pull request to `main`. It
+needs no secrets or network access beyond `npm ci`. `todo` cases do not fail
+the job.
