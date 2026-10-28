@@ -119,7 +119,10 @@ Prerequisites: Git, OpenCode V2, Node.js 24.x, and the required model connection
 npm ci
 npm run typecheck
 npm test
+npm run smoke
 ```
+
+`npm run smoke` runs the real `harness:*` CLIs end to end in an isolated temporary home with a stub OpenCode runtime (no credentials or network); see the [smoke test plan](docs/smoke-test-plan.md). Its answers are piped, so it is not interactive TTY QA.
 
 Check an installed harness without reinstalling:
 

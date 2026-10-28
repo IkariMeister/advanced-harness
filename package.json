@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
+    "smoke": "node --test --test-concurrency=1 smoke/*.smoke.ts",
     "typecheck": "tsc --noEmit",
     "harness:install": "node scripts/install-native-harness.ts",
     "harness:uninstall": "node scripts/uninstall-native-harness.ts",
