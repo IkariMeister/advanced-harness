@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -12,10 +12,13 @@ import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recove
 type PlannedFile = { path: string; content: string; before: string | undefined; kind: string };
 const quote = (text: string): string => JSON.stringify(text);
 const roleId = (value: string): boolean => /^[a-z][a-z0-9_-]{0,63}$/.test(value);
+const validMcpId = (value: string): boolean => value.length > 0 && !/[\r\n\0]/.test(value);
+export const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high'] as const;
 const digest = (text: string): string => createHash('sha256').update(text).digest('hex');
 const canonicalPath = (path: string): string => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
+export const encodeCodexYamlScalar = (value: string): string => JSON.stringify(value);
 
-type CodexTomlTable = { path: string; start: number; end: number };
+type CodexTomlTable = { path: string; parts: string[]; start: number; end: number };
 type CodexTomlDocument = { tables: CodexTomlTable[] };
 
 function stripTomlComment(line: string): string {
@@ -36,12 +39,45 @@ function stripTomlComment(line: string): string {
 }
 
 function keyParts(text: string): string[] | undefined {
-  const parts = text.split('.').map(part => part.trim());
-  return parts.length && parts.every(part => /^[A-Za-z0-9_-]+$/.test(part)) ? parts : undefined;
+  const parts: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    while (text[i] === ' ' || text[i] === '\t') i++;
+    let value: string;
+    if (text[i] === '"' || text[i] === "'") {
+      const q = text[i++]!; const start = i;
+      while (i < text.length && text[i] !== q) { if (q === '"' && text[i] === '\\') i++; i++; }
+      if (i >= text.length) return undefined;
+      const raw = text.slice(start, i++);
+      try { value = q === '"' ? JSON.parse(`"${raw}"`) as string : raw; } catch { return undefined; }
+    } else {
+      const start = i; while (/[A-Za-z0-9_-]/.test(text[i] ?? '')) i++;
+      if (i === start) return undefined; value = text.slice(start, i);
+    }
+    if (!value || /[\u0000-\u001f\u007f]/.test(value)) return undefined; parts.push(value);
+    while (text[i] === ' ' || text[i] === '\t') i++;
+    if (i === text.length) break;
+    if (text[i++] !== '.') return undefined;
+  }
+  return parts.length ? parts : undefined;
 }
 
 function hasValuePathConflict(paths: Iterable<string>, candidate: string): boolean {
-  for (const path of paths) if (path === candidate || path.startsWith(`${candidate}.`) || candidate.startsWith(`${path}.`)) return true;
+  const decode = (path: string): string[] => { try { const value: unknown = JSON.parse(path); return Array.isArray(value) ? value as string[] : path.split('.'); } catch { return path.split('.'); } };
+  const wanted = decode(candidate);
+  for (const path of paths) {
+    const existing = decode(path);
+    const common = Math.min(existing.length, wanted.length);
+    if (common > 0 && existing.slice(0, common).every((part, index) => part === wanted[index])) return true;
+  }
+  return false;
+}
+function hasDescendantPath(paths: Iterable<string>, candidate: string): boolean {
+  const wanted = JSON.parse(candidate) as string[];
+  for (const path of paths) {
+    const existing = JSON.parse(path) as string[];
+    if (existing.length >= wanted.length && wanted.every((part, index) => existing[index] === part)) return true;
+  }
   return false;
 }
 
@@ -96,10 +132,23 @@ function parseTomlValue(source: string, initial: number, path: string, lineNumbe
     if (source[index] === '}') return index + 1;
     while (index < source.length) {
       const start = index;
-      while (/[A-Za-z0-9_.-]/.test(source[index] ?? '')) index++;
+      let keyQuote = '';
+      let keyEscape = false;
+      while (index < source.length) {
+        const current = source[index]!;
+        if (keyQuote === '"') {
+          if (keyEscape) keyEscape = false;
+          else if (current === '\\') keyEscape = true;
+          else if (current === '"') keyQuote = '';
+        } else if (keyQuote === "'") {
+          if (current === "'") keyQuote = '';
+        } else if (current === '"' || current === "'") keyQuote = current;
+        else if (current === '=' || current === ',' || current === '}') break;
+        index++;
+      }
       const parts = keyParts(source.slice(start, index));
       if (!parts) return fail();
-      const key = parts.join('.');
+      const key = JSON.stringify(parts);
       if (hasValuePathConflict(seen, key)) return fail();
       seen.add(key);
       index = spaces(index);
@@ -130,7 +179,7 @@ function parseCodexToml(text: string, path: string): CodexTomlDocument {
   const explicitTables = new Set<string>();
   const values = new Set<string>();
   const tables: CodexTomlTable[] = [];
-  let currentTable = '';
+  let currentTable: string[] = [];
   let offset = 0;
   let lineNumber = 0;
   const lines = text.split(/(?<=\n)/);
@@ -140,27 +189,27 @@ function parseCodexToml(text: string, path: string): CodexTomlDocument {
     const content = stripTomlComment(raw).trim();
     const actualLine = lineNumber;
     if (!content) { offset += rawLine.length; continue; }
-    const tableMatch = /^\[\s*([A-Za-z0-9_-]+(?:\s*\.\s*[A-Za-z0-9_-]+)*)\s*\]$/.exec(content);
+      const tableMatch = /^\[\s*(.*?)\s*\]$/.exec(content);
     if (tableMatch) {
       const parts = keyParts(tableMatch[1]!);
       if (!parts) throw new Error(`Unsupported TOML table in ${path} at line ${actualLine}; refusing to edit it.`);
-      const tablePath = parts.join('.');
-      if (explicitTables.has(tablePath) || [...explicitTables].some(existing => existing.startsWith(`${tablePath}.`))) throw new Error(`Duplicate or out-of-order TOML table in ${path} at line ${actualLine}.`);
-      if ([...values].some(value => value === tablePath || value.startsWith(`${tablePath}.`) || tablePath.startsWith(`${value}.`))) throw new Error(`TOML scalar/table collision in ${path} at line ${actualLine}.`);
+      const tablePath = JSON.stringify(parts);
+      if (hasDescendantPath(explicitTables, tablePath)) throw new Error(`Duplicate or out-of-order TOML table in ${path} at line ${actualLine}.`);
+      if (hasValuePathConflict(values, tablePath)) throw new Error(`TOML scalar/table collision in ${path} at line ${actualLine}.`);
       if (tables.length) tables[tables.length - 1]!.end = offset;
       explicitTables.add(tablePath);
-      currentTable = tablePath;
-      tables.push({ path: tablePath, start: offset, end: text.length });
+      currentTable = parts;
+      tables.push({ path: parts.join('.'), parts, start: offset, end: text.length });
       offset += rawLine.length;
       continue;
     }
     if (content.startsWith('[')) throw new Error(`Unsupported or malformed TOML table in ${path} at line ${actualLine}; refusing to edit it.`);
-    const assignment = /^([A-Za-z0-9_-]+(?:\s*\.\s*[A-Za-z0-9_-]+)*)\s*=(.*)$/.exec(content);
+    const assignment = /^((?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-])(?:[^=]*?))\s*=(.*)$/.exec(content);
     if (!assignment) throw new Error(`Unsupported or malformed TOML assignment in ${path} at line ${actualLine}; refusing to edit it.`);
     const parts = keyParts(assignment[1]!);
     if (!parts) throw new Error(`Unsupported TOML key in ${path} at line ${actualLine}; refusing to edit it.`);
-    const fullKey = [currentTable, ...parts].filter(Boolean).join('.');
-    if (hasValuePathConflict(values, fullKey) || [...explicitTables].some(table => table === fullKey || table.startsWith(`${fullKey}.`))) throw new Error(`Duplicate TOML key or scalar/table collision in ${path} at line ${actualLine}.`);
+    const fullKey = JSON.stringify([...currentTable, ...parts]);
+    if (hasValuePathConflict(values, fullKey) || hasDescendantPath(explicitTables, fullKey)) throw new Error(`Duplicate TOML key or scalar/table collision in ${path} at line ${actualLine}.`);
     const valueStart = content.indexOf('=') + 1;
     const valueEnd = parseTomlValue(content, valueStart, path, actualLine);
     if (content.slice(valueEnd).trim()) throw new Error(`Trailing or malformed TOML value in ${path} at line ${actualLine}; refusing to edit it.`);
@@ -182,7 +231,11 @@ function appendSettings(existing: string | undefined): string {
     for (const line of text.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (/^\[/.test(trimmed)) { inTable = true; continue; }
-      if (!inTable && new RegExp(`^${key}\\s*=`).test(trimmed)) return true;
+      if (!inTable) {
+        const assignment = /^((?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-])(?:[^=]*?))\s*=/.exec(trimmed);
+        const parts = assignment && keyParts(assignment[1]!);
+        if (parts?.length === 1 && parts[0] === key) return true;
+      }
     }
     return false;
   };
@@ -190,18 +243,113 @@ function appendSettings(existing: string | undefined): string {
   if (!rootHas('sandbox_mode')) blocks.push('sandbox_mode = "read-only"');
   if (!rootHas('approval_policy')) blocks.push('approval_policy = "on-request"');
   if (!blocks.length) return text;
-  const firstTable = text.search(/^\s*\[/m);
-  if (firstTable >= 0) return `${text.slice(0, firstTable).trimEnd()}${text.slice(0, firstTable).trim() ? '\n\n' : ''}${blocks.join('\n\n')}\n\n${text.slice(firstTable)}`;
-  return `${text.trimEnd()}${text.trim() ? '\n\n' : ''}${blocks.join('\n\n')}\n`;
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const separator = (prefix: string) => !prefix ? '' : prefix.endsWith(`${newline}${newline}`) ? '' : prefix.endsWith(newline) ? newline : `${newline}${newline}`;
+  const firstTable = parseCodexToml(text, 'config.toml').tables[0]?.start;
+  if (firstTable !== undefined) {
+    const prefix = text.slice(0, firstTable);
+    return `${prefix}${separator(prefix)}${blocks.join(`${newline}${newline}`)}${newline}${newline}${text.slice(firstTable)}`;
+  }
+  return `${text}${separator(text)}${blocks.join(`${newline}${newline}`)}${newline}`;
 }
 
 export function compileCodexAgent(role: NativeRole, model: string, reasoning: string, description: string, instructions: string): string {
-  if (!roleId(role) || !model.trim() || !['low', 'medium', 'high'].includes(reasoning)) throw new Error(`Invalid Codex agent assignment: ${role}`);
+  if (!roleId(role) || !model.trim() || !(CODEX_REASONING_EFFORTS as readonly string[]).includes(reasoning)) throw new Error(`Invalid Codex agent assignment: ${role}`);
   return `name = ${quote(role)}\ndescription = ${quote(description)}\ndeveloper_instructions = ${quote(instructions)}\nmodel = ${quote(model.trim())}\nmodel_reasoning_effort = ${quote(reasoning)}\n`;
 }
 
 export function compileCodexMergeRule(): string {
   return '# BEGIN advanced-harness managed merge rules\n# Denies identifiable direct CLI forms only; indirect/API routes are not blocked.\nprefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")\nprefix_rule(pattern = ["gh.exe", "pr", "merge"], decision = "forbidden")\n# END advanced-harness managed merge rules\n';
+}
+
+function hasActiveCodexMergeRule(text: string, executable: 'gh' | 'gh.exe'): boolean {
+  type Token = { kind: 'identifier' | 'string' | 'punctuation'; value: string; line: number; column: number };
+  const tokens: Token[] = [];
+  const continuedLines = new Set<number>();
+  let index = 0;
+  let line = 0;
+  let lineStart = 0;
+  while (index < text.length) {
+    const ch = text[index]!;
+    if (ch === '\n') { line++; index++; lineStart = index; continue; }
+    if (ch === '\r' || ch === ' ' || ch === '\t' || ch === '\f') { index++; continue; }
+    if (ch === '\\' && (text[index + 1] === '\n' || text[index + 1] === '\r')) {
+      index++;
+      if (text[index] === '\r') index++;
+      if (text[index] === '\n') index++;
+      line++;
+      lineStart = index;
+      continuedLines.add(line);
+      continue;
+    }
+    if (ch === '#') {
+      while (index < text.length && text[index] !== '\n') index++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      const triple = text.startsWith(quote.repeat(3), index);
+      const delimiter = quote.repeat(triple ? 3 : 1);
+      const startLine = line;
+      const column = index - lineStart;
+      index += delimiter.length;
+      let value = '';
+      let closed = false;
+      while (index < text.length) {
+        if (text.startsWith(delimiter, index)) { index += delimiter.length; closed = true; break; }
+        const current = text[index]!;
+        if (current === '\\') {
+          if (index + 1 >= text.length || text[index + 1] === '\n' || text[index + 1] === '\r') return false;
+          const escaped = text[index + 1]!;
+          value += escaped === quote || escaped === '\\' ? escaped : `\\${escaped}`;
+          index += 2;
+          continue;
+        }
+        if (!triple && (current === '\n' || current === '\r')) return false;
+        if (current === '\n') { line++; lineStart = index + 1; }
+        value += current;
+        index++;
+      }
+      if (!closed) return false;
+      tokens.push({ kind: 'string', value, line: startLine, column });
+      continue;
+    }
+    if (/[A-Za-z_]/.test(ch)) {
+      const start = index++;
+      const column = start - lineStart;
+      while (index < text.length && /[A-Za-z0-9_]/.test(text[index]!)) index++;
+      tokens.push({ kind: 'identifier', value: text.slice(start, index), line, column });
+      continue;
+    }
+    tokens.push({ kind: 'punctuation', value: ch, line, column: index - lineStart });
+    index++;
+  }
+
+  const expected: Array<[Token['kind'], string]> = [
+    ['identifier', 'prefix_rule'], ['punctuation', '('], ['identifier', 'pattern'], ['punctuation', '='],
+    ['punctuation', '['], ['string', executable], ['punctuation', ','], ['string', 'pr'],
+    ['punctuation', ','], ['string', 'merge'], ['punctuation', ']'], ['punctuation', ','],
+    ['identifier', 'decision'], ['punctuation', '='], ['string', 'forbidden'], ['punctuation', ')'],
+  ];
+  // Accept only a complete canonical call as the entire unindented physical line.
+  // This excludes expression wrappers, assignments, suites, and continuation contexts
+  // without trying to interpret or execute Starlark.
+  const depthBefore = new Map<Token, number>();
+  let depth = 0;
+  for (const token of tokens) {
+    if (token.kind === 'punctuation' && [')', ']', '}'].includes(token.value)) {
+      if (depth === 0) return false;
+      depth--;
+    }
+    depthBefore.set(token, depth);
+    if (token.kind === 'punctuation' && ['(', '[', '{'].includes(token.value)) depth++;
+  }
+  if (depth !== 0) return false;
+  const lines = new Map<number, Token[]>();
+  for (const token of tokens) lines.set(token.line, [...(lines.get(token.line) ?? []), token]);
+  return [...lines.values()].some(lineTokens => lineTokens.length === expected.length
+    && lineTokens[0]!.column === 0 && !continuedLines.has(lineTokens[0]!.line) && depthBefore.get(lineTokens[0]!) === 0
+    && expected.every(([kind, value], index) => lineTokens[index]!.kind === kind && lineTokens[index]!.value === value));
 }
 
 function mergeCodexRules(existing: string | undefined): string {
@@ -211,36 +359,43 @@ function mergeCodexRules(existing: string | undefined): string {
   const end = '# END advanced-harness managed merge rules';
   const start = existing.indexOf(begin), finish = existing.indexOf(end);
   if (start >= 0 || finish >= 0) {
-    if (start < 0 || finish < start) throw new Error('Malformed managed Codex rules block; resolve it before updating.');
+    if (start < 0 || finish < start || existing.indexOf(begin, start + begin.length) >= 0 || existing.indexOf(end, finish + end.length) >= 0) throw new Error('Malformed or ambiguous managed Codex rules block; resolve it before updating.');
     return existing.slice(0, start) + desired.trimEnd() + existing.slice(finish + end.length);
   }
-  if (existing.includes('pattern = ["gh", "pr", "merge"]') || existing.includes('pattern = ["gh.exe", "pr", "merge"]')) return existing;
   return `${existing.trimEnd()}${existing.trim() ? '\n\n' : ''}${desired}`;
 }
 
 function tomlConfigText(existing: string, selectedServerIds: string[], selectedTools: Record<string, string[]>): string {
   let result = appendSettings(existing);
   for (const id of selectedServerIds) {
-    if (!roleId(id)) throw new Error(`Invalid Codex MCP server ID: ${id}`);
-    const tablePath = `mcp_servers.${id}`;
-    const targetTable = parseCodexToml(result, 'config.toml').tables.find(table => table.path === tablePath);
+    if (!validMcpId(id)) throw new Error(`Invalid Codex MCP server ID: ${id}`);
+    const targetTable = parseCodexToml(result, 'config.toml').tables.find(table => table.parts.length === 2 && table.parts[0] === 'mcp_servers' && table.parts[1] === id);
     if (!targetTable) throw new Error(`Selected MCP server "${id}" is not already configured. Supply its real configuration through the host; no endpoint or command was invented.`);
     const { start, end } = targetTable;
     const section = result.slice(start, end);
-    let updatedSection = /^\s*enabled\s*=/m.test(section)
-      ? section.replace(/^(\s*enabled\s*=\s*)true\b/gim, '$1false')
-      : section.trimEnd() + '\nenabled = false\n';
+    const newline = section.includes('\r\n') ? '\r\n' : '\n';
+    const appendLine = (text: string, assignment: string) => {
+      const suffix = /(?:\r?\n[ \t]*)*$/.exec(text)?.[0] ?? '';
+      const body = text.slice(0, text.length - suffix.length);
+      return `${body}${body && !body.endsWith('\n') ? newline : ''}${assignment}${newline}${suffix}`;
+    };
+    const enabled = /^\s*(?:enabled|"enabled"|'enabled')\s*=\s*(true|false)\b/im.exec(section);
+    let updatedSection = enabled
+      ? enabled[1]!.toLowerCase() === 'true'
+        ? `${section.slice(0, enabled.index + enabled[0].lastIndexOf(enabled[1]!))}false${section.slice(enabled.index + enabled[0].lastIndexOf(enabled[1]!) + enabled[1]!.length)}`
+        : section
+      : appendLine(section, 'enabled = false');
     const tools = selectedTools[id] ?? [];
     if (tools.length) {
       const encoded = `disabled_tools = [${tools.map(quote).join(', ')}]`;
-      const existingTools = /^\s*disabled_tools\s*=\s*\[([^\]]*)\]/m.exec(updatedSection);
+      const existingTools = /^[ \t]*(?:disabled_tools|"disabled_tools"|'disabled_tools')\s*=\s*\[([^\]]*)\]/m.exec(updatedSection);
       if (existingTools) {
         const remainder = existingTools[1]!.replace(/"(?:[^"\\]|\\.)*"/g, '').replace(/[\s,]/g, '');
         if (remainder) throw new Error(`Unsupported disabled_tools value in Codex MCP server ${id}; refusing to discard existing data.`);
         const oldNames = [...existingTools[1]!.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(m => JSON.parse(`"${m[1]}"`) as string);
         const merged = [...new Set([...oldNames, ...tools])];
         updatedSection = updatedSection.replace(existingTools[0], `disabled_tools = [${merged.map(quote).join(', ')}]`);
-      } else updatedSection = updatedSection.trimEnd() + `\n${encoded}\n`;
+      } else updatedSection = appendLine(updatedSection, encoded);
     }
     result = result.slice(0, start) + updatedSection + result.slice(end);
   }
@@ -277,21 +432,38 @@ export async function installCodex(options: {
   const snapshot = discoverReceiptChain(backupParent, statePath, 'codex');
   if (stateBefore !== undefined && !snapshot.head) throw new Error(`Codex state manifest exists without a matching recovery receipt: ${statePath}. Resolve recovery before updating.`);
   const priorFiles = snapshot.head?.receipt.version === 2 ? snapshot.head.receipt.managedFiles ?? [] : [];
-  const selected = (await ask('Existing Codex MCP server ID(s) to mark disabled pending route validation (comma-separated; blank for none)', '')).trim().split(',').map(x => x.trim()).filter(Boolean);
+  const previousSelected = Array.isArray(stateValue.selectedMcpServers) ? stateValue.selectedMcpServers.filter((id): id is string => typeof id === 'string') : [];
+  const selectedAnswer = (await ask('Existing Codex MCP server ID(s) to mark disabled pending route validation (comma-separated; - clears tracking)', previousSelected.join(', '))).trim();
+  const selected = selectedAnswer === '-' ? [] : selectedAnswer ? selectedAnswer.split(',').map(x => x.trim()).filter(Boolean) : previousSelected;
   const selectedTools: Record<string, string[]> = {};
   for (const id of selected) {
-    if (!roleId(id)) throw new Error(`Invalid Codex MCP server ID: ${id}`);
-    const raw = (await ask(`Exact tool names on ${id} to add to disabled_tools (comma-separated; no names are guessed)`, '')).trim();
-    selectedTools[id] = raw ? raw.split(',').map(name => name.trim()).filter(Boolean) : [];
+    if (!validMcpId(id)) throw new Error(`Invalid Codex MCP server ID: ${id}`);
+    const priorTools = stateValue.disabledTools && typeof stateValue.disabledTools === 'object' ? (stateValue.disabledTools as Record<string, unknown>)[id] : undefined;
+    const defaults = Array.isArray(priorTools) ? priorTools.filter((name): name is string => typeof name === 'string') : [];
+    const raw = (await ask(`Exact tool names on ${id} to add to disabled_tools (comma-separated; - clears tracking only)`, defaults.join(', '))).trim();
+    selectedTools[id] = raw === '-' ? [] : raw ? raw.split(',').map(name => name.trim()).filter(Boolean) : defaults;
   }
   const configAfter = tomlConfigText(existing, selected, selectedTools);
   const definitions = loadRoleDefinitions(options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)));
   const files: PlannedFile[] = [{ path: configPath, content: configAfter, before: configBefore, kind: 'config' }];
   for (const role of nativeRoles) {
-    const model = (await ask(`${role}: explicitly assigned Codex model ID (required)`, '')).trim();
-    if (!model || /[\r\n\0]/.test(model)) throw new Error(`A valid explicit model ID is required for ${role}; no guessed fallback is used.`);
-    const reasoning = (await ask(`${role}: reasoning effort (low, medium, high)`, '')).trim();
-    if (!['low', 'medium', 'high'].includes(reasoning)) throw new Error(`Explicit reasoning effort low/medium/high is required for ${role}.`);
+    const roleFile = join(base, 'agents', `${role}.toml`);
+    const currentRole = existsSync(roleFile) ? readFileSync(roleFile, 'utf8') : '';
+    const modelDefault = /^model\s*=\s*("(?:[^"\\]|\\.)*")\s*$/m.exec(currentRole)?.[1];
+    const effortDefault = /^model_reasoning_effort\s*=\s*("(?:[^"\\]|\\.)*")\s*$/m.exec(currentRole)?.[1];
+    const decodeString = (value: string | undefined) => { try { return value ? JSON.parse(value) as string : ''; } catch { return ''; } };
+    const modelSuggestion = decodeString(modelDefault);
+    let model = '';
+    while (!model || model === '-' || /[\r\n\0]/.test(model)) {
+      model = ((await ask(`${role}: explicitly assigned Codex model ID (required)`, modelSuggestion)).trim() || modelSuggestion);
+      if (!model || model === '-' || /[\r\n\0]/.test(model)) output(`Enter a valid explicit model ID for ${role}; no guessed fallback is used.`);
+    }
+    const effortSuggestion = decodeString(effortDefault);
+    let reasoning = '';
+    while (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(reasoning)) {
+      reasoning = ((await ask(`${role}: reasoning effort (low, medium, high)`, effortSuggestion)).trim() || effortSuggestion);
+      if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(reasoning)) output(`Enter one of the supported reasoning efforts: ${CODEX_REASONING_EFFORTS.join(', ')}.`);
+    }
     const target = join(base, 'agents', `${role}.toml`);
     assertSafeFilesystemPath(target, 'file');
     files.push({ path: target, content: compileCodexAgent(role, model, reasoning, definitions[role].description, definitions[role].instructions), before: existsSync(target) ? readFileSync(target, 'utf8') : undefined, kind: 'role' });
@@ -306,7 +478,7 @@ export async function installCodex(options: {
     const target = join(scope === 'project' ? (project ?? '') : home, '.agents', 'skills', id, 'SKILL.md');
     assertSafeFilesystemPath(target, 'file');
     const body = commands[id].body.replace(/\$ARGUMENTS/g, '<current invocation context; if missing, ask before action>').replace(/\$1/g, '<current invocation parent; if missing, ask before action>').replace(/\$2/g, '<current invocation description; if missing, ask before action>');
-    const content = `---\nname: ${id}\ndescription: ${commands[id].description}\n---\n${body}`;
+    const content = `---\nname: ${id}\ndescription: ${encodeCodexYamlScalar(commands[id].description)}\n---\n${body}`;
     const before = existsSync(target) ? readFileSync(target, 'utf8') : undefined;
     const previous = priorFiles.find(entry => canonicalPath(entry.path) === canonicalPath(target));
     const isOwnedCurrent = before !== undefined && previous?.after && !('absent' in previous.after) && ('content' in previous.after ? previous.after.content === before : previous.after.digest === digest(before));
@@ -354,6 +526,8 @@ export async function installCodex(options: {
   const pending = writePendingSuccessor(snapshot, receipt);
   const backups: string[] = [];
   let completed = false;
+  const attempted: PlannedFile[] = [];
+  let stateAttempted = false;
   try {
     revalidatePendingSuccessor(pending);
     for (const file of changed) {
@@ -362,16 +536,34 @@ export async function installCodex(options: {
     }
     for (const file of changed) {
       mkdirSync(dirname(file.path), { recursive: true });
+      attempted.push(file);
       const backup = save(file.path, file.before, file.content, backupParent);
       if (backup) backups.push(backup);
     }
+    stateAttempted = true;
     const stateBackup = save(statePath, stateBefore, nextState, backupParent);
     if (stateBackup) backups.push(stateBackup);
     finalizeSuccessor(pending, nextState);
     completed = true;
   } catch (error) {
-    if (!changed.some(file => existsSync(file.path) && readFileSync(file.path, 'utf8') === file.content) && (existsSync(statePath) ? readFileSync(statePath, 'utf8') : undefined) === stateBefore) recoverFailedSuccessor(pending, stateBefore);
-    else options.error(`Codex files may have been partially written; pending recovery evidence retained at ${pending.path}.`);
+    const restore = (path: string, before: string | undefined, expected: string): boolean => {
+      try {
+        assertSafeFilesystemPath(path, 'file');
+        const current = existsSync(path) ? readFileSync(path, 'utf8') : undefined;
+        if (current === before) return true;
+        if (current !== expected) return false;
+        if (before === undefined) { unlinkSync(path); return true; }
+        writeFileSync(path, before, 'utf8');
+        return readFileSync(path, 'utf8') === before;
+      } catch { return false; }
+    };
+    let restored = true;
+    if (stateAttempted) restored = restore(statePath, stateBefore, nextState) && restored;
+    for (const file of [...attempted].reverse()) restored = restore(file.path, file.before, file.content) && restored;
+    if (restored) {
+      try { recoverFailedSuccessor(pending, stateBefore); }
+      catch (cleanupError) { options.error(`Codex rollback verified, but pending recovery evidence could not be removed: ${pending.path}; ${String(cleanupError)}`); }
+    } else options.error(`Codex rollback was incomplete or encountered divergent content; pending recovery evidence retained at ${pending.path}. Review affected files and backups: ${backups.join(', ') || '(none)'}.`);
     throw error;
   }
   output(`Codex artifacts written with cumulative receipt ${pending.path}. Backups: ${backups.length}.`);
@@ -410,7 +602,7 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
         };
         for (const key of ['name', 'description', 'developer_instructions', 'model', 'model_reasoning_effort']) if (!stringValue(key)) issues.push(`Codex agent ${role} lacks required explicit ${key}: ${path}`);
         if (stringValue('name') !== role) issues.push(`Codex agent name does not match expected role ${role}: ${path}`);
-        if (!['low', 'medium', 'high'].includes(stringValue('model_reasoning_effort') ?? '')) issues.push(`Codex agent ${role} has unsupported model_reasoning_effort: ${path}`);
+        if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(stringValue('model_reasoning_effort') ?? '')) issues.push(`Codex agent ${role} has unsupported model_reasoning_effort: ${path}`);
       } catch (error) { issues.push(error instanceof Error ? error.message : String(error)); }
     }
     const skillsDir = join(dirname(root), '.agents', 'skills');
@@ -426,15 +618,15 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
     if (existsSync(statePath)) {
       try {
         const state = JSON.parse(readFileSync(statePath, 'utf8')) as { selectedMcpServers?: unknown; disabledTools?: Record<string, unknown> };
-        if (!state || typeof state !== 'object' || !Array.isArray(state.selectedMcpServers)) { issues.push(`Invalid Codex harness state manifest: ${statePath}`); continue; }
+        if (!state || typeof state !== 'object' || !Array.isArray(state.selectedMcpServers)) { issues.push(`Invalid Codex harness state manifest: ${statePath}`); }
         if (Array.isArray(state.selectedMcpServers)) for (const id of state.selectedMcpServers) {
-          if (typeof id !== 'string' || !roleId(id)) { issues.push(`Invalid MCP identity in Codex state manifest: ${statePath}`); continue; }
-          const table = parseCodexToml(configText, config).tables.find(item => item.path === `mcp_servers.${id}`);
+          if (typeof id !== 'string' || !validMcpId(id)) { issues.push(`Invalid MCP identity in Codex state manifest: ${statePath}`); continue; }
+          const table = parseCodexToml(configText, config).tables.find(item => item.parts.length === 2 && item.parts[0] === 'mcp_servers' && item.parts[1] === id);
           const section = table ? configText.slice(table.start, table.end) : '';
-          if (!/^enabled\s*=\s*false\b/m.test(section)) issues.push(`Selected Codex MCP server ${id} is not disabled pending validation.`);
+           if (!/^[ \t]*(?:enabled|"enabled"|'enabled')\s*=\s*false\b/m.test(section)) issues.push(`Selected Codex MCP server ${id} is not disabled pending validation.`);
           const expectedTools = state.disabledTools?.[id];
           if (Array.isArray(expectedTools)) {
-            const match = /^disabled_tools\s*=\s*\[([^\]]*)\]/m.exec(section);
+             const match = /^[ \t]*(?:disabled_tools|"disabled_tools"|'disabled_tools')\s*=\s*\[([^\]]*)\]/m.exec(section);
             const actual = match ? [...match[1]!.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(item => JSON.parse(`"${item[1]}"`) as string) : [];
             for (const tool of expectedTools) if (typeof tool !== 'string' || !actual.includes(tool)) issues.push(`Selected Codex MCP tool for ${id} is not disabled: ${String(tool)}`);
           }
@@ -446,7 +638,7 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
     else {
       assertSafeFilesystemPath(rules, 'file');
       const rulesText = readFileSync(rules, 'utf8');
-      if (!rulesText.includes('prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")') || !rulesText.includes('prefix_rule(pattern = ["gh.exe", "pr", "merge"], decision = "forbidden")')) issues.push(`Codex direct gh pr merge rules are missing or malformed: ${rules}`);
+      if (!hasActiveCodexMergeRule(rulesText, 'gh') || !hasActiveCodexMergeRule(rulesText, 'gh.exe')) issues.push(`Codex direct gh pr merge rules are missing or malformed: ${rules}`);
     }
   }
   if (!found) issues.push('Codex configuration is not installed in inspected project/global scope.');

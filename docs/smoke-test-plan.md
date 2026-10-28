@@ -61,9 +61,9 @@ input with no writes.
 
 ## Journeys and cases
 
-Hosts covered: OpenCode V2, Claude Code, and Google Antigravity, which are the
-hosts with native deployment. Codex and Cursor are compile-only and stay covered
-by `npm test`.
+Hosts covered: OpenCode V2, Claude Code, Google Antigravity, and OpenAI Codex,
+which have native deployment. Cursor remains compile-only and is covered by
+`npm test`.
 
 ### SMK-OC: OpenCode project lifecycle (`smoke/opencode-lifecycle.smoke.ts`)
 
@@ -102,6 +102,13 @@ by `npm test`.
 | AG-03 | `yes` with unconfigured model preferences | `.agents/` rules, 6 skills, merge-guard script and hook, MCP config; original `AGENTS.md` content preserved; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
 | AG-04 | `harness:doctor --host antigravity` | Exit 0, `Installed: Yes` |
 | AG-05 | Receipt-backed uninstall (`--host antigravity --scope project`) | Exit 0; rules, skills, merge-guard script, `hooks.json`, `mcp_config.json` removed; `AGENTS.md` equals its pristine content |
+
+### SMK-CX: Codex project lifecycle (`smoke/codex-lifecycle.smoke.ts`)
+
+| ID | Case | Expected |
+| --- | --- | --- |
+| CX-01 | Cancel installation after preview | Existing quoted-ID MCP fixture and project tree remain byte-identical; no backups or receipts |
+| CX-02 | Install and doctor; run `harness:update` with Enter at prior MCP/tool/model/effort defaults; then inject a fixture edit at the install-confirmation boundary | Quoted MCP route is disabled while CRLF/comments remain; doctor passes; update preserves prior model/effort and MCP choices; stale confirmation is automatically refused, preserving the injected concurrent edit with no other project/recovery changes |
 
 ### SMK-PS / SMK-PI: project context (`smoke/project-context.smoke.ts`)
 

@@ -6,6 +6,7 @@ import {
   supportedHosts,
   isSupportedHost,
   parseHostSelection,
+  selectNativeHost,
   askHostSelection,
   HOST_MODEL_PRESETS,
   HOST_CAPABILITIES,
@@ -69,6 +70,12 @@ test('supportedHosts and parseHostSelection validate all hosts, aliases, and err
   assert.throws(() => parseHostSelection('opencode,invalid,cursor'), /Unsupported host: "invalid"/);
 });
 
+test('native dispatch selection is shared and fails closed for unsupported/mixed hosts', () => {
+  assert.deepEqual(selectNativeHost(['codex']), { host: 'codex', unsupported: [], multi: false });
+  assert.deepEqual(selectNativeHost(['codex', 'opencode']), { unsupported: [], multi: true });
+  assert.deepEqual(selectNativeHost(['cursor']), { unsupported: ['cursor'], multi: false });
+});
+
 test('askHostSelection defaults on Enter and re-asks invalid, multi-host, and all entries', async () => {
   const inputs = ['', 'invalid-host', 'claude-code,codex', 'all', ' Claude-Code '];
   const questions: string[] = [];
@@ -78,12 +85,10 @@ test('askHostSelection defaults on Enter and re-asks invalid, multi-host, and al
     return inputs.shift() ?? suggested ?? '';
   };
 
-  // First input '' -> defaults to suggested ('opencode')
   assert.equal(await askHostSelection(ask, 'opencode', message => notices.push(message)), 'opencode');
   assert.equal(questions.length, 1);
   assert.doesNotMatch(questions[0]!, /comma-separated|all/);
 
-  // Unknown, comma-separated, and all answers are re-asked; a single host is accepted
   assert.equal(await askHostSelection(ask, 'opencode', message => notices.push(message)), 'claude-code');
   assert.equal(questions.length, 5);
   assert.equal(notices.length, 3);

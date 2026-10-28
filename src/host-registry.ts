@@ -9,6 +9,13 @@ import { installCodex, diagnoseCodex } from './codex-adapter.ts';
 
 export const supportedHosts = ['opencode', 'claude-code', 'antigravity', 'codex', 'cursor'] as const;
 export type HostId = typeof supportedHosts[number];
+export const supportedNativeHosts = ['opencode', 'antigravity', 'claude-code', 'codex'] as const satisfies readonly HostId[];
+export type NativeHostId = typeof supportedNativeHosts[number];
+
+export function selectNativeHost(hosts: readonly HostId[]): { host?: NativeHostId; unsupported: HostId[]; multi: boolean } {
+  const unsupported = hosts.filter((host): host is Exclude<HostId, NativeHostId> => !(supportedNativeHosts as readonly HostId[]).includes(host));
+  return { ...(!unsupported.length && hosts.length === 1 ? { host: hosts[0] as NativeHostId } : {}), unsupported, multi: hosts.length > 1 };
+}
 
 export function isSupportedHost(value: unknown): value is HostId {
   return typeof value === 'string' && (supportedHosts as readonly string[]).includes(value);
@@ -409,16 +416,15 @@ registerHostAdapter({
   },
 });
 
+async function installCodexFromOptions(options: HostAdapterInstallOptions | HostAdapterUpdateOptions): Promise<number> {
+  const ask: Ask = options.ask ?? (async (_q, s) => s ?? '');
+  return await installCodex({ scope: options.scope, project: options.project, home: options.home ?? homedir(), recoveryDirectory: options.recoveryDirectory, agentsDirectory: options.agentsDirectory, commandsDirectory: options.commandsDirectory, ask, output: options.output ?? console.log, error: options.error ?? console.error });
+}
+
 registerHostAdapter({
   host: 'codex',
-  async install(options) {
-    const ask: Ask = options.ask ?? (async (_q, s) => s ?? '');
-    return await installCodex({ scope: options.scope, project: options.project, home: options.home ?? homedir(), recoveryDirectory: options.recoveryDirectory, agentsDirectory: options.agentsDirectory, commandsDirectory: options.commandsDirectory, ask, output: options.output ?? console.log, error: options.error ?? console.error });
-  },
-  async update(options) {
-    const ask: Ask = options.ask ?? (async (_q, s) => s ?? '');
-    return await installCodex({ scope: options.scope, project: options.project, home: options.home ?? homedir(), recoveryDirectory: options.recoveryDirectory, agentsDirectory: options.agentsDirectory, commandsDirectory: options.commandsDirectory, ask, output: options.output ?? console.log, error: options.error ?? console.error });
-  },
+  install: installCodexFromOptions,
+  update: installCodexFromOptions,
   async doctor(options) { return await diagnoseCodex({ project: options.project, home: options.home ?? homedir(), globalDirectory: options.globalDirectory }); },
 });
 
