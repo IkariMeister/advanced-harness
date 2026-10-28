@@ -14,7 +14,7 @@ const support = resolve(fileURLToPath(new URL('./', import.meta.url)));
 
 export type Step = { prompt: RegExp; answer: string };
 export type RunResult = { code: number | null; stdout: string; stderr: string; transcript: string; unansweredSteps: Step[] };
-export type RunOptions = { steps?: Step[]; tty?: boolean; cwd?: string; timeoutMs?: number };
+export type RunOptions = { steps?: Step[]; tty?: boolean; cwd?: string; timeoutMs?: number; onPrompt?: (prompt: string) => void };
 
 export interface Sandbox {
   root: string;
@@ -97,8 +97,10 @@ export function createSandbox(name: string): Sandbox {
       stdout += text; transcript += text; pending += text;
       const step = steps[0];
       if (step && step.prompt.test(pending)) {
+        const promptText = pending;
         steps.shift();
         pending = '';
+        options.onPrompt?.(promptText);
         transcript += `«${step.answer}»\n`;
         child.stdin.write(`${step.answer}\n`);
       }

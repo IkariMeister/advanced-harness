@@ -9,7 +9,7 @@ import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receip
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 
-import { parseHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
+import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string; context?: string }
@@ -45,7 +45,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const home = deps.home ?? homedir();
   const env = deps.environment ?? process.env;
 
-  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
+  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : [await askHostSelection(ask, 'opencode', output)];
 
   let scope = options.scope;
   while (!scope || !['project', 'global'].includes(scope)) scope = (await ask('Install scope: project or global', 'project')) || 'project';
@@ -55,27 +55,26 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (project && (!existsSync(project) || !statSync(project).isDirectory())) throw new Error('Project directory does not exist or is not a directory. Create/select it before installing.');
 
   // Hosts with native adapters; unsupported selections fail closed.
-  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity', 'claude-code', 'codex'];
-  const unsupportedHosts = selectedHosts.filter(host => !supportedNativeHosts.includes(host));
+  const dispatch = selectNativeHost(selectedHosts);
+  const unsupportedHosts = dispatch.unsupported;
 
   if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
     for (const host of unsupportedHosts) {
-      const issue = host === 'claude-code' ? '#43' : '#46';
-      errorOutput(`Installation blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
+      errorOutput(`Installation blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented${host === 'cursor' ? ' (issue #46)' : ''}. No host adapters or files were changed.`);
     }
-    if (selectedHosts.length > 1 && unsupportedHosts.length === 0) {
+    if (dispatch.multi && unsupportedHosts.length === 0) {
       errorOutput('Multi-host simultaneous installation is not supported. Install each host deliberately.');
     }
     return 2;
   }
 
-  if (options.context && !selectedHosts.includes('antigravity')) throw new Error('--context for model preferences is supported only with --host antigravity.');
+  if (options.context && dispatch.host !== 'antigravity') throw new Error('--context for model preferences is supported only with --host antigravity.');
   if (options.context && scope !== 'project') throw new Error('--context can be used only with project scope.');
 
   const harnessRoot = deps.harnessRoot ?? resolve(fileURLToPath(new URL('..', import.meta.url)));
   const stamp = toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand));
 
-  if (selectedHosts.includes('claude-code')) {
+  if (dispatch.host === 'claude-code') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('claude-code');
     if (!adapter) throw new Error('Claude Code host adapter is not registered.');
     const result = await adapter.install({
@@ -93,7 +92,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     return typeof result === 'number' ? result : 0;
   }
 
-  if (selectedHosts.includes('antigravity')) {
+  if (dispatch.host === 'antigravity') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('antigravity');
     if (!adapter) throw new Error('Antigravity host adapter is not registered.');
     const result = await adapter.install({
@@ -112,7 +111,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     return typeof result === 'number' ? result : 0;
   }
 
-  if (selectedHosts.includes('codex')) {
+  if (dispatch.host === 'codex') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('codex');
     if (!adapter) throw new Error('Codex host adapter is not registered.');
     const result = await adapter.install({

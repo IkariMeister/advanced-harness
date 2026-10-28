@@ -3,15 +3,25 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { compileCodexAgent, compileCodexMergeRule, diagnoseCodex, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
+import { compileCodexAgent, compileCodexMergeRule, diagnoseCodex, encodeCodexYamlScalar, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
+import { parseDocument } from 'yaml';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { askHostSelection } from '../src/host-registry.ts';
 import { saveInstallation } from '../src/native-installer.ts';
 
-function roleAnswers(model: string, finalAnswer = 'install'): string[] {
-  return ['', ...Array.from({ length: 8 }, () => [model, 'medium']).flat(), finalAnswer];
+function roleAnswers(model: string, finalAnswer = 'install', reasoning = 'medium'): string[] {
+  return ['', ...rolePairAnswers(model, reasoning), finalAnswer];
 }
+function rolePairAnswers(model: string, reasoning = 'medium'): string[] { return Array.from({ length: 8 }, () => [model, reasoning]).flat(); }
+
+test('Codex skill YAML scalar roundtrips punctuation and embedded newlines', () => {
+  for (const value of ['colon: # hash [brackets] "quotes" \'apostrophe\'', 'first line\nsecond: # line\nthird']) {
+    const parsed = parseDocument(`description: ${encodeCodexYamlScalar(value)}\n`);
+    assert.equal(parsed.errors.length, 0);
+    assert.equal(parsed.toJSON()?.description, value);
+  }
+});
 
 test('Codex agent serializes only supported explicit role fields and validates TOML', () => {
   const text = compileCodexAgent('lead', 'gpt-example', 'high', 'Lead role', 'Ask the human before writes.');
@@ -33,8 +43,25 @@ test('Codex agent serializes only supported explicit role fields and validates T
   ]) assert.throws(() => validateCodexToml(invalid));
   for (const invalid of ['x = +0x1', 'x = -0b1', 'x = 01', 'x = 01.2', 'x = 01e2', 'x = 1_', 'x = 1__0', 'x = 0x_1']) assert.throws(() => validateCodexToml(invalid));
   for (const valid of ['x = 0x1', 'x = 0o7', 'x = 0b1', 'x = +0', 'x = -1', 'x = 1_000', 'x = 1.2', 'x = 1e2', 'x = 1.2e-2', 'x = { a = 1, b = { c = 2 } }']) validateCodexToml(valid);
+  for (const valid of ['"quoted.key" = 1', "'literal.key' = 2", '["mcp_servers"."server.with.dot"]\nenabled = true', 'root = { "quoted.key" = 1 }']) validateCodexToml(valid);
+  validateCodexToml('"literal.key" = 1\nliteral.key = 2');
+  assert.throws(() => validateCodexToml('"literal.key" = 1\n"literal.key" = 2'));
+  assert.throws(() => validateCodexToml('"unterminated = 1'));
   assert.match(compileCodexMergeRule(), /decision = "forbidden"/);
   assert.match(compileCodexMergeRule(), /indirect\/API routes are not blocked/);
+});
+
+test('Codex canonical merge block is added despite unowned lookalikes and replaces owned blocks', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-rules-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const rules = join(project, '.codex', 'rules', 'advanced-harness.rules'); mkdirSync(join(project, '.codex', 'rules'), { recursive: true });
+  writeFileSync(rules, '# user note: prefix_rule(pattern = ["gh", "pr", "merge"], decision = "prompt")\n');
+  const answers = roleAnswers('model');
+  await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {} });
+  const result = readFileSync(rules, 'utf8');
+  assert.match(result, /pattern = \["gh", "pr", "merge"\], decision = "forbidden"/);
+  assert.match(result, /pattern = \["gh\.exe", "pr", "merge"\], decision = "forbidden"/);
+  assert.match(result, /# user note:/);
 });
 
 test('Codex cancellation creates no target files or backups; explicit choices install idempotently', async () => {
@@ -42,18 +69,18 @@ test('Codex cancellation creates no target files or backups; explicit choices in
   const project = join(root, 'project'), home = join(root, 'home');
   const { mkdirSync } = await import('node:fs');
   mkdirSync(project); mkdirSync(home);
-  const answers: string[] = ['', ...Array.from({ length: 8 }, () => ['gpt-example', 'medium']).flat(), 'cancel'];
+  const answers = roleAnswers('gpt-example', 'cancel');
   const ask = async () => answers.shift() ?? '';
   const output: string[] = [];
   assert.equal(await installCodex({ scope: 'project', project, home, ask, output: value => output.push(value), error() {} }), 0);
   assert.equal(existsSync(join(project, '.codex')), false);
   assert.equal(existsSync(join(home, 'Projects', 'advanced-harness-backups')), false);
 
-  const installAnswers: string[] = ['', ...Array.from({ length: 8 }, () => ['gpt-example', 'medium']).flat(), 'install'];
+  const installAnswers = roleAnswers('gpt-example');
   assert.equal(await installCodex({ scope: 'project', project, home, ask: async () => installAnswers.shift() ?? '', output: value => output.push(value), error() {} }), 0);
   assert.equal(readFileSync(join(project, '.codex', 'agents', 'lead.toml'), 'utf8').includes('gpt-example'), true);
   assert.equal((await diagnoseCodex({ project, home })).ok, true);
-  const rerunAnswers: string[] = ['', ...Array.from({ length: 8 }, () => ['gpt-example', 'medium']).flat(), 'install'];
+  const rerunAnswers = roleAnswers('gpt-example');
   assert.equal(await installCodex({ scope: 'project', project, home, ask: async () => rerunAnswers.shift() ?? '', output: value => output.push(value), error() {} }), 0);
   assert.equal(readdirSync(join(project, '.codex', 'agents')).length, 8);
   const receipts = readdirSync(join(home, 'Projects', 'advanced-harness-backups')).filter(name => name.startsWith('native-install-'));
@@ -66,7 +93,7 @@ test('Codex MCP changes require actual selected IDs/tools, disable routes, and p
   mkdirSync(project); mkdirSync(home);
   const configDir = join(project, '.codex'); mkdirSync(configDir);
   writeFileSync(join(configDir, 'config.toml'), 'model = "existing-model"\n\n[mcp_servers.real_server]\nenabled = true\nrequired = true\ncommand = "real-mcp"\nargs = ["--safe"]\n\n  [mcp_servers.unselected] # indented table header\nenabled = true\n\n  [mcp_servers.unselected.tools.some_tool]\napproval_mode = "auto"\n');
-  const answers = ['real_server', 'merge_tool', ...Array.from({ length: 8 }, () => ['custom/model', 'low']).flat(), 'install'];
+  const answers = ['real_server', 'merge_tool', ...rolePairAnswers('custom/model', 'low'), 'install'];
   const result = await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {} });
   assert.equal(result, 0);
   const saved = readFileSync(join(configDir, 'config.toml'), 'utf8');
@@ -87,6 +114,77 @@ test('Codex MCP changes require actual selected IDs/tools, disable routes, and p
   assert.equal(report.ok, true, report.issues.join('; '));
 });
 
+test('Codex quoted MCP identity edits preserve CRLF, comments, and blank lines', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-quoted-mcp-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const configDir = join(project, '.codex'); mkdirSync(configDir);
+  const source = '# preserved\r\n"literal.key" = true\r\n\r\n[mcp_servers."server.with.dot"] # server comment\r\n# before enabled\r\nenabled = true # keep comment\r\n\r\n[mcp_servers.other]\r\nenabled = true\r\n';
+  writeFileSync(join(configDir, 'config.toml'), source);
+  const answers = ['server.with.dot', 'tool.name', ...rolePairAnswers('model'), 'install'];
+  await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {} });
+  const saved = readFileSync(join(configDir, 'config.toml'), 'utf8');
+  assert.ok(saved.includes('# before enabled\r\nenabled = false # keep comment\r\n'));
+  assert.ok(saved.includes('\r\n\r\n[mcp_servers.other]'));
+  assert.ok(saved.includes('disabled_tools = ["tool.name"]\r\n'));
+  assert.ok(saved.includes('# preserved\r\n'));
+});
+
+test('Codex selected MCP routes with basic- and literal-quoted enabled keys are actually disabled', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-quoted-enabled-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const configDir = join(project, '.codex'); mkdirSync(configDir);
+  writeFileSync(join(configDir, 'config.toml'), '[mcp_servers."basic"]\n"enabled" = true\n[mcp_servers.\'literal\']\n\'enabled\' = true\n');
+  const answers = ['basic, literal', '', '', ...rolePairAnswers('model'), 'install'];
+  await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {} });
+  const config = readFileSync(join(configDir, 'config.toml'), 'utf8');
+  assert.match(config, /"enabled" = false/);
+  assert.match(config, /'enabled' = false/);
+});
+
+test('Codex baseline insertion retains exact original CRLF root/table bytes and uses CRLF additions', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-baseline-crlf-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const configDir = join(project, '.codex'); mkdirSync(configDir);
+  const before = '# original comment\r\nroot = "keep"\r\n\r\n[mcp_servers.server]\r\nenabled = true\r\n';
+  writeFileSync(join(configDir, 'config.toml'), before);
+  const answers = ['', ...rolePairAnswers('model'), 'install'];
+  await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {} });
+  const expected = '# original comment\r\nroot = "keep"\r\n\r\nsandbox_mode = "read-only"\r\n\r\napproval_policy = "on-request"\r\n\r\n[mcp_servers.server]\r\nenabled = true\r\n';
+  assert.equal(readFileSync(join(configDir, 'config.toml'), 'utf8'), expected);
+});
+
+test('Codex Enter defaults preserve role and MCP choices; dash clears tracking without enabling routes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-defaults-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const configDir = join(project, '.codex'); mkdirSync(configDir);
+  writeFileSync(join(configDir, 'config.toml'), '[mcp_servers.selected]\nenabled = true\n');
+  const initial = ['selected', 'tool_x', ...rolePairAnswers('chosen/model', 'high'), 'install'];
+  await installCodex({ scope: 'project', project, home, ask: async () => initial.shift() ?? '', output() {}, error() {} });
+  const beforeRole = readFileSync(join(configDir, 'agents', 'lead.toml'), 'utf8');
+  const update = ['-', ...rolePairAnswers('', ''), 'install'];
+  await installCodex({ scope: 'project', project, home, ask: async () => update.shift() ?? '', output() {}, error() {} });
+  assert.equal(readFileSync(join(configDir, 'agents', 'lead.toml'), 'utf8'), beforeRole);
+  const config = readFileSync(join(configDir, 'config.toml'), 'utf8');
+  assert.match(config, /enabled = false/);
+  assert.match(config, /disabled_tools = \["tool_x"\]/);
+  const state = JSON.parse(readFileSync(join(configDir, '.advanced-harness-state.json'), 'utf8')) as { selectedMcpServers: string[]; disabledTools: Record<string, string[]> };
+  assert.deepEqual(state.selectedMcpServers, []);
+  assert.deepEqual(state.disabledTools, {});
+});
+
+test('Codex invalid required model and effort answers retry in the interactive adapter flow', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-retry-required-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const answers = ['', '\n', 'fixed/model', 'unsupported', 'high', ...rolePairAnswers('fixed/model', 'medium').slice(2), 'install'];
+  const output: string[] = [];
+  const result = await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output: message => output.push(message), error() {} });
+  assert.equal(result, 0);
+  assert.match(readFileSync(join(project, '.codex', 'agents', 'lead.toml'), 'utf8'), /model = "fixed\/model"/);
+  assert.match(readFileSync(join(project, '.codex', 'agents', 'lead.toml'), 'utf8'), /model_reasoning_effort = "high"/);
+  assert.ok(output.some(message => message.includes('Enter a valid explicit model ID')));
+  assert.ok(output.some(message => message.includes('supported reasoning efforts')));
+});
+
 test('Codex doctor fails closed on malformed TOML and MCP route remains disabled', async () => {
   const root = mkdtempSync(join(tmpdir(), 'codex-doctor-'));
   const codex = join(root, '.codex');
@@ -95,6 +193,54 @@ test('Codex doctor fails closed on malformed TOML and MCP route remains disabled
   const report = await diagnoseCodex({ project: root, home: root });
   assert.equal(report.ok, false);
   assert.match(report.issues.join(' '), /Malformed|Unsupported/);
+});
+
+test('Codex doctor reports independent rules when its state manifest is invalid', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-doctor-independent-'));
+  const codex = join(root, '.codex'); mkdirSync(codex, { recursive: true });
+  writeFileSync(join(codex, 'config.toml'), 'sandbox_mode = "read-only"\napproval_policy = "on-request"\n');
+  writeFileSync(join(codex, '.advanced-harness-state.json'), '{invalid');
+  const report = await diagnoseCodex({ project: root, home: root });
+  assert.ok(report.issues.some(issue => issue.includes('Malformed Codex harness state manifest')));
+  assert.ok(report.issues.some(issue => issue.includes('Missing Codex direct merge rule')));
+});
+
+test('Codex doctor ignores commented/string merge-rule lookalikes for both executables', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-doctor-rule-lookalike-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const answers = roleAnswers('doctor-model');
+  await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {} });
+  const rules = join(project, '.codex', 'rules', 'advanced-harness.rules');
+  writeFileSync(rules, [
+    '# prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")',
+    'example = "prefix_rule(pattern = [\\"gh.exe\\", \\"pr\\", \\"merge\\"], decision = \\"forbidden\\")"',
+    'example = """documentation for gh rule:',
+    'prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")',
+    '"""',
+    "example = '''documentation for gh.exe rule:",
+    'prefix_rule(pattern = ["gh.exe", "pr", "merge"], decision = "forbidden")',
+    "'''",
+    'example = "escaped delimiter: \\" and rule text prefix_rule(pattern = [\"gh.exe\", \"pr\", \"merge\"], decision = \"forbidden\")"',
+    'False and prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")',
+    'prefix_rule(pattern = ["gh.exe", "pr", "merge"], decision = "forbidden") and False',
+    'if False: prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")',
+    'assigned = prefix_rule(pattern = ["gh.exe", "pr", "merge"], decision = "forbidden")',
+    'if False:',
+    '  prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")',
+    'def nested():',
+    '  prefix_rule(pattern = ["gh.exe", "pr", "merge"], decision = "forbidden")',
+    'wrapped = (',
+    'prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")',
+    ')',
+    'False and \\',
+    'prefix_rule(pattern = ["gh.exe", "pr", "merge"], decision = "forbidden")',
+  ].join('\n') + '\n');
+  const report = await diagnoseCodex({ project, home });
+  assert.ok(report.issues.some(issue => issue.includes('Codex direct gh pr merge rules are missing or malformed')));
+
+  writeFileSync(rules, 'prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")\nprefix_rule(pattern = ["gh.exe", "pr", "merge"], decision = "forbidden")\n');
+  const active = await diagnoseCodex({ project, home });
+  assert.equal(active.issues.some(issue => issue.includes('Codex direct gh pr merge rules are missing or malformed')), false);
 });
 
 test('Codex rejects malformed supported-subset TOML before prompts, backups, receipts, or writes', async () => {
@@ -120,7 +266,7 @@ test('actual installer flow routes Codex selection and cancellation leaves no ar
   const root = mkdtempSync(join(tmpdir(), 'codex-flow-'));
   const project = join(root, 'project'), home = join(root, 'home');
   mkdirSync(project); mkdirSync(home);
-  const answers = ['', ...Array.from({ length: 8 }, () => ['gpt-explicit', 'medium']).flat(), 'no'];
+  const answers = roleAnswers('gpt-explicit', 'no');
   const output: string[] = [];
   const status = await runInstallerFlow({ host: 'codex', scope: 'project', project }, {
     ask: async () => answers.shift() ?? '', output: message => output.push(message), error: message => output.push(message), cwd: root, home,
@@ -148,6 +294,11 @@ test('Codex installer and updater route both project and global scopes to their 
     });
   };
   assert.equal(await runInstall('project', 'project-model'), 0);
+  const enterDefaults = ['', ...rolePairAnswers('', ''), 'install'];
+  assert.equal(await runUpdateFlow({ host: 'codex', scope: 'project', project }, {
+    ask: async () => enterDefaults.shift() ?? '', output() {}, error() {}, cwd: root, home,
+  }), 0, 'blank answers on the actual Codex update flow preserve installed model/effort values');
+  assert.match(readFileSync(join(project, '.codex', 'agents', 'lead.toml'), 'utf8'), /model = "project-model"/);
   assert.equal(await runUpdate('project', 'project-updated-model'), 0);
   assert.equal(await runInstall('global', 'global-model'), 0);
   assert.equal(await runUpdate('global', 'global-updated-model'), 0);
@@ -170,7 +321,7 @@ test('customized Codex roles and shared skills default to preserve; AGENTS is ne
   const customSkill = '---\nname: start-issue\ndescription: My customized skill\n---\nKeep this skill.\n';
   const projectInstructions = '# Existing project workflow\nLeave every byte intact.\n';
   writeFileSync(rolePath, customRole); writeFileSync(skillPath, customSkill); writeFileSync(agentsPath, projectInstructions);
-  const answers = ['', ...Array.from({ length: 8 }, () => ['chosen-model', 'medium']).flat(), 'no', 'install'];
+  const answers = ['', ...rolePairAnswers('chosen-model'), 'no', 'install'];
   const output: string[] = [];
   const status = await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output: value => output.push(value), error() {} });
   assert.equal(status, 1, 'preserving a required role file leaves installation explicitly incomplete');
@@ -203,7 +354,7 @@ test('Codex confirmation-time config drift is refused before backup or receipt c
   assert.equal(existsSync(join(home, 'Projects', 'advanced-harness-backups')), false);
 });
 
-test('Codex partial file failure leaves the pending receipt and prior successful file for recovery', async () => {
+test('Codex partial file failure restores verified prior state and clears pending evidence', async () => {
   const root = mkdtempSync(join(tmpdir(), 'codex-partial-'));
   const project = join(root, 'project'), home = join(root, 'home');
   mkdirSync(project); mkdirSync(home);
@@ -216,20 +367,56 @@ test('Codex partial file failure leaves the pending receipt and prior successful
   const errors: string[] = [];
   const answers = roleAnswers('partial-model');
   await assert.rejects(installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error: message => errors.push(message), save }), /injected second-file failure/);
-  assert.match(readFileSync(join(project, '.codex', 'config.toml'), 'utf8'), /sandbox_mode = "read-only"/);
+  assert.equal(existsSync(join(project, '.codex', 'config.toml')), false);
   assert.equal(existsSync(join(project, '.codex', 'agents', 'lead.toml')), false);
   const recovery = join(home, 'Projects', 'advanced-harness-backups');
-  const receiptName = readdirSync(recovery).find(name => name.startsWith('native-install-'))!;
-  const pending = JSON.parse(readFileSync(join(recovery, receiptName), 'utf8')) as { status: string; complete: boolean };
-  assert.equal(pending.status, 'pending');
-  assert.equal(pending.complete, false);
-  assert.ok(errors.some(message => message.includes('pending recovery evidence retained')));
+  assert.equal(readdirSync(recovery).some(name => name.startsWith('native-install-')), false);
+  assert.equal(errors.some(message => message.includes('pending recovery evidence retained')), false);
+});
+
+test('Codex write-then-throw failures at early and manifest stages roll back only verified writes', async () => {
+  for (const failureAt of [1, 17]) {
+    const root = mkdtempSync(join(tmpdir(), `codex-write-throw-${failureAt}-`));
+    const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+    let writes = 0;
+    const save = (...args: Parameters<typeof saveInstallation>) => {
+      const backup = saveInstallation(...args);
+      if (++writes === failureAt) throw new Error(`write then throw ${failureAt}`);
+      return backup;
+    };
+    const answers = roleAnswers('throw-model');
+    await assert.rejects(installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {}, save }), /write then throw/);
+    assert.equal(existsSync(join(project, '.codex', 'config.toml')), false);
+    assert.equal(existsSync(join(project, '.codex', '.advanced-harness-state.json')), false);
+    const recovery = join(home, 'Projects', 'advanced-harness-backups');
+    assert.equal(readdirSync(recovery).some(name => name.startsWith('native-install-')), false);
+  }
+});
+
+test('Codex rollback preserves divergent concurrent content and retains pending evidence', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-divergent-rollback-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const configPath = join(project, '.codex', 'config.toml');
+  let writes = 0;
+  const save = (...args: Parameters<typeof saveInstallation>) => {
+    if (++writes === 2) throw new Error('injected later failure');
+    const backup = saveInstallation(...args);
+    writeFileSync(configPath, '# concurrent edit wins\n');
+    return backup;
+  };
+  const errors: string[] = [];
+  const answers = roleAnswers('divergent-model');
+  await assert.rejects(installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error: message => errors.push(message), save }), /injected later failure/);
+  assert.equal(readFileSync(configPath, 'utf8'), '# concurrent edit wins\n');
+  assert.ok(errors.some(message => message.includes('rollback was incomplete')));
+  const recovery = join(home, 'Projects', 'advanced-harness-backups');
+  assert.ok(readdirSync(recovery).some(name => name.startsWith('native-install-')));
 });
 
 test('CLI-used host selection retries; Enter defaults scope/project and cancels without writes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'codex-prompt-flow-'));
   const home = join(root, 'home'); mkdirSync(home, { recursive: true });
-  const answers = ['unknown-host', 'codex', 'invalid-scope', '', '', '', ...Array.from({ length: 8 }, () => ['explicit-model', 'medium']).flat(), ''];
+  const answers = ['unknown-host', 'codex', 'invalid-scope', '', '', '', ...rolePairAnswers('explicit-model'), ''];
   const ask = async () => answers.shift() ?? '';
   const hosts = await askHostSelection(ask, 'opencode');
   const output: string[] = [];

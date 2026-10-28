@@ -36,7 +36,7 @@ import {
   preflightOpenCodeCommandDeployment,
   type WorkflowCommandId
 } from './workflow-commands.ts';
-import { parseHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
+import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 
 export interface UpdateFlowOptions {
   scope?: string;
@@ -79,7 +79,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   const env = deps.environment ?? process.env;
   const harnessRoot = deps.harnessRoot ?? resolve(fileURLToPath(new URL('..', import.meta.url)));
 
-  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
+  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : [await askHostSelection(ask, 'opencode', output)];
 
   let scope = options.scope;
   while (!scope || !['project', 'global'].includes(scope)) {
@@ -95,24 +95,23 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     throw new Error('Project directory does not exist or is not a directory. Select a valid directory before updating.');
   }
 
-  const supportedNativeHosts: HostId[] = ['opencode', 'antigravity', 'claude-code', 'codex'];
-  const unsupportedHosts = selectedHosts.filter(host => !supportedNativeHosts.includes(host));
+  const dispatch = selectNativeHost(selectedHosts);
+  const unsupportedHosts = dispatch.unsupported;
 
   if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
     for (const host of unsupportedHosts) {
-      const issue = host === 'claude-code' ? '#43' : '#46';
-      errorOutput(`Update blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented; track integration in issue ${issue}. No host adapters or files were changed.`);
+      errorOutput(`Update blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented${host === 'cursor' ? ' (issue #46)' : ''}. No host adapters or files were changed.`);
     }
-    if (selectedHosts.length > 1 && unsupportedHosts.length === 0) {
+    if (dispatch.multi && unsupportedHosts.length === 0) {
       errorOutput('Multi-host simultaneous update is not supported. Update each host deliberately.');
     }
     return 2;
   }
 
-  if (options.context && !selectedHosts.includes('antigravity')) throw new Error('--context for model preferences is supported only with --host antigravity.');
+  if (options.context && dispatch.host !== 'antigravity') throw new Error('--context for model preferences is supported only with --host antigravity.');
   if (options.context && scope !== 'project') throw new Error('--context can be used only with project scope.');
 
-  if (selectedHosts.includes('claude-code')) {
+  if (dispatch.host === 'claude-code') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('claude-code');
     if (!adapter || !adapter.update) throw new Error('Claude Code host adapter update is not available.');
     const result = await adapter.update({
@@ -130,7 +129,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     return typeof result === 'number' ? result : 0;
   }
 
-  if (selectedHosts.includes('antigravity')) {
+  if (dispatch.host === 'antigravity') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('antigravity');
     if (!adapter || !adapter.update) throw new Error('Antigravity host adapter update is not available.');
     const result = await adapter.update({
@@ -149,7 +148,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     return typeof result === 'number' ? result : 0;
   }
 
-  if (selectedHosts.includes('codex')) {
+  if (dispatch.host === 'codex') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('codex');
     if (!adapter || !adapter.update) throw new Error('Codex host adapter update is not available.');
     const result = await adapter.update({
