@@ -341,3 +341,20 @@ test('validateV2Receipt accepts commands kind and rejects unknown kinds', t => {
     ] });
   }, /Invalid managedFiles evidence item/);
 });
+
+test('successor receipts inherit the predecessor harnessVersion unless an explicit stamp is passed', async t => {
+  const { directory, target } = fixture(t);
+  const a = rule('a');
+  const stamp = { version: '0.1.0', commit: 'a'.repeat(40) };
+  const initial = discoverReceiptChain(directory, target);
+  const first = createSuccessorReceipt(initial, undefined, config([a]), { lead: reconcilePermissions({ existing: [], desired: [{ rule: a, sources: ['native:lead'] }] }) }, stamp);
+  assert.deepEqual(first.harnessVersion, stamp);
+  assert.equal('harnessVersion' in createSuccessorReceipt(initial, undefined, config([a]), { lead: reconcilePermissions({ existing: [], desired: [{ rule: a, sources: ['native:lead'] }] }) }), false, 'no parent and no stamp');
+  const pending = writePendingSuccessor(initial, first);
+  writeFileSync(target, config([a])); finalizeSuccessor(pending, config([a]));
+  const snapshot = discoverReceiptChain(directory, target);
+  const inherited = createSuccessorReceipt(snapshot, config([a]), config([a], 'updated'), {});
+  assert.deepEqual(inherited.harnessVersion, stamp);
+  const override = { version: '0.2.0', commit: 'b'.repeat(40), dirty: true };
+  assert.deepEqual(createSuccessorReceipt(snapshot, config([a]), config([a], 'other'), {}, override).harnessVersion, override);
+});

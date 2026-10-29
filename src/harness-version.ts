@@ -51,6 +51,14 @@ export function readSourceVersion(repoRoot: string, run: Runner = defaultRun): S
   return { version, commit, dirty };
 }
 
+export function toVersionStamp(source: SourceVersion): HarnessVersionStamp {
+  return { version: source.version, commit: source.commit, ...(source.dirty ? { dirty: true } : {}) };
+}
+
+export function formatVersionStamp(stamp: HarnessVersionStamp): string {
+  return `${stamp.version} (${stamp.commit})${stamp.dirty ? ' [dirty local changes]' : ''}`;
+}
+
 export type VersionComparison =
   | 'unknown-installed'
   | 'up-to-date'

@@ -10,8 +10,10 @@ import {
   recoverFailedSuccessor,
   revalidatePendingSuccessor,
   writePendingSuccessor,
+  type HarnessVersionStamp,
   type ManagedFileEvidence,
 } from './receipt-lineage.ts';
+import { formatVersionStamp } from './harness-version.ts';
 import { nativeRoles, saveInstallation, type Ask, type NativeRole } from './native-installer.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import {
@@ -33,6 +35,7 @@ export interface AntigravityAdapterInstallOptions {
   agentsDirectory?: string | undefined;
   commandsDirectory?: string | undefined;
   context?: string | undefined;
+  harnessVersion?: HarnessVersionStamp | undefined;
   ask: Ask;
   output(message: string): void;
   error(message: string): void;
@@ -343,6 +346,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   if (preferencePlan.writes.length) preferencePlan.writes.forEach(file => output(`  ${file.path} (${file.currentContent === undefined ? 'new' : 'update'}${file.currentContent === undefined ? '' : `; private before-state backup under ${backupParent}`})`));
   else output('  None (preferences already match).');
 
+  if (options.harnessVersion) output(`Harness version: ${formatVersionStamp(options.harnessVersion)}`);
   const confirm = (await ask('\nConfirm installation of Antigravity harness configuration? (yes/no)', 'yes')).trim().toLowerCase();
   if (confirm !== 'yes' && confirm !== 'y') {
     output('Installation canceled by user. No files written.');
@@ -401,7 +405,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     targetInitial,
     targetFinal,
     {},
-    undefined,
+    options.harnessVersion,
     { host: 'antigravity', managedFiles: combinedManagedFiles }
   );
 

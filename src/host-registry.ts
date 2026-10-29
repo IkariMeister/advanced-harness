@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { nativeRoles, type Ask, type NativeRole } from './native-installer.ts';
+import type { HarnessVersionStamp } from './receipt-lineage.ts';
 import { installAntigravity, diagnoseAntigravity } from './antigravity-adapter.ts';
 import { installClaudeCode, diagnoseClaudeCode } from './claude-code-adapter.ts';
 
@@ -287,6 +288,7 @@ export interface HostAdapterInstallOptions {
   agentsDirectory?: string | undefined;
   commandsDirectory?: string | undefined;
   context?: string | undefined;
+  harnessVersion?: HarnessVersionStamp | undefined;
 }
 
 export interface HostAdapterUpdateOptions {
@@ -301,6 +303,7 @@ export interface HostAdapterUpdateOptions {
   agentsDirectory?: string | undefined;
   commandsDirectory?: string | undefined;
   context?: string | undefined;
+  harnessVersion?: HarnessVersionStamp | undefined;
 }
 
 export interface HostAdapterDoctorOptions {
@@ -335,6 +338,7 @@ async function installClaudeCodeFromOptions(options: HostAdapterInstallOptions):
     recoveryDirectory: options.recoveryDirectory,
     agentsDirectory: options.agentsDirectory,
     commandsDirectory: options.commandsDirectory,
+    harnessVersion: options.harnessVersion,
     ask,
     output,
     error,
@@ -370,6 +374,7 @@ registerHostAdapter({
       agentsDirectory: options.agentsDirectory,
       commandsDirectory: options.commandsDirectory,
       context: options.context,
+      harnessVersion: options.harnessVersion,
       ask,
       output,
       error,
@@ -387,6 +392,7 @@ registerHostAdapter({
       agentsDirectory: options.agentsDirectory,
       commandsDirectory: options.commandsDirectory,
       context: options.context,
+      harnessVersion: options.harnessVersion,
       ask,
       output,
       error,

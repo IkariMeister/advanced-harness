@@ -288,6 +288,8 @@ npm run harness:update -- --check-remote
 4. **Safe recovery**: Updates write an exact private backup and a pending successor receipt first. On failure, pending evidence is retained. You can restore through the existing receipt chain (`npm run harness:uninstall`) to rollback cleanly.
 5. **Confirmation**: Final confirmation requires typing `update`. Cancellation leaves all files and receipts unchanged.
 
+Install stamps each new receipt with the harness version (`package.json` version and git commit), and the install prints it as `Harness version: ...` before confirmation. Later receipts from integrations, permission setup and prompt deployment carry that stamp forward, so `harness:update` can report the installed version.
+
 If update planning finds any permission reconciliation conflict, the update stops
 before role, command-replacement, or final-confirmation prompts. It reports the
 configuration path and each conflict's role, code, and message, then returns status

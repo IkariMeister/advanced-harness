@@ -8,6 +8,7 @@ import { planAntigravityDeployment, installAntigravity, diagnoseAntigravity } fr
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { diagnoseHost } from '../src/native-diagnostics.ts';
+import { discoverReceiptChain } from '../src/receipt-lineage.ts';
 
 const rolesDir = fileURLToPath(new URL('../agents/', import.meta.url));
 const commandsDir = fileURLToPath(new URL('../commands/', import.meta.url));
@@ -455,6 +456,38 @@ test('installAntigravity aborts and writes nothing if files diverge during confi
     // Verify no pending receipt was left behind
     const backupEntries = existsSync(recoveryDir) ? rmSync : null;
     assert.ok(!existsSync(join(tempProject, '.agents', 'hooks.json')), 'hooks.json must not have been created');
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('runInstallerFlow stamps harnessVersion on the Antigravity receipt and prints it before confirmation', async () => {
+  const tempProject = makeTempRoot('ag-version-project-');
+  const tempHome = makeTempRoot('ag-version-home-');
+  const harnessRoot = join(tempHome, 'checkout');
+  const recoveryDir = join(tempHome, 'recovery');
+  const outputs: string[] = [];
+  const commit = 'd'.repeat(40);
+  try {
+    mkdirSync(harnessRoot);
+    writeFileSync(join(harnessRoot, 'package.json'), JSON.stringify({ version: '9.8.7' }));
+    const runCommand = (_executable: string, args: string[]) => args[0] === 'rev-parse' ? commit : '';
+    const code = await runInstallerFlow({ host: 'antigravity', scope: 'project', project: tempProject }, {
+      ask: async (_q, s) => s ?? 'yes',
+      output: msg => outputs.push(msg),
+      error: msg => outputs.push(msg),
+      home: tempHome,
+      recoveryDirectory: recoveryDir,
+      agentsDirectory: rolesDir,
+      commandsDirectory: commandsDir,
+      harnessRoot,
+      runCommand,
+    });
+    assert.equal(code, 0);
+    assert.ok(outputs.includes(`Harness version: 9.8.7 (${commit})`));
+    const head = discoverReceiptChain(recoveryDir, join(tempProject, '.agents', 'hooks.json'), 'antigravity').head;
+    assert.deepEqual(head?.receipt.version === 2 ? head.receipt.harnessVersion : undefined, { version: '9.8.7', commit });
   } finally {
     rmSync(tempProject, { recursive: true, force: true });
     rmSync(tempHome, { recursive: true, force: true });

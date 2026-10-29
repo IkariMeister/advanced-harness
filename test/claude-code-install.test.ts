@@ -10,6 +10,7 @@ import { diagnoseClaudeCode } from '../src/claude-code-adapter.ts';
 import { diagnoseHost } from '../src/native-diagnostics.ts';
 import { claudeChildRoles, claudeSettingsDeny } from '../src/claude-code-compiler.ts';
 import { nativeRoles } from '../src/native-role-types.ts';
+import { discoverReceiptChain } from '../src/receipt-lineage.ts';
 
 type Answer = (question: string, suggested?: string) => string;
 
@@ -306,4 +307,18 @@ test('text outside the Lead block edited by the user never triggers the overwrit
   assert.equal(run.status, 0);
   assert.ok(!run.prompts.some(claudeOverwritePrompt));
   assert.ok(readFileSync(join(h.project, 'CLAUDE.md'), 'utf8').includes(outsideBlockNote));
+});
+
+test('install stamps harnessVersion on the Claude Code receipt and prints it before confirmation', async t => {
+  const h = harness(t, confirmOnly('yes'));
+  const harnessRoot = join(h.root, 'checkout');
+  mkdirSync(harnessRoot);
+  writeFileSync(join(harnessRoot, 'package.json'), JSON.stringify({ version: '9.8.7' }));
+  const commit = 'c'.repeat(40);
+  const runCommand = (_executable: string, args: string[]) => args[0] === 'rev-parse' ? commit : '';
+  assert.equal(await runInstallerFlow({ scope: 'project', project: h.project, host: 'claude-code' }, { ...h.deps, harnessRoot, runCommand }), 0);
+  const line = h.output.indexOf(`Harness version: 9.8.7 (${commit})`);
+  assert.ok(line >= 0, 'version line printed');
+  const head = discoverReceiptChain(h.recovery, join(h.project, '.claude', 'settings.json'), 'claude-code').head;
+  assert.deepEqual(head?.receipt.version === 2 ? head.receipt.harnessVersion : undefined, { version: '9.8.7', commit });
 });
