@@ -324,7 +324,8 @@ export function planV2Restore(receipt: V2Receipt, text: string): { updated: stri
     }
   }
   const scalar: InstallationReceipt = { version: 1, target: receipt.target, provenance: 'installer', complete: true, changes: receipt.changes.filter(c => c.path.at(-1) !== 'permissions'), createdContainers: receipt.createdContainers };
-  const rest = planLegacyUninstall(scalar, bom + updated);
+  // Host receipts with no scalar fields skip the scalar pass, so an absent or empty target is never parsed as configuration.
+  const rest = scalar.changes.length || scalar.createdContainers.length ? planLegacyUninstall(scalar, bom + updated) : { updated: bom + updated, actions: [] as string[], conflicts: [] as string[] };
   conflicts.push(...rest.conflicts); actions.push(...rest.actions);
   return { updated: conflicts.length ? text : rest.updated, actions, conflicts };
 }

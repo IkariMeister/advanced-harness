@@ -42,10 +42,14 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
     assert.match(result.stdout, /Status: HEALTHY \(Installed: Yes\)/);
   });
 
-  it('SMK-CC-04 receipt-backed uninstall removes the Claude Code footprint', { todo: 'Gap: harness:uninstall only accepts opencode.json(c) targets, so Claude Code receipts cannot be uninstalled via the CLI' }, async () => {
+  it('SMK-CC-04 receipt-backed uninstall removes the Claude Code footprint and restores AGENTS.md', async () => {
     const result = await box.run('uninstall-native-harness.ts', args(), { steps: [ask('Type uninstall to continue', 'uninstall')] });
     assert.equal(result.code, 0, result.transcript);
-    assert.equal(existsSync(join(box.project, '.claude', 'agents', 'lead.md')), false);
+    for (const role of roles) assert.equal(existsSync(join(box.project, '.claude', 'agents', `${role}.md`)), false, role);
+    for (const command of commands) assert.equal(existsSync(join(box.project, '.claude', 'commands', `${command}.md`)), false, command);
+    assert.equal(existsSync(join(box.project, '.claude', 'settings.json')), false, 'settings.json');
+    assert.equal(existsSync(join(box.project, 'CLAUDE.md')), false, 'CLAUDE.md');
+    assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
   });
 });
 
@@ -85,9 +89,15 @@ describe('SMK-AG Antigravity project lifecycle (non-TTY piped answers)', () => {
     assert.match(result.stdout, /Installed: Yes/);
   });
 
-  it('SMK-AG-05 receipt-backed uninstall removes the Antigravity footprint', { todo: 'Gap: harness:uninstall only accepts opencode.json(c) targets, so Antigravity receipts cannot be uninstalled via the CLI' }, async () => {
+  it('SMK-AG-05 receipt-backed uninstall removes the Antigravity footprint and restores AGENTS.md', async () => {
     const result = await box.run('uninstall-native-harness.ts', args(), { steps: [ask('Type uninstall to continue', 'uninstall')] });
     assert.equal(result.code, 0, result.transcript);
-    assert.equal(existsSync(join(box.project, '.agents', 'hooks.json')), false);
+    const agents = join(box.project, '.agents');
+    assert.equal(existsSync(join(agents, 'rules', 'advanced-harness-lead.md')), false, 'lead rule');
+    for (const command of commands) assert.equal(existsSync(join(agents, 'skills', command, 'SKILL.md')), false, command);
+    assert.equal(existsSync(join(agents, 'scripts', 'antigravity-merge-guard.mjs')), false, 'merge guard script');
+    assert.equal(existsSync(join(agents, 'hooks.json')), false, 'hooks.json');
+    assert.equal(existsSync(join(agents, 'mcp_config.json')), false, 'mcp_config.json');
+    assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
   });
 });

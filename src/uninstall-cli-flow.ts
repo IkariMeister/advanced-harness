@@ -1,3 +1,5 @@
+import { lstatSync, readdirSync, rmdirSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve, join, sep } from 'node:path';
 import type { AnyReceipt } from './installation-receipt.ts';
 import { planUninstall } from './installation-receipt.ts';
 import { applyManagedFilePlan, planV2Restore, prepareManagedFilePlan } from './receipt-lineage.ts';
@@ -12,6 +14,8 @@ export async function runUninstallFlow(input: {
   save: (updated: string) => void;
   backupParent?: string;
   host?: HostId;
+  /** Directory that bounds empty-directory pruning (project root, or the Antigravity global config directory). */
+  pruneRoot?: string | undefined;
 }): Promise<number> {
   const plan = planUninstall(input.receipt, input.current);
   if (plan.conflicts.length) {
@@ -64,10 +68,39 @@ export async function runUninstallFlow(input: {
       const fileResult = applyManagedFilePlan(input.receipt, input.backupParent, managedExecution);
       for (const mod of fileResult.modified) input.output(`Managed file restored: ${mod}`);
       for (const backup of fileResult.backups) input.output(`Private backup: ${backup}`);
+      if (input.pruneRoot) for (const dir of pruneInstalledDirectories(input.receipt, input.pruneRoot)) input.output(`Removed empty installer directory: ${dir}`);
     } catch (err) {
       input.error(`Uninstall partially completed${saved ? '; configuration was restored' : ''}. ${String(err)}. Review completed work and backups before retrying.`);
       return 1;
     }
   }
   return 0;
+}
+
+// Prunes only directories the install created. Candidates are ancestors of managed files whose recorded
+// prior state is absent, strictly inside pruneRoot, and removed only when empty after restore. The
+// top-level .claude and .agents containers are never pruned: the receipt cannot prove they were absent
+// before install, so they are left in place even when empty. Non-empty directories are never touched.
+export function pruneInstalledDirectories(receipt: AnyReceipt, pruneRoot: string): string[] {
+  if (receipt.version !== 2 || !receipt.managedFiles?.length) return [];
+  const root = resolve(pruneRoot);
+  const containers = [join(root, '.claude'), join(root, '.agents')];
+  const candidates = new Set<string>();
+  for (const file of receipt.managedFiles) {
+    if (!('absent' in file.before)) continue;
+    for (let dir = resolve(dirname(file.path)); ; dir = dirname(dir)) {
+      const rel = relative(root, dir);
+      if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) break;
+      candidates.add(dir);
+    }
+  }
+  const removed: string[] = [];
+  for (const dir of [...candidates].sort((a, b) => b.length - a.length)) {
+    if (containers.some(container => relative(container, dir) === '')) continue;
+    const stat = lstatSync(dir, { throwIfNoEntry: false });
+    if (!stat?.isDirectory() || stat.isSymbolicLink() || readdirSync(dir).length) continue;
+    rmdirSync(dir);
+    removed.push(dir);
+  }
+  return removed;
 }

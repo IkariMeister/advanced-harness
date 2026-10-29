@@ -8,11 +8,11 @@ import { adoptionPreviewAction, selectAdoptionFields } from '../src/adoption-pro
 import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
 import { discoverReceiptChain, readReceiptForRestore, revalidateRestoreReceipt } from '../src/receipt-lineage.ts';
 import { parseHostSelection, type HostId } from '../src/host-registry.ts';
-import { selectUninstallTarget } from '../src/uninstall-target.ts';
+import { selectUninstallTarget, uninstallPruneRoot } from '../src/uninstall-target.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:uninstall -- [--scope global|project] [--project <directory>] [--config <opencode.json|opencode.jsonc>] [--receipt <receipt>] [--host <host>] | --adopt-existing [--before-config <known-before-config>]');
+  console.log('Usage: npm run harness:uninstall -- [--host opencode|claude-code|antigravity] [--scope global|project] [--project <directory>] [--config <opencode.json|opencode.jsonc>] [--receipt <receipt>] | --adopt-existing [--before-config <known-before-config>]\n  --host claude-code: project scope only (<project>/.claude/settings.json); --scope global is rejected.\n  --host antigravity: project scope (<project>/.agents/hooks.json) or global (~/.gemini/config/hooks.json).\n  --config is OpenCode-only.');
 } else {
   const options: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {
@@ -28,7 +28,9 @@ if (args.includes('--help')) {
   const selectedHosts = options['--host'] ? parseHostSelection(String(options['--host'])) : undefined;
   if (selectedHosts && selectedHosts.length !== 1) throw new Error('--host must select exactly one host for uninstall.');
   const home = homedir();
+  const host: HostId = selectedHosts?.[0] ?? 'opencode';
   const target = selectUninstallTarget({
+    host,
     ...(options['--scope'] ? { scope: String(options['--scope']) } : {}),
     ...(options['--project'] ? { project: String(options['--project']) } : {}),
     ...(options['--config'] ? { config: String(options['--config']) } : {}),
@@ -40,8 +42,10 @@ if (args.includes('--help')) {
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   try {
     assertSafeFilesystemPath(target, 'file');
-    if (!existsSync(target) || !lstatSync(target).isFile() || lstatSync(target).isSymbolicLink()) throw new Error('Target must exist as a regular non-symlink file.');
-    const current = readFileSync(target, 'utf8');
+    // Non-OpenCode receipts can be restored when their target is absent; the save path below never creates it.
+    const targetAbsent = host !== 'opencode' && !existsSync(target);
+    if (!targetAbsent && (!existsSync(target) || !lstatSync(target).isFile() || lstatSync(target).isSymbolicLink())) throw new Error('Target must exist as a regular non-symlink file.');
+    const current = targetAbsent ? '' : readFileSync(target, 'utf8');
     const backupParent = process.env.ADVANCED_HARNESS_RECOVERY_DIR || join(home, 'Projects', 'advanced-harness-backups');
     let receiptPath = String(options['--receipt'] ?? '');
     let receipt: ReturnType<typeof readInstallationReceipt> | undefined;
@@ -90,10 +94,12 @@ if (args.includes('--help')) {
         receipt: receipt!, current,
         backupParent,
         host: effectiveReceiptHost(receipt!),
+        pruneRoot: uninstallPruneRoot(host, target, home),
         confirm: message => terminal.question(message),
         output: message => console.log(message),
         error: message => console.error(message),
         save: updated => {
+          if (targetAbsent) throw new Error('Target was absent at review; refusing to create it during uninstall.');
           const latest = readInstallationReceipt(receiptPath, target);
           if (JSON.stringify(latest) !== JSON.stringify(receipt)) throw new Error('Receipt changed during uninstall review; no write permitted.');
           revalidateRestoreReceipt(receipt!);
