@@ -451,7 +451,7 @@ test('Codex requires consent for customized instructions while valid preserved p
     }, output() {}, error() {} });
     assert.equal(overwriteAsked, true);
     if (consent === 'no') {
-      assert.equal(status, 0);
+      assert.equal(status, 1, 'a declined overwrite leaves the requested assignment unapplied, so installation is incomplete');
       assert.equal(readFileSync(rolePath, 'utf8'), edited);
       assert.equal((await diagnoseCodex({ project, home })).ok, true);
     } else {
@@ -576,7 +576,7 @@ test('Codex rollback retains evidence when a backup changes after creation', asy
   assert.ok(readdirSync(recovery).some(name => name.startsWith('native-install-')));
 });
 
-test('Codex returned backup is tracked without callback and duplicate callback/return is deduplicated', async () => {
+test('Codex returned backup without creation evidence is preserved, while callback-reported backups are cleaned up', async () => {
   for (const duplicate of [false, true]) {
     const root = mkdtempSync(join(tmpdir(), 'codex-returned-backup-'));
     const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
@@ -592,7 +592,11 @@ test('Codex returned backup is tracked without callback and duplicate callback/r
     const answers = roleAnswers('returned-model');
     await assert.rejects(installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {}, save }), /injected after write with returned backup/);
     const recovery = join(home, 'Projects', 'advanced-harness-backups');
-      assert.equal(existsSync(recovery) ? readdirSync(recovery).some(name => name.startsWith('native-install-')) : false, false);
+    const entries = existsSync(recovery) ? readdirSync(recovery) : [];
+    // Callback-reported backups are attributable and removed; a backup only returned by the saver has no
+    // creation evidence, so rollback keeps it and the pending receipt.
+    assert.equal(entries.some(name => name.startsWith('native-install-')), !duplicate);
+    assert.equal(entries.some(name => !name.startsWith('native-install-')), !duplicate);
   }
 });
 
@@ -663,7 +667,9 @@ test('Codex declined overwrite says the requested model and effort were not appl
   writeFileSync(leadPath, edited);
   const output: string[] = [];
   const answers = ['', ...Array.from({ length: 8 }, () => ['requested-model', 'high']).flat(), 'no', 'install'];
-  await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output: line => output.push(line), error() {} });
+  const status = await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output: line => output.push(line), error() {} });
+  assert.equal(status, 1, 'declining leaves the requested assignment unapplied, so installation is not reported as complete');
+  assert.ok(output.some(line => line.includes('Install will remain incomplete') && line.includes('lead')), output.join('\n'));
   assert.equal(readFileSync(leadPath, 'utf8'), edited);
   assert.ok(output.some(line => /Preserving customized Codex agent: .*lead\.toml; the model and reasoning effort entered for it were not applied/.test(line)), output.join('\n'));
 });
