@@ -108,7 +108,15 @@ which have native deployment. Cursor remains compile-only and is covered by
 | ID | Case | Expected |
 | --- | --- | --- |
 | CX-01 | Cancel installation after preview | Existing quoted-ID MCP fixture and project tree remain byte-identical; no backups or receipts |
-| CX-02 | Install and doctor; run `harness:update` with Enter at prior MCP/tool/model/effort defaults; then inject a fixture edit at the install-confirmation boundary | Quoted MCP route is disabled while CRLF/comments remain; doctor passes; update preserves prior model/effort and MCP choices; stale confirmation is automatically refused, preserving the injected concurrent edit with no other project/recovery changes |
+| CX-02 | Install and doctor; run `harness:update` with Enter at prior MCP/tool/model/effort defaults; then inject a fixture edit at the install-confirmation boundary | Exact CRLF config including comments, root settings, disabled route/tools and trailing bytes; manifest MCP selections; all eight model/effort role assignments; doctor passes; update retains them; stale confirmation is refused without writes beyond injected edit |
+| CX-03 | Global cancellation, install, update and doctor in isolated home (after CX-02) | Snapshot the project immediately before global install; assert exact unchanged tree afterward. Sandbox global Codex config, roles and shared skills are deployed; recursive real-home `.codex`, `.agents/skills`, and recovery fingerprints match before/after; cancellation writes nothing |
+| CX-04 | Required model/effort invalid-answer policy | Three invalid attempts per required field fail before writes; valid default Enter is preserved; blank without a valid default consumes an attempt |
+| CX-05 | Doctor after route/tool tampering; customized role and shared rules/skill preservation | Doctor reports selected route/tool drift; install preserves a customized role by default and retains user/shared-host skill and existing rules text. Missing-role/missing-rules doctor checks are unit-tested in `test/codex-adapter.test.ts`, not this smoke case. |
+
+Rollback is covered by focused unit tests in `test/codex-adapter.test.ts`, not by a
+Codex lifecycle smoke case: partial and early/manifest write-then-throw failures,
+divergent target preservation, changed backup preservation, and a concurrent file in
+a transaction-created backup directory retaining pending recovery evidence.
 
 ### SMK-PS / SMK-PI: project context (`smoke/project-context.smoke.ts`)
 
@@ -123,8 +131,15 @@ which have native deployment. Cursor remains compile-only and is covered by
 Gaps are recorded as `todo` tests. They report on every run but do not fail
 it. When a gap is fixed, remove the `todo` option so the test becomes a gate.
 
-None are open: CC-04 and AG-05 were resolved by the host-aware uninstall, AG-02
-by #81, and OC-08 by #82.
+The previously recorded Claude Code/Antigravity uninstall gap (CC-04, AG-05),
+Antigravity confirmation-default gap (AG-02), and install version-stamp gap (OC-08)
+are resolved by the host-aware uninstall, #81, and #82 respectively. Codex
+receipt-backed uninstall remains unimplemented and explicitly deferred (CX-07);
+the Codex lifecycle cases do not assert uninstall support.
+
+Codex Windows/macOS TTY validation remains pending; the human waived this manual
+test for this pass only. Codex Desktop validation also remains pending and out of
+scope. Automated smoke is non-TTY and is not TTY/Desktop runtime evidence.
 
 The suite also made these observations, which are not asserted:
 

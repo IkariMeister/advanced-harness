@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { compileCodexAgent, compileCodexMergeRule, diagnoseCodex, encodeCodexYamlScalar, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
 import { parseDocument } from 'yaml';
 import { runInstallerFlow } from '../src/installer-flow.ts';
@@ -41,10 +41,23 @@ test('Codex agent serializes only supported explicit role fields and validates T
     'x = { a.b = 2, a = 1 }',
     'x = { a = { b = 1 }, a.c = 2 }',
   ]) assert.throws(() => validateCodexToml(invalid));
+  for (const invalid of ['a. = 1', '[a.]', 'x = { a. = 1 }', 'x = { a .   = 1 }']) assert.throws(() => validateCodexToml(invalid));
+  for (const valid of ['[a]\nb = 1\n[b]\nx = 2', 'a."b.c" = 1', 'x = { a."b.c" = 1 }']) validateCodexToml(valid);
+  for (const unsafe of [
+    'x = { __proto__.codexReviewProbe = 1 }',
+    'x = { constructor.prototype.codexReviewProbe = 1 }',
+  ]) {
+    delete (Object.prototype as Record<string, unknown>).codexReviewProbe;
+    validateCodexToml(unsafe);
+    assert.equal(Object.prototype.hasOwnProperty.call(Object.prototype, 'codexReviewProbe'), false);
+    assert.equal(({} as Record<string, unknown>).codexReviewProbe, undefined);
+  }
+  assert.throws(() => validateCodexToml('[a]\nx = 1\n[a.x]'));
   for (const invalid of ['x = +0x1', 'x = -0b1', 'x = 01', 'x = 01.2', 'x = 01e2', 'x = 1_', 'x = 1__0', 'x = 0x_1']) assert.throws(() => validateCodexToml(invalid));
   for (const valid of ['x = 0x1', 'x = 0o7', 'x = 0b1', 'x = +0', 'x = -1', 'x = 1_000', 'x = 1.2', 'x = 1e2', 'x = 1.2e-2', 'x = { a = 1, b = { c = 2 } }']) validateCodexToml(valid);
   for (const valid of ['"quoted.key" = 1', "'literal.key' = 2", '["mcp_servers"."server.with.dot"]\nenabled = true', 'root = { "quoted.key" = 1 }']) validateCodexToml(valid);
   validateCodexToml('"literal.key" = 1\nliteral.key = 2');
+  for (const valid of ['"equals=key" = "v=x"', '"escaped\\\"=key" = 2 # = in comment', '["mcp_servers"."a=b"]\n"enabled" = true # retained =']) validateCodexToml(valid);
   assert.throws(() => validateCodexToml('"literal.key" = 1\n"literal.key" = 2'));
   assert.throws(() => validateCodexToml('"unterminated = 1'));
   assert.match(compileCodexMergeRule(), /decision = "forbidden"/);
@@ -183,6 +196,64 @@ test('Codex invalid required model and effort answers retry in the interactive a
   assert.match(readFileSync(join(project, '.codex', 'agents', 'lead.toml'), 'utf8'), /model_reasoning_effort = "high"/);
   assert.ok(output.some(message => message.includes('Enter a valid explicit model ID')));
   assert.ok(output.some(message => message.includes('supported reasoning efforts')));
+});
+
+test('Codex required assignments stop after three invalid attempts and preserve targets', async () => {
+  for (const invalid of ['model', 'effort'] as const) {
+    const root = mkdtempSync(join(tmpdir(), 'codex-attempt-limit-'));
+    const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+    const answers = invalid === 'model' ? ['', '-', '-', '-', ...rolePairAnswers('valid/model').slice(2)] : ['', 'valid/model', '', '', ''];
+    let calls = 0;
+    await assert.rejects(installCodex({ scope: 'project', project, home, ask: async () => { calls++; return answers.shift() ?? ''; }, output() {}, error() {} }), /3 attempts/);
+    assert.equal(calls, invalid === 'model' ? 4 : 5, 'MCP prompts precede the three invalid required answers');
+    assert.equal(existsSync(join(project, '.codex')), false);
+    assert.equal(existsSync(join(home, 'Projects', 'advanced-harness-backups')), false);
+  }
+});
+
+test('Codex custom role preservation and explicit overwrite and independent doctor findings', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-custom-role-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const rolePath = join(project, '.codex', 'agents', 'lead.toml'); mkdirSync(join(project, '.codex', 'agents'), { recursive: true });
+  writeFileSync(rolePath, 'name = "lead"\ndescription = "custom"\n');
+  const existing = ['', ...rolePairAnswers('new/model'), 'no', 'install'];
+  await installCodex({ scope: 'project', project, home, ask: async () => existing.shift() ?? '', output() {}, error() {} });
+  assert.match(readFileSync(rolePath, 'utf8'), /description = "custom"/);
+  const doctor = await diagnoseCodex({ project, home });
+  assert.ok(doctor.issues.some(issue => issue.includes('Missing Codex agent definition')) || doctor.issues.some(issue => issue.includes('lacks required explicit')));
+});
+
+test('Codex explicit customized role overwrite updates the role while preserving shared skill', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-custom-overwrite-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const rolePath = join(project, '.codex', 'agents', 'lead.toml'); mkdirSync(join(project, '.codex', 'agents'), { recursive: true });
+  writeFileSync(rolePath, 'name = "lead"\ndescription = "custom"\n');
+  const sharedSkill = join(project, '.agents', 'skills', 'start-issue', 'SKILL.md'); mkdirSync(join(project, '.agents', 'skills', 'start-issue'), { recursive: true });
+  writeFileSync(sharedSkill, 'other-host owns this skill');
+  const answers = ['', ...rolePairAnswers('new/model'), 'yes', 'install'];
+  await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {} });
+  assert.match(readFileSync(rolePath, 'utf8'), /model = "new\/model"/);
+  assert.equal(readFileSync(sharedSkill, 'utf8'), 'other-host owns this skill');
+});
+
+test('Codex doctor independently reports missing roles, missing rules, and selected MCP tampering', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-independent-doctor-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const codex = join(project, '.codex'); mkdirSync(codex, { recursive: true });
+  writeFileSync(join(codex, 'config.toml'), 'sandbox_mode = "read-only"\napproval_policy = "on-request"\n');
+  writeFileSync(join(codex, '.advanced-harness-state.json'), JSON.stringify({ selectedMcpServers: ['selected'], disabledTools: {} }));
+  const report = await diagnoseCodex({ project, home });
+  assert.ok(report.issues.some(issue => issue.includes('Missing Codex agent definition')));
+  assert.ok(report.issues.some(issue => issue.includes('Missing Codex direct merge rule')));
+  assert.ok(report.issues.some(issue => issue.includes('not disabled pending validation')));
+});
+
+test('Codex closed required prompts abort without spinning or writing', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-prompt-close-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  await assert.rejects(installCodex({ scope: 'project', project, home, ask: async () => { throw new Error('closed'); }, output() {}, error() {} }), /rejected or closed/);
+  assert.equal(existsSync(join(project, '.codex')), false);
+  assert.equal(existsSync(join(home, 'Projects', 'advanced-harness-backups')), false);
 });
 
 test('Codex doctor fails closed on malformed TOML and MCP route remains disabled', async () => {
@@ -334,6 +405,33 @@ test('customized Codex roles and shared skills default to preserve; AGENTS is ne
   assert.equal(receipt.managedFiles.some(item => item.path === rolePath || item.path === skillPath || item.path === agentsPath), false);
 });
 
+test('Codex requires consent for an instructions-only role edit even when name and description are canonical', async () => {
+  for (const consent of ['no', 'yes']) {
+    const root = mkdtempSync(join(tmpdir(), `codex-instructions-consent-${consent}-`));
+    const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+    const rolePath = join(project, '.codex', 'agents', 'lead.toml'); mkdirSync(dirname(rolePath), { recursive: true });
+    const generated = compileCodexAgent('lead', 'profile-model', 'medium', 'Canonical lead description', 'Canonical lead instructions');
+    const edited = generated.replace(JSON.stringify('Canonical lead instructions'), JSON.stringify('User-edited lead instructions'));
+    writeFileSync(rolePath, edited);
+    const answers = ['', ...rolePairAnswers('profile-model')];
+    let overwriteAsked = false;
+    const status = await installCodex({ scope: 'project', project, home, ask: async question => {
+      if (question.includes('Overwrite customized/unowned Codex agent')) { overwriteAsked = true; return consent; }
+      if (question.includes('Type install')) return 'install';
+      return answers.shift() ?? '';
+    }, output() {}, error() {} });
+    assert.equal(overwriteAsked, true);
+    if (consent === 'no') {
+      assert.equal(status, 1);
+      assert.equal(readFileSync(rolePath, 'utf8'), edited);
+    } else {
+      assert.equal(status, 0);
+      assert.notEqual(readFileSync(rolePath, 'utf8'), edited);
+      assert.doesNotMatch(readFileSync(rolePath, 'utf8'), /User-edited lead instructions/);
+    }
+  }
+});
+
 test('Codex confirmation-time config drift is refused before backup or receipt creation', async () => {
   const root = mkdtempSync(join(tmpdir(), 'codex-drift-'));
   const project = join(root, 'project'), home = join(root, 'home');
@@ -410,6 +508,48 @@ test('Codex rollback preserves divergent concurrent content and retains pending 
   assert.equal(readFileSync(configPath, 'utf8'), '# concurrent edit wins\n');
   assert.ok(errors.some(message => message.includes('rollback was incomplete')));
   const recovery = join(home, 'Projects', 'advanced-harness-backups');
+  assert.ok(readdirSync(recovery).some(name => name.startsWith('native-install-')));
+});
+
+test('Codex rollback retains evidence when a backup changes after creation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-changed-backup-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const config = join(project, '.codex', 'config.toml'); mkdirSync(join(project, '.codex'));
+  writeFileSync(config, 'sandbox_mode = "workspace-write"\n');
+  let saves = 0;
+  const save = (...args: Parameters<typeof saveInstallation>) => {
+    const backup = saveInstallation(...args);
+    if (++saves === 1) { if (backup) writeFileSync(backup, 'concurrent replacement\n'); throw new Error('injected failure after changed backup'); }
+    return backup;
+  };
+  const errors: string[] = [];
+  const answers = roleAnswers('changed-backup');
+  await assert.rejects(installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error: message => errors.push(message), save }), /injected failure/);
+  assert.equal(readFileSync(config, 'utf8'), 'sandbox_mode = "workspace-write"\n');
+  assert.ok(errors.some(message => message.includes('cleanup was incomplete')));
+  const recovery = join(home, 'Projects', 'advanced-harness-backups');
+  assert.ok(readdirSync(recovery).some(name => name.startsWith('native-install-')));
+});
+
+test('Codex rollback preserves concurrent files in transaction-created directories and pending evidence', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-concurrent-dir-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const config = join(project, '.codex', 'config.toml'); mkdirSync(join(project, '.codex'));
+  writeFileSync(config, 'sandbox_mode = "workspace-write"\n');
+  let saves = 0;
+  const save = (...args: Parameters<typeof saveInstallation>) => {
+    const backup = saveInstallation(...args);
+    if (++saves === 1) { if (backup) writeFileSync(join(dirname(backup), 'concurrent.txt'), 'keep me'); throw new Error('injected failure with concurrent backup sibling'); }
+    return backup;
+  };
+  const errors: string[] = [];
+  const answers = roleAnswers('concurrent-dir');
+  await assert.rejects(installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error: message => errors.push(message), save }), /injected failure/);
+  const recovery = join(home, 'Projects', 'advanced-harness-backups');
+  const children = readdirSync(recovery).filter(name => !name.startsWith('native-install-'));
+  const transactionDir = join(recovery, children[0]!);
+  assert.equal(readFileSync(join(transactionDir, 'concurrent.txt'), 'utf8'), 'keep me');
+  assert.ok(errors.some(message => message.includes('cleanup was incomplete')));
   assert.ok(readdirSync(recovery).some(name => name.startsWith('native-install-')));
 });
 
