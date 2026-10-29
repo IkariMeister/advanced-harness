@@ -98,7 +98,7 @@ by `npm test`.
 | ID | Case | Expected |
 | --- | --- | --- |
 | AG-01 | `no` at the confirmation | Exit 1, "No files written", tree unchanged |
-| AG-02 *(todo)* | Enter at a confirmation that shows `[yes]` | **Known gap**, see below |
+| AG-02 | Enter at `Type yes to install` (default `no`) | Exit 1, "No files written", tree unchanged |
 | AG-03 | `yes` with unconfigured model preferences | `.agents/` rules, 6 skills, merge-guard script and hook, MCP config; original `AGENTS.md` content preserved; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
 | AG-04 | `harness:doctor --host antigravity` | Exit 0, `Installed: Yes` |
 | AG-05 | Receipt-backed uninstall (`--host antigravity --scope project`) | Exit 0; rules, skills, merge-guard script, `hooks.json`, `mcp_config.json` removed; `AGENTS.md` equals its pristine content |
@@ -113,13 +113,11 @@ by `npm test`.
 
 ## Known gaps found by the suite
 
-These are recorded as `todo` tests (CC-04 and AG-05 were resolved by the host-aware uninstall). They report on every run but do not fail
+Gaps are recorded as `todo` tests. They report on every run but do not fail
 it. When a gap is fixed, remove the `todo` option so the test becomes a gate.
 
-1. **Antigravity confirmation default is misleading** (AG-02). The prompt
-   shows `(yes/no) [yes]`, but Enter cancels (`src/antigravity-adapter.ts`).
-   This fails safe, but it contradicts the displayed default. The Claude Code
-   prompt correctly shows `[no]`.
+None are open: CC-04 and AG-05 were resolved by the host-aware uninstall, AG-02
+by #81, and OC-08 by #82.
 
 The suite also made these observations, which are not asserted:
 

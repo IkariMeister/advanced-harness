@@ -16,7 +16,7 @@ const rolesDir = fileURLToPath(new URL('../agents/', import.meta.url));
 const commandsDir = fileURLToPath(new URL('../commands/', import.meta.url));
 const prefsPath = (home: string) => join(home, '.gemini', 'config', 'harness.model-preferences.json');
 const emptyPreferences = () => ({ version: 1, preferences: Object.fromEntries(nativeRoles.map(role => [role, null])) });
-const defaultAnswer = async (_question: string, suggested?: string) => suggested ?? 'yes';
+const defaultAnswer = async (question: string, suggested?: string) => question.trimStart().startsWith('Type yes to install the Antigravity') ? 'yes' : (suggested ?? 'yes');
 const snapshotTree = (root: string): Array<[string, 'directory' | 'file' | 'symlink', string?]> => {
   if (!existsSync(root)) return [];
   const entries: Array<[string, 'directory' | 'file' | 'symlink', string?]> = [];
@@ -98,7 +98,7 @@ test('Antigravity preference cancellation writes no project/global settings, bac
   const exitCode = await runInstallerFlow({ scope: 'project', project, context: 'docs/ALT.md', host: 'antigravity' }, {
     home, recoveryDirectory: recovery, agentsDirectory: rolesDir, commandsDirectory: commandsDir,
     ask: async question => {
-      if (question.trimStart().startsWith('Confirm installation')) { cancellationPromptObserved = true; return 'cancel'; }
+      if (question.trimStart().startsWith('Type yes to install the Antigravity')) { cancellationPromptObserved = true; return 'cancel'; }
       return '';
     },
     output: () => {}, error: () => {},
@@ -181,7 +181,7 @@ test('clean project update and subsequent uninstall restore pre-existing context
   mkdirSync(join(project, 'docs'), { recursive: true }); mkdirSync(home);
   const context = join(project, 'docs', 'clean.md'); const before = '# User-owned text\n'; writeFileSync(context, before);
   const options = { scope: 'project' as const, project, context: 'docs/clean.md', home, recoveryDirectory: recovery,
-    agentsDirectory: rolesDir, commandsDirectory: commandsDir, ask: async (question: string, suggested?: string) => question.trimStart().startsWith('lead: desired') ? 'Personalized label' : (suggested ?? 'yes'), output: () => {}, error: () => {} };
+    agentsDirectory: rolesDir, commandsDirectory: commandsDir, ask: async (question: string, suggested?: string) => question.trimStart().startsWith('lead: desired') ? 'Personalized label' : question.trimStart().startsWith('Type yes to install the Antigravity') ? 'yes' : (suggested ?? 'yes'), output: () => {}, error: () => {} };
   assert.equal(await installAntigravity(options), 0);
   const firstSnapshot = discoverReceiptChain(recovery, join(project, '.agents', 'hooks.json'), 'antigravity');
   const firstReceiptCount = readdirSync(recovery).filter(name => name.startsWith('native-install-')).length;
@@ -259,7 +259,7 @@ test('retained prior context and global suggestion edits during preference promp
   const globalPrefs = antigravityGlobalModelPreferencesPath(home);
   const initialPrefs = JSON.stringify(emptyPreferences(), null, 2) + '\n'; writeFileSync(globalPrefs, initialPrefs);
   const base = { scope: 'project' as const, project, home, recoveryDirectory: recovery, agentsDirectory: rolesDir, commandsDirectory: commandsDir, output: () => {}, error: () => {} };
-  const confirm = async (question: string, suggested?: string) => question.trimStart().startsWith('Confirm installation') ? 'yes' : (suggested ?? 'yes');
+  const confirm = async (question: string, suggested?: string) => question.trimStart().startsWith('Type yes to install the Antigravity') ? 'yes' : (suggested ?? 'yes');
   assert.equal(await installAntigravity({ ...base, context: 'docs/OLD.md', ask: confirm }), 0);
   assert.equal(await installAntigravity({ ...base, context: 'docs/NEW.md', ask: confirm }), 0);
   const oldManaged = readFileSync(retained, 'utf8'); writeFileSync(retained, `${oldManaged}\nHuman edit\n`);
@@ -284,7 +284,7 @@ test('retained prior context and global suggestion edits during preference promp
     if (!injected && question.trimStart().startsWith('lead: desired')) {
       injected = true; writeFileSync(globalPrefs, managedGlobalPrefs.replace('Claude Opus 5.5', 'Changed during prompt'));
     }
-    return question.trimStart().startsWith('Confirm installation') ? 'yes' : (suggested ?? 'yes');
+    return question.trimStart().startsWith('Type yes to install the Antigravity') ? 'yes' : (suggested ?? 'yes');
   } }), /recorded predecessor after-state/);
   assert.equal(injected, true);
   assert.notEqual(readFileSync(globalPrefs, 'utf8'), managedGlobalPrefs);
@@ -399,11 +399,11 @@ test('concurrent preference-context change during review is preserved and leaves
   await assert.rejects(runInstallerFlow({ scope: 'project', project, host: 'antigravity' }, {
     home, recoveryDirectory: recovery, agentsDirectory: rolesDir, commandsDirectory: commandsDir,
     ask: async (question, suggested) => {
-      if (question.trimStart().startsWith('Confirm installation')) {
+      if (question.trimStart().startsWith('Type yes to install the Antigravity')) {
         confirmationPromptObserved = true;
         writeFileSync(agents, '# Concurrent human edit\n');
       }
-      return suggested ?? 'yes';
+      return question.trimStart().startsWith('Type yes to install the Antigravity') ? 'yes' : (suggested ?? 'yes');
     },
     output: () => {}, error: () => {},
   }), /Model preference file changed while confirmation was open/);
@@ -445,7 +445,7 @@ for (const collision of ['.agents/rules/advanced-harness-lead.md', '.agents/skil
       scope: 'project', project, home, context: collision, recoveryDirectory: recovery,
       agentsDirectory: rolesDir, commandsDirectory: commandsDir,
       ask: async question => {
-        if (question.trimStart().startsWith('Confirm installation')) confirmationReached = true;
+        if (question.trimStart().startsWith('Type yes to install the Antigravity')) confirmationReached = true;
         return '';
       },
       output: () => {}, error: () => {},

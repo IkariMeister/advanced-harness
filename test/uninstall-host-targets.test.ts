@@ -24,7 +24,7 @@ function fixture(t: { after(fn: () => void): void }): Fixture {
 
 // Answers every install prompt affirmatively; the uninstall prompt is driven separately.
 const installDeps = (f: Fixture) => ({
-  ask: async (question: string, suggested?: string) => (question.startsWith('Type yes') || question.includes('Confirm installation') || question.startsWith('Overwrite') ? 'yes' : (suggested ?? '')),
+  ask: async (question: string, suggested?: string) => (question.startsWith('Type yes') || question.startsWith('Overwrite') ? 'yes' : (suggested ?? '')),
   output: (message: string) => { f.output.push(message); },
   error: (message: string) => { f.errors.push(message); },
   home: f.home,
