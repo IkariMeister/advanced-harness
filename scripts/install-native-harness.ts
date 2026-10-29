@@ -20,7 +20,7 @@ if (args.includes('--help')) {
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   const ask: Ask = async (question, suggested) => (await terminal.question(`${question}${suggested ? ` [${suggested}]` : ''}: `)).trim();
   try {
-    const host = options['--host'] ? options['--host'] : (await askHostSelection(ask, 'opencode')).join(',');
+    const host = options['--host'] ? options['--host'] : await askHostSelection(ask, 'opencode', message => console.error(message));
     process.exitCode = await runInstallerFlow({ ...(options['--scope'] ? { scope: options['--scope'] } : {}), ...(options['--project'] ? { project: options['--project'] } : {}), ...(options['--config'] ? { config: options['--config'] } : {}), ...(options['--context'] ? { context: options['--context'] } : {}), ...(options['--opencode'] ? { opencode: options['--opencode'] } : {}), host }, { ask, output: message => console.log(message), error: message => console.error(message) });
   } finally { terminal.close(); }
 }

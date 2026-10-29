@@ -9,7 +9,7 @@ import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receip
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 
-import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string; context?: string }

@@ -31,7 +31,7 @@ if (args.includes('--help')) {
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   const ask: Ask = async (question, suggested) => (await terminal.question(`${question}${suggested ? ` [${suggested}]` : ''}: `)).trim();
   try {
-    const host = options['--host'] ? String(options['--host']) : (await askHostSelection(ask, 'opencode')).join(',');
+    const host = options['--host'] ? String(options['--host']) : await askHostSelection(ask, 'opencode', message => console.error(message));
     process.exitCode = await runUpdateFlow(
       {
         ...(options['--scope'] ? { scope: String(options['--scope']) } : {}),
