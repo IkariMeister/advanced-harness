@@ -19,5 +19,5 @@ export const openCodeInstall = (confirmation: string, project?: string): Step[] 
 
 export const antigravityInstall = (confirmation: string): Step[] => [
   ...roles.map(role => ask(`${role}: desired model preference`)),
-  ask('Confirm installation of Antigravity', confirmation),
+  ask('Type yes to install the Antigravity', confirmation),
 ];
