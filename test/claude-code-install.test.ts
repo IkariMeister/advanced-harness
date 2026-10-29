@@ -310,15 +310,19 @@ test('text outside the Lead block edited by the user never triggers the overwrit
 });
 
 test('install stamps harnessVersion on the Claude Code receipt and prints it before confirmation', async t => {
-  const h = harness(t, confirmOnly('yes'));
+  const commit = 'c'.repeat(40);
+  let versionBeforeConfirm = false;
+  const h = harness(t, question => {
+    if (!question.startsWith('Type yes')) return '';
+    versionBeforeConfirm = h.output.includes(`Harness version: 9.8.7 (${commit})`);
+    return 'yes';
+  });
   const harnessRoot = join(h.root, 'checkout');
   mkdirSync(harnessRoot);
   writeFileSync(join(harnessRoot, 'package.json'), JSON.stringify({ version: '9.8.7' }));
-  const commit = 'c'.repeat(40);
   const runCommand = (_executable: string, args: string[]) => args[0] === 'rev-parse' ? commit : '';
   assert.equal(await runInstallerFlow({ scope: 'project', project: h.project, host: 'claude-code' }, { ...h.deps, harnessRoot, runCommand }), 0);
-  const line = h.output.indexOf(`Harness version: 9.8.7 (${commit})`);
-  assert.ok(line >= 0, 'version line printed');
+  assert.equal(versionBeforeConfirm, true, 'version line printed before the final confirmation');
   const head = discoverReceiptChain(h.recovery, join(h.project, '.claude', 'settings.json'), 'claude-code').head;
   assert.deepEqual(head?.receipt.version === 2 ? head.receipt.harnessVersion : undefined, { version: '9.8.7', commit });
 });

@@ -276,16 +276,18 @@ test('OpenCode install stamps harnessVersion on the head receipt and prints it b
   mkdirSync(harnessRoot);
   writeFileSync(join(harnessRoot, 'package.json'), JSON.stringify({ version: '9.8.7' }));
   const commit = 'c'.repeat(40);
-  const runCommand = (_executable: string, args: string[]) => args[0] === 'rev-parse' ? commit : '';
-  const run = async (decision: string) => {
-    const project = join(root, `project-${decision}`);
+  const run = async (decision: string, dirty = false) => {
+    const label = `${decision}${dirty ? '-dirty' : ''}`;
+    const project = join(root, `project-${label}`);
     mkdirSync(project);
-    const recovery = join(root, `recovery-${decision}`);
+    const recovery = join(root, `recovery-${label}`);
     const output: string[] = [];
+    const runCommand = (_executable: string, args: string[]) => args[0] === 'rev-parse' ? commit : dirty ? ' M src/installer-flow.ts' : '';
+    const expectedLine = `Harness version: 9.8.7 (${commit})${dirty ? ' [dirty local changes]' : ''}`;
     let sawVersionBeforeConfirm = false;
     const code = await runInstallerFlow({ scope: 'project', project }, {
       ask: async question => {
-        if (question.startsWith('Type install')) sawVersionBeforeConfirm = output.includes(`Harness version: 9.8.7 (${commit})`);
+        if (question.startsWith('Type install')) sawVersionBeforeConfirm = output.includes(expectedLine);
         if (/^(lead|operator|external|researcher|planner|implementer|reviewer|qa): model/.test(question)) return 'local/model#low';
         if (/^(lead|operator|external|researcher|planner|implementer|reviewer|qa): reasoning/.test(question)) return '-';
         if (question.startsWith('Type install')) return decision;
@@ -303,6 +305,12 @@ test('OpenCode install stamps harnessVersion on the head receipt and prints it b
   assert.equal(installed.sawVersionBeforeConfirm, true);
   const head = discoverReceiptChain(installed.recovery, join(installed.project, 'opencode.jsonc'), 'opencode').head;
   assert.deepEqual(head?.receipt.version === 2 ? head.receipt.harnessVersion : undefined, { version: '9.8.7', commit });
+
+  const dirty = await run('install', true);
+  assert.equal(dirty.code, 0);
+  assert.equal(dirty.sawVersionBeforeConfirm, true, 'dirty annotation printed before the final confirmation');
+  const dirtyHead = discoverReceiptChain(dirty.recovery, join(dirty.project, 'opencode.jsonc'), 'opencode').head;
+  assert.deepEqual(dirtyHead?.receipt.version === 2 ? dirtyHead.receipt.harnessVersion : undefined, { version: '9.8.7', commit, dirty: true });
 
   const cancelled = await run('cancel');
   assert.equal(cancelled.code, 0);
