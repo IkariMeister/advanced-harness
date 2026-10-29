@@ -1,6 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, lstatSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { ask, roles } from './support/steps.ts';
 import { createSandbox, tree, type Sandbox } from './support/sandbox.ts';
@@ -34,7 +35,7 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
     assert.equal(installed.code, 0, installed.transcript);
     const config = join(box.project, '.codex', 'config.toml');
     const configText = readFileSync(config, 'utf8');
-    assert.equal(configText, '# smoke-owned original\r\n\r\nsandbox_mode = "read-only"\r\n\r\napproval_policy = "on-request"\r\n\r\n[mcp_servers."fixture.server"] # keep this comment\r\nenabled = false\r\ndisabled_tools = ["tool_x"]\r\n\r\n');
+    assert.equal(configText, '# smoke-owned original\r\n\r\nsandbox_mode = "read-only"\r\n\r\napproval_policy = "on-request"\r\n\r\n[mcp_servers."fixture.server"] # keep this comment\r\nenabled = false\r\ndisabled_tools = ["tool_x"]\r\n');
     assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
     const { diagnoseCodex } = await import('../src/codex-adapter.ts');
     const projectReport = await diagnoseCodex({ project: box.project, home: box.home });
@@ -51,7 +52,7 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
     const state = JSON.parse(readFileSync(join(box.project, '.codex', '.advanced-harness-state.json'), 'utf8')) as { selectedMcpServers: string[]; disabledTools: Record<string, string[]> };
     assert.deepEqual(state.selectedMcpServers, ['fixture.server']);
     assert.deepEqual(state.disabledTools, { 'fixture.server': ['tool_x'] });
-    assert.equal(readFileSync(config, 'utf8'), '# smoke-owned original\r\n\r\nsandbox_mode = "read-only"\r\n\r\napproval_policy = "on-request"\r\n\r\n[mcp_servers."fixture.server"] # keep this comment\r\nenabled = false\r\ndisabled_tools = ["tool_x"]\r\n\r\n');
+    assert.equal(readFileSync(config, 'utf8'), '# smoke-owned original\r\n\r\nsandbox_mode = "read-only"\r\n\r\napproval_policy = "on-request"\r\n\r\n[mcp_servers."fixture.server"] # keep this comment\r\nenabled = false\r\ndisabled_tools = ["tool_x"]\r\n');
     const roleFile = join(box.project, '.codex', 'agents', 'lead.toml');
     const beforeRecovery = tree(box.recoveryDirectory);
     const beforeProject = tree(box.project);
@@ -74,16 +75,16 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
   it('CX-03 global install and doctor stay separate from the project and real home', async () => {
     const realHome = process.env.USERPROFILE ?? process.env.HOME ?? '';
     const watched = ['.codex', '.agents', 'Projects/advanced-harness-backups'].map(path => join(realHome, path));
-    const fingerprint = (path: string): string => {
-      try {
-        const stat = lstatSync(path);
-        if (stat.isSymbolicLink()) return 'SYMLINK';
-        if (stat.isFile()) return readFileSync(path).toString('base64');
-        if (stat.isDirectory()) return readdirSync(path).sort().map(name => `${name}:${fingerprint(join(path, name))}`).join('|');
-      } catch { return 'ABSENT'; }
-      return 'OTHER';
-    };
-    const before = watched.map(fingerprint);
+    const fingerprintFixture = join(box.root, 'fingerprint-fixture');
+    const secretLikeFixture = 'SECRET-LIKE-SENTINEL-do-not-log';
+    writeFileSync(fingerprintFixture, secretLikeFixture);
+    const { createHash } = await import('node:crypto');
+    const fixtureHash = createHash('sha256').update(readFileSync(fingerprintFixture)).digest('hex');
+    const fixtureFingerprintText = `file:${readFileSync(fingerprintFixture).length}:${fixtureHash}`;
+    assert.match(fixtureFingerprintText, /^file:\d+:[a-f0-9]{64}$/);
+    assert.doesNotMatch(fixtureFingerprintText, /SECRET-LIKE-SENTINEL/);
+    const { realHomeFingerprintOf } = await import('./support/sandbox.ts');
+    const before = realHomeFingerprintOf(watched.map(path => path.replaceAll('\\', '/')));
     const cancel = await box.run('install-native-harness.ts', ['--host', 'codex', '--scope', 'global'], { steps: [ask('Existing Codex MCP server ID', ''), ...roles.flatMap(role => [ask(`${role}: explicitly assigned Codex model ID`, 'global/model'), ask(`${role}: reasoning effort`, 'medium')]), ask('Type install to apply', 'cancel')] });
     assert.equal(cancel.code, 0, cancel.transcript);
     assert.equal(existsSync(join(box.home, '.codex')), false);
@@ -94,9 +95,9 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
     assert.deepEqual(tree(box.project), projectBeforeGlobalInstall);
     const { diagnoseCodex } = await import('../src/codex-adapter.ts');
     const doctor = await diagnoseCodex({ project: box.project, home: box.home });
-    assert.equal(doctor.ok, false, 'project-scoped doctor must still detect the concurrent edit injected by CX-02');
+    assert.equal(doctor.ok, false, 'CX-02 intentionally injected a project role edit at the stale-confirmation boundary');
     assert.ok(doctor.issues.some(issue => issue.includes('lead')));
-    assert.deepEqual(watched.map(fingerprint), before, 'real-home protected roots remain unchanged');
+    assert.deepEqual(realHomeFingerprintOf(watched.map(path => path.replaceAll('\\', '/'))), before, 'real-home protected roots remain unchanged');
     assert.ok(existsSync(join(box.home, '.codex', 'config.toml')));
     assert.ok(existsSync(join(box.home, '.agents', 'skills')));
     const { diagnoseCodex: diagnoseGlobalReport } = await import('../src/codex-adapter.ts');
@@ -104,13 +105,27 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
     assert.equal(globalReport.ok, true, globalReport.issues.join('\n'));
     const update = await box.run('update-native-harness.ts', ['--host', 'codex', '--scope', 'global'], { steps: [ask('Existing Codex MCP server ID', ''), ...roles.flatMap(role => [ask(`${role}: explicitly assigned Codex model ID`, ''), ask(`${role}: reasoning effort`, '')]), ask('Type install to apply', 'install')] });
     assert.equal(update.code, 0, update.transcript);
-    assert.deepEqual(watched.map(fingerprint), before, 'real-home protected roots unchanged after global update');
+    assert.deepEqual(realHomeFingerprintOf(watched.map(path => path.replaceAll('\\', '/'))), before, 'real-home protected roots unchanged after global update');
     const { diagnoseCodex: diagnoseGlobal } = await import('../src/codex-adapter.ts');
     const globalDoctor = await diagnoseGlobal({ home: box.home });
     assert.equal(globalDoctor.ok, true, globalDoctor.issues.join('\n'));
   });
 
   it('CX-05 doctor independently reports tampered route/tool, missing role/rules and preserves customized shared artifacts by default', async () => {
+    const previousBox = box;
+    box = createSandbox('codex-cx05-independent');
+    previousBox.dispose();
+    const configPath = join(box.project, '.codex', 'config.toml'); mkdirSync(join(box.project, '.codex'), { recursive: true });
+    writeFileSync(configPath, '[mcp_servers."fixture.server"]\nenabled = true\ndisabled_tools = []\n');
+    const answers = [ask('Existing Codex MCP server ID', 'fixture.server'), ask('Exact tool names on fixture.server', 'tool_x'), ...roles.flatMap(role => [ask(`${role}: explicitly assigned Codex model ID`, 'fixture/model'), ask(`${role}: reasoning effort`, 'medium')]), ask('Type install to apply', 'install')];
+    const fresh = await box.run('install-native-harness.ts', args(), { steps: answers });
+    assert.equal(fresh.code, 0, fresh.transcript);
+    assert.deepEqual(fresh.unansweredSteps, []);
+    const freshConfig = readFileSync(join(box.project, '.codex', 'config.toml'), 'utf8');
+    assert.match(freshConfig, /^sandbox_mode = "read-only"/m);
+    assert.match(freshConfig, /^approval_policy = "on-request"/m);
+    assert.match(freshConfig, /enabled = false/);
+    assert.match(freshConfig, /disabled_tools = \["tool_x"\]/);
     const config = join(box.project, '.codex', 'config.toml');
     writeFileSync(config, readFileSync(config, 'utf8').replace('enabled = false', 'enabled = true').replace('disabled_tools = ["tool_x"]', 'disabled_tools = []'));
     const role = join(box.project, '.codex', 'agents', 'researcher.toml');
@@ -125,25 +140,34 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
     assert.match(doctor.transcript, /not disabled/);
     writeFileSync(role, roleBefore); writeFileSync(config, readFileSync(config, 'utf8').replace('enabled = true', 'enabled = false').replace('disabled_tools = []', 'disabled_tools = ["tool_x"]'));
     rmSync(join(box.project, '.codex', 'agents', 'reviewer.toml'));
-    const prompts = [ask('Existing Codex MCP server ID', ''), ask('Exact tool names on fixture.server', ''), ...roles.flatMap(name => [ask(`${name}: explicitly assigned Codex model ID`, 'fixture/model'), ask(`${name}: reasoning effort`, 'medium')]), ask('Overwrite customized/unowned Codex agent', 'no'), ask('Type install to apply', 'install')];
+    writeFileSync(join(box.project, '.codex', 'agents', 'researcher.toml'), roleBefore.replace('model = "fixture/model"', 'model = "custom/model"'));
+    const prompts = [ask('Existing Codex MCP server ID', ''), ask('Exact tool names on fixture.server', ''), ...roles.flatMap(name => [ask(`${name}: explicitly assigned Codex model ID`, 'fixture/model'), ask(`${name}: reasoning effort`, 'medium')]), { prompt: /Overwrite customized\/unowned Codex agent[^\n]*researcher\.toml[^\n]*: $/, answer: 'no' }, { prompt: /Type install to apply[^\n]*: $/, answer: 'install' }];
     const rerun = await box.run('install-native-harness.ts', args(), { steps: prompts });
-    assert.notEqual(rerun.code, 0, rerun.transcript);
+    assert.equal(rerun.code, 0, rerun.transcript);
+    assert.deepEqual(rerun.unansweredSteps, []);
     assert.equal(readFileSync(skill, 'utf8'), '# other host shared skill\n');
     assert.match(readFileSync(rules, 'utf8'), /# user rules preserved/);
-    assert.equal(existsSync(join(box.project, '.codex', 'agents', 'reviewer.toml')), true);
+    assert.equal(readFileSync(join(box.project, '.codex', 'agents', 'reviewer.toml'), 'utf8').includes('model = "fixture/model"'), true);
+    const affirmative = [ask('Existing Codex MCP server ID', ''), ask('Exact tool names on fixture.server', ''), ...roles.flatMap(name => [ask(`${name}: explicitly assigned Codex model ID`, 'fixture/model'), ask(`${name}: reasoning effort`, 'medium')]), { prompt: /Overwrite customized\/unowned Codex agent[^\n]*researcher\.toml[^\n]*: $/, answer: 'yes' }, { prompt: /Type install to apply[^\n]*: $/, answer: 'install' }];
+    const completed = await box.run('install-native-harness.ts', args(), { steps: affirmative });
+    assert.equal(completed.code, 0, completed.transcript);
+    assert.deepEqual(completed.unansweredSteps, []);
+    assert.doesNotMatch(readFileSync(join(box.project, '.codex', 'agents', 'researcher.toml'), 'utf8'), /custom\/model/);
     assert.ok(skillBefore.length > 0);
   });
 
   it('CX-04 invalid model/effort choices fail after three attempts with no target writes', async () => {
     for (const field of ['model', 'effort'] as const) {
       const root = join(box.root, `retry-${field}`); mkdirSync(root);
-      const project = join(root, 'project'), home = join(box.home, `retry-home-${field}`); mkdirSync(project); mkdirSync(home);
+      const project = join(root, 'project'); mkdirSync(project);
+      const beforeProject = tree(project), beforeHome = tree(box.home), beforeRecovery = tree(box.recoveryDirectory);
       const prompts = [ask('Existing Codex MCP server ID', ''), ...(field === 'model' ? [ask('explicitly assigned Codex model ID', '-'), ask('explicitly assigned Codex model ID', '-'), ask('explicitly assigned Codex model ID', '-')] : [ask('explicitly assigned Codex model ID', 'valid/model'), ask('reasoning effort', 'bogus'), ask('reasoning effort', 'bogus'), ask('reasoning effort', 'bogus')])];
       const failed = await box.run('install-native-harness.ts', ['--host', 'codex', '--scope', 'project', '--project', project], { steps: prompts, cwd: project });
       assert.notEqual(failed.code, 0, failed.transcript);
       assert.match(failed.transcript, /3 attempts/);
-      assert.equal(existsSync(join(project, '.codex')), false);
-      assert.equal(existsSync(join(home, 'Projects', 'advanced-harness-backups')), false);
+      assert.deepEqual(tree(project), beforeProject, `invalid ${field} answers must not write to the project`);
+      assert.deepEqual(tree(box.home), beforeHome, `invalid ${field} answers must not write to the sandbox home`);
+      assert.deepEqual(tree(box.recoveryDirectory), beforeRecovery, `invalid ${field} answers must not write recovery evidence`);
     }
   });
 });

@@ -166,6 +166,34 @@ test('Codex baseline insertion retains exact original CRLF root/table bytes and 
   assert.equal(readFileSync(join(configDir, 'config.toml'), 'utf8'), expected);
 });
 
+test('Codex MCP additions preserve trailing bytes and disabled-tools unions idempotently', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-tools-union-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const configDir = join(project, '.codex'); mkdirSync(configDir);
+  const source = '[mcp_servers.server]\r\ndisabled_tools = ["old"] # keep\r\n\r\n';
+  writeFileSync(join(configDir, 'config.toml'), source);
+  const run = async () => { const answers = ['server', 'new', ...rolePairAnswers('model'), 'install']; await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {} }); };
+  await run();
+  const once = readFileSync(join(configDir, 'config.toml'), 'utf8');
+  assert.match(once, /disabled_tools = \["old", "new"\] # keep\r\n/);
+  assert.ok(once.endsWith('\r\n\r\n'));
+  await run();
+  assert.equal(readFileSync(join(configDir, 'config.toml'), 'utf8'), once);
+});
+
+test('Codex malformed role TOML prompts explicit assignments and preserves exact bytes by default', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-malformed-role-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const rolePath = join(project, '.codex', 'agents', 'lead.toml'); mkdirSync(dirname(rolePath), { recursive: true });
+  const original = 'developer_instructions = """\ncustom\ntext\n"""\r\n'; writeFileSync(rolePath, original);
+  const answers = ['', ...rolePairAnswers('explicit/model')]; let consentAsked = false;
+  await installCodex({ scope: 'project', project, home, ask: async question => { if (question.includes('Overwrite customized')) { consentAsked = true; return 'no'; } return answers.shift() ?? 'install'; }, output() {}, error() {} });
+  assert.equal(consentAsked, true);
+  assert.equal(readFileSync(rolePath, 'utf8'), original);
+  const configPath = join(project, '.codex', 'config.toml');
+  assert.ok(existsSync(configPath), 'unsupported multiline config remains fail-closed only when config itself uses it');
+});
+
 test('Codex Enter defaults preserve role and MCP choices; dash clears tracking without enabling routes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'codex-defaults-'));
   const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
@@ -405,13 +433,13 @@ test('customized Codex roles and shared skills default to preserve; AGENTS is ne
   assert.equal(receipt.managedFiles.some(item => item.path === rolePath || item.path === skillPath || item.path === agentsPath), false);
 });
 
-test('Codex requires consent for an instructions-only role edit even when name and description are canonical', async () => {
+test('Codex requires consent for customized instructions while valid preserved profiles remain doctor-compatible', async () => {
   for (const consent of ['no', 'yes']) {
     const root = mkdtempSync(join(tmpdir(), `codex-instructions-consent-${consent}-`));
     const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
     const rolePath = join(project, '.codex', 'agents', 'lead.toml'); mkdirSync(dirname(rolePath), { recursive: true });
     const generated = compileCodexAgent('lead', 'profile-model', 'medium', 'Canonical lead description', 'Canonical lead instructions');
-    const edited = generated.replace(JSON.stringify('Canonical lead instructions'), JSON.stringify('User-edited lead instructions'));
+    const edited = generated.replace('developer_instructions = "Canonical lead instructions"', 'developer_instructions = "custom lead instructions"');
     writeFileSync(rolePath, edited);
     const answers = ['', ...rolePairAnswers('profile-model')];
     let overwriteAsked = false;
@@ -422,14 +450,30 @@ test('Codex requires consent for an instructions-only role edit even when name a
     }, output() {}, error() {} });
     assert.equal(overwriteAsked, true);
     if (consent === 'no') {
-      assert.equal(status, 1);
+      assert.equal(status, 0);
       assert.equal(readFileSync(rolePath, 'utf8'), edited);
+      assert.equal((await diagnoseCodex({ project, home })).ok, true);
     } else {
       assert.equal(status, 0);
       assert.notEqual(readFileSync(rolePath, 'utf8'), edited);
-      assert.doesNotMatch(readFileSync(rolePath, 'utf8'), /User-edited lead instructions/);
+      assert.doesNotMatch(readFileSync(rolePath, 'utf8'), /custom lead instructions/);
     }
   }
+});
+
+test('Codex declining an invalid customized required role reports incomplete installation', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-invalid-preserved-role-'));
+  const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+  const rolePath = join(project, '.codex', 'agents', 'lead.toml'); mkdirSync(dirname(rolePath), { recursive: true });
+  const invalidRole = 'name = "lead"\ndescription = "custom"\n'; writeFileSync(rolePath, invalidRole);
+  const answers = ['', ...rolePairAnswers('valid/model')];
+  const status = await installCodex({ scope: 'project', project, home, ask: async question => {
+    if (question.includes('Overwrite customized/unowned Codex agent')) return 'no';
+    if (question.includes('Type install')) return 'install';
+    return answers.shift() ?? '';
+  }, output() {}, error() {} });
+  assert.equal(status, 1);
+  assert.equal(readFileSync(rolePath, 'utf8'), invalidRole);
 });
 
 test('Codex confirmation-time config drift is refused before backup or receipt creation', async () => {
@@ -529,6 +573,26 @@ test('Codex rollback retains evidence when a backup changes after creation', asy
   assert.ok(errors.some(message => message.includes('cleanup was incomplete')));
   const recovery = join(home, 'Projects', 'advanced-harness-backups');
   assert.ok(readdirSync(recovery).some(name => name.startsWith('native-install-')));
+});
+
+test('Codex returned backup is tracked without callback and duplicate callback/return is deduplicated', async () => {
+  for (const duplicate of [false, true]) {
+    const root = mkdtempSync(join(tmpdir(), 'codex-returned-backup-'));
+    const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
+    const config = join(project, '.codex', 'config.toml'); mkdirSync(dirname(config), { recursive: true }); writeFileSync(config, 'sandbox_mode = "workspace-write"\n');
+    let called = 0;
+    const save = (...args: Parameters<typeof saveInstallation>) => {
+      called++;
+      const [path, before, content, parent, onBackup, onDirectory] = args;
+      const backup = saveInstallation(path, before, content, parent, duplicate ? onBackup : undefined, duplicate ? onDirectory : undefined);
+      if (called === 2) throw new Error('injected after write with returned backup');
+      return backup;
+    };
+    const answers = roleAnswers('returned-model');
+    await assert.rejects(installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output() {}, error() {}, save }), /injected after write with returned backup/);
+    const recovery = join(home, 'Projects', 'advanced-harness-backups');
+      assert.equal(existsSync(recovery) ? readdirSync(recovery).some(name => name.startsWith('native-install-')) : false, false);
+  }
 });
 
 test('Codex rollback preserves concurrent files in transaction-created directories and pending evidence', async () => {

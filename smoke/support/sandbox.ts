@@ -3,7 +3,8 @@
 // identity, and a scratch Git "Android" checkout, then runs the real harness:*
 // scripts against it. Answers are piped (non-TTY); see docs/smoke-test-plan.md.
 import { spawn, execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, chmodSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, linkSync, mkdirSync, openSync, readSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync, lstatSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -139,12 +140,20 @@ export function tree(directory: string): Map<string, string> {
   return files;
 }
 
-/** Size/mtime fingerprints of paths under the runner's real home, to prove nothing leaked out of the sandbox. */
+/** SHA-256/size fingerprints; never returns file contents or reversible encodings. Symlinks are not followed. */
 export function realHomeFingerprintOf(paths: Iterable<string>): Map<string, string> {
   const fingerprints = new Map<string, string>();
+  const fingerprint = (path: string): string => {
+    let info;
+    try { info = lstatSync(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent'; throw error; }
+    if (info.isSymbolicLink()) return 'symlink';
+    if (info.isFile()) { const hash = createHash('sha256'); let size = 0; const fd = openSync(path, 'r'); try { const buffer = Buffer.alloc(64 * 1024); for (;;) { const count = readSync(fd, buffer, 0, buffer.length, null); if (!count) break; size += count; hash.update(buffer.subarray(0, count)); } } finally { closeSync(fd); } return `file:${size}:${hash.digest('hex')}`; }
+    if (info.isDirectory()) return `directory:${readdirSync(path).sort().map(name => `${name}:${fingerprint(join(path, name))}`).join('|')}`;
+    return 'other';
+  };
   for (const path of paths) {
     const real = join(homedir(), path);
-    fingerprints.set(path, existsSync(real) ? `${statSync(real).size}:${statSync(real).mtimeMs}` : 'absent');
+    fingerprints.set(path, fingerprint(real));
   }
   return fingerprints;
 }

@@ -30,6 +30,12 @@ Workflow source compilation can emit deterministic host-specific command/skill a
 
 Codex install/update and doctor share one bounded, offset-preserving TOML scanner for basic tables, dotted/quoted keys, scalar values, arrays, and inline tables. Comments, whitespace, line endings, and untouched source slices are preserved. Unsupported multiline strings/arrays, array-of-table forms, and TOML syntax outside this subset are refused rather than normalized. Codex uninstall is not implemented; do not use the OpenCode-only uninstall route as a substitute.
 
+The Codex config scanner remains fail-closed for multiline arrays (no parser expansion
+is attempted). A malformed existing role profile does not block questions for all
+required explicit assignments; defaults are inferred only from a successfully parsed
+role. The installer then asks whether to preserve (default) or explicitly overwrite
+the malformed role, retaining its exact bytes when overwrite is declined.
+
 The adapter adds `sandbox_mode = "read-only"` and `approval_policy = "on-request"` only when absent; existing user values are preserved. These shared settings affect Codex as a whole, not individual role identities. They are a conservative generated baseline, **not proof that every write route requires a human approval**. Codex project configuration is subject to the host's project-trust behavior. The direct shell rule rejects identifiable `gh pr merge` / `gh.exe pr merge` prefixes only; scripts, MCP/API calls, and other indirect routes are not universally blocked.
 
 MCP entries are never invented. The installer asks for actual server IDs already present in the target config and exact tool names, then marks selected server entries `enabled = false` and adds supplied names to `disabled_tools` pending separate route validation. It does not enable/authenticate servers or claim tool-level approval behavior. Existing configuration and credentials are preserved; malformed or unsupported TOML is refused. Cancellation makes no changes or backups, repeated identical updates are idempotent, and updates create cumulative host-scoped recovery receipts. If a write fails, the adapter attempts guarded reverse-order restoration only where live files still match its expected write; concurrent divergent edits are preserved and pending recovery evidence is retained for manual recovery.
