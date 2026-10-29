@@ -25,9 +25,10 @@ throwaway directory under the OS temp folder and runs every script with:
 | Target project | A scratch Git checkout with Gradle files and a pre-existing `AGENTS.md` |
 | OpenCode runtime | `OPENCODE_BIN` points to a deterministic stub (below) |
 
-The sandbox is deleted after each suite. SMK-GL-01 also fingerprints the harness
-paths in the **real** home (`~/.config/opencode/*`, `~/Projects/advanced-harness-backups`)
-before and after a global-scope journey. It fails if anything leaked out.
+The sandbox is deleted after each suite. Global-scope checks fingerprint protected
+paths in the **real** home with streaming SHA-256 and byte size; safe output exposes
+only entry names/type/size/digest, never contents or reversible encodings. Symlinks
+are identified without following their targets.
 
 ### OpenCode stub
 
@@ -111,7 +112,7 @@ which have native deployment. Cursor remains compile-only and is covered by
 | CX-02 | Install and doctor; run `harness:update` with Enter at prior MCP/tool/model/effort defaults; then inject a fixture edit at the install-confirmation boundary | Exact CRLF config including comments, root settings, disabled route/tools and trailing bytes; manifest MCP selections; all eight model/effort role assignments; doctor passes; update retains them; stale confirmation is refused without writes beyond injected edit |
 | CX-03 | Global cancellation, install, update and doctor in isolated home (after CX-02) | Snapshot the project immediately before global install; assert exact unchanged tree afterward. Sandbox global Codex config, roles and shared skills are deployed; recursive real-home `.codex`, `.agents/skills`, and recovery fingerprints match before/after; cancellation writes nothing |
 | CX-04 | Required model/effort invalid-answer policy | Three invalid attempts per required field fail before writes; valid default Enter is preserved; blank without a valid default consumes an attempt |
-| CX-05 | Doctor after route/tool tampering; customized role and shared rules/skill preservation | Doctor reports selected route/tool drift; install preserves a customized role by default and retains user/shared-host skill and existing rules text. Missing-role/missing-rules doctor checks are unit-tested in `test/codex-adapter.test.ts`, not this smoke case. |
+| CX-05 | Independent fresh sandbox: install, then doctor after route/tool tampering; customized role and shared rules/skill preservation | Explicitly asserts shared sandbox/approval settings and route/tool drift separately; retains custom-role edit through prompt and verifies exact unchanged role/skill/rules plus exit status. It does not depend on earlier CX cases. |
 
 Rollback is covered by focused unit tests in `test/codex-adapter.test.ts`, not by a
 Codex lifecycle smoke case: partial and early/manifest write-then-throw failures,
@@ -140,6 +141,9 @@ the Codex lifecycle cases do not assert uninstall support.
 Codex Windows/macOS TTY validation remains pending; the human waived this manual
 test for this pass only. Codex Desktop validation also remains pending and out of
 scope. Automated smoke is non-TTY and is not TTY/Desktop runtime evidence.
+Multiline config arrays remain deliberately unsupported and fail closed before any
+prompt or write; role TOML parse failures are instead preserved unless explicit
+overwrite consent is obtained.
 
 The suite also made these observations, which are not asserted:
 
