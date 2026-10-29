@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { compileCodexAgent, compileCodexMergeRule, diagnoseCodex, encodeCodexYamlScalar, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
@@ -629,4 +630,40 @@ test('CLI-used host selection retries; Enter defaults scope/project and cancels 
   assert.ok(output.some(line => line.includes('Cancelled. No files, backups, or receipts were written.')));
   assert.equal(existsSync(join(root, '.codex')), false);
   assert.equal(existsSync(join(home, 'Projects', 'advanced-harness-backups')), false);
+});
+
+test('Codex update refreshes harness-owned roles after a source change without asking for overwrite consent', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-owned-refresh-'));
+  const project = join(root, 'project'), home = join(root, 'home'), agents = join(root, 'agents');
+  mkdirSync(project); mkdirSync(home); cpSync(fileURLToPath(new URL('../agents/', import.meta.url)), agents, { recursive: true });
+  const first = roleAnswers('owned-model');
+  assert.equal(await installCodex({ scope: 'project', project, home, agentsDirectory: agents, ask: async () => first.shift() ?? '', output() {}, error() {} }), 0);
+  const leadPath = join(project, '.codex', 'agents', 'lead.toml');
+  const installed = readFileSync(leadPath, 'utf8');
+  const lead = join(agents, 'lead.md');
+  writeFileSync(lead, readFileSync(lead, 'utf8').replace(/^description: .*$/m, 'description: Refreshed lead description from a newer harness'));
+  const questions: string[] = [];
+  const update = ['', ...Array.from({ length: 8 }, () => ['', '']).flat(), 'install'];
+  assert.equal(await installCodex({ scope: 'project', project, home, agentsDirectory: agents, ask: async question => { questions.push(question); return update.shift() ?? ''; }, output() {}, error() {} }), 0);
+  assert.equal(questions.some(question => question.includes('Overwrite customized/unowned')), false);
+  const refreshed = readFileSync(leadPath, 'utf8');
+  assert.notEqual(refreshed, installed);
+  assert.match(refreshed, /Refreshed lead description from a newer harness/);
+  assert.match(refreshed, /model = "owned-model"/);
+});
+
+test('Codex declined overwrite says the requested model and effort were not applied', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-declined-'));
+  const project = join(root, 'project'), home = join(root, 'home');
+  mkdirSync(project); mkdirSync(home);
+  const first = roleAnswers('first-model');
+  assert.equal(await installCodex({ scope: 'project', project, home, ask: async () => first.shift() ?? '', output() {}, error() {} }), 0);
+  const leadPath = join(project, '.codex', 'agents', 'lead.toml');
+  const edited = readFileSync(leadPath, 'utf8').replace('first-model', 'user-edited-model');
+  writeFileSync(leadPath, edited);
+  const output: string[] = [];
+  const answers = ['', ...Array.from({ length: 8 }, () => ['requested-model', 'high']).flat(), 'no', 'install'];
+  await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output: line => output.push(line), error() {} });
+  assert.equal(readFileSync(leadPath, 'utf8'), edited);
+  assert.ok(output.some(line => /Preserving customized Codex agent: .*lead\.toml; the model and reasoning effort entered for it were not applied/.test(line)), output.join('\n'));
 });

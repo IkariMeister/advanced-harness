@@ -9,7 +9,7 @@ import { loadRoleDefinitions } from './role-definitions.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, type ManagedFileEvidence } from './receipt-lineage.ts';
 
-type PlannedFile = { path: string; content: string; before: string | undefined; kind: string; malformedRoleBefore?: boolean };
+type PlannedFile = { path: string; content: string; before: string | undefined; kind: string };
 const quote = (text: string): string => JSON.stringify(text);
 const roleId = (value: string): boolean => /^[a-z][a-z0-9_-]{0,63}$/.test(value);
 const validMcpId = (value: string): boolean => value.length > 0 && !/[\r\n\0]/.test(value);
@@ -537,7 +537,7 @@ export async function installCodex(options: {
     const target = join(base, 'agents', `${role}.toml`);
     assertSafeFilesystemPath(target, 'file');
     const compiled = compileCodexAgent(role, model, reasoning, definitions[role].description, definitions[role].instructions);
-    files.push({ path: target, content: compiled, before: existsSync(target) ? currentRole : undefined, kind: 'role', ...(malformedRoleBefore ? { malformedRoleBefore: true } : {}) });
+    files.push({ path: target, content: compiled, before: existsSync(target) ? currentRole : undefined, kind: 'role' });
   }
   const rulesPath = join(base, 'rules', 'advanced-harness.rules');
   assertSafeFilesystemPath(rulesPath, 'file');
@@ -566,16 +566,13 @@ export async function installCodex(options: {
     if (file.before !== undefined && file.before !== file.content && file.kind === 'role') {
       const prior = priorFiles.find(entry => canonicalPath(entry.path) === canonicalPath(file.path));
       const owned = prior?.after && !('absent' in prior.after) && ('content' in prior.after ? prior.after.content === file.before : prior.after.digest === digest(file.before));
-      let currentDescription: unknown; let currentInstructions: unknown;
-      try { const parsedCurrent = parseCodexToml(file.before, file.path); currentDescription = parsedCurrent.entries.find(entry => entry.table.length === 0 && entry.key.join('.') === 'description')?.value; currentInstructions = parsedCurrent.entries.find(entry => entry.table.length === 0 && entry.key.join('.') === 'developer_instructions')?.value; } catch { /* malformed-role consent remains the explicit safe path */ }
-      const roleName = file.path.split(/[\\/]/).at(-1)!.replace(/\.toml$/, '') as NativeRole;
-      const customRole = currentDescription !== undefined && currentDescription !== parseCodexToml(file.content, file.path).entries.find(entry => entry.table.length === 0 && entry.key.join('.') === 'description')?.value
-        || currentInstructions !== undefined && currentInstructions !== parseCodexToml(file.content, file.path).entries.find(entry => entry.table.length === 0 && entry.key.join('.') === 'developer_instructions')?.value;
-      if (!owned || file.malformedRoleBefore || customRole) {
+      // A file that still matches the receipt is harness-owned and may be refreshed without consent,
+      // even when the harness's role definition changed; only user-edited or unowned files ask.
+      if (!owned) {
         let overwrite: string;
         try { overwrite = (await ask(`Overwrite customized/unowned Codex agent ${file.path}?`, 'no')).trim(); }
         catch { throw new Error('Codex installation cancelled because an interactive prompt was rejected or closed; no changes made.'); }
-        if (!/^(y|yes)$/i.test(overwrite)) { output(`Preserving customized Codex agent: ${file.path}`); continue; }
+        if (!/^(y|yes)$/i.test(overwrite)) { output(`Preserving customized Codex agent: ${file.path}; the model and reasoning effort entered for it were not applied.`); continue; }
       }
     }
     selectedFiles.push(file);
@@ -619,9 +616,9 @@ export async function installCodex(options: {
   let stateAttempted = false;
   const createdDirectories: string[] = [];
   const madeBackups = new Map<string, string>();
-  let backupOwnershipUnknown = false;
-  let transactionBackupOwnershipUnknown = false;
-  let directoryOwnershipUnknown = false;
+  // Sticky for the whole transaction: once any save cannot attribute its backup or directories,
+  // rollback must keep recovery evidence instead of guessing what to delete.
+  let ownershipUnknown = false;
   const recordBackup = (path: string, contents: string) => {
     madeBackups.set(path, contents);
     if (!backupSet.has(path)) { backups.push(path); backupSet.add(path); }
@@ -645,11 +642,10 @@ export async function installCodex(options: {
             for (let directory = backupDirectory; directory !== resolve(backupParent) && directory.startsWith(resolve(backupParent) + (process.platform === 'win32' ? '\\' : '/')); directory = dirname(directory)) createdDirectories.push(directory);
           }
         }
-        if (!callbackSawDirectory && callbackSawBackup) directoryOwnershipUnknown = true;
-      } else if (before !== undefined && !callbackSawBackup) { backupOwnershipUnknown = true; transactionBackupOwnershipUnknown = true; }
-      if (returnedBackup && !callbackSawBackup) { backupOwnershipUnknown = false; transactionBackupOwnershipUnknown = false; directoryOwnershipUnknown = false; }
+        if (callbackSawBackup && !callbackSawDirectory) ownershipUnknown = true;
+      } else if (before !== undefined && !callbackSawBackup) ownershipUnknown = true;
     } catch (error) {
-      if (before !== undefined && !callbackSawBackup) { backupOwnershipUnknown = true; transactionBackupOwnershipUnknown = true; }
+      if (before !== undefined && !callbackSawBackup) ownershipUnknown = true;
       throw error;
     }
   };
@@ -704,7 +700,7 @@ export async function installCodex(options: {
     }
     for (const file of [...attempted].reverse()) restored = restore(file.path, file.before, file.content) && restored;
     if (restored) {
-      let cleanupFailed = transactionBackupOwnershipUnknown || directoryOwnershipUnknown;
+      let cleanupFailed = ownershipUnknown;
       const cleanupBackupDirectories = new Set<string>();
       for (const [backup, expectedBackup] of [...madeBackups].sort(([a], [b]) => b.length - a.length)) try {
         assertSafeFilesystemPath(backup, 'file');
