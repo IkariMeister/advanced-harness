@@ -26,7 +26,7 @@ import {
   revalidatePendingSuccessor,
   writePendingSuccessor
 } from './receipt-lineage.ts';
-import { checkRemoteHead, compareInstalledAndSource, readSourceVersion, type Runner } from './harness-version.ts';
+import { checkRemoteHead, compareInstalledAndSource, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 import { planUpdate } from './update-planner.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 import {
@@ -121,6 +121,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
       agentsDirectory: deps.agentsDirectory,
       commandsDirectory: deps.workflowCommandsDirectory,
+      harnessVersion: toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand)),
       ask,
       output,
       error: errorOutput,
@@ -139,6 +140,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       agentsDirectory: deps.agentsDirectory,
       commandsDirectory: deps.workflowCommandsDirectory,
       context: options.context,
+      harnessVersion: toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand)),
       ask,
       output,
       error: errorOutput,
@@ -358,11 +360,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     return 0;
   }
 
-  const harnessVersionStamp = {
-    version: sourceVersion.version,
-    commit: sourceVersion.commit,
-    ...(sourceVersion.dirty ? { dirty: true } : {})
-  };
+  const harnessVersionStamp = toVersionStamp(sourceVersion);
 
   const combinedManagedFiles = buildOpenCodeCommandManagedEvidence(
     commandPlan,

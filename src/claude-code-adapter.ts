@@ -3,6 +3,8 @@ import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parseDocument } from 'yaml';
+import type { HarnessVersionStamp } from './receipt-lineage.ts';
+import { formatVersionStamp } from './harness-version.ts';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import {
   createSuccessorReceipt,
@@ -41,6 +43,7 @@ export interface ClaudeCodeInstallOptions {
   recoveryDirectory?: string | undefined;
   agentsDirectory?: string | undefined;
   commandsDirectory?: string | undefined;
+  harnessVersion?: HarnessVersionStamp | undefined;
   ask: Ask;
   output(message: string): void;
   error(message: string): void;
@@ -224,6 +227,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   output('Settings and CLAUDE.md are merged: unrelated content is preserved. Unsupported mappings are withheld, not approximated:');
   for (const line of claudeDisclosures(plan.mappings)) output(`  - ${line}`);
 
+  if (options.harnessVersion) output(`Harness version: ${formatVersionStamp(options.harnessVersion)}`);
   // Enter does not apply a default here: only an explicit yes writes files.
   const confirm = (await ask('Type yes to install the Claude Code harness configuration listed above (yes/no)', 'no')).trim().toLowerCase();
   if (confirm !== 'yes' && confirm !== 'y') {
@@ -266,7 +270,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
     targetInitial,
     targetFinal,
     {},
-    undefined,
+    options.harnessVersion,
     { host: 'claude-code', managedFiles: combinedManagedFiles }
   );
   const pending = writePendingSuccessor(snapshot, successor);

@@ -76,7 +76,7 @@ by `npm test`.
 | OC-05 | Drift Lead's system prompt, then `harness:deploy-prompts` and type `deploy` | Prompt restored from `agents/lead.md`, model unchanged |
 | OC-06 | `harness:update`: cancel, then `update` | Cancel changes nothing; apply succeeds; a rerun no longer reports an unknown installed version |
 | OC-07 | `harness:uninstall`: cancel, then `uninstall` | Cancel changes nothing; apply removes all harness agents and commands, keeps a backup, `AGENTS.md` untouched |
-| OC-08 *(todo)* | Fresh install receipt has a version stamp | **Known gap**, see below |
+| OC-08 | Fresh install receipt has a version stamp | Install exits 0; `harness:update` prints `Installed version: <version> (<commit>)` instead of `unknown` |
 
 ### SMK-GL: OpenCode global scope (`smoke/opencode-lifecycle.smoke.ts`)
 
@@ -89,7 +89,7 @@ by `npm test`.
 | ID | Case | Expected |
 | --- | --- | --- |
 | CC-01 | Enter at `Type yes to install` (default `no`) | Exit 1, "No files written", tree unchanged |
-| CC-02 | `yes` | `CLAUDE.md` Lead block, `.claude/settings.json` (`agent: lead`, `gh pr merge` denied), 8 agents, 6 commands, `AGENTS.md` untouched, no OpenCode calls |
+| CC-02 | `yes` | `CLAUDE.md` Lead block, `.claude/settings.json` (`agent: lead`, `gh pr merge` denied), 8 agents, 6 commands, `AGENTS.md` untouched, no OpenCode calls; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
 | CC-03 | `harness:doctor --host claude-code` | Exit 0, `HEALTHY (Installed: Yes)` |
 | CC-04 | Receipt-backed uninstall (`--host claude-code --scope project`) | Exit 0; agents, commands, `settings.json`, and `CLAUDE.md` removed; `AGENTS.md` equals its pristine content |
 
@@ -99,7 +99,7 @@ by `npm test`.
 | --- | --- | --- |
 | AG-01 | `no` at the confirmation | Exit 1, "No files written", tree unchanged |
 | AG-02 | Enter at `Type yes to install` (default `no`) | Exit 1, "No files written", tree unchanged |
-| AG-03 | `yes` with unconfigured model preferences | `.agents/` rules, 6 skills, merge-guard script and hook, MCP config; original `AGENTS.md` content preserved |
+| AG-03 | `yes` with unconfigured model preferences | `.agents/` rules, 6 skills, merge-guard script and hook, MCP config; original `AGENTS.md` content preserved; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
 | AG-04 | `harness:doctor --host antigravity` | Exit 0, `Installed: Yes` |
 | AG-05 | Receipt-backed uninstall (`--host antigravity --scope project`) | Exit 0; rules, skills, merge-guard script, `hooks.json`, `mcp_config.json` removed; `AGENTS.md` equals its pristine content |
 
@@ -113,13 +113,11 @@ by `npm test`.
 
 ## Known gaps found by the suite
 
-These are recorded as `todo` tests (CC-04 and AG-05 were resolved by the host-aware uninstall; AG-02 by #81). They report on every run but do not fail
+Gaps are recorded as `todo` tests. They report on every run but do not fail
 it. When a gap is fixed, remove the `todo` option so the test becomes a gate.
 
-1. **Install does not stamp the harness version** (OC-08). `runInstallerFlow`
-   never passes a `harnessVersion` to `createSuccessorReceipt`. As a result,
-   `harness:update` reports a brand-new install as "legacy or unversioned"
-   until the first update is applied.
+None are open: CC-04 and AG-05 were resolved by the host-aware uninstall, AG-02
+by #81, and OC-08 by #82.
 
 The suite also made these observations, which are not asserted:
 

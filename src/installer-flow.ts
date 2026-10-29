@@ -7,6 +7,7 @@ import { DiagnosticError, printReport, verifyRuntime } from './native-diagnostic
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from './receipt-lineage.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
+import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 
 import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
@@ -22,7 +23,9 @@ export interface InstallerFlowDependencies {
   recoveryDirectory?: string;
   agentsDirectory?: string;
   commandsDirectory?: string;
+  harnessRoot?: string;
   environment?: NodeJS.ProcessEnv;
+  runCommand?: Runner;
   loadDefinitions?: typeof loadNativeDefinitions;
   updateConfiguration?: typeof updateNativeConfiguration;
   save?: typeof saveInstallation;
@@ -68,6 +71,9 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (options.context && !selectedHosts.includes('antigravity')) throw new Error('--context for model preferences is supported only with --host antigravity.');
   if (options.context && scope !== 'project') throw new Error('--context can be used only with project scope.');
 
+  const harnessRoot = deps.harnessRoot ?? resolve(fileURLToPath(new URL('..', import.meta.url)));
+  const stamp = toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand));
+
   if (selectedHosts.includes('claude-code')) {
     const adapter = getHostAdapter('claude-code');
     if (!adapter) throw new Error('Claude Code host adapter is not registered.');
@@ -78,6 +84,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
       recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
       agentsDirectory: deps.agentsDirectory,
       commandsDirectory: deps.commandsDirectory,
+      harnessVersion: stamp,
       ask,
       output,
       error: errorOutput,
@@ -96,6 +103,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
       agentsDirectory: deps.agentsDirectory,
       commandsDirectory: deps.commandsDirectory,
       context: options.context,
+      harnessVersion: stamp,
       ask,
       output,
       error: errorOutput,
@@ -199,7 +207,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const configChanged = updated !== (original ?? '{}\n');
   const commandsChanged = commandFilesToWrite.length > 0;
   const needsReceipt = configChanged || provenanceChanged || commandsChanged;
-  const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans, undefined, { host: 'opencode', ...(combinedManagedFiles.length ? { managedFiles: combinedManagedFiles } : {}) }) : undefined;
+  const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans, stamp, { host: 'opencode', ...(combinedManagedFiles.length ? { managedFiles: combinedManagedFiles } : {}) }) : undefined;
   output('\nAssignments:');
   for (const role of nativeRoles) {
     const saved = parseConfiguration(updated, target).agents as Record<string, Record<string, unknown>>;
@@ -225,6 +233,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   output('Assignments are stored inline in agents; no plugin or separate approval host is installed.');
   if (original !== undefined && configChanged) output(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
   output('After writing, runtime verification may start the OpenCode service. It will not restart/reload it or send paid model requests.');
+  output(`Harness version: ${formatVersionStamp(stamp)}`);
   if (await ask('Type install to apply these changes', 'cancel') !== 'install') { output('Cancelled. No files were changed.'); return 0; }
   if (!receipt && !configChanged && !commandsChanged) { output('Configuration and workflow commands already match; no configuration, backup, or receipt writes are needed.'); return 0; }
   const pending = (deps.writePending ?? writePendingSuccessor)(history, receipt!);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readSourceVersion, checkRemoteHead, compareInstalledAndSource } from '../src/harness-version.ts';
+import { readSourceVersion, checkRemoteHead, compareInstalledAndSource, toVersionStamp, formatVersionStamp } from '../src/harness-version.ts';
 
 test('compareInstalledAndSource reports unknown-installed for undefined or missing stamps', () => {
   assert.equal(compareInstalledAndSource(undefined, { version: '0.1.0', commit: 'abc', dirty: false }), 'unknown-installed');
@@ -113,4 +113,14 @@ test('checkRemoteHead reports inconclusive when remote object is absent locally'
     remoteHead: 'ffffffffffffffffffffffffffffffffffffffff',
     status: 'inconclusive'
   });
+});
+
+test('toVersionStamp omits dirty for clean checkouts and keeps it for dirty ones; formatVersionStamp mirrors the stamp', () => {
+  const clean = toVersionStamp({ version: '0.1.0', commit: 'a'.repeat(40), dirty: false });
+  assert.deepEqual(clean, { version: '0.1.0', commit: 'a'.repeat(40) });
+  assert.equal('dirty' in clean, false);
+  const dirty = toVersionStamp({ version: '0.1.0', commit: 'a'.repeat(40), dirty: true });
+  assert.deepEqual(dirty, { version: '0.1.0', commit: 'a'.repeat(40), dirty: true });
+  assert.equal(formatVersionStamp(clean), `0.1.0 (${'a'.repeat(40)})`);
+  assert.equal(formatVersionStamp(dirty), `0.1.0 (${'a'.repeat(40)}) [dirty local changes]`);
 });

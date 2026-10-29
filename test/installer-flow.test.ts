@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
+import { discoverReceiptChain } from '../src/receipt-lineage.ts';
 import { loadNativeDefinitions, nativeRoles, parseConfiguration } from '../src/native-installer.ts';
 
 test('injected production installer flow writes a fresh configuration and finalizes its receipt', async t => {
@@ -266,4 +267,54 @@ test('global installer selects default, XDG, and injected config directories and
     assert.equal(existsSync(recovery), false);
   }
   assert.equal(readFileSync(unrelated, 'utf8'), '{"keep":true}\n');
+});
+
+test('OpenCode install stamps harnessVersion on the head receipt and prints it before confirmation; cancel writes nothing', async t => {
+  const root = makeTempRoot('harness-flow-version-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const harnessRoot = join(root, 'checkout');
+  mkdirSync(harnessRoot);
+  writeFileSync(join(harnessRoot, 'package.json'), JSON.stringify({ version: '9.8.7' }));
+  const commit = 'c'.repeat(40);
+  const run = async (decision: string, dirty = false) => {
+    const label = `${decision}${dirty ? '-dirty' : ''}`;
+    const project = join(root, `project-${label}`);
+    mkdirSync(project);
+    const recovery = join(root, `recovery-${label}`);
+    const output: string[] = [];
+    const runCommand = (_executable: string, args: string[]) => args[0] === 'rev-parse' ? commit : dirty ? ' M src/installer-flow.ts' : '';
+    const expectedLine = `Harness version: 9.8.7 (${commit})${dirty ? ' [dirty local changes]' : ''}`;
+    let sawVersionBeforeConfirm = false;
+    const code = await runInstallerFlow({ scope: 'project', project }, {
+      ask: async question => {
+        if (question.startsWith('Type install')) sawVersionBeforeConfirm = output.includes(expectedLine);
+        if (/^(lead|operator|external|researcher|planner|implementer|reviewer|qa): model/.test(question)) return 'local/model#low';
+        if (/^(lead|operator|external|researcher|planner|implementer|reviewer|qa): reasoning/.test(question)) return '-';
+        if (question.startsWith('Type install')) return decision;
+        return question.startsWith('Install workflow slash commands') || question.startsWith('Make Lead') || question.startsWith('Also set') || question.startsWith('Replace') ? 'no' : '';
+      },
+      output: text => output.push(text), error: text => output.push(text),
+      home: root, recoveryDirectory: recovery, harnessRoot, runCommand,
+      verify: async () => ({ ok: true, checks: [] } as never), printReport: () => {},
+    });
+    return { code, output, recovery, project, sawVersionBeforeConfirm };
+  };
+
+  const installed = await run('install');
+  assert.equal(installed.code, 0);
+  assert.equal(installed.sawVersionBeforeConfirm, true);
+  const head = discoverReceiptChain(installed.recovery, join(installed.project, 'opencode.jsonc'), 'opencode').head;
+  assert.deepEqual(head?.receipt.version === 2 ? head.receipt.harnessVersion : undefined, { version: '9.8.7', commit });
+
+  const dirty = await run('install', true);
+  assert.equal(dirty.code, 0);
+  assert.equal(dirty.sawVersionBeforeConfirm, true, 'dirty annotation printed before the final confirmation');
+  const dirtyHead = discoverReceiptChain(dirty.recovery, join(dirty.project, 'opencode.jsonc'), 'opencode').head;
+  assert.deepEqual(dirtyHead?.receipt.version === 2 ? dirtyHead.receipt.harnessVersion : undefined, { version: '9.8.7', commit, dirty: true });
+
+  const cancelled = await run('cancel');
+  assert.equal(cancelled.code, 0);
+  assert.ok(cancelled.output.some(line => /Cancelled\. No files were changed\./.test(line)));
+  assert.equal(existsSync(join(cancelled.project, 'opencode.jsonc')), false);
+  assert.equal(existsSync(cancelled.recovery), false, 'no receipt or backup on cancel');
 });

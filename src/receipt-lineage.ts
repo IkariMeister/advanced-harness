@@ -186,6 +186,7 @@ export function receiptReconciliationOptions(snapshot: ReceiptSnapshot): NativeR
 export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string | undefined, after: string, plans: Partial<Record<NativeRole, ReconciliationResult>>, harnessVersion?: HarnessVersionStamp, extra?: { host?: HostId; managedFiles?: ManagedFileEvidence[] }): V2Receipt {
   revalidateReceiptSnapshot(snapshot);
   const delta = createReceipt(snapshot.target, before, after), parent = snapshot.head;
+  const stamp = harnessVersion ?? (parent?.receipt.version === 2 ? parent.receipt.harnessVersion : undefined);
   const changes = structuredClone(parent?.receipt.changes ?? []);
   for (const change of delta.changes) {
     const old = changes.find(c => equal(c.path, change.path));
@@ -216,7 +217,7 @@ export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string
   const parentHost = parent?.receipt.version === 2 ? parent.receipt.host : undefined;
   const host: HostId = extra?.host ?? snapshot.host ?? parentHost ?? 'opencode';
   const managedFiles = extra?.managedFiles ?? (parent?.receipt.version === 2 ? parent.receipt.managedFiles : undefined);
-  const receipt: V2Receipt = { version: 2, id: randomUUID(), target: snapshot.target, complete: true, status: 'complete', provenance: 'installer', host, predecessor: parent ? { file: parent.file, identity: parent.identity, digest: parent.digest } : null, changes, createdContainers: containers, permissions, ...(managedFiles ? { managedFiles: structuredClone(managedFiles) } : {}), ...(harnessVersion ? { harnessVersion } : {}) };
+  const receipt: V2Receipt = { version: 2, id: randomUUID(), target: snapshot.target, complete: true, status: 'complete', provenance: 'installer', host, predecessor: parent ? { file: parent.file, identity: parent.identity, digest: parent.digest } : null, changes, createdContainers: containers, permissions, ...(managedFiles ? { managedFiles: structuredClone(managedFiles) } : {}), ...(stamp ? { harnessVersion: structuredClone(stamp) } : {}) };
   return validateV2Receipt(receipt, snapshot.target);
 }
 

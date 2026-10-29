@@ -106,12 +106,14 @@ describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
     assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
   });
 
-  it('SMK-OC-08 the fresh install receipt carries a harness version stamp', { todo: 'Gap: harness:install never stamps harnessVersion, so harness:update reports a brand-new install as "legacy or unversioned"' }, async () => {
+  it('SMK-OC-08 the fresh install receipt carries a harness version stamp', async () => {
     const fresh = createSandbox('opencode-stamp');
     try {
-      await fresh.run('install-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: openCodeInstall('install') });
+      const install = await fresh.run('install-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: openCodeInstall('install') });
+      assert.equal(install.code, 0, install.transcript);
       const update = await fresh.run('update-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: [ask('Check remote repository', 'no'), ask('Type update to apply', '')] });
       assert.doesNotMatch(update.stdout, /Installed version: unknown/);
+      assert.match(update.stdout, /Installed version: \d+\.\d+\.\d+ \([0-9a-f]{40}\)/);
     } finally { fresh.dispose(); }
   });
 });

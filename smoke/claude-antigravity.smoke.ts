@@ -1,12 +1,29 @@
 // SMK-CC / SMK-AG: Claude Code and Antigravity project install → doctor (→ uninstall gap) in an isolated home.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createSandbox, tree, type Sandbox } from './support/sandbox.ts';
+import { createSandbox, repoRoot, tree, type Sandbox } from './support/sandbox.ts';
 import { antigravityInstall, ask, roles } from './support/steps.ts';
 
 const commands = ['address-pr-feedback', 'assess-debt', 'grill-me', 'report-defect', 'review-pr', 'start-issue'];
+const headCommit = () => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+
+// Recursively collects native-install receipts for one host from the recovery directory.
+function receiptsFor(directory: string, host: string): { harnessVersion?: { version: string; commit: string } }[] {
+  const found: { harnessVersion?: { version: string; commit: string } }[] = [];
+  if (!existsSync(directory)) return found;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...receiptsFor(path, host));
+    else if (/^native-install-.*\.json$/.test(entry.name)) {
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as { host?: string; harnessVersion?: { version: string; commit: string } };
+      if (raw.host === host) found.push(raw);
+    }
+  }
+  return found;
+}
 
 describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
   let box: Sandbox;
@@ -26,6 +43,8 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
   it('SMK-CC-02 install deploys CLAUDE.md, settings, eight agents, and six commands; AGENTS.md preserved', async () => {
     const result = await box.run('install-native-harness.ts', args(), { steps: [ask('Type yes to install the Claude Code harness', 'yes')] });
     assert.equal(result.code, 0, result.transcript);
+    assert.match(result.stdout, /Harness version: \d+\.\d+\.\d+ \([0-9a-f]{40}\)/);
+    assert.ok(receiptsFor(box.recoveryDirectory, 'claude-code').some(r => r.harnessVersion?.commit === headCommit()), 'receipt stamped with the checkout commit');
     assert.match(readFileSync(join(box.project, 'CLAUDE.md'), 'utf8'), /advanced-harness:lead:start/);
     const settings = JSON.parse(readFileSync(join(box.project, '.claude', 'settings.json'), 'utf8'));
     assert.equal(settings.agent, 'lead');
@@ -78,6 +97,8 @@ describe('SMK-AG Antigravity project lifecycle (non-TTY piped answers)', () => {
   it('SMK-AG-03 install deploys rules, skills, merge guard hook, and MCP config; preferences go to AGENTS.md', async () => {
     const result = await box.run('install-native-harness.ts', args(), { steps: antigravityInstall('yes') });
     assert.equal(result.code, 0, result.transcript);
+    assert.match(result.stdout, /Harness version: \d+\.\d+\.\d+ \([0-9a-f]{40}\)/);
+    assert.ok(receiptsFor(box.recoveryDirectory, 'antigravity').some(r => r.harnessVersion?.commit === headCommit()), 'receipt stamped with the checkout commit');
     const agents = join(box.project, '.agents');
     assert.ok(existsSync(join(agents, 'rules', 'advanced-harness-lead.md')));
     for (const command of commands) assert.ok(existsSync(join(agents, 'skills', command, 'SKILL.md')), command);
