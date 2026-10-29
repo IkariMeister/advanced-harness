@@ -91,7 +91,22 @@ Not verified here: Claude Code discovery of subagents, `agent: lead`, `Agent(...
 
 ### OpenAI Codex
 
-Codex install/update writes project `.codex/` or global `~/.codex/` after confirmation. Existing role model and effort values are shown as defaults; Enter preserves them. New roles have no guessed assignment and require explicit model/effort values. Enter at the MCP selection and tool prompts preserves prior tracking; `-` clears only tracking (servers stay disabled and existing disabled-tool entries remain). Invalid required assignments must be corrected before the review. Shared `AGENTS.md` and customized shared skills are preserved, and updates create cumulative recovery receipts. If saving fails, the adapter attempts reverse-order restoration only when live contents match its expected post-write state; divergent edits are preserved, and unresolved rollback retains pending recovery evidence and reports its path. Selected existing MCP routes remain disabled pending validation. Codex shared sandbox/approval settings do not prove per-role isolation or universal approval. Static doctor checks do not establish Desktop runtime behavior; see [Codex configuration limits](configuration.md#openai-codex-selections).
+Codex install/update writes project `.codex/` or global `~/.codex/` after confirmation. Existing role model and effort values are shown as defaults; Enter preserves them. New roles have no guessed assignment and require explicit model/effort values. Each required assignment has at most three invalid attempts; prompt rejection/closure exits before writes. Enter at the MCP selection and tool prompts preserves prior tracking; `-` clears only tracking (servers stay disabled and existing disabled-tool entries remain). Shared `AGENTS.md` and customized shared skills are preserved, and updates create cumulative recovery receipts. If saving fails, rollback removes only attributable unchanged backups and transaction-created empty directories after verified restoration; divergent edits and older evidence are preserved. Selected existing MCP routes remain disabled pending validation. Codex shared sandbox/approval settings do not prove per-role isolation or universal approval. Static doctor checks do not establish Desktop runtime behavior; see [Codex configuration limits](configuration.md#openai-codex-selections). Codex uninstall remains unimplemented.
+
+#### Codex Desktop validation checklist (Windows/macOS; pending)
+
+Use a disposable project and isolated home/recovery directory, never the real user
+configuration. Open Codex Desktop and select the matching scope. Before installation,
+record fixture file bytes and a recursive inventory/content fingerprint for `.codex`,
+`.agents`, and `AGENTS.md`; do not print contents or follow unsafe links. Run install
+and explicitly cancel once; verify targets, backups, and receipts are unchanged.
+Repeat and approve; check selected MCP entries stay disabled, disabled tools stay
+present, unrelated enabled entries remain unchanged, and all eight role model/effort
+choices match (Enter keeps prior choices). Run `harness:doctor` after installation.
+Inspect Desktop without treating static doctor output as runtime approval/model proof.
+Repeat in global scope and verify project/global separation. Record actual outcomes,
+including any prompt rejection or three-attempt failure. This checklist is pending;
+manual testing was waived for this implementation pass, not marked passed.
 
 Integration configuration (`harness:integrations`) currently supports OpenCode only. Its `--host` option accepts `opencode`; unsupported hosts and multi-host selections (including `all`) are rejected before discovery, checks, or writes. This does not limit the separately implemented native installer adapters for Antigravity, project-scope Claude Code, and Codex.
 

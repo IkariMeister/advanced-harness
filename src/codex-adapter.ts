@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, lstatSync, rmdirSync } from 'node:fs';
+import { basename, dirname, join, resolve, parse as pathParse } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
@@ -18,8 +18,13 @@ const digest = (text: string): string => createHash('sha256').update(text).diges
 const canonicalPath = (path: string): string => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 export const encodeCodexYamlScalar = (value: string): string => JSON.stringify(value);
 
+// Supported TOML subset: basic/literal keys, basic tables, single-line strings,
+// scalar primitives, arrays, and inline tables. Multiline strings and arrays of
+// tables are intentionally rejected so edits can preserve original source slices.
+
 type CodexTomlTable = { path: string; parts: string[]; start: number; end: number };
-type CodexTomlDocument = { tables: CodexTomlTable[] };
+type CodexTomlEntry = { key: string[]; table: string[]; valueStart: number; valueEnd: number; value: unknown; line: number };
+type CodexTomlDocument = { tables: CodexTomlTable[]; entries: CodexTomlEntry[] };
 
 function stripTomlComment(line: string): string {
   let quoteChar = '';
@@ -41,25 +46,31 @@ function stripTomlComment(line: string): string {
 function keyParts(text: string): string[] | undefined {
   const parts: string[] = [];
   let i = 0;
+  let needPart = true;
   while (i < text.length) {
     while (text[i] === ' ' || text[i] === '\t') i++;
+    if (i === text.length) return undefined;
     let value: string;
     if (text[i] === '"' || text[i] === "'") {
       const q = text[i++]!; const start = i;
       while (i < text.length && text[i] !== q) { if (q === '"' && text[i] === '\\') i++; i++; }
       if (i >= text.length) return undefined;
-      const raw = text.slice(start, i++);
-      try { value = q === '"' ? JSON.parse(`"${raw}"`) as string : raw; } catch { return undefined; }
+      const raw = text.slice(start - 1, i + 1);
+      i++;
+      try { value = decodeTomlString(raw); } catch { return undefined; }
     } else {
       const start = i; while (/[A-Za-z0-9_-]/.test(text[i] ?? '')) i++;
       if (i === start) return undefined; value = text.slice(start, i);
     }
-    if (!value || /[\u0000-\u001f\u007f]/.test(value)) return undefined; parts.push(value);
+    if (!value || /[\u0000-\u001f\u007f]/.test(value)) return undefined; parts.push(value); needPart = false;
     while (text[i] === ' ' || text[i] === '\t') i++;
     if (i === text.length) break;
     if (text[i++] !== '.') return undefined;
+    needPart = true;
+    while (text[i] === ' ' || text[i] === '\t') i++;
+    if (i === text.length) return undefined;
   }
-  return parts.length ? parts : undefined;
+  return parts.length && !needPart ? parts : undefined;
 }
 
 function hasValuePathConflict(paths: Iterable<string>, candidate: string): boolean {
@@ -68,7 +79,24 @@ function hasValuePathConflict(paths: Iterable<string>, candidate: string): boole
   for (const path of paths) {
     const existing = decode(path);
     const common = Math.min(existing.length, wanted.length);
-    if (common > 0 && existing.slice(0, common).every((part, index) => part === wanted[index])) return true;
+    if ((existing.length <= wanted.length && existing.every((part, index) => part === wanted[index])) || (wanted.length <= existing.length && wanted.every((part, index) => part === existing[index]))) return true;
+  }
+  return false;
+}
+function hasAnyPathPrefixConflict(paths: Iterable<string>, candidate: string): boolean {
+  const wanted = JSON.parse(candidate) as string[];
+  for (const path of paths) {
+    const existing = JSON.parse(path) as string[];
+    const common = Math.min(existing.length, wanted.length);
+    if (existing.length <= wanted.length && existing.every((part, index) => part === wanted[index])) return true;
+  }
+  return false;
+}
+function hasExactPath(paths: Iterable<string>, candidate: string): boolean {
+  const wanted = JSON.parse(candidate) as string[];
+  for (const path of paths) {
+    const existing = JSON.parse(path) as string[];
+    if (existing.length === wanted.length && existing.every((part, index) => part === wanted[index])) return true;
   }
   return false;
 }
@@ -80,8 +108,41 @@ function hasDescendantPath(paths: Iterable<string>, candidate: string): boolean 
   }
   return false;
 }
+function isPrefix(a: string[], b: string[]): boolean { return a.length <= b.length && a.every((part, index) => part === b[index]); }
+function assignmentDelimiter(text: string): number {
+  let quote = ''; let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (quote === '"') { if (escaped) escaped = false; else if (ch === '\\') escaped = true; else if (ch === '"') quote = ''; }
+    else if (quote === "'") { if (ch === "'") quote = ''; }
+    else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '=') return i;
+  }
+  return -1;
+}
 
-function parseTomlValue(source: string, initial: number, path: string, lineNumber: number): number {
+function decodeTomlString(raw: string): string {
+  if (raw.startsWith("'")) return raw.slice(1, -1);
+  const value = JSON.parse(raw) as string;
+  return value;
+}
+
+function parseTomlScalar(raw: string): unknown {
+  const value = raw.trim();
+  if (value.startsWith('"') || value.startsWith("'")) return decodeTomlString(value);
+  if (value === 'true' || value === 'false') return value === 'true';
+  const digits = '[0-9](?:_?[0-9])*';
+  const dec = `(?:0|[1-9](?:_?[0-9])*)`;
+  if (new RegExp(`^[+-]?${dec}$`).test(value)) return Number(value.replaceAll('_', ''));
+  if (/^0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*$/.test(value)) return Number.parseInt(value.slice(2).replaceAll('_', ''), 16);
+  if (/^0o[0-7](?:_?[0-7])*$/.test(value)) return Number.parseInt(value.slice(2).replaceAll('_', ''), 8);
+  if (/^0b[01](?:_?[01])*$/.test(value)) return Number.parseInt(value.slice(2).replaceAll('_', ''), 2);
+  if (new RegExp(`^[+-]?${dec}(?:\\.${digits}(?:[eE][+-]?${digits})?|[eE][+-]?${digits})$|^[+-]?${dec}\\.${digits}(?:[eE][+-]?${digits})?$`).test(value)) return Number(value.replaceAll('_', ''));
+  if (/^[+-]?(?:inf|nan)$/.test(value)) return value;
+  return value;
+}
+
+function parseTomlValue(source: string, initial: number, path: string, lineNumber: number): { end: number; value: unknown } {
   const fail = (): never => { throw new Error(`Unsupported or malformed TOML value in ${path} at line ${lineNumber}; refusing to edit it.`); };
   const spaces = (index: number) => { while (source[index] === ' ' || source[index] === '\t') index++; return index; };
   let index = spaces(initial);
@@ -106,7 +167,12 @@ function parseTomlValue(source: string, initial: number, path: string, lineNumbe
         }
         return fail();
       }
-      if (source[index] === quoteChar) return index + 1;
+      if (source[index] === quoteChar) {
+        const token = source.slice(spaces(initial), index + 1);
+        let decoded: string;
+        try { decoded = decodeTomlString(token); } catch { return fail(); }
+        return { end: index + 1, value: decoded };
+      }
       if (code < 0x20 && source[index] !== '\t') return fail();
       index++;
     }
@@ -115,37 +181,30 @@ function parseTomlValue(source: string, initial: number, path: string, lineNumbe
   if (ch === '[') {
     index++;
     index = spaces(index);
-    if (source[index] === ']') return index + 1;
+    if (source[index] === ']') return { end: index + 1, value: [] };
+    const values: unknown[] = [];
     while (index < source.length) {
-      index = parseTomlValue(source, index, path, lineNumber);
+      const item = parseTomlValue(source, index, path, lineNumber);
+      values.push(item.value);
+      index = item.end;
       index = spaces(index);
-      if (source[index] === ']') return index + 1;
+      if (source[index] === ']') return { end: index + 1, value: values };
       if (source[index] !== ',') return fail();
       index = spaces(index + 1);
-      if (source[index] === ']') return index + 1; // TOML arrays permit a trailing comma.
+      if (source[index] === ']') return { end: index + 1, value: values }; // TOML arrays permit a trailing comma.
     }
     return fail();
   }
   if (ch === '{') {
     index = spaces(index + 1);
     const seen = new Set<string>();
-    if (source[index] === '}') return index + 1;
+    if (source[index] === '}') return { end: index + 1, value: Object.create(null) };
+    const values = Object.create(null) as Record<string, unknown>;
     while (index < source.length) {
       const start = index;
-      let keyQuote = '';
-      let keyEscape = false;
-      while (index < source.length) {
-        const current = source[index]!;
-        if (keyQuote === '"') {
-          if (keyEscape) keyEscape = false;
-          else if (current === '\\') keyEscape = true;
-          else if (current === '"') keyQuote = '';
-        } else if (keyQuote === "'") {
-          if (current === "'") keyQuote = '';
-        } else if (current === '"' || current === "'") keyQuote = current;
-        else if (current === '=' || current === ',' || current === '}') break;
-        index++;
-      }
+      const delimiter = assignmentDelimiter(source.slice(index));
+      if (delimiter < 0) return fail();
+      index += delimiter;
       const parts = keyParts(source.slice(start, index));
       if (!parts) return fail();
       const key = JSON.stringify(parts);
@@ -153,9 +212,17 @@ function parseTomlValue(source: string, initial: number, path: string, lineNumbe
       seen.add(key);
       index = spaces(index);
       if (source[index] !== '=') return fail();
-      index = parseTomlValue(source, index + 1, path, lineNumber);
+      const keyPath = [...(keyParts(source.slice(start, index)) ?? [])];
+      const item = parseTomlValue(source, index + 1, path, lineNumber);
+      let target = values;
+      for (const keyPart of keyPath.slice(0, -1)) {
+        if (!Object.prototype.hasOwnProperty.call(target, keyPart)) Object.defineProperty(target, keyPart, { value: Object.create(null), writable: true, enumerable: true, configurable: true });
+        target = target[keyPart] as Record<string, unknown>;
+      }
+      Object.defineProperty(target, keyPath.at(-1)!, { value: item.value, writable: true, enumerable: true, configurable: true });
+      index = item.end;
       index = spaces(index);
-      if (source[index] === '}') return index + 1;
+      if (source[index] === '}') return { end: index + 1, value: values };
       if (source[index] !== ',') return fail();
       index = spaces(index + 1);
       if (source[index] === '}') return fail(); // TOML inline tables do not permit a trailing comma.
@@ -170,7 +237,9 @@ function parseTomlValue(source: string, initial: number, path: string, lineNumbe
   const integer = new RegExp(`^[+-]?${unsignedDecimal}$`);
   const based = /^0(?:x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*|o[0-7](?:_?[0-7])*|b[01](?:_?[01])*)$/;
   const float = new RegExp(`^[+-]?${unsignedDecimal}(?:\\.${digits}(?:[eE][+-]?${digits})?|[eE][+-]?${digits})$|^[+-]?${unsignedDecimal}\\.${digits}(?:[eE][+-]?${digits})?$`);
-  if (bare === 'true' || bare === 'false' || integer.test(bare) || based.test(bare) || float.test(bare) || /^[+-]?(?:inf|nan)$/.test(bare)) return index;
+  if (bare === 'true' || bare === 'false' || integer.test(bare) || based.test(bare) || float.test(bare) || /^[+-]?(?:inf|nan)$/.test(bare)) {
+    return { end: index, value: bare === 'true' ? true : bare === 'false' ? false : Number(bare.replaceAll('_', '')) };
+  }
   return fail();
 }
 
@@ -178,7 +247,9 @@ function parseTomlValue(source: string, initial: number, path: string, lineNumbe
 function parseCodexToml(text: string, path: string): CodexTomlDocument {
   const explicitTables = new Set<string>();
   const values = new Set<string>();
+  const scalarPaths = new Set<string>();
   const tables: CodexTomlTable[] = [];
+  const entries: CodexTomlEntry[] = [];
   let currentTable: string[] = [];
   let offset = 0;
   let lineNumber = 0;
@@ -189,13 +260,14 @@ function parseCodexToml(text: string, path: string): CodexTomlDocument {
     const content = stripTomlComment(raw).trim();
     const actualLine = lineNumber;
     if (!content) { offset += rawLine.length; continue; }
-      const tableMatch = /^\[\s*(.*?)\s*\]$/.exec(content);
+    const tableMatch = /^\[\s*(.*?)\s*\]$/.exec(content);
     if (tableMatch) {
       const parts = keyParts(tableMatch[1]!);
       if (!parts) throw new Error(`Unsupported TOML table in ${path} at line ${actualLine}; refusing to edit it.`);
       const tablePath = JSON.stringify(parts);
-      if (hasDescendantPath(explicitTables, tablePath)) throw new Error(`Duplicate or out-of-order TOML table in ${path} at line ${actualLine}.`);
-      if (hasValuePathConflict(values, tablePath)) throw new Error(`TOML scalar/table collision in ${path} at line ${actualLine}.`);
+      if (hasExactPath(explicitTables, tablePath) || hasDescendantPath(explicitTables, tablePath)) throw new Error(`Duplicate or out-of-order TOML table in ${path} at line ${actualLine}.`);
+      const tableParts = parts;
+      if ([...scalarPaths].some(valuePath => { const valueParts = JSON.parse(valuePath) as string[]; return isPrefix(valueParts, tableParts); })) throw new Error(`TOML scalar/table collision in ${path} at line ${actualLine}.`);
       if (tables.length) tables[tables.length - 1]!.end = offset;
       explicitTables.add(tablePath);
       currentTable = parts;
@@ -204,19 +276,28 @@ function parseCodexToml(text: string, path: string): CodexTomlDocument {
       continue;
     }
     if (content.startsWith('[')) throw new Error(`Unsupported or malformed TOML table in ${path} at line ${actualLine}; refusing to edit it.`);
-    const assignment = /^((?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-])(?:[^=]*?))\s*=(.*)$/.exec(content);
-    if (!assignment) throw new Error(`Unsupported or malformed TOML assignment in ${path} at line ${actualLine}; refusing to edit it.`);
-    const parts = keyParts(assignment[1]!);
+    const uncommented = stripTomlComment(raw);
+    const leading = raw.search(/\S/);
+    const equals = assignmentDelimiter(uncommented);
+    if (equals < 0) throw new Error(`Unsupported or malformed TOML assignment in ${path} at line ${actualLine}; refusing to edit it.`);
+    const keyText = uncommented.slice(leading, equals).trimEnd();
+    const parts = keyParts(keyText);
     if (!parts) throw new Error(`Unsupported TOML key in ${path} at line ${actualLine}; refusing to edit it.`);
     const fullKey = JSON.stringify([...currentTable, ...parts]);
+    const fullParts = [...currentTable, ...parts];
     if (hasValuePathConflict(values, fullKey) || hasDescendantPath(explicitTables, fullKey)) throw new Error(`Duplicate TOML key or scalar/table collision in ${path} at line ${actualLine}.`);
-    const valueStart = content.indexOf('=') + 1;
-    const valueEnd = parseTomlValue(content, valueStart, path, actualLine);
-    if (content.slice(valueEnd).trim()) throw new Error(`Trailing or malformed TOML value in ${path} at line ${actualLine}; refusing to edit it.`);
+    const valueStart = equals + 1;
+    const parsedValue = parseTomlValue(uncommented, valueStart, path, actualLine);
+    const valueEnd = parsedValue.end;
+    if (uncommented.slice(valueEnd).trim()) throw new Error(`Trailing or malformed TOML value in ${path} at line ${actualLine}; refusing to edit it.`);
     values.add(fullKey);
+    scalarPaths.add(fullKey);
+    const leadingValue = uncommented.slice(valueStart).match(/^[ \t]*/)?.[0].length ?? 0;
+    const lineLeading = raw.search(/\S/);
+    entries.push({ key: parts, table: [...currentTable], valueStart: offset + valueStart + leadingValue, valueEnd: offset + valueEnd, value: parsedValue.value, line: actualLine });
     offset += rawLine.length;
   }
-  return { tables };
+  return { tables, entries };
 }
 
 export function validateCodexToml(text: string, path = 'Codex TOML'): void {
@@ -225,20 +306,8 @@ export function validateCodexToml(text: string, path = 'Codex TOML'): void {
 
 function appendSettings(existing: string | undefined): string {
   const text = existing ?? '';
-  validateCodexToml(text, 'config.toml');
-  const rootHas = (key: string) => {
-    let inTable = false;
-    for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (/^\[/.test(trimmed)) { inTable = true; continue; }
-      if (!inTable) {
-        const assignment = /^((?:"(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-])(?:[^=]*?))\s*=/.exec(trimmed);
-        const parts = assignment && keyParts(assignment[1]!);
-        if (parts?.length === 1 && parts[0] === key) return true;
-      }
-    }
-    return false;
-  };
+  const parsed = parseCodexToml(text, 'config.toml');
+  const rootHas = (key: string) => parsed.entries.some(entry => entry.table.length === 0 && entry.key.length === 1 && entry.key[0] === key);
   const blocks: string[] = [];
   if (!rootHas('sandbox_mode')) blocks.push('sandbox_mode = "read-only"');
   if (!rootHas('approval_policy')) blocks.push('approval_policy = "on-request"');
@@ -379,23 +448,29 @@ function tomlConfigText(existing: string, selectedServerIds: string[], selectedT
       const body = text.slice(0, text.length - suffix.length);
       return `${body}${body && !body.endsWith('\n') ? newline : ''}${assignment}${newline}${suffix}`;
     };
-    const enabled = /^\s*(?:enabled|"enabled"|'enabled')\s*=\s*(true|false)\b/im.exec(section);
+    const parsed = parseCodexToml(result, 'config.toml');
+    const enabled = parsed.entries.find(entry => entry.table.length === 2 && entry.table[0] === 'mcp_servers' && entry.table[1] === id && entry.key.length === 1 && entry.key[0] === 'enabled');
     let updatedSection = enabled
-      ? enabled[1]!.toLowerCase() === 'true'
-        ? `${section.slice(0, enabled.index + enabled[0].lastIndexOf(enabled[1]!))}false${section.slice(enabled.index + enabled[0].lastIndexOf(enabled[1]!) + enabled[1]!.length)}`
+      ? enabled.value === true
+        ? `${result.slice(start, enabled.valueStart)}false${result.slice(enabled.valueEnd, end)}`
         : section
       : appendLine(section, 'enabled = false');
     const tools = selectedTools[id] ?? [];
     if (tools.length) {
       const encoded = `disabled_tools = [${tools.map(quote).join(', ')}]`;
-      const existingTools = /^[ \t]*(?:disabled_tools|"disabled_tools"|'disabled_tools')\s*=\s*\[([^\]]*)\]/m.exec(updatedSection);
+      const existingTools = parsed.entries.find(entry => entry.table.length === 2 && entry.table[0] === 'mcp_servers' && entry.table[1] === id && entry.key.length === 1 && entry.key[0] === 'disabled_tools');
       if (existingTools) {
-        const remainder = existingTools[1]!.replace(/"(?:[^"\\]|\\.)*"/g, '').replace(/[\s,]/g, '');
-        if (remainder) throw new Error(`Unsupported disabled_tools value in Codex MCP server ${id}; refusing to discard existing data.`);
-        const oldNames = [...existingTools[1]!.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(m => JSON.parse(`"${m[1]}"`) as string);
+        if (!Array.isArray(existingTools.value) || existingTools.value.some(value => typeof value !== 'string')) throw new Error(`Unsupported disabled_tools value in Codex MCP server ${id}; refusing to discard existing data.`);
+        const oldNames = existingTools.value as string[];
         const merged = [...new Set([...oldNames, ...tools])];
-        updatedSection = updatedSection.replace(existingTools[0], `disabled_tools = [${merged.map(quote).join(', ')}]`);
+        updatedSection = `${result.slice(start, existingTools.valueStart)}[${merged.map(quote).join(', ')}]${result.slice(existingTools.valueEnd, end)}`;
       } else updatedSection = appendLine(updatedSection, encoded);
+    }
+    if (enabled?.value === true) {
+      const nextDoc = parseCodexToml(updatedSection, 'mcp server section');
+      const localEnabled = nextDoc.entries.find(entry => entry.key.length === 1 && entry.key[0] === 'enabled');
+      if (!localEnabled) throw new Error(`Could not structurally locate enabled field for MCP server ${id}.`);
+      updatedSection = `${updatedSection.slice(0, localEnabled.valueStart)}false${updatedSection.slice(localEnabled.valueEnd)}`;
     }
     result = result.slice(0, start) + updatedSection + result.slice(end);
   }
@@ -433,14 +508,18 @@ export async function installCodex(options: {
   if (stateBefore !== undefined && !snapshot.head) throw new Error(`Codex state manifest exists without a matching recovery receipt: ${statePath}. Resolve recovery before updating.`);
   const priorFiles = snapshot.head?.receipt.version === 2 ? snapshot.head.receipt.managedFiles ?? [] : [];
   const previousSelected = Array.isArray(stateValue.selectedMcpServers) ? stateValue.selectedMcpServers.filter((id): id is string => typeof id === 'string') : [];
-  const selectedAnswer = (await ask('Existing Codex MCP server ID(s) to mark disabled pending route validation (comma-separated; - clears tracking)', previousSelected.join(', '))).trim();
+    let selectedAnswer: string;
+    try { selectedAnswer = (await ask('Existing Codex MCP server ID(s) to mark disabled pending route validation (comma-separated; - clears tracking)', previousSelected.join(', '))).trim(); }
+    catch { throw new Error('Codex installation cancelled because an interactive prompt was rejected or closed; no changes made.'); }
   const selected = selectedAnswer === '-' ? [] : selectedAnswer ? selectedAnswer.split(',').map(x => x.trim()).filter(Boolean) : previousSelected;
   const selectedTools: Record<string, string[]> = {};
   for (const id of selected) {
     if (!validMcpId(id)) throw new Error(`Invalid Codex MCP server ID: ${id}`);
     const priorTools = stateValue.disabledTools && typeof stateValue.disabledTools === 'object' ? (stateValue.disabledTools as Record<string, unknown>)[id] : undefined;
     const defaults = Array.isArray(priorTools) ? priorTools.filter((name): name is string => typeof name === 'string') : [];
-    const raw = (await ask(`Exact tool names on ${id} to add to disabled_tools (comma-separated; - clears tracking only)`, defaults.join(', '))).trim();
+    let raw: string;
+    try { raw = (await ask(`Exact tool names on ${id} to add to disabled_tools (comma-separated; - clears tracking only)`, defaults.join(', '))).trim(); }
+    catch { throw new Error('Codex installation cancelled because an interactive prompt was rejected or closed; no changes made.'); }
     selectedTools[id] = raw === '-' ? [] : raw ? raw.split(',').map(name => name.trim()).filter(Boolean) : defaults;
   }
   const configAfter = tomlConfigText(existing, selected, selectedTools);
@@ -449,24 +528,36 @@ export async function installCodex(options: {
   for (const role of nativeRoles) {
     const roleFile = join(base, 'agents', `${role}.toml`);
     const currentRole = existsSync(roleFile) ? readFileSync(roleFile, 'utf8') : '';
-    const modelDefault = /^model\s*=\s*("(?:[^"\\]|\\.)*")\s*$/m.exec(currentRole)?.[1];
-    const effortDefault = /^model_reasoning_effort\s*=\s*("(?:[^"\\]|\\.)*")\s*$/m.exec(currentRole)?.[1];
-    const decodeString = (value: string | undefined) => { try { return value ? JSON.parse(value) as string : ''; } catch { return ''; } };
-    const modelSuggestion = decodeString(modelDefault);
-    let model = '';
+    const roleParsed = parseCodexToml(currentRole, roleFile);
+    const roleValue = (key: string) => roleParsed.entries.find(entry => entry.table.length === 0 && entry.key.length === 1 && entry.key[0] === key)?.value;
+    const modelRaw = roleValue('model'); const effortRaw = roleValue('model_reasoning_effort');
+    const customRole = currentRole.length > 0 && (roleValue('name') !== role || !roleValue('developer_instructions') || !roleValue('description'));
+    const modelSuggestion = typeof modelRaw === 'string' ? modelRaw : '';
+    let model = ''; let modelAttempts = 0;
     while (!model || model === '-' || /[\r\n\0]/.test(model)) {
-      model = ((await ask(`${role}: explicitly assigned Codex model ID (required)`, modelSuggestion)).trim() || modelSuggestion);
+      if (modelAttempts >= 3) throw new Error(`Codex model assignment for ${role} remained invalid after 3 attempts; no changes made.`);
+      let answer: string;
+      try { answer = (await ask(`${role}: explicitly assigned Codex model ID (required)`, modelSuggestion)).trim(); }
+      catch { throw new Error(`Codex model prompt for ${role} was rejected or closed; no changes made.`); }
+      modelAttempts++;
+      model = answer || (modelSuggestion && modelAttempts === 1 ? modelSuggestion : '');
       if (!model || model === '-' || /[\r\n\0]/.test(model)) output(`Enter a valid explicit model ID for ${role}; no guessed fallback is used.`);
     }
-    const effortSuggestion = decodeString(effortDefault);
-    let reasoning = '';
+    const effortSuggestion = typeof effortRaw === 'string' ? effortRaw : '';
+    let reasoning = ''; let effortAttempts = 0;
     while (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(reasoning)) {
-      reasoning = ((await ask(`${role}: reasoning effort (low, medium, high)`, effortSuggestion)).trim() || effortSuggestion);
+      if (effortAttempts >= 3) throw new Error(`Codex reasoning effort for ${role} remained invalid after 3 attempts; no changes made.`);
+      let answer: string;
+      try { answer = (await ask(`${role}: reasoning effort (low, medium, high)`, effortSuggestion)).trim(); }
+      catch { throw new Error(`Codex reasoning prompt for ${role} was rejected or closed; no changes made.`); }
+      effortAttempts++;
+      reasoning = answer || (effortSuggestion && effortAttempts === 1 ? effortSuggestion : '');
       if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(reasoning)) output(`Enter one of the supported reasoning efforts: ${CODEX_REASONING_EFFORTS.join(', ')}.`);
     }
     const target = join(base, 'agents', `${role}.toml`);
     assertSafeFilesystemPath(target, 'file');
-    files.push({ path: target, content: compileCodexAgent(role, model, reasoning, definitions[role].description, definitions[role].instructions), before: existsSync(target) ? readFileSync(target, 'utf8') : undefined, kind: 'role' });
+    const compiled = compileCodexAgent(role, model, reasoning, definitions[role].description, definitions[role].instructions);
+    files.push({ path: target, content: compiled, before: existsSync(target) ? readFileSync(target, 'utf8') : undefined, kind: 'role' });
   }
   const rulesPath = join(base, 'rules', 'advanced-harness.rules');
   assertSafeFilesystemPath(rulesPath, 'file');
@@ -491,12 +582,16 @@ export async function installCodex(options: {
   // Existing unowned/custom role files require explicit per-file consent.
   const selectedFiles: PlannedFile[] = [];
   for (const file of files) {
-    assertSafeFilesystemPath(file.path, 'file');
-    if (file.before !== undefined && file.before !== file.content && file.kind === 'role') {
+      assertSafeFilesystemPath(file.path, 'file');
+      if (file.before !== undefined && file.before !== file.content && file.kind === 'role') {
+        parseCodexToml(file.before, file.path);
       const prior = priorFiles.find(entry => canonicalPath(entry.path) === canonicalPath(file.path));
       const owned = prior?.after && !('absent' in prior.after) && ('content' in prior.after ? prior.after.content === file.before : prior.after.digest === digest(file.before));
-      if (!owned && !/^(y|yes)$/i.test((await ask(`Overwrite customized/unowned Codex agent ${file.path}?`, 'no')).trim())) {
-        output(`Preserving customized Codex agent: ${file.path}`); continue;
+      if (!owned) {
+        let overwrite: string;
+        try { overwrite = (await ask(`Overwrite customized/unowned Codex agent ${file.path}?`, 'no')).trim(); }
+        catch { throw new Error('Codex installation cancelled because an interactive prompt was rejected or closed; no changes made.'); }
+        if (!/^(y|yes)$/i.test(overwrite)) { output(`Preserving customized Codex agent: ${file.path}`); continue; }
       }
     }
     selectedFiles.push(file);
@@ -528,6 +623,16 @@ export async function installCodex(options: {
   let completed = false;
   const attempted: PlannedFile[] = [];
   let stateAttempted = false;
+  const createdDirectories: string[] = [];
+  const madeBackups = new Map<string, string>();
+  const mkdirTracked = (directory: string) => {
+    const missing: string[] = []; let cursor = resolve(directory); const root = pathParse(cursor).root;
+    while (cursor !== root && !existsSync(cursor)) { missing.push(cursor); cursor = dirname(cursor); }
+    for (const path of missing.reverse()) {
+      try { mkdirSync(path); createdDirectories.push(path); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) throw error; }
+    }
+  };
   try {
     revalidatePendingSuccessor(pending);
     for (const file of changed) {
@@ -535,14 +640,19 @@ export async function installCodex(options: {
       if ((existsSync(file.path) ? readFileSync(file.path, 'utf8') : undefined) !== file.before) throw new Error(`Codex target changed during install: ${file.path}`);
     }
     for (const file of changed) {
-      mkdirSync(dirname(file.path), { recursive: true });
+      mkdirTracked(dirname(file.path));
       attempted.push(file);
-      const backup = save(file.path, file.before, file.content, backupParent);
-      if (backup) backups.push(backup);
+      let saveError: unknown;
+      try { save(file.path, file.before, file.content, backupParent, (backup, contents) => { backups.push(backup); madeBackups.set(backup, contents); }, directory => createdDirectories.push(directory)); }
+      catch (error) { saveError = error; }
+      if (saveError !== undefined) throw saveError;
     }
     stateAttempted = true;
-    const stateBackup = save(statePath, stateBefore, nextState, backupParent);
-    if (stateBackup) backups.push(stateBackup);
+    let stateSaveError: unknown;
+    try {
+      save(statePath, stateBefore, nextState, backupParent, (backup, contents) => { backups.push(backup); madeBackups.set(backup, contents); }, directory => createdDirectories.push(directory));
+    } catch (error) { stateSaveError = error; }
+    if (stateSaveError !== undefined) throw stateSaveError;
     finalizeSuccessor(pending, nextState);
     completed = true;
   } catch (error) {
@@ -558,12 +668,28 @@ export async function installCodex(options: {
       } catch { return false; }
     };
     let restored = true;
-    if (stateAttempted) restored = restore(statePath, stateBefore, nextState) && restored;
+    if (stateAttempted) {
+      try {
+        const current = existsSync(statePath) ? readFileSync(statePath, 'utf8') : undefined;
+        if (current !== stateBefore) restored = restore(statePath, stateBefore, nextState) && restored;
+      } catch { restored = false; }
+    }
     for (const file of [...attempted].reverse()) restored = restore(file.path, file.before, file.content) && restored;
     if (restored) {
-      try { recoverFailedSuccessor(pending, stateBefore); }
-      catch (cleanupError) { options.error(`Codex rollback verified, but pending recovery evidence could not be removed: ${pending.path}; ${String(cleanupError)}`); }
-    } else options.error(`Codex rollback was incomplete or encountered divergent content; pending recovery evidence retained at ${pending.path}. Review affected files and backups: ${backups.join(', ') || '(none)'}.`);
+      let cleanupFailed = false;
+      for (const [backup, expectedBackup] of [...madeBackups].sort(([a], [b]) => b.length - a.length)) try {
+        assertSafeFilesystemPath(backup, 'file');
+        const info = lstatSync(backup);
+        if (!info.isFile() || info.isSymbolicLink() || readFileSync(backup, 'utf8') !== expectedBackup) throw new Error('Backup is not an unchanged transaction-created regular file');
+        unlinkSync(backup);
+      } catch { cleanupFailed = true; options.error(`Rollback cleanup could not remove attributable backup: ${backup}`); }
+      for (const directory of [...new Set(createdDirectories)].sort((a, b) => b.length - a.length)) try { rmdirSync(directory); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { cleanupFailed = true; options.error(`Rollback cleanup could not remove transaction-created empty directory: ${directory}`); } }
+      if (!cleanupFailed) try { recoverFailedSuccessor(pending, stateBefore); }
+      catch (cleanupError) { cleanupFailed = true; options.error(`Codex rollback verified, but pending recovery evidence could not be removed: ${pending.path}; ${String(cleanupError)}`); }
+      if (cleanupFailed) options.error(`Codex file restoration succeeded but rollback cleanup was incomplete; preserve and review recovery evidence at ${pending.path}.`);
+    } else {
+      options.error(`Codex rollback was incomplete or encountered divergent content; pending recovery evidence retained at ${pending.path}. Review affected files and backups: ${backups.join(', ') || [...madeBackups.keys()].join(', ') || '(none)'}.`);
+    }
     throw error;
   }
   output(`Codex artifacts written with cumulative receipt ${pending.path}. Backups: ${backups.length}.`);
@@ -582,27 +708,27 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
   let found = false;
   for (const root of [...new Set(roots.map(path => resolve(path)))]) {
     const config = join(root, 'config.toml');
-    if (!existsSync(config)) continue;
-    found = true;
+      if (!existsSync(config)) continue;
+      found = true;
     let configText: string;
     try { assertSafeFilesystemPath(config, 'file'); configText = readFileSync(config, 'utf8'); validateCodexToml(configText, config); }
     catch (error) { issues.push(error instanceof Error ? error.message : String(error)); continue; }
-    const rootText = configText.split(/^\s*\[/m, 1)[0] ?? '';
-    if (!/^sandbox_mode\s*=\s*"(?:read-only|workspace-write|danger-full-access)"/m.test(rootText)) issues.push(`Codex shared sandbox_mode is missing or unsupported: ${config}`);
-    if (!/^approval_policy\s*=\s*"(?:on-request|never|granular)"/m.test(rootText) && !/^approval_policy\s*=\s*\{/m.test(rootText)) issues.push(`Codex shared approval_policy is missing or unsupported: ${config}`);
+    const configDocument = parseCodexToml(configText, config);
+    const rootValue = (key: string) => configDocument.entries.find(entry => entry.table.length === 0 && entry.key.length === 1 && entry.key[0] === key)?.value;
+    const sandbox = rootValue('sandbox_mode'); const approval = rootValue('approval_policy');
+    if (!['read-only', 'workspace-write', 'danger-full-access'].includes(String(sandbox))) issues.push(`Codex shared sandbox_mode is missing or unsupported: ${config}`);
+    if (!['on-request', 'never', 'granular'].includes(String(approval)) && !(approval && typeof approval === 'object')) issues.push(`Codex shared approval_policy is missing or unsupported: ${config}`);
     for (const role of nativeRoles) {
       const path = join(root, 'agents', `${role}.toml`);
       if (!existsSync(path)) { issues.push(`Missing Codex agent definition: ${path}`); continue; }
       try {
         assertSafeFilesystemPath(path, 'file');
         const text = readFileSync(path, 'utf8'); validateCodexToml(text, path);
-        const stringValue = (key: string) => {
-          const match = new RegExp(`^${key}\\s*=\\s*("(?:[^"\\\\]|\\\\.)*")\\s*$`, 'm').exec(text);
-          return match ? JSON.parse(match[1]!) as string : undefined;
-        };
+        const roleDocument = parseCodexToml(text, path);
+        const stringValue = (key: string) => roleDocument.entries.find(entry => entry.table.length === 0 && entry.key.length === 1 && entry.key[0] === key)?.value;
         for (const key of ['name', 'description', 'developer_instructions', 'model', 'model_reasoning_effort']) if (!stringValue(key)) issues.push(`Codex agent ${role} lacks required explicit ${key}: ${path}`);
         if (stringValue('name') !== role) issues.push(`Codex agent name does not match expected role ${role}: ${path}`);
-        if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(stringValue('model_reasoning_effort') ?? '')) issues.push(`Codex agent ${role} has unsupported model_reasoning_effort: ${path}`);
+        if (!(CODEX_REASONING_EFFORTS as readonly unknown[]).includes(stringValue('model_reasoning_effort') ?? '')) issues.push(`Codex agent ${role} has unsupported model_reasoning_effort: ${path}`);
       } catch (error) { issues.push(error instanceof Error ? error.message : String(error)); }
     }
     const skillsDir = join(dirname(root), '.agents', 'skills');
@@ -621,13 +747,13 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
         if (!state || typeof state !== 'object' || !Array.isArray(state.selectedMcpServers)) { issues.push(`Invalid Codex harness state manifest: ${statePath}`); }
         if (Array.isArray(state.selectedMcpServers)) for (const id of state.selectedMcpServers) {
           if (typeof id !== 'string' || !validMcpId(id)) { issues.push(`Invalid MCP identity in Codex state manifest: ${statePath}`); continue; }
-          const table = parseCodexToml(configText, config).tables.find(item => item.parts.length === 2 && item.parts[0] === 'mcp_servers' && item.parts[1] === id);
-          const section = table ? configText.slice(table.start, table.end) : '';
-           if (!/^[ \t]*(?:enabled|"enabled"|'enabled')\s*=\s*false\b/m.test(section)) issues.push(`Selected Codex MCP server ${id} is not disabled pending validation.`);
+          const table = configDocument.tables.find(item => item.parts.length === 2 && item.parts[0] === 'mcp_servers' && item.parts[1] === id);
+          const enabled = configDocument.entries.find(item => item.table.length === 2 && item.table[0] === 'mcp_servers' && item.table[1] === id && item.key.length === 1 && item.key[0] === 'enabled');
+           if (!table || enabled?.value !== false) issues.push(`Selected Codex MCP server ${id} is not disabled pending validation.`);
           const expectedTools = state.disabledTools?.[id];
           if (Array.isArray(expectedTools)) {
-             const match = /^[ \t]*(?:disabled_tools|"disabled_tools"|'disabled_tools')\s*=\s*\[([^\]]*)\]/m.exec(section);
-            const actual = match ? [...match[1]!.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(item => JSON.parse(`"${item[1]}"`) as string) : [];
+              const tools = configDocument.entries.find(item => item.table.length === 2 && item.table[0] === 'mcp_servers' && item.table[1] === id && item.key.length === 1 && item.key[0] === 'disabled_tools');
+              const actual = Array.isArray(tools?.value) ? tools.value : [];
             for (const tool of expectedTools) if (typeof tool !== 'string' || !actual.includes(tool)) issues.push(`Selected Codex MCP tool for ${id} is not disabled: ${String(tool)}`);
           }
         }

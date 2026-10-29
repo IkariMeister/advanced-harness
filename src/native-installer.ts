@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, parse as pathParse, resolve } from 'node:path';
 import { applyEdits, modify, parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
@@ -207,7 +207,7 @@ export function updateNativeConfiguration(original: string, definitions: Record<
   return bom + text;
 }
 
-export function saveInstallation(target: string, expected: string | undefined, updated: string, backupParent: string): string | undefined {
+export function saveInstallation(target: string, expected: string | undefined, updated: string, backupParent: string, onBackup?: (path: string, contents: string) => void, onBackupDirectory?: (path: string) => void): string | undefined {
   const checkAncestors = (path: string, leaf: 'file' | 'directory' | 'either'): void => {
     const absolute = resolve(path), root = pathParse(absolute).root;
     let cursor = root;
@@ -231,12 +231,23 @@ export function saveInstallation(target: string, expected: string | undefined, u
   if (current !== expected) throw new Error('Configuration changed while answering prompts. Rerun the installer; nothing was overwritten.');
   let backup: string | undefined;
   if (expected !== undefined) {
+    const makeDirectories = (directory: string) => {
+      const missing: string[] = []; let cursor = resolve(directory); const root = pathParse(cursor).root;
+      while (cursor !== root && !lstatSync(cursor, { throwIfNoEntry: false })) { missing.push(cursor); cursor = dirname(cursor); }
+      for (const path of missing.reverse()) {
+        try { mkdirSync(path, { mode: 0o700 }); onBackupDirectory?.(path); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) throw error; }
+      }
+    };
+    makeDirectories(backupParent);
     const directory = join(backupParent, `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
     checkAncestors(backupParent, 'directory');
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    makeDirectories(directory);
     checkAncestors(directory, 'directory');
     backup = join(directory, basename(target));
-    writeFileSync(backup, expected, { flag: 'wx', mode: 0o600 });
+    const fd = openSync(backup, 'wx', 0o600);
+    onBackup?.(backup, expected);
+    try { writeFileSync(fd, expected, 'utf8'); } finally { closeSync(fd); }
   }
   mkdirSync(dirname(target), { recursive: true });
   checkAncestors(target, 'file');
