@@ -36,7 +36,7 @@ import {
   preflightOpenCodeCommandDeployment,
   type WorkflowCommandId
 } from './workflow-commands.ts';
-import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 
 export interface UpdateFlowOptions {
   scope?: string;
@@ -79,7 +79,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   const env = deps.environment ?? process.env;
   const harnessRoot = deps.harnessRoot ?? resolve(fileURLToPath(new URL('..', import.meta.url)));
 
-  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : [await askHostSelection(ask, 'opencode', output)];
+  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
 
   let scope = options.scope;
   while (!scope || !['project', 'global'].includes(scope)) {

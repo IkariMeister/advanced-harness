@@ -622,9 +622,9 @@ test('CLI-used host selection retries; Enter defaults scope/project and cancels 
   const home = join(root, 'home'); mkdirSync(home, { recursive: true });
   const answers = ['unknown-host', 'codex', 'invalid-scope', '', '', '', ...rolePairAnswers('explicit-model'), ''];
   const ask = async () => answers.shift() ?? '';
-  const hosts = await askHostSelection(ask, 'opencode');
   const output: string[] = [];
-  const status = await runInstallerFlow({ host: hosts.join(',') }, { ask, output: message => output.push(message), error: message => output.push(message), cwd: root, home });
+  const host = await askHostSelection(ask, 'opencode', message => output.push(message));
+  const status = await runInstallerFlow({ host }, { ask, output: message => output.push(message), error: message => output.push(message), cwd: root, home });
   assert.equal(status, 0);
   assert.ok(output.some(line => line.includes('Cancelled. No files, backups, or receipts were written.')));
   assert.equal(existsSync(join(root, '.codex')), false);
