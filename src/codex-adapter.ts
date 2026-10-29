@@ -561,6 +561,7 @@ export async function installCodex(options: {
   }
   // Existing unowned/custom role files require explicit per-file consent.
   const selectedFiles: PlannedFile[] = [];
+  const declinedRolePaths = new Set<string>();
   for (const file of files) {
       assertSafeFilesystemPath(file.path, 'file');
     if (file.before !== undefined && file.before !== file.content && file.kind === 'role') {
@@ -572,7 +573,7 @@ export async function installCodex(options: {
         let overwrite: string;
         try { overwrite = (await ask(`Overwrite customized/unowned Codex agent ${file.path}?`, 'no')).trim(); }
         catch { throw new Error('Codex installation cancelled because an interactive prompt was rejected or closed; no changes made.'); }
-        if (!/^(y|yes)$/i.test(overwrite)) { output(`Preserving customized Codex agent: ${file.path}; the model and reasoning effort entered for it were not applied.`); continue; }
+        if (!/^(y|yes)$/i.test(overwrite)) { declinedRolePaths.add(file.path); output(`Preserving customized Codex agent: ${file.path}; the model and reasoning effort entered for it were not applied.`); continue; }
       }
     }
     selectedFiles.push(file);
@@ -580,6 +581,7 @@ export async function installCodex(options: {
   const omittedRoles = nativeRoles.filter(role => {
     const path = join(base, 'agents', `${role}.toml`);
     if (selectedFiles.some(file => file.kind === 'role' && file.path === path)) return false;
+    if (declinedRolePaths.has(path)) return true; // the requested assignment was not applied
     if (!existsSync(path)) return true;
     try {
       const document = parseCodexToml(readFileSync(path, 'utf8'), path);
@@ -632,17 +634,11 @@ export async function installCodex(options: {
         directory => { callbackSawDirectory = true; createdDirectories.push(directory); });
       if (returnedBackup) {
         if (before === undefined) throw new Error(`Saver returned a backup for a previously absent target: ${returnedBackup}`);
-        recordBackup(returnedBackup, before);
         if (!callbackSawBackup) {
-          assertSafeFilesystemPath(returnedBackup, 'file');
-          const info = lstatSync(returnedBackup);
-          if (!info.isFile() || info.isSymbolicLink() || readFileSync(returnedBackup, 'utf8') !== before) throw new Error(`Saver returned an unverifiable backup: ${returnedBackup}`);
-          if (!callbackSawDirectory) {
-            const backupDirectory = dirname(returnedBackup);
-            for (let directory = backupDirectory; directory !== resolve(backupParent) && directory.startsWith(resolve(backupParent) + (process.platform === 'win32' ? '\\' : '/')); directory = dirname(directory)) createdDirectories.push(directory);
-          }
-        }
-        if (callbackSawBackup && !callbackSawDirectory) ownershipUnknown = true;
+          // Matching contents do not prove this transaction created the file: report it, never delete it.
+          if (!backupSet.has(returnedBackup)) { backups.push(returnedBackup); backupSet.add(returnedBackup); }
+          ownershipUnknown = true;
+        } else if (!callbackSawDirectory) ownershipUnknown = true;
       } else if (before !== undefined && !callbackSawBackup) ownershipUnknown = true;
     } catch (error) {
       if (before !== undefined && !callbackSawBackup) ownershipUnknown = true;

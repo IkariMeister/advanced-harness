@@ -148,7 +148,8 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
     writeFileSync(join(box.project, '.codex', 'agents', 'researcher.toml'), roleBefore.replace('model = "fixture/model"', 'model = "custom/model"'));
     const prompts = [ask('Existing Codex MCP server ID', ''), ask('Exact tool names on fixture.server', ''), ...roles.flatMap(name => [ask(`${name}: explicitly assigned Codex model ID`, 'fixture/model'), ask(`${name}: reasoning effort`, 'medium')]), { prompt: /Overwrite customized\/unowned Codex agent[^\n]*researcher\.toml[^\n]*: $/, answer: 'no' }, { prompt: /Type install to apply[^\n]*: $/, answer: 'install' }];
     const rerun = await box.run('install-native-harness.ts', args(), { steps: prompts });
-    assert.equal(rerun.code, 0, rerun.transcript);
+    assert.equal(rerun.code, 1, rerun.transcript);
+    assert.match(rerun.stdout, /Install will remain incomplete because existing role profiles were preserved: researcher/);
     assert.deepEqual(rerun.unansweredSteps, []);
     assert.equal(readFileSync(skill, 'utf8'), '# other host shared skill\n');
     assert.match(readFileSync(rules, 'utf8'), /# user rules preserved/);
