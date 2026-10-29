@@ -608,7 +608,12 @@ export async function installCodex(options: {
     if (old) old.after = item.after; else combinedEvidence.push(item);
   }
   const nextState = JSON.stringify({ ...stateValue, host: 'codex', selectedMcpServers: selected, disabledTools: selectedTools, managed: combinedEvidence.map(item => ({ path: item.path, after: item.after })) }, null, 2) + '\n';
-  if (changed.length === 0 && nextState === stateBefore) { output('Codex configuration is already current; no files, backups, or receipts written.'); return 0; }
+  if (changed.length === 0 && nextState === stateBefore) {
+    output(omittedRoles.length
+      ? 'Nothing was written: the selected files are already current, but the requested role assignments were not applied because existing role profiles were preserved.'
+      : 'Codex configuration is already current; no files, backups, or receipts written.');
+    return omittedRoles.length ? 1 : 0;
+  }
   const receipt = createSuccessorReceipt(snapshot, stateBefore, nextState, {}, undefined, { host: 'codex', managedFiles: combinedEvidence });
   const pending = writePendingSuccessor(snapshot, receipt);
   const backups: string[] = [];
