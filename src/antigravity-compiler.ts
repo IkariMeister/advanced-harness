@@ -80,7 +80,7 @@ export function compileAntigravitySubagentSpec(
         description: definition.description,
         model: (preset?.tier ?? 'flash_lite') as AntigravitySubagentSpec['model'],
         roleTitle: 'Harness Remote & Service Integrator',
-        enableWriteTools: false, // Does not edit application code
+        enableWriteTools: true, // Antigravity bundles run_command with write tools; needed for gh and git push
         enableMCPTools: true,  // Exclusively owns MCP and remote services
         workspace: 'inherit',
         instructionSummary: 'Exclusively owns MCP tools, remote Git pushing, and GitHub CLI operations. Does not merge PRs.',
@@ -124,7 +124,7 @@ export function compileAntigravitySubagentSpec(
         description: definition.description,
         model: (preset?.tier ?? 'pro') as AntigravitySubagentSpec['model'],
         roleTitle: 'Code Reviewer & Quality Gate',
-        enableWriteTools: false, // Reports findings, does not silently fix
+        enableWriteTools: true, // Antigravity bundles run_command with write tools; needed for lint/build/unit checks
         enableMCPTools: false,
         workspace: 'inherit',
         instructionSummary: 'Runs lint/build/unit checks and reports code quality findings. Does not modify app code.',
@@ -135,7 +135,7 @@ export function compileAntigravitySubagentSpec(
         description: definition.description,
         model: (preset?.tier ?? 'flash') as AntigravitySubagentSpec['model'],
         roleTitle: 'QA & Verification Specialist',
-        enableWriteTools: false, // Reports verification results
+        enableWriteTools: true, // Antigravity bundles run_command with write tools; needed for runtime/E2E checks
         enableMCPTools: false,
         workspace: 'inherit',
         instructionSummary: 'Runs runtime/E2E verifications, Roborazzi, and device checks. Reports pass/fail findings.',
@@ -180,7 +180,7 @@ export function compileLeadOrchestrationRule(
     '## Subagent Role Registration Table',
     'When invoking child roles, call `define_subagent` (or use existing definitions) matching these parameters:',
     '',
-    '| Role | Model Tier | Write Tools | MCP Tools | Workspace | Role Description |',
+    '| Role | Model Tier | Write Tools (edits + `run_command`) | MCP Tools | Workspace | Role Description |',
     '| :--- | :--- | :--- | :--- | :--- | :--- |',
   ];
 
@@ -189,7 +189,13 @@ export function compileLeadOrchestrationRule(
   }
 
   lines.push('');
+  lines.push('## Subagent Definition Lifecycle');
+  lines.push('- Define each child role at most once per session. Before calling `define_subagent`, reuse any existing definition for that role.');
+  lines.push('- If `define_subagent` reports that the agent already exists, do not retry it; invoke the existing child with `invoke_subagent`.');
+  lines.push('- If an existing definition does not match the table above (for example, it was created under an older version of this rule), do not work around it. Stop and ask the human to start a fresh session.');
+  lines.push('');
   lines.push('## Subagent Execution Constraints');
+  lines.push('- **Write Tools:** In Antigravity, write tools include both file editing and `run_command`. External, Reviewer, and QA have write tools enabled only so they can run commands; they must never use file-edit tools on application, test, or configuration source.');
   lines.push('- **External:** The ONLY subagent permitted to access MCP tools, GitHub CLI (`gh`), or remote Git pushing.');
   lines.push('- **Operator:** Owns local Git branches, worktrees, and shared `MEMORY.md`. Does not edit application code.');
   lines.push('- **Implementer:** The ONLY subagent permitted to write application and test source code.');

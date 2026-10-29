@@ -66,6 +66,32 @@ test('planAntigravityDeployment produces expected global footprint including wor
   }
 });
 
+test('planAntigravityDeployment marks a receipt-owned older Lead rule outdated and an edited one customized', () => {
+  const tempProject = makeTempRoot('ag-project-outdated-rule-');
+  const tempHome = makeTempRoot('ag-home-outdated-rule-');
+  const rulePath = join(tempProject, '.agents', 'rules', 'advanced-harness-lead.md');
+  const olderRule = '# Advanced Harness Lead Orchestrator Rule\n\n| **external** | `flash_lite` | false | true | `inherit` | older |\n';
+
+  try {
+    mkdirSync(join(tempProject, '.agents', 'rules'), { recursive: true });
+    writeFileSync(rulePath, olderRule);
+    const prior = [{ path: rulePath, kind: 'rules' as const, before: { absent: true as const }, after: { content: olderRule } }];
+
+    const outdated = planAntigravityDeployment('project', tempProject, tempHome, rolesDir, commandsDir, prior);
+    const outdatedRule = outdated.filesToDeploy.find(f => f.relativePath === '.agents/rules/advanced-harness-lead.md');
+    assert.equal(outdatedRule?.status, 'outdated');
+    assert.ok(outdatedRule?.content.includes('## Subagent Definition Lifecycle'));
+
+    writeFileSync(rulePath, `${olderRule}user edit\n`);
+    const customized = planAntigravityDeployment('project', tempProject, tempHome, rolesDir, commandsDir, prior);
+    const customizedRule = customized.filesToDeploy.find(f => f.relativePath === '.agents/rules/advanced-harness-lead.md');
+    assert.equal(customizedRule?.status, 'customized');
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
 test('installAntigravity performs full installation and preserves existing unrelated hooks and mcp servers', async () => {
   const tempProject = makeTempRoot('ag-project-install-');
   const tempHome = makeTempRoot('ag-home-install-');
