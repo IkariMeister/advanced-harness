@@ -9,7 +9,7 @@ import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receip
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 
-import { parseHostSelection, HOST_CAPABILITIES, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string; context?: string }
@@ -60,7 +60,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
 
   if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
     for (const host of unsupportedHosts) {
-      errorOutput(`Installation blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented${host === 'cursor' ? ' (issue #46)' : ''}. No host adapters or files were changed.`);
+      errorOutput(`Installation blocked: ${HOST_CAPABILITIES[host].displayName} ${describeBlockedHost(host)}. No host adapters or files were changed.`);
     }
     if (dispatch.multi && unsupportedHosts.length === 0) {
       errorOutput('Multi-host simultaneous installation is not supported. Install each host deliberately.');
@@ -107,18 +107,6 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
       ask,
       output,
       error: errorOutput,
-    });
-    return typeof result === 'number' ? result : 0;
-  }
-
-  if (dispatch.host === 'codex') {
-    const adapter = (deps.getHostAdapter ?? getHostAdapter)('codex');
-    if (!adapter) throw new Error('Codex host adapter is not registered.');
-    const result = await adapter.install({
-      scope: scope as 'project' | 'global', project, home,
-      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
-      agentsDirectory: deps.agentsDirectory, commandsDirectory: deps.commandsDirectory,
-      ask, output, error: errorOutput,
     });
     return typeof result === 'number' ? result : 0;
   }

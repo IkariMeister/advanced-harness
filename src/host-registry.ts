@@ -5,12 +5,22 @@ import { nativeRoles, type Ask, type NativeRole } from './native-installer.ts';
 import type { HarnessVersionStamp } from './receipt-lineage.ts';
 import { installAntigravity, diagnoseAntigravity } from './antigravity-adapter.ts';
 import { installClaudeCode, diagnoseClaudeCode } from './claude-code-adapter.ts';
-import { installCodex, diagnoseCodex } from './codex-adapter.ts';
+import { diagnoseCodex } from './codex-adapter.ts';
 
 export const supportedHosts = ['opencode', 'claude-code', 'antigravity', 'codex', 'cursor'] as const;
 export type HostId = typeof supportedHosts[number];
-export const supportedNativeHosts = ['opencode', 'antigravity', 'claude-code', 'codex'] as const satisfies readonly HostId[];
+// Codex is deliberately absent: issue #45 requires strict per-role isolation, which Codex subagents
+// (shared sandbox/approval/MCP settings) do not provide. Its adapter serves doctor checks and tests only.
+export const supportedNativeHosts = ['opencode', 'antigravity', 'claude-code'] as const satisfies readonly HostId[];
 export type NativeHostId = typeof supportedNativeHosts[number];
+
+export const CODEX_INSTALL_GATE = 'native installation is gated: issue #45 requires strict per-role isolation, which Codex does not provide (subagents inherit shared sandbox/approval/MCP settings)';
+
+/** Why a host cannot be installed or updated natively, for blocked-selection messages. */
+export function describeBlockedHost(host: HostId): string {
+  if (host === 'codex') return CODEX_INSTALL_GATE;
+  return `native deployment is not implemented${host === 'cursor' ? ' (issue #46)' : ''}`;
+}
 
 export function selectNativeHost(hosts: readonly HostId[]): { host?: NativeHostId; unsupported: HostId[]; multi: boolean } {
   const unsupported = hosts.filter((host): host is Exclude<HostId, NativeHostId> => !(supportedNativeHosts as readonly HostId[]).includes(host));
@@ -191,6 +201,7 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
     },
     ghPrMergeGuard: 'Codex rules forbid identifiable direct gh pr merge forms; indirect/API routes are not universally blocked.',
     disclosures: [
+      'Installation and update are gated pending strict per-role isolation (issue #45); the Codex adapter currently serves doctor checks and tests only.',
       'Workflow skills are installed as .agents/skills/<name>/SKILL.md; invocation binding remains caller-specific.',
       'Lead and seven Codex subagent profiles use explicit user-selected models and reasoning settings; shared sandbox/approval/MCP configuration is inherited.',
       'Codex role ownership is instructional, not permission isolation. Approval behavior and Desktop runtime remain unverified.',
@@ -416,15 +427,16 @@ registerHostAdapter({
   },
 });
 
-async function installCodexFromOptions(options: HostAdapterInstallOptions | HostAdapterUpdateOptions): Promise<number> {
-  const ask: Ask = options.ask ?? (async (_q, s) => s ?? '');
-  return await installCodex({ scope: options.scope, project: options.project, home: options.home ?? homedir(), recoveryDirectory: options.recoveryDirectory, agentsDirectory: options.agentsDirectory, commandsDirectory: options.commandsDirectory, ask, output: options.output ?? console.log, error: options.error ?? console.error });
+// Install and update are gated at the registry as well as in the flows, so no caller can reach the
+// Codex writer through getHostAdapter(). Doctor stays available.
+async function codexGated(): Promise<never> {
+  throw new Error(`Codex ${CODEX_INSTALL_GATE}. No files were changed.`);
 }
 
 registerHostAdapter({
   host: 'codex',
-  install: installCodexFromOptions,
-  update: installCodexFromOptions,
+  install: codexGated,
+  update: codexGated,
   async doctor(options) { return await diagnoseCodex({ project: options.project, home: options.home ?? homedir(), globalDirectory: options.globalDirectory }); },
 });
 

@@ -8,7 +8,7 @@ import { compileCodexAgent, compileCodexMergeRule, diagnoseCodex, encodeCodexYam
 import { parseDocument } from 'yaml';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
-import { askHostSelection } from '../src/host-registry.ts';
+import { askHostSelection, getHostAdapter } from '../src/host-registry.ts';
 import { saveInstallation } from '../src/native-installer.ts';
 
 function roleAnswers(model: string, finalAnswer = 'install', reasoning = 'medium'): string[] {
@@ -362,46 +362,40 @@ test('Codex rejects malformed supported-subset TOML before prompts, backups, rec
   }
 });
 
-test('actual installer flow routes Codex selection and cancellation leaves no artifacts, backups, or receipts', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'codex-flow-'));
+test('Codex install and update are gated by the flows and the registry before prompts, files, backups or receipts', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-gated-'));
   const project = join(root, 'project'), home = join(root, 'home');
   mkdirSync(project); mkdirSync(home);
-  const answers = roleAnswers('gpt-explicit', 'no');
-  const output: string[] = [];
-  const status = await runInstallerFlow({ host: 'codex', scope: 'project', project }, {
-    ask: async () => answers.shift() ?? '', output: message => output.push(message), error: message => output.push(message), cwd: root, home,
-  });
-  assert.equal(status, 0);
+  for (const scope of ['project', 'global'] as const) {
+    let prompts = 0;
+    const output: string[] = [];
+    const deps = { ask: async () => { prompts++; return ''; }, output: (message: string) => output.push(message), error: (message: string) => output.push(message), cwd: root, home };
+    const options = { host: 'codex', scope, ...(scope === 'project' ? { project } : {}) };
+    assert.equal(await runInstallerFlow(options, deps), 2, scope);
+    assert.equal(await runUpdateFlow(options, deps), 2, scope);
+    assert.equal(prompts, 0, 'gated before any prompt');
+    assert.equal(output.filter(line => line.includes('issue #45') && /blocked/.test(line)).length, 2, output.join('\n'));
+  }
   assert.equal(existsSync(join(project, '.codex')), false);
+  assert.equal(existsSync(join(home, '.codex')), false);
   assert.equal(existsSync(join(home, 'Projects', 'advanced-harness-backups')), false);
-  assert.ok(output.some(line => line.includes('Cancelled.')));
+  const adapter = getHostAdapter('codex')!;
+  await assert.rejects(adapter.install({ scope: 'project', project, home }), /gated.*issue #45/);
+  await assert.rejects(adapter.update!({ scope: 'project', project, home }), /gated.*issue #45/);
+  assert.equal(typeof adapter.doctor, 'function', 'doctor stays available while installation is gated');
 });
 
-test('Codex installer and updater route both project and global scopes to their separate targets', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'codex-routing-'));
+test('installCodex keeps project and global scopes separate and Enter preserves installed choices', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-scopes-'));
   const project = join(root, 'project'), home = join(root, 'home');
   mkdirSync(project); mkdirSync(home);
-  const runInstall = (scope: 'project' | 'global', model: string) => {
-    const answers = roleAnswers(model);
-    return runInstallerFlow({ host: 'codex', scope, ...(scope === 'project' ? { project } : {}) }, {
-      ask: async () => answers.shift() ?? '', output() {}, error() {}, cwd: root, home,
-    });
-  };
-  const runUpdate = (scope: 'project' | 'global', model: string) => {
-    const answers = roleAnswers(model);
-    return runUpdateFlow({ host: 'codex', scope, ...(scope === 'project' ? { project } : {}) }, {
-      ask: async () => answers.shift() ?? '', output() {}, error() {}, cwd: root, home,
-    });
-  };
-  assert.equal(await runInstall('project', 'project-model'), 0);
-  const enterDefaults = ['', ...rolePairAnswers('', ''), 'install'];
-  assert.equal(await runUpdateFlow({ host: 'codex', scope: 'project', project }, {
-    ask: async () => enterDefaults.shift() ?? '', output() {}, error() {}, cwd: root, home,
-  }), 0, 'blank answers on the actual Codex update flow preserve installed model/effort values');
+  const run = (scope: 'project' | 'global', answers: string[]) => installCodex({ scope, ...(scope === 'project' ? { project } : {}), home, ask: async () => answers.shift() ?? '', output() {}, error() {} });
+  assert.equal(await run('project', roleAnswers('project-model')), 0);
+  assert.equal(await run('project', ['', ...rolePairAnswers('', ''), 'install']), 0, 'blank answers preserve installed model/effort values');
   assert.match(readFileSync(join(project, '.codex', 'agents', 'lead.toml'), 'utf8'), /model = "project-model"/);
-  assert.equal(await runUpdate('project', 'project-updated-model'), 0);
-  assert.equal(await runInstall('global', 'global-model'), 0);
-  assert.equal(await runUpdate('global', 'global-updated-model'), 0);
+  assert.equal(await run('project', roleAnswers('project-updated-model')), 0);
+  assert.equal(await run('global', roleAnswers('global-model')), 0);
+  assert.equal(await run('global', roleAnswers('global-updated-model')), 0);
   assert.match(readFileSync(join(project, '.codex', 'agents', 'lead.toml'), 'utf8'), /project-updated-model/);
   assert.match(readFileSync(join(home, '.codex', 'agents', 'lead.toml'), 'utf8'), /global-updated-model/);
   assert.equal(existsSync(join(project, '.codex', '.advanced-harness-state.json')), true);
@@ -622,16 +616,19 @@ test('Codex rollback preserves concurrent files in transaction-created directori
   assert.ok(readdirSync(recovery).some(name => name.startsWith('native-install-')));
 });
 
-test('CLI-used host selection retries; Enter defaults scope/project and cancels without writes', async () => {
+test('CLI-used host selection retries; a Codex selection is gated before scope prompts and writes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'codex-prompt-flow-'));
   const home = join(root, 'home'); mkdirSync(home, { recursive: true });
-  const answers = ['unknown-host', 'codex', 'invalid-scope', '', '', '', ...rolePairAnswers('explicit-model'), ''];
-  const ask = async () => answers.shift() ?? '';
+  const answers = ['unknown-host', 'codex'];
+  const questions: string[] = [];
+  const ask = async (question: string) => { questions.push(question); return answers.shift() ?? ''; };
   const output: string[] = [];
   const host = await askHostSelection(ask, 'opencode', message => output.push(message));
+  assert.equal(host, 'codex');
   const status = await runInstallerFlow({ host }, { ask, output: message => output.push(message), error: message => output.push(message), cwd: root, home });
-  assert.equal(status, 0);
-  assert.ok(output.some(line => line.includes('Cancelled. No files, backups, or receipts were written.')));
+  assert.equal(status, 2);
+  assert.equal(questions.some(question => /model ID|reasoning effort|MCP server|Type install/.test(question)), false, 'the gate must fire before any Codex role, MCP or install prompt');
+  assert.ok(output.some(line => line.includes('Installation blocked') && line.includes('issue #45')), output.join('\n'));
   assert.equal(existsSync(join(root, '.codex')), false);
   assert.equal(existsSync(join(home, 'Projects', 'advanced-harness-backups')), false);
 });
