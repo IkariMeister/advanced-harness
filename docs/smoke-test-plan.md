@@ -108,7 +108,7 @@ by `npm test`.
 | ID | Case | Expected |
 | --- | --- | --- |
 | PS-01 | `harness:setup`, Enter at the save preview | "Nothing changed", tree unchanged, no backups |
-| PS-02 | Setup with a bash shell, one configured build command, emulator, then `save` | Marked section holds the settings JSON; the other checks stay `unconfigured`; original `AGENTS.md` text preserved; no legacy profile; no worktree created |
+| PS-02 | Setup with a bash shell, one configured build command, a `detekt` additional gate, emulator, then `save` | Marked section holds the settings JSON with `additionalChecks`; the other checks stay `unconfigured` (lint is not replaced); original `AGENTS.md` text preserved; no legacy profile; no worktree created |
 | PI-01 | Project integrations: `gh` plus `example/smoke-android-app`, then `integrations` | Repository recorded; setup section byte-identical; no project OpenCode config; no connection checks |
 
 ## Known gaps found by the suite

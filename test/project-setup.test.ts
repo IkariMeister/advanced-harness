@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
-import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, runSetupFlow, saveSetup, setupConfirmation, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
+import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, runSetupFlow, saveSetup, setupConfirmation, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
 import { contextData, updateContext } from '../src/project-context.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
@@ -123,7 +123,7 @@ test('profile validation leaves unknown checks unconfigured, and rejects malform
 
 test('interactive collection confirms each command, supports explicit unconfigured and device serial', async t => {
   const { root, project } = fixture(t);
-  const responses = ['feature base', 'develop', 'unknown', 'bash', './gradlew :app:assembleDebug', '-', '-', '-', 'adb -s emulator-5554 shell am start -n app/.Main', '-', 'emulator', 'emulator-5554', join(root, 'trees'), join(root, 'memory', 'MEMORY.md')];
+  const responses = ['feature base', 'develop', 'unknown', 'bash', './gradlew :app:assembleDebug', '-', '-', '-', 'adb -s emulator-5554 shell am start -n app/.Main', '-', '', 'emulator', 'emulator-5554', join(root, 'trees'), join(root, 'memory', 'MEMORY.md')];
   const prompts: string[] = [];
   const result = await askProfile(project, inspectProject(project), undefined, async question => {
     prompts.push(question);
@@ -146,6 +146,102 @@ test('repeat setup preserves explicitly unconfigured checks and previous choices
   const result = await askProfile(project, inspectProject(project), previous, async (question, suggested) => { shown[question] = suggested; return ''; });
   assert.deepEqual(result, previous);
   assert.equal(shown['build: confirm command, or - to leave UNCONFIGURED'], '-');
+});
+
+test('additional gates: Spotless/Detekt detection suggests root tasks, validation keeps them distinct from standard checks', t => {
+  const { root, project } = fixture(t);
+  writeFileSync(join(project, 'build.gradle.kts'), 'plugins { id("com.diffplug.spotless"); id("io.gitlab.arturbosch.detekt") }');
+  const inspection = inspectProject(project);
+  assert.deepEqual(inspection.gates?.sort(), ['detekt', 'spotless']);
+  assert.deepEqual(suggestedAdditionalChecks(inspection, 'powershell').map(check => check.command).sort(), ['.\\gradlew.bat detekt', '.\\gradlew.bat spotlessCheck']);
+  assert.deepEqual(suggestedAdditionalChecks({ ...inspection, wrappers: { bash: false, windows: true } }, 'bash'), []);
+  assert.deepEqual(inspectProject(fixture(t).project).gates, []);
+
+  const valid: ProjectProfile = { ...profile(root, project), additionalChecks: [{ name: 'spotless', command: './gradlew spotlessCheck' }, { name: 'detekt', command: './gradlew detekt' }] };
+  assert.equal(validateProfile(valid), valid);
+  for (const additionalChecks of [
+    [], {}, [{ name: 'lint', command: './gradlew detekt' }], [{ name: 'Spotless', command: 'x' }], [{ name: 'with space', command: 'x' }],
+    [{ name: 'detekt', command: 'x' }, { name: 'detekt', command: 'y' }], [{ name: 'detekt', command: '' }], [{ name: 'detekt', command: 'a\nb' }],
+    [{ name: 'detekt', command: 'x', status: 'waived' }], [{ name: 'detekt' }],
+  ]) assert.throws(() => validateProfile({ ...valid, additionalChecks }), JSON.stringify(additionalChecks));
+
+  const updated = updateProjectInstructions(undefined, valid);
+  assert.deepEqual(contextData(updated, 'project'), valid);
+  assert.ok(updated.includes('they do not replace lint'));
+  assert.equal(updateProjectInstructions(updated, valid), updated);
+});
+
+test('additional gates: first setup confirms detected gates, retries invalid names, and skips with -', async t => {
+  const { root, project } = fixture(t);
+  writeFileSync(join(project, 'build.gradle.kts'), 'plugins { id("com.diffplug.spotless"); id("io.gitlab.arturbosch.detekt") }');
+  const inspection = inspectProject(project);
+  const gates = (inspection.gates ?? []).length;
+  const replies: Record<string, string[]> = {
+    'spotless (additional gate, detected in Gradle files): confirm command, or - to leave out': [''],
+    'detekt (additional gate, detected in Gradle files): confirm command, or - to leave out': ['-'],
+    'Additional required project gate name (for example spotless or detekt), or Enter to finish': ['lint', 'Bad Name', 'spotless', 'ktlint', 'license', ''],
+    'ktlint: command, or - to skip this gate': ['./gradlew ktlintCheck'],
+    'license: command, or - to skip this gate': [''],
+  };
+  const prompts: string[] = [];
+  const result = await askProfile(project, inspection, undefined, async (question, suggested) => {
+    prompts.push(question);
+    if (question.startsWith('Parent directory')) return join(root, 'trees');
+    if (question.startsWith('Shared MEMORY.md')) return join(root, 'memory', 'MEMORY.md');
+    return replies[question]?.shift() ?? suggested ?? '';
+  }, 'bash');
+  assert.equal(gates, 2);
+  assert.deepEqual(result.additionalChecks, [{ name: 'spotless', command: './gradlew spotlessCheck' }, { name: 'ktlint', command: './gradlew ktlintCheck' }]);
+  for (const queue of Object.values(replies)) assert.equal(queue.length, 0);
+  // Standard checks are still asked before the additional gates; lint is not replaced.
+  assert.ok(prompts.indexOf('lint: confirm command, or - to leave UNCONFIGURED') < prompts.findIndex(question => question.startsWith('spotless')));
+  assert.equal(result.checks.lint.status, 'configured');
+});
+
+test('additional gates: repeat setup keeps confirmed gates, removes with -, and never re-enables a detected gate left out', async t => {
+  const { root, project } = fixture(t);
+  writeFileSync(join(project, 'build.gradle.kts'), 'plugins { id("com.diffplug.spotless"); id("io.gitlab.arturbosch.detekt") }');
+  const previous: ProjectProfile = { ...profile(root, project), additionalChecks: [{ name: 'spotless', command: './gradlew spotlessCheck' }, { name: 'ktlint', command: './gradlew ktlintCheck' }] };
+  const shown: Record<string, string | undefined> = {};
+  const kept = await askProfile(project, inspectProject(project), previous, async (question, suggested) => { shown[question] = suggested; return ''; });
+  assert.deepEqual(kept, previous);
+  assert.equal(shown['detekt (additional gate, detected in Gradle files): confirm command, or - to leave out'], '-');
+  assert.equal(shown['spotless (additional gate, detected in Gradle files): confirm command, or - to leave out'], undefined);
+  const removed = await askProfile(project, inspectProject(project), previous, async question => question.startsWith('ktlint (additional gate)') || question.startsWith('spotless (additional gate)') ? '-' : '');
+  assert.equal(Object.hasOwn(removed, 'additionalChecks'), false);
+});
+
+test('runSetupFlow previews additional gates and cancellation writes nothing', async t => {
+  const { root, project } = fixture(t);
+  const original = '# Existing rules\n';
+  writeFileSync(join(project, 'AGENTS.md'), original);
+  writeFileSync(join(project, 'build.gradle.kts'), 'plugins { id("io.gitlab.arturbosch.detekt") }');
+  const home = join(root, 'home');
+  mkdirSync(home);
+  for (const confirmation of ['', 'save']) {
+    const outputs: string[] = [];
+    const code = await runSetupFlow({ project }, {
+      ask: async (question, suggested) => {
+        if (question.startsWith('Full preview')) return confirmation;
+        if (question.startsWith('Parent directory')) return join(root, 'trees');
+        if (question.startsWith('Shared MEMORY.md')) return join(root, 'memory', 'MEMORY.md');
+        return suggested ?? '';
+      },
+      output: message => outputs.push(message),
+      error: message => outputs.push(message),
+      home,
+      xdgConfigHome: join(root, 'xdg'),
+      recoveryDirectory: join(root, `backups-${confirmation || 'blank'}`),
+    });
+    assert.equal(code, 0);
+    assert.ok(outputs.includes('detekt (additional gate): ./gradlew detekt') || outputs.includes('detekt (additional gate): .\\gradlew.bat detekt'));
+    if (!confirmation) {
+      assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), original);
+      assert.equal(existsSync(join(root, 'backups-blank')), false);
+    } else {
+      assert.deepEqual(validateProfile(contextData(readFileSync(join(project, 'AGENTS.md'), 'utf8'), 'project')).additionalChecks?.map(check => check.name), ['detekt']);
+    }
+  }
 });
 
 test('AGENTS marked-section updates preserve unrelated bytes, BOM, and CRLF; repeat is idempotent', t => {
@@ -373,6 +469,7 @@ test('runSetupFlow in project scope supports non-Git and non-Android directory, 
     'main',                       // baseBranch
     'npm run build',              // build check (suggested from package.json)
     '-', '-', '-', '-',           // lint, unit, runtime, e2e (roborazzi skipped for non-Android!)
+    '',                           // no additional gates
     join(home, 'worktrees'),
     join(home, 'data', 'MEMORY.md'),
     'save',

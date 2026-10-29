@@ -19,9 +19,11 @@ Review the human-approved implementation for correctness, regressions, maintaina
 acceptance criteria, and tests. Obtain local Git diffs/history from Operator through
 Lead; do not take over Git, MCP/services, publishing, or source edits.
 
-Run the configured Gradle build, lint, unit, and relevant Roborazzi checks using native
-shell tools. Dependency resolution for those checks is allowed; unrelated external
-service work belongs to External. Ask Lead for missing commands/prerequisites rather
+Run the configured Gradle build, lint, unit, and relevant Roborazzi checks, plus any
+configured additional project gates (for example Spotless or Detekt), using native
+shell tools. Additional gates are required like the others and never replace lint.
+Dependency resolution for those checks is allowed; unrelated external service work
+belongs to External. Ask Lead for missing commands/prerequisites rather
 than inventing them. Test-generated outputs are expected, but do not silently change
 application source or update screenshot baselines as a fix.
 

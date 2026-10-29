@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createSandbox, tree, type Sandbox } from './support/sandbox.ts';
 import { ask } from './support/steps.ts';
 
-const setupSteps = (build: string, confirmation: string) => [
+const setupSteps = (build: string, confirmation: string, gates: [string, string][] = []) => [
   ask('Command shell', 'bash'),
   ask('Base branch'),
   ask('build: confirm command', build),
@@ -15,6 +15,8 @@ const setupSteps = (build: string, confirmation: string) => [
   ask('roborazzi: confirm command'),
   ask('runtime: confirm command'),
   ask('e2e: confirm command'),
+  ...gates.flatMap(([name, command]) => [ask('Additional required project gate name', name), ask(`${name}: command`, command)]),
+  ask('Additional required project gate name'),
   ask('Device preference', 'emulator'),
   ask('Optional device serial'),
   ask('Parent directory for future worktrees'),
@@ -39,7 +41,7 @@ describe('SMK-PS project setup + SMK-PI project integrations (non-TTY piped answ
   });
 
   it('SMK-PS-02 saving writes a marked settings section and preserves existing AGENTS.md content', async () => {
-    const result = await box.run('setup-native-project.ts', ['--scope', 'project', '--project', box.project], { steps: setupSteps('./gradlew assembleDebug', 'save') });
+    const result = await box.run('setup-native-project.ts', ['--scope', 'project', '--project', box.project], { steps: setupSteps('./gradlew assembleDebug', 'save', [['detekt', './gradlew detekt']]) });
     assert.equal(result.code, 0, result.transcript);
     const text = agentsMd();
     assert.ok(text.includes(pristine.get('AGENTS.md')!.trim()), 'original instructions preserved');
@@ -49,6 +51,7 @@ describe('SMK-PS project setup + SMK-PI project integrations (non-TTY piped answ
     assert.equal(settings.device.preference, 'emulator');
     assert.equal(settings.checks.build.status, 'configured');
     assert.equal(settings.checks.lint.status, 'unconfigured');
+    assert.deepEqual(settings.additionalChecks, [{ name: 'detekt', command: './gradlew detekt' }], 'additional gate saved next to, not instead of, lint');
     assert.equal(existsSync(join(box.project, '.opencode', 'harness.project.json')), false, 'no legacy profile file');
     assert.equal(existsSync(settings.worktreeDirectory), false, 'setup does not create worktrees');
   });

@@ -8,12 +8,18 @@ import { contextData, contextPath, prepareContextFiles, readContext, updateConte
 export const checkNames = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'] as const;
 export type CheckName = typeof checkNames[number];
 export type ProjectCheck = { status: 'configured'; command: string } | { status: 'unconfigured' };
+/** Extra required project gates (for example Spotless or Detekt); they never replace lint. */
+export type AdditionalCheck = { name: string; command: string };
+export const detectedGateTasks = { spotless: 'spotlessCheck', detekt: 'detekt' } as const;
+export type DetectedGate = keyof typeof detectedGateTasks;
+const additionalCheckName = /^[a-z][a-z0-9-]{0,31}$/;
 export type ProjectProfile = {
   version: 1;
   projectRoot: string;
   baseBranch: string;
   shell: 'powershell' | 'bash' | 'cmd';
   checks: Record<CheckName, ProjectCheck>;
+  additionalChecks?: AdditionalCheck[];
   device: { preference: 'physical-first' | 'emulator' | 'ask'; serial?: string };
   worktreeDirectory: string;
   memoryPath: string;
@@ -23,6 +29,7 @@ export type Inspection = {
   gradleFiles: string[];
   androidModules: string[];
   roborazzi: boolean;
+  gates?: DetectedGate[] | undefined;
   wrappers: { bash: boolean; windows: boolean };
   packageScripts?: Partial<Record<CheckName, string>> | undefined;
   agents: string | undefined;
@@ -53,6 +60,7 @@ export function inspectProject(directory: string): Inspection {
   const gradleFiles: string[] = [];
   const androidModules: string[] = [];
   let roborazzi = false;
+  const gates = new Set<DetectedGate>();
   let visited = 0;
   const walk = (directory: string, depth: number) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -66,6 +74,7 @@ export function inspectProject(directory: string): Inspection {
         gradleFiles.push(relative(root, path).replaceAll('\\', '/'));
         if (/com\.android\.(application|library)/.test(text) && entry.name.startsWith('build.')) androidModules.push(relative(root, directory).replaceAll('\\', '/'));
         if (/roborazzi/i.test(text)) roborazzi = true;
+        for (const gate of Object.keys(detectedGateTasks) as DetectedGate[]) if (new RegExp(gate, 'i').test(text)) gates.add(gate);
       }
     }
   };
@@ -94,6 +103,7 @@ export function inspectProject(directory: string): Inspection {
     gradleFiles,
     androidModules,
     roborazzi,
+    gates: [...gates],
     wrappers: { bash: existsSync(join(root, 'gradlew')), windows: existsSync(join(root, 'gradlew.bat')) },
     packageScripts,
     agents: existsSync(agentsPath) ? safeText(agentsPath) : undefined,
@@ -119,6 +129,14 @@ export function suggestedCommands(inspection: Inspection, shell: ProjectProfile[
   return {};
 }
 
+/** Text-detected Spotless/Detekt plugins suggest root tasks; neither is verified to exist. */
+export function suggestedAdditionalChecks(inspection: Inspection, shell: ProjectProfile['shell']): AdditionalCheck[] {
+  const hasGradleWrapper = shell === 'bash' ? inspection.wrappers.bash : inspection.wrappers.windows;
+  if (!hasGradleWrapper || inspection.gradleFiles.length === 0) return [];
+  const wrapper = shell === 'powershell' ? '.\\gradlew.bat' : shell === 'cmd' ? 'gradlew.bat' : './gradlew';
+  return (inspection.gates ?? []).map(name => ({ name, command: `${wrapper} ${detectedGateTasks[name]}` }));
+}
+
 /** Full-preview confirmation accepts only the documented tokens; all else cancels. */
 export function setupConfirmation(response: string): 'save' | 'cancel' {
   const answer = response.trim();
@@ -137,12 +155,21 @@ function inside(path: string, directory: string): boolean {
 }
 
 export function validateProfile(value: unknown): ProjectProfile {
-  if (!object(value) || !onlyKeys(value, ['version', 'projectRoot', 'baseBranch', 'shell', 'checks', 'device', 'worktreeDirectory', 'memoryPath']) || value.version !== 1 || typeof value.projectRoot !== 'string' || !isAbsolute(value.projectRoot) || typeof value.baseBranch !== 'string' || !validBranch(value.baseBranch) || !['powershell', 'bash', 'cmd'].includes(String(value.shell)) || !object(value.checks) || !onlyKeys(value.checks, checkNames) || !object(value.device) || !onlyKeys(value.device, ['preference', 'serial']) || !['physical-first', 'emulator', 'ask'].includes(String(value.device.preference))) throw new Error('Invalid or unsupported project profile metadata; unknown fields are not silently discarded.');
+  if (!object(value) || !onlyKeys(value, ['version', 'projectRoot', 'baseBranch', 'shell', 'checks', 'additionalChecks', 'device', 'worktreeDirectory', 'memoryPath']) || value.version !== 1 || typeof value.projectRoot !== 'string' || !isAbsolute(value.projectRoot) || typeof value.baseBranch !== 'string' || !validBranch(value.baseBranch) || !['powershell', 'bash', 'cmd'].includes(String(value.shell)) || !object(value.checks) || !onlyKeys(value.checks, checkNames) || !object(value.device) || !onlyKeys(value.device, ['preference', 'serial']) || !['physical-first', 'emulator', 'ask'].includes(String(value.device.preference))) throw new Error('Invalid or unsupported project profile metadata; unknown fields are not silently discarded.');
   for (const name of checkNames) {
     const check = value.checks[name];
     if (!object(check) || !onlyKeys(check, ['status', 'command']) || !['configured', 'unconfigured'].includes(String(check.status))) throw new Error(`Invalid ${name} check configuration.`);
     if (check.status === 'configured' && (typeof check.command !== 'string' || !check.command.trim() || /[\r\n\0]/.test(check.command))) throw new Error(`Invalid ${name} command; use a single shell command line.`);
     if (check.status === 'unconfigured' && Object.hasOwn(check, 'command')) throw new Error(`Unconfigured ${name} cannot contain a command.`);
+  }
+  if (Object.hasOwn(value, 'additionalChecks')) {
+    if (!Array.isArray(value.additionalChecks) || value.additionalChecks.length === 0) throw new Error('Additional checks must be a non-empty list; omit the field when there are none.');
+    const seen = new Set<string>();
+    for (const check of value.additionalChecks as unknown[]) {
+      if (!object(check) || !onlyKeys(check, ['name', 'command']) || typeof check.name !== 'string' || !additionalCheckName.test(check.name) || (checkNames as readonly string[]).includes(check.name) || seen.has(check.name)) throw new Error('Invalid additional check name; use a unique lowercase name that is not a standard check.');
+      seen.add(check.name);
+      if (typeof check.command !== 'string' || !check.command.trim() || /[\r\n\0]/.test(check.command)) throw new Error(`Invalid ${check.name} command; use a single shell command line.`);
+    }
   }
   if (value.device.serial !== undefined && (typeof value.device.serial !== 'string' || !/^[\w.:-]+$/.test(value.device.serial))) throw new Error('Invalid device serial.');
   for (const key of ['worktreeDirectory', 'memoryPath'] as const) {
@@ -275,6 +302,7 @@ export async function askProfile(
     do { answer = (await ask(`${name}: confirm command, or - to leave UNCONFIGURED`, suggestion)).trim() || suggestion; } while (/[\r\n\0]/.test(answer));
     checks[name] = answer === '-' ? { status: 'unconfigured' } : { status: 'configured', command: answer };
   }
+  const additionalChecks = await askAdditionalChecks(ask, previous, suggestedAdditionalChecks(inspection, shell));
   let device: ProjectProfile['device'];
   if (isAndroid) {
     const preference = await choose(ask, 'Device preference: physical-first, emulator, or ask', ['physical-first', 'emulator', 'ask'], previous?.device.preference ?? globalDefaults?.device.preference ?? 'physical-first');
@@ -293,7 +321,31 @@ export async function askProfile(
   const defaultMemoryParent = globalDefaults?.memoryParentDirectory ?? join(home, 'Projects', 'advanced-harness-data');
   const worktreeDirectory = expandPath((await ask('Parent directory for future worktrees (outside the checkout)', previous?.worktreeDirectory ?? join(defaultWorktreeParent, id))).trim() || previous?.worktreeDirectory || join(defaultWorktreeParent, id), home);
   const memoryPath = expandPath((await ask('Shared MEMORY.md path (outside checkout/worktrees)', previous?.memoryPath ?? join(defaultMemoryParent, id, 'MEMORY.md'))).trim() || previous?.memoryPath || join(defaultMemoryParent, id, 'MEMORY.md'), home);
-  return validateProfile({ version: 1, projectRoot: resolve(root), baseBranch, shell, checks, device, worktreeDirectory, memoryPath });
+  return validateProfile({ version: 1, projectRoot: resolve(root), baseBranch, shell, checks, ...(additionalChecks.length ? { additionalChecks } : {}), device, worktreeDirectory, memoryPath });
+}
+
+/** Previous gates are reconfirmed, newly detected ones suggested, then free-form gates until Enter. */
+async function askAdditionalChecks(ask: Ask, previous: ProjectProfile | undefined, suggestions: readonly AdditionalCheck[]): Promise<AdditionalCheck[]> {
+  const result: AdditionalCheck[] = [];
+  const confirm = async (name: string, suggestion: string, question: string) => {
+    let answer: string;
+    do { answer = (await ask(question, suggestion)).trim() || suggestion; } while (/[\r\n\0]/.test(answer));
+    if (answer !== '-') result.push({ name, command: answer });
+  };
+  for (const old of previous?.additionalChecks ?? []) await confirm(old.name, old.command, `${old.name} (additional gate): confirm command, or - to remove`);
+  for (const suggestion of suggestions) {
+    if (previous?.additionalChecks?.some(old => old.name === suggestion.name)) continue;
+    // Repeat setup does not silently enable a detected gate the human previously left out.
+    await confirm(suggestion.name, previous ? '-' : suggestion.command, `${suggestion.name} (additional gate, detected in Gradle files): confirm command, or - to leave out`);
+  }
+  for (;;) {
+    const name = (await ask('Additional required project gate name (for example spotless or detekt), or Enter to finish', '')).trim();
+    if (!name) return result;
+    if (!additionalCheckName.test(name) || (checkNames as readonly string[]).includes(name) || result.some(check => check.name === name)) continue;
+    let command: string;
+    do { command = (await ask(`${name}: command, or - to skip this gate`, '-')).trim() || '-'; } while (/[\r\n\0]/.test(command));
+    if (command !== '-') result.push({ name, command });
+  }
 }
 
 export function updateProjectInstructions(original: string | undefined, profile: ProjectProfile): string {
@@ -303,6 +355,7 @@ export function updateProjectInstructions(original: string | undefined, profile:
   return updateContext(original, 'project', profile, [
     'These embedded settings are the project context source; legacy .opencode/harness.project.json files are not loaded automatically.',
     'Use the settings below before planning. Commands are confirmed choices, not verified results or authorization to execute them.',
+    'Additional checks (for example Spotless or Detekt) are required project gates alongside the standard checks; they do not replace lint.',
     'Run commands in the active application worktree root. Ask on instruction conflicts, missing prerequisites, or unconfigured checks; missing checks are not passed or waived.',
     'Operator owns local Git/worktrees and shared MEMORY.md. Task bootstrap prepares the worktree and initializes shared memory without blocking on other worktrees. Shared memory stays outside application worktrees.',
     'Screenshots/video/logcat evidence remain optional unless explicitly required. Implementation and publishing require separate conversational approvals.',
@@ -482,6 +535,7 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
     const check = profile.checks[name];
     output(`${name}: ${check.status === 'configured' ? check.command : 'UNCONFIGURED (not waived)'}`);
   }
+  for (const check of profile.additionalChecks ?? []) output(`${check.name} (additional gate): ${check.command}`);
   output(`Device: ${profile.device.preference}; serial: ${profile.device.serial ?? 'choose at runtime'}`);
   output(`Worktree parent: ${profile.worktreeDirectory}\nShared memory: ${profile.memoryPath}`);
   output('Files to write:');
