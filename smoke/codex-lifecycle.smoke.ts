@@ -1,7 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { ask, roles } from './support/steps.ts';
 import { createSandbox, tree, type Sandbox } from './support/sandbox.ts';
@@ -73,18 +72,24 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
   });
 
   it('CX-03 global install and doctor stay separate from the project and real home', async () => {
-    const realHome = process.env.USERPROFILE ?? process.env.HOME ?? '';
-    const watched = ['.codex', '.agents', 'Projects/advanced-harness-backups'].map(path => join(realHome, path));
-    const fingerprintFixture = join(box.root, 'fingerprint-fixture');
-    const secretLikeFixture = 'SECRET-LIKE-SENTINEL-do-not-log';
-    writeFileSync(fingerprintFixture, secretLikeFixture);
-    const { createHash } = await import('node:crypto');
-    const fixtureHash = createHash('sha256').update(readFileSync(fingerprintFixture)).digest('hex');
-    const fixtureFingerprintText = `file:${readFileSync(fingerprintFixture).length}:${fixtureHash}`;
-    assert.match(fixtureFingerprintText, /^file:\d+:[a-f0-9]{64}$/);
-    assert.doesNotMatch(fixtureFingerprintText, /SECRET-LIKE-SENTINEL/);
+    // realHomeFingerprintOf joins each entry onto homedir(), so watched paths must be home-relative. Only harness-written
+    // paths are watched: the rest of a real ~/.codex (sessions, logs, databases) is live and may be locked by Codex Desktop.
+    const watched = ['.codex/config.toml', '.codex/agents', '.codex/rules', '.codex/.advanced-harness-state.json', '.agents/skills', 'Projects/advanced-harness-backups'];
     const { realHomeFingerprintOf } = await import('./support/sandbox.ts');
-    const before = realHomeFingerprintOf(watched.map(path => path.replaceAll('\\', '/')));
+    // Prove the guard resolves and hashes a real directory (and never returns its contents) by pointing
+    // homedir() at a fixture that holds a secret-like file.
+    const homeVariable = process.platform === 'win32' ? 'USERPROFILE' : 'HOME';
+    const fixtureHome = join(box.root, 'fingerprint-home');
+    mkdirSync(join(fixtureHome, '.codex'), { recursive: true });
+    writeFileSync(join(fixtureHome, '.codex', 'auth.json'), 'SECRET-LIKE-SENTINEL-do-not-log');
+    const savedHome = process.env[homeVariable];
+    process.env[homeVariable] = fixtureHome;
+    let fixtureFingerprint: string | undefined;
+    try { fixtureFingerprint = realHomeFingerprintOf(['.codex']).get('.codex'); }
+    finally { if (savedHome === undefined) delete process.env[homeVariable]; else process.env[homeVariable] = savedHome; }
+    assert.match(fixtureFingerprint ?? '', /^directory:auth\.json:file:\d+:[a-f0-9]{64}$/);
+    assert.doesNotMatch(fixtureFingerprint ?? '', /SECRET-LIKE-SENTINEL/);
+    const before = realHomeFingerprintOf(watched);
     const cancel = await box.run('install-native-harness.ts', ['--host', 'codex', '--scope', 'global'], { steps: [ask('Existing Codex MCP server ID', ''), ...roles.flatMap(role => [ask(`${role}: explicitly assigned Codex model ID`, 'global/model'), ask(`${role}: reasoning effort`, 'medium')]), ask('Type install to apply', 'cancel')] });
     assert.equal(cancel.code, 0, cancel.transcript);
     assert.equal(existsSync(join(box.home, '.codex')), false);
@@ -97,7 +102,7 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
     const doctor = await diagnoseCodex({ project: box.project, home: box.home });
     assert.equal(doctor.ok, false, 'CX-02 intentionally injected a project role edit at the stale-confirmation boundary');
     assert.ok(doctor.issues.some(issue => issue.includes('lead')));
-    assert.deepEqual(realHomeFingerprintOf(watched.map(path => path.replaceAll('\\', '/'))), before, 'real-home protected roots remain unchanged');
+    assert.deepEqual(realHomeFingerprintOf(watched), before, 'real-home protected roots remain unchanged');
     assert.ok(existsSync(join(box.home, '.codex', 'config.toml')));
     assert.ok(existsSync(join(box.home, '.agents', 'skills')));
     const { diagnoseCodex: diagnoseGlobalReport } = await import('../src/codex-adapter.ts');
@@ -105,7 +110,7 @@ describe('SMK-CX Codex project lifecycle (non-TTY piped answers)', () => {
     assert.equal(globalReport.ok, true, globalReport.issues.join('\n'));
     const update = await box.run('update-native-harness.ts', ['--host', 'codex', '--scope', 'global'], { steps: [ask('Existing Codex MCP server ID', ''), ...roles.flatMap(role => [ask(`${role}: explicitly assigned Codex model ID`, ''), ask(`${role}: reasoning effort`, '')]), ask('Type install to apply', 'install')] });
     assert.equal(update.code, 0, update.transcript);
-    assert.deepEqual(realHomeFingerprintOf(watched.map(path => path.replaceAll('\\', '/'))), before, 'real-home protected roots unchanged after global update');
+    assert.deepEqual(realHomeFingerprintOf(watched), before, 'real-home protected roots unchanged after global update');
     const { diagnoseCodex: diagnoseGlobal } = await import('../src/codex-adapter.ts');
     const globalDoctor = await diagnoseGlobal({ home: box.home });
     assert.equal(globalDoctor.ok, true, globalDoctor.issues.join('\n'));
