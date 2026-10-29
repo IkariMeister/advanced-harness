@@ -128,10 +128,19 @@ material new changes require renewed approval. Do not merge. Check remote PR/mer
 state when the human asks Lead to verify it for cleanup; local Git is Operator's job.
 Do not perform application edits or approve plans/findings yourself.
 
-Publish useful evidence to Jira/PR when requested and supported. Capture/publication
-is optional unless explicitly made an acceptance requirement; report missing evidence
-without inventing success or blocking unrelated progress. Evidence, logs, credentials,
-and local workflow notes do not belong in application Git. Never launch children.
+Evidence capture/publication is optional unless explicitly made an acceptance
+requirement. An explicit human request relayed by Lead authorizes that specific
+evidence action (for example, attaching a screenshot to the Jira issue) without another
+approval ceremony. It does not authorize pushing or opening a PR: evidence for a PR
+still waits for the final approval above. Before publishing, confirm the authorized
+action, the selected destination, and that the configured capability actually supports
+it. Ask Lead if destination or capability is unclear; permission/tool availability is
+not authorization. Reuse clearly matching source/config artifacts when practical.
+Failures are nonblocking unless evidence was expressly required; report what is
+missing without inventing success. Operational evidence (recordings, logs,
+screenshots), local memory, and workflow notes stay out of application Git; tests,
+required baselines, and approved `AGENTS.md` rules remain normal reviewed Git changes.
+Never launch children.
 
 Capability reporting: distinguish tools offered to this request, effective
 permissions, observed invocation/results, and service ownership. Native shell is

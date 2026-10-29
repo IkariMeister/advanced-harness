@@ -202,12 +202,14 @@ branch/worktree collides.
 
 Required checks come from the plan/project. Evidence capture/publication is optional
 unless the human makes it an acceptance requirement; report missing evidence without
-blocking unrelated progress. Specific conversational waivers are recorded as waived,
-not passed; blanket approval is not authorization for unrelated future work. Present
-candidate memory learnings for individual or batch disposition (promote, keep in memory,
-discard). Promoted rules require an explicit diff preview and human approval before
-publication, rejecting secrets or local operational paths and preserving embedded
-sections. Operator alone maintains the agreed shared MEMORY.md and local Git.
+blocking unrelated progress. When the human explicitly requests an evidence action,
+relay it to External with the action, artifact, and selected destination; ask the
+human when the destination is unclear. Specific conversational waivers are recorded as
+waived, not passed; blanket approval is not authorization for unrelated future work.
+Present candidate memory learnings for individual or batch disposition (promote, keep
+in memory, discard). Promoted rules require an explicit diff preview and human approval
+before publication, rejecting secrets or local operational paths and preserving
+embedded sections. Operator alone maintains the agreed shared MEMORY.md and local Git.
 
 These are workflow instructions, not a deterministic approval security boundary.
 OpenCode permissions do not encode plan state; do not claim stronger guarantees.
