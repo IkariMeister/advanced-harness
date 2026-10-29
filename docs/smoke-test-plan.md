@@ -63,13 +63,18 @@ input with no writes.
 ## Journeys and cases
 
 Hosts covered: OpenCode V2, Claude Code, Google Antigravity, and OpenAI Codex,
-which have native deployment. Cursor remains compile-only and is covered by
-`npm test`.
+which have native deployment. The host-selection prompt journey is covered by
+`smoke/host-selection.smoke.ts`: it re-asks comma-separated and `all` answers,
+keeps OpenCode on Enter, and rejects unsupported Cursor without writes. Cursor
+otherwise remains compile-only and is covered by `npm test`.
 
 ### SMK-OC: OpenCode project lifecycle (`smoke/opencode-lifecycle.smoke.ts`)
 
 | ID | Case | Expected |
 | --- | --- | --- |
+| SMK-HS-01 | Install host prompt receives comma-separated and `all` answers, then a Claude Code selection | Both invalid multi-host answers are re-asked; Claude Code cancellation leaves project tree and recovery directory unchanged, with no unanswered prompts |
+| SMK-HS-02 | Enter at install host prompt | OpenCode remains the default; cancellation leaves project tree and recovery directory unchanged |
+| SMK-HS-03 | Update host prompt receives a comma-separated answer, then unsupported Cursor | Multi-host answer is re-asked; Cursor is rejected before writes, with no unanswered prompts |
 | OC-01 | Install with piped stdin and no TTY preload | Non-zero exit, guard message, no files or receipts |
 | OC-02 | Install preview, Enter at `Type install` | "Cancelled", project tree unchanged, no recovery dir, no runtime calls |
 | OC-03 | Install with default model suggestions | 8 inline agents (Lead primary), 6 `.opencode/commands`, 1 receipt, `AGENTS.md` untouched, runtime PASS for 8 roles, only `opencode api get` calls |
@@ -112,7 +117,7 @@ which have native deployment. Cursor remains compile-only and is covered by
 | CX-02 | Install and doctor; run `harness:update` with Enter at prior MCP/tool/model/effort defaults; then inject a fixture edit at the install-confirmation boundary | Exact CRLF config including comments, root settings, disabled route/tools and trailing bytes; manifest MCP selections; all eight model/effort role assignments; doctor passes; update retains them; stale confirmation is refused without writes beyond injected edit |
 | CX-03 | Global cancellation, install, update and doctor in isolated home (after CX-02) | Snapshot the project immediately before global install; assert exact unchanged tree afterward. Sandbox global Codex config, roles and shared skills are deployed; recursive real-home `.codex`, `.agents/skills`, and recovery fingerprints match before/after; cancellation writes nothing |
 | CX-04 | Required model/effort invalid-answer policy | Three invalid attempts per required field fail before writes; valid default Enter is preserved; blank without a valid default consumes an attempt |
-| CX-05 | Independent fresh sandbox: install, then doctor after route/tool tampering; customized role and shared rules/skill preservation | Explicitly asserts shared sandbox/approval settings and route/tool drift separately; retains custom-role edit through prompt and verifies exact unchanged role/skill/rules plus exit status. It does not depend on earlier CX cases. |
+| CX-05 | Independent fresh sandbox: install, then doctor after route/tool tampering; customized role and shared rules/skill preservation | Explicitly asserts shared sandbox/approval settings and route/tool drift separately. On rerun, explicit `no` preserves a valid customized researcher profile and shared skill/rules, while the missing reviewer is installed; all prompts are answered and the run succeeds. A subsequent explicit `yes` overwrites that customized role; shared artifacts remain untouched, all prompts are answered, and the run also succeeds. It does not depend on earlier CX cases. |
 
 Rollback is covered by focused unit tests in `test/codex-adapter.test.ts`, not by a
 Codex lifecycle smoke case: partial and early/manifest write-then-throw failures,

@@ -43,12 +43,12 @@ describe('SMK-HS host selection prompt (non-TTY piped answers)', () => {
   it('SMK-HS-03 update re-asks a multi-host answer and passes the single chosen host to the flow', async () => {
     const result = await box.run('update-native-harness.ts', args(), { steps: [
       ask('Select host (', 'claude-code,antigravity'),
-      ask('Select host (', 'codex'),
+      ask('Select host (', 'cursor'),
     ] });
     assert.equal(result.code, 2, result.transcript);
     assert.deepEqual(result.unansweredSteps, []);
     assert.equal(result.stderr.match(multiHostNotice)?.length, 1);
-    assert.match(result.stderr, /Update blocked: .*issue #45/);
+    assert.match(result.stderr, /Update blocked: .*issue #46/);
     assert.doesNotMatch(result.stderr, /Multi-host simultaneous update is not supported/);
     assert.deepEqual(tree(box.project), pristine);
     assert.equal(existsSync(box.recoveryDirectory), false);

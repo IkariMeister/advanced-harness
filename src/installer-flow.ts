@@ -9,7 +9,7 @@ import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receip
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 
-import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string; context?: string }
@@ -45,7 +45,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const home = deps.home ?? homedir();
   const env = deps.environment ?? process.env;
 
-  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : [await askHostSelection(ask, 'opencode', output)];
+  const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
 
   let scope = options.scope;
   while (!scope || !['project', 'global'].includes(scope)) scope = (await ask('Install scope: project or global', 'project')) || 'project';
