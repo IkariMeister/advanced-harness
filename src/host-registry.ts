@@ -35,15 +35,15 @@ export function parseHostSelection(raw: string): HostId[] {
   return supportedHosts.filter(host => selected.has(host));
 }
 
-export async function askHostSelection(ask: Ask, suggested = 'opencode'): Promise<HostId[]> {
+// Install and update deploy one host per run, so the prompt accepts exactly one host and re-asks otherwise.
+export async function askHostSelection(ask: Ask, suggested: HostId = 'opencode', notice: (message: string) => void = () => {}): Promise<HostId> {
   while (true) {
-    const answer = (await ask(`Select host(s) (${supportedHosts.join(', ')}, comma-separated, or all)`, suggested)).trim();
-    const candidate = answer || suggested;
-    try {
-      return parseHostSelection(candidate);
-    } catch {
-      // Loop on error to allow user to re-enter
-    }
+    const answer = (await ask(`Select host (${supportedHosts.join(', ')})`, suggested)).trim();
+    const candidate = (answer || suggested).toLowerCase();
+    if (isSupportedHost(candidate)) return candidate;
+    notice(candidate === 'all' || candidate.includes(',')
+      ? 'Select one host. Multi-host and all selections are not supported; run the command once per host.'
+      : `Unsupported host: "${candidate}". Supported hosts: ${supportedHosts.join(', ')}`);
   }
 }
 

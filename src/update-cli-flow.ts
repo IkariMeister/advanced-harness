@@ -36,7 +36,7 @@ import {
   preflightOpenCodeCommandDeployment,
   type WorkflowCommandId
 } from './workflow-commands.ts';
-import { parseHostSelection, askHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, getHostAdapter, type HostId } from './host-registry.ts';
 
 export interface UpdateFlowOptions {
   scope?: string;

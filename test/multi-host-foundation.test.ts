@@ -69,23 +69,27 @@ test('supportedHosts and parseHostSelection validate all hosts, aliases, and err
   assert.throws(() => parseHostSelection('opencode,invalid,cursor'), /Unsupported host: "invalid"/);
 });
 
-test('askHostSelection defaults on Enter and retries invalid entries', async () => {
-  const inputs = ['', 'invalid-host', 'claude-code,codex'];
-  let promptCount = 0;
-  const ask = async (_q: string, suggested?: string) => {
-    promptCount++;
+test('askHostSelection defaults on Enter and re-asks invalid, multi-host, and all entries', async () => {
+  const inputs = ['', 'invalid-host', 'claude-code,codex', 'all', ' Claude-Code '];
+  const questions: string[] = [];
+  const notices: string[] = [];
+  const ask = async (question: string, suggested?: string) => {
+    questions.push(question);
     return inputs.shift() ?? suggested ?? '';
   };
 
   // First input '' -> defaults to suggested ('opencode')
-  const res1 = await askHostSelection(ask, 'opencode');
-  assert.deepEqual(res1, ['opencode']);
-  assert.equal(promptCount, 1);
+  assert.equal(await askHostSelection(ask, 'opencode', message => notices.push(message)), 'opencode');
+  assert.equal(questions.length, 1);
+  assert.doesNotMatch(questions[0]!, /comma-separated|all/);
 
-  // Second trial: 'invalid-host' retries, then 'claude-code,codex' succeeds
-  const res2 = await askHostSelection(ask, 'opencode');
-  assert.deepEqual(res2, ['claude-code', 'codex']);
-  assert.equal(promptCount, 3);
+  // Unknown, comma-separated, and all answers are re-asked; a single host is accepted
+  assert.equal(await askHostSelection(ask, 'opencode', message => notices.push(message)), 'claude-code');
+  assert.equal(questions.length, 5);
+  assert.equal(notices.length, 3);
+  assert.match(notices[0]!, /Unsupported host: "invalid-host"/);
+  assert.match(notices[1]!, /Select one host/);
+  assert.match(notices[2]!, /Select one host/);
 });
 
 test('HOST_MODEL_PRESETS covers all 8 roles across all 5 hosts', () => {
