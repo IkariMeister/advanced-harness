@@ -673,3 +673,24 @@ test('Codex declined overwrite says the requested model and effort were not appl
   assert.equal(readFileSync(leadPath, 'utf8'), edited);
   assert.ok(output.some(line => /Preserving customized Codex agent: .*lead\.toml; the model and reasoning effort entered for it were not applied/.test(line)), output.join('\n'));
 });
+
+test('Codex declined overwrite reports incomplete even when every other selected file is already current', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'codex-declined-nochange-'));
+  const project = join(root, 'project'), home = join(root, 'home');
+  mkdirSync(project); mkdirSync(home);
+  const first = roleAnswers('stable-model');
+  assert.equal(await installCodex({ scope: 'project', project, home, ask: async () => first.shift() ?? '', output() {}, error() {} }), 0);
+  const leadPath = join(project, '.codex', 'agents', 'lead.toml');
+  const edited = readFileSync(leadPath, 'utf8').replace('stable-model', 'user-edited-model');
+  writeFileSync(leadPath, edited);
+  const recovery = join(home, 'Projects', 'advanced-harness-backups');
+  const receiptsBefore = readdirSync(recovery).sort();
+  const output: string[] = [];
+  // Same answers as the install, so every other file and the state are already current; only lead differs.
+  const answers = ['', ...Array.from({ length: 8 }, () => ['stable-model', 'medium']).flat(), 'no', 'install'];
+  const status = await installCodex({ scope: 'project', project, home, ask: async () => answers.shift() ?? '', output: line => output.push(line), error() {} });
+  assert.equal(status, 1, output.join('\n'));
+  assert.ok(output.some(line => line.includes('Nothing was written') && line.includes('not applied')), output.join('\n'));
+  assert.equal(readFileSync(leadPath, 'utf8'), edited);
+  assert.deepEqual(readdirSync(recovery).sort(), receiptsBefore, 'no new receipts or backups');
+});
