@@ -37,6 +37,7 @@ import {
   type WorkflowCommandId
 } from './workflow-commands.ts';
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseGlobalProjectDefaults, runSharedLocationStep, type GlobalProjectDefaults } from './project-setup.ts';
 
 export interface UpdateFlowOptions {
   scope?: string;
@@ -70,6 +71,7 @@ export interface UpdateFlowDependencies {
   verify?: typeof verifyRuntime;
   printReport?: typeof printReport;
   getHostAdapter?: typeof getHostAdapter;
+  sharedLocations?: typeof runSharedLocationStep;
 }
 
 export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlowDependencies): Promise<number> {
@@ -110,6 +112,22 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
 
   if (options.context && dispatch.host !== 'antigravity') throw new Error('--context for model preferences is supported only with --host antigravity.');
   if (options.context && scope !== 'project') throw new Error('--context can be used only with project scope.');
+
+  if (project) {
+    // Shared locations are host-neutral, so they are settled once before any host update.
+    const globalDefaultsPath = join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode', 'harness.project.json');
+    let globalDefaults: GlobalProjectDefaults | undefined;
+    if (existsSync(globalDefaultsPath)) {
+      try { globalDefaults = parseGlobalProjectDefaults(readFileSync(globalDefaultsPath, 'utf8')); } catch { /* malformed defaults only lose suggestions */ }
+    }
+    await (deps.sharedLocations ?? runSharedLocationStep)(project, {
+      ask,
+      output,
+      home,
+      globalDefaults,
+      backupParent: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups'),
+    });
+  }
 
   if (dispatch.host === 'claude-code') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('claude-code');

@@ -3,7 +3,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { SetupFile } from './project-setup.ts';
 import { parseConfiguration } from './native-installer.ts';
 
-export type ContextSection = 'project' | 'integrations' | 'model-preferences';
+export type ContextSection = 'project' | 'integrations' | 'model-preferences' | 'paths';
 const marker = (section: ContextSection, edge: string) => `<!-- advanced-harness:${section}:${edge} -->`;
 
 export function readContext(path: string): string | undefined {
@@ -49,6 +49,23 @@ export function updateContext(text: string | undefined, section: ContextSection,
   const block = [marker(section, 'start'), `## Advanced Harness ${section} settings`, '', ...instructions, '', '```json', payload, '```', marker(section, 'end')].join(eol);
   if (range) return original.slice(0, range[0]) + block + original.slice(range[1]);
   return original + (original && !original.endsWith('\n') ? eol : '') + (original ? eol : '') + block + eol;
+}
+
+/** Detects any harness section, including legacy instructions-only blocks without JSON. */
+export function hasContextSection(text: string | undefined, section: ContextSection): boolean {
+  return !!text && bounds(text, section) !== undefined;
+}
+
+/** Removes a section and the blank line that updateContext placed before it. */
+export function removeContext(text: string, section: ContextSection): string {
+  const range = bounds(text, section);
+  if (!range) return text;
+  let [start, end] = range;
+  if (text.startsWith('\r\n', end)) end += 2;
+  else if (text.startsWith('\n', end)) end += 1;
+  const before = text.slice(0, start);
+  const trimmed = before.endsWith('\r\n\r\n') ? before.slice(0, -2) : before.endsWith('\n\n') ? before.slice(0, -1) : before;
+  return trimmed + text.slice(end);
 }
 
 export function prepareContextFiles(root: string, target: string, original: string | undefined, updated: string): SetupFile[] {

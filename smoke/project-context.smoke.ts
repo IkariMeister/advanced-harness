@@ -1,7 +1,7 @@
 // SMK-PS / SMK-PI: harness:setup and project-scope harness:integrations write only marked AGENTS.md sections.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSandbox, tree, type Sandbox } from './support/sandbox.ts';
 import { ask } from './support/steps.ts';
@@ -53,7 +53,8 @@ describe('SMK-PS project setup + SMK-PI project integrations (non-TTY piped answ
     assert.equal(settings.checks.lint.status, 'unconfigured');
     assert.deepEqual(settings.additionalChecks, [{ name: 'detekt', command: './gradlew detekt' }], 'additional gate saved next to, not instead of, lint');
     assert.equal(existsSync(join(box.project, '.opencode', 'harness.project.json')), false, 'no legacy profile file');
-    assert.equal(existsSync(settings.worktreeDirectory), false, 'setup does not create worktrees');
+    assert.deepEqual(readdirSync(settings.worktreeDirectory), [], 'setup creates the worktree parent but no Git worktrees');
+    assert.equal(readFileSync(settings.memoryPath, 'utf8'), '# Shared Operator memory\n\n', 'setup creates a header-only shared memory file');
   });
 
   it('SMK-PI-01 project integrations (gh + repository) add their own section without touching setup settings', async () => {

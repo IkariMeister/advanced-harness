@@ -198,6 +198,7 @@ export function compileLeadOrchestrationRule(
   lines.push('- **Write Tools:** In Antigravity, write tools include both file editing and `run_command`. External, Reviewer, and QA have write tools enabled only so they can run commands; they must never use file-edit tools on application, test, or configuration source.');
   lines.push('- **External:** The ONLY subagent permitted to access MCP tools, GitHub CLI (`gh`), or remote Git pushing.');
   lines.push('- **Operator:** Owns local Git branches, worktrees, and shared `MEMORY.md`. Does not edit application code.');
+  lines.push('- **Shared locations:** Task worktrees go under `worktreeDirectory` and shared memory is the file at `memoryPath`, both read from the Advanced Harness `project` (or interim `paths`) settings section in `AGENTS.md` or the context file it links. They are outside the workspace by design: never search the workspace for `MEMORY.md` or create one there. If a location is missing or unreadable, stop and ask the human to run `harness:update` or `harness:setup`.');
   lines.push('- **Implementer:** The ONLY subagent permitted to write application and test source code.');
   lines.push('- **Reviewer / QA:** Execute test and build commands to report findings; never modify application source directly.');
   lines.push('- **Precedence:** Current Human Decision > `AGENTS.md` > `MEMORY.md`.');
