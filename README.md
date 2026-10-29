@@ -146,7 +146,7 @@ Configure an Android project interactively:
 npm run harness:setup -- --project "path/to/android-checkout"
 ```
 
-Setup records confirmed commands/device/paths without executing them or creating worktrees. Missing checks stay unconfigured, not waived. It writes settings into a marked `AGENTS.md` section, or a Markdown context file selected with `--context`, only after confirmation. Existing legacy JSON profiles are preserved and offered as suggestions only with explicit migration consent. See [project setup](docs/project-setup.md).
+Setup records confirmed commands/device/paths without executing them or creating Git worktrees, and creates a missing worktree parent and header-only shared `MEMORY.md` only after confirmation. Project-scope `harness:update` confirms or records those shared locations too. Missing checks stay unconfigured, not waived. It writes settings into a marked `AGENTS.md` section, or a Markdown context file selected with `--context`, only after confirmation. Existing legacy JSON profiles are preserved and offered as suggestions only with explicit migration consent. See [project setup](docs/project-setup.md).
 
 Configure reusable optional connections/defaults globally, then project choices in context:
 

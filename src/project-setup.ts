@@ -1,9 +1,9 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { createHash } from 'node:crypto';
 import { parseConfiguration, saveInstallation, type Ask } from './native-installer.ts';
-import { contextData, contextPath, prepareContextFiles, readContext, updateContext } from './project-context.ts';
+import { contextData, contextPath, hasContextSection, prepareContextFiles, readContext, removeContext, updateContext } from './project-context.ts';
+import { createSharedLocations, defaultLocations, describeLocationPlan, emptyLocationPlan, pathsInstructions, planSharedLocations, validateLocations, validatePathsSettings, type PathsSettings, type SharedLocations } from './shared-locations.ts';
 
 export const checkNames = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'] as const;
 export type CheckName = typeof checkNames[number];
@@ -172,11 +172,7 @@ export function validateProfile(value: unknown): ProjectProfile {
     }
   }
   if (value.device.serial !== undefined && (typeof value.device.serial !== 'string' || !/^[\w.:-]+$/.test(value.device.serial))) throw new Error('Invalid device serial.');
-  for (const key of ['worktreeDirectory', 'memoryPath'] as const) {
-    if (typeof value[key] !== 'string' || !isAbsolute(value[key]) || inside(value[key], value.projectRoot) || inside(value.projectRoot, key === 'memoryPath' ? dirname(value[key]) : value[key])) throw new Error('Worktree and shared-memory paths must be outside the application checkout and cannot contain it.');
-  }
-  if (basename(value.memoryPath as string) !== 'MEMORY.md') throw new Error('Shared memory path must end in MEMORY.md.');
-  if (inside(value.memoryPath as string, value.worktreeDirectory as string)) throw new Error('Shared memory must not be inside the worktree directory.');
+  validateLocations(value.projectRoot, value);
   return value as ProjectProfile;
 }
 
@@ -275,7 +271,8 @@ export async function askProfile(
   ask: Ask,
   selectedShell?: ProjectProfile['shell'],
   globalDefaults?: GlobalProjectDefaults,
-  home = homedir()
+  home = homedir(),
+  recorded?: SharedLocations
 ): Promise<ProjectProfile> {
   const isAndroid = inspection.gradleFiles.length > 0 || inspection.androidModules.length > 0 || inspection.roborazzi || previous?.checks.roborazzi.status === 'configured' || previous?.device.serial !== undefined;
   let baseBranch = '';
@@ -315,12 +312,9 @@ export async function askProfile(
   } else {
     device = previous?.device ?? globalDefaults?.device ?? { preference: 'ask' };
   }
-  const canonical = process.platform === 'win32' ? resolve(root).toLowerCase() : resolve(root);
-  const id = `${basename(root).replace(/[^a-zA-Z0-9_-]/g, '-') || 'project'}-${createHash('sha256').update(canonical).digest('hex').slice(0, 8)}`;
-  const defaultWorktreeParent = globalDefaults?.worktreeParentDirectory ?? join(home, 'Projects', 'advanced-harness-worktrees');
-  const defaultMemoryParent = globalDefaults?.memoryParentDirectory ?? join(home, 'Projects', 'advanced-harness-data');
-  const worktreeDirectory = expandPath((await ask('Parent directory for future worktrees (outside the checkout)', previous?.worktreeDirectory ?? join(defaultWorktreeParent, id))).trim() || previous?.worktreeDirectory || join(defaultWorktreeParent, id), home);
-  const memoryPath = expandPath((await ask('Shared MEMORY.md path (outside checkout/worktrees)', previous?.memoryPath ?? join(defaultMemoryParent, id, 'MEMORY.md'))).trim() || previous?.memoryPath || join(defaultMemoryParent, id, 'MEMORY.md'), home);
+  const suggested = previous ?? recorded ?? defaultLocations(root, globalDefaults, home);
+  const worktreeDirectory = expandPath((await ask('Parent directory for future worktrees (outside the checkout)', suggested.worktreeDirectory)).trim() || suggested.worktreeDirectory, home);
+  const memoryPath = expandPath((await ask('Shared MEMORY.md path (outside checkout/worktrees)', suggested.memoryPath)).trim() || suggested.memoryPath, home);
   return validateProfile({ version: 1, projectRoot: resolve(root), baseBranch, shell, checks, ...(additionalChecks.length ? { additionalChecks } : {}), device, worktreeDirectory, memoryPath });
 }
 
@@ -358,6 +352,7 @@ export function updateProjectInstructions(original: string | undefined, profile:
     'Additional checks (for example Spotless or Detekt) are required project gates alongside the standard checks; they do not replace lint.',
     'Run commands in the active application worktree root. Ask on instruction conflicts, missing prerequisites, or unconfigured checks; missing checks are not passed or waived.',
     'Operator owns local Git/worktrees and shared MEMORY.md. Task bootstrap prepares the worktree and initializes shared memory without blocking on other worktrees. Shared memory stays outside application worktrees.',
+    'worktreeDirectory and memoryPath below are the shared locations, outside this checkout by design: read them from here, never search the workspace for MEMORY.md or create one inside it. Ask Lead if either is missing.',
     'Screenshots/video/logcat evidence remain optional unless explicitly required. Implementation and publishing require separate conversational approvals.',
   ]);
 }
@@ -366,7 +361,88 @@ export type SetupFile = { path: string; original: string | undefined; updated: s
 export function prepareSetup(root: string, profile: ProjectProfile, original: string | undefined, target = join(root, 'AGENTS.md')): SetupFile[] {
   validateProfile(profile);
   if (resolve(root) !== resolve(profile.projectRoot)) throw new Error('Profile checkout does not match the selected project.');
-  return prepareContextFiles(root, target, original, updateProjectInstructions(original, profile));
+  // Full project settings supersede an interim paths section in the same file.
+  return prepareContextFiles(root, target, original, removeContext(updateProjectInstructions(original, profile), 'paths'));
+}
+
+/** Settings live in AGENTS.md or the context file it links to. */
+export function locateProjectContext(root: string): { target: string; original: string | undefined } {
+  const agentsPath = join(root, 'AGENTS.md');
+  const agents = readContext(agentsPath);
+  const linked = /Read `([^`\r\n]+)` for Advanced Harness project settings/.exec(agents ?? '')?.[1];
+  if (!linked) return { target: agentsPath, original: agents };
+  const target = contextPath(root, linked);
+  return { target, original: readContext(target) };
+}
+
+export function recordedLocations(root: string, original: string | undefined): SharedLocations | undefined {
+  const data = contextData(original, 'paths');
+  return data === undefined ? undefined : validatePathsSettings(resolve(root), data);
+}
+
+export interface SharedLocationStepDependencies {
+  ask: Ask;
+  output(message: string): void;
+  home: string;
+  globalDefaults?: GlobalProjectDefaults | undefined;
+  backupParent: string;
+  save?: typeof saveSetup;
+}
+
+/**
+ * harness:update step: confirm or record shared locations and create missing ones.
+ * Projects without any harness settings are pointed to harness:setup instead of being prompted.
+ */
+export async function runSharedLocationStep(root: string, deps: SharedLocationStepDependencies): Promise<'skipped' | 'current' | 'saved'> {
+  const { ask, output, home } = deps;
+  const { target, original } = locateProjectContext(root);
+  const data = contextData(original, 'project');
+  const profile = data === undefined ? undefined : validateProfile(data);
+  if (profile && resolve(profile.projectRoot) !== resolve(root)) {
+    output(`Shared locations: project settings in ${target} belong to another checkout; run harness:setup here. No shared-location changes.`);
+    return 'skipped';
+  }
+  const recorded = profile ? undefined : recordedLocations(root, original);
+  const legacyPath = join(root, '.opencode', 'harness.project.json');
+  const legacy = existsSync(legacyPath);
+  if (!profile && !recorded && !legacy && !hasContextSection(original, 'project')) {
+    output('Shared locations: no Advanced Harness project settings found. Run harness:setup to choose worktree and shared MEMORY.md locations.');
+    return 'skipped';
+  }
+  let current: SharedLocations | undefined = profile ?? recorded;
+  let suggestion = current;
+  if (!current && legacy) {
+    output(`Legacy settings detected: ${legacyPath}. This file will not be edited/deleted.`);
+    if ((await ask('Type migrate to use its worktree/memory paths as suggestions', 'no')).trim() === 'migrate') suggestion = parseProfile(readFileSync(legacyPath, 'utf8'));
+  }
+  suggestion ??= defaultLocations(root, deps.globalDefaults, home);
+  output(current ? 'Confirm shared locations (Enter keeps each):' : 'No shared locations are recorded for this project. Choose them (Enter accepts each suggestion):');
+  let chosen: SharedLocations;
+  for (;;) {
+    const worktreeDirectory = expandPath((await ask('Parent directory for future worktrees (outside the checkout)', suggestion.worktreeDirectory)).trim() || suggestion.worktreeDirectory, home);
+    const memoryPath = expandPath((await ask('Shared MEMORY.md path (outside checkout/worktrees)', suggestion.memoryPath)).trim() || suggestion.memoryPath, home);
+    try { validateLocations(resolve(root), { worktreeDirectory, memoryPath }); chosen = { worktreeDirectory, memoryPath }; break; }
+    catch (error) { output(`${(error as Error).message} Enter different paths.`); }
+  }
+  const plan = planSharedLocations(chosen);
+  const changed = !current || resolve(current.worktreeDirectory) !== resolve(chosen.worktreeDirectory) || resolve(current.memoryPath) !== resolve(chosen.memoryPath);
+  const files: SetupFile[] = !changed ? [] : profile
+    ? prepareSetup(root, { ...profile, ...chosen }, original, target)
+    : [{ path: target, original, updated: updateContext(original, 'paths', { version: 1, ...chosen } satisfies PathsSettings, pathsInstructions) }];
+  if (!files.length && emptyLocationPlan(plan)) {
+    output(`Shared locations are recorded and present: ${chosen.worktreeDirectory}; ${chosen.memoryPath}`);
+    return 'current';
+  }
+  output('\nShared-location changes:');
+  for (const file of files) output(`  ${file.path}${file.original === undefined ? ' (new)' : ' (backup before updating)'}`);
+  for (const line of describeLocationPlan(plan)) output(line);
+  if ((await ask('Type paths to apply these shared-location changes; Enter skips them and continues the update', 'skip')).trim() !== 'paths') {
+    output('Shared locations skipped: no files, directories, or backups were created.');
+    return 'skipped';
+  }
+  for (const backup of (deps.save ?? saveSetup)(files, deps.backupParent)) if (backup) output(`Backup (keep private): ${backup}`);
+  for (const created of createSharedLocations(plan)) output(`Created: ${created}`);
+  return 'saved';
 }
 
 export function saveSetup(files: readonly SetupFile[], backupParent: string): (string | undefined)[] {
@@ -524,10 +600,11 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
     output(`Selected shell: ${shell}. Enter the correct command manually or - to leave unconfigured.`);
   }
 
-  const profile = await askProfile(root, inspection, previous, ask, shell, globalDefaults, home);
+  const profile = await askProfile(root, inspection, previous, ask, shell, globalDefaults, home, previous ? undefined : recordedLocations(root, original));
   if (profile.shell !== shell) throw new Error('Collected shell differs from the selected shell. No files changed.');
   const files = prepareSetup(root, profile, original, target);
   const updated = files[0]!.updated;
+  const locations = planSharedLocations(profile);
 
   output('\nReview project setup:');
   output(`Base branch: ${profile.baseBranch}; shell: ${profile.shell}`);
@@ -540,9 +617,10 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   output(`Worktree parent: ${profile.worktreeDirectory}\nShared memory: ${profile.memoryPath}`);
   output('Files to write:');
   for (const file of files) output(`  ${file.path}${file.original === undefined ? ' (new)' : ' (backup before updating)'}`);
+  for (const line of describeLocationPlan(locations)) output(line);
   output('Proposed context section:');
   output(updated.slice(updated.indexOf('<!-- advanced-harness:project:start -->'), updated.indexOf('<!-- advanced-harness:project:end -->') + '<!-- advanced-harness:project:end -->'.length));
-  output('Only context files are written; no separate project profile. Paths are machine-specific: review before committing. No models/MCP/ignore rules are changed. Legacy files remain untouched.');
+  output('Only context files and missing shared locations are written; no separate project profile, Git worktrees, or branches. An existing MEMORY.md is never overwritten. Paths are machine-specific: review before committing. No models/MCP/ignore rules are changed. Legacy files remain untouched.');
 
   const confirm = await ask('Full preview: type save (or legacy setup) to save; Enter or anything else cancels', 'cancel');
   const result = confirmAndSaveSetup(confirm, files, backupParent);
@@ -552,6 +630,8 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   }
   output(`Project settings saved in context: ${target}`);
   for (const backup of result.backups) if (backup) output(`Backup (keep private): ${backup}`);
+  try { for (const created of createSharedLocations(locations)) output(`Created: ${created}`); }
+  catch (error) { throw new Error(`Project settings were saved, but creating shared locations failed: ${(error as Error).message} Rerun harness:setup or harness:update to retry.`); }
   output('Setup choices saved, not runtime-validated. Run harness:doctor in this project, then approve command/device/integration validation with Lead.');
   return 0;
 }
