@@ -1,17 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeTempRoot } from './temp-directory.ts';
 import { askAssignments, chooseConfiguration, configuredModels, discoverConfigurations, findMarkdownConflicts, loadNativeDefinitions, modelReference, nativeRoles, parseConfiguration, projectConfiguration, saveInstallation, suggestedModel, updateNativeConfiguration, type ConfigSource, type NativeRole } from '../src/native-installer.ts';
 
 const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
 const assignments = Object.fromEntries(nativeRoles.map(role => [role, `local/${role}#low`])) as Record<NativeRole, string>;
 const source = (value: Record<string, unknown>): ConfigSource => ({ path: 'test.jsonc', text: JSON.stringify(value), value });
 function fixture(t: { after: (fn: () => void) => void }) {
-  const root = mkdtempSync(join(tmpdir(), 'advanced-harness-installer-'));
+  const root = makeTempRoot('advanced-harness-installer-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -76,10 +76,21 @@ test('JSONC installation preserves comments, root choices, credentials, MCP, plu
   assert.equal(agents.lead?.disabled, true);
   for (const role of nativeRoles) {
     assert.equal(agents[role]?.model, assignments[role]);
-    assert.equal(agents[role]?.system, definitions[role].system);
+    assert.equal(agents[role]?.system, role === 'lead' ? 'old' : definitions[role].system);
     assert.deepEqual(agents[role]?.permissions, definitions[role].permissions);
   }
   assert.equal(value.$schema, 'https://opencode.ai/config.json');
+});
+
+test('custom managed fields survive; only unchanged evidence or explicit selections refresh them', () => {
+  const original = JSON.stringify({ agents: { lead: { description: 'custom', mode: 'custom-mode', system: 'previous managed prompt' } } });
+  const inspect = (options: Parameters<typeof updateNativeConfiguration>[6]) => (parseConfiguration(updateNativeConfiguration(original, definitions, assignments, false, false, [], options), 'test').agents as Record<string, Record<string, unknown>>).lead!;
+  assert.equal(inspect({}).system, 'previous managed prompt');
+  const refreshed = inspect({ managedFields: { lead: { description: 'previous description', system: 'previous managed prompt' } } });
+  assert.equal(refreshed.description, 'custom');
+  assert.equal(refreshed.mode, 'custom-mode');
+  assert.equal(refreshed.system, definitions.lead.system);
+  assert.equal(inspect({ replaceFields: { lead: ['mode'] } }).mode, definitions.lead.mode);
 });
 
 test('default-agent/model changes require separate opt-ins; BOM and CRLF are preserved', () => {
@@ -91,6 +102,25 @@ test('default-agent/model changes require separate opt-ins; BOM and CRLF are pre
   assert.equal(value.default_agent, 'lead');
   assert.equal(value.model, 'local/lead');
   assert.equal((value.agents as Record<string, Record<string, unknown>>).lead?.model, 'local/lead#low');
+});
+
+test('reinstall preserves customized model representations unless explicitly replaced', () => {
+  const original = JSON.stringify({ agents: {
+    lead: { model: { providerID: 'openai', model: 'gpt-6-luna', variant: 'low', custom: 'keep' }, color: 'violet', permissions: [{ action: 'shell', resource: 'git status', effect: 'deny' }] },
+  } });
+  const preserved = parseConfiguration(updateNativeConfiguration(original, definitions, assignments, false), 'preserved').agents as Record<string, Record<string, unknown>>;
+  assert.deepEqual(preserved.lead!.model, { providerID: 'openai', model: 'gpt-6-luna', variant: 'low', custom: 'keep' });
+  assert.equal(preserved.lead!.color, 'violet');
+  assert.deepEqual(preserved.lead!.permissions, [{ action: 'shell', resource: 'git status', effect: 'deny' }, ...definitions.lead.permissions]);
+  const replaced = parseConfiguration(updateNativeConfiguration(original, definitions, assignments, false, false, ['lead']), 'replaced').agents as Record<string, Record<string, unknown>>;
+  assert.equal(replaced.lead!.model, assignments.lead);
+});
+
+test('installer fails closed on duplicate permission identities', () => {
+  const rule = definitions.lead.permissions[0]!;
+  const original = JSON.stringify({ agents: { lead: { permissions: [rule, { ...rule }] } } });
+  assert.throws(() => updateNativeConfiguration(original, definitions, assignments, false), /Permission reconciliation conflict for lead/);
+  assert.equal(original, JSON.stringify({ agents: { lead: { permissions: [rule, { ...rule }] } } }));
 });
 
 test('invalid, duplicate, non-object and ambiguous configurations are never rewritten', t => {

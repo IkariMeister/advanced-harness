@@ -1,6 +1,7 @@
 {
   "name": "advanced-harness",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,8 +9,16 @@
   },
   "scripts": {
     "test": "node --test test/*.test.ts",
+    "smoke": "node --test --test-concurrency=1 smoke/*.smoke.ts",
     "typecheck": "tsc --noEmit",
-    "harness:install": "node scripts/install-native-harness.ts"
+    "harness:install": "node scripts/install-native-harness.ts",
+    "harness:uninstall": "node scripts/uninstall-native-harness.ts",
+    "harness:doctor": "node scripts/diagnose-native-harness.ts",
+    "harness:update": "node scripts/update-native-harness.ts",
+    "harness:setup": "node scripts/setup-native-project.ts",
+    "harness:integrations": "node scripts/configure-integrations.ts",
+    "harness:pr-feedback-permissions": "node scripts/add-pr-feedback-permissions.ts",
+    "harness:deploy-prompts": "node scripts/deploy-native-prompts.ts"
   },
   "dependencies": {
     "jsonc-parser": "3.3.1",

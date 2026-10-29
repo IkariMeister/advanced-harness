@@ -1,14 +1,26 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, parse as pathParse, resolve } from 'node:path';
 import { applyEdits, modify, parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
-import { parseDocument } from 'yaml';
+import { reconcilePermissions, type PermissionRule, type ReconciliationResult, type AttributedRule } from './permission-reconciliation.ts';
+import { compileOpenCodeRoles } from './opencode-role-compiler.ts';
+import { loadRoleDefinitions } from './role-definitions.ts';
+import { modelReference, nativeRoles, type NativeRole } from './native-role-types.ts';
 
-export const nativeRoles = ['lead', 'operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const;
-export type NativeRole = typeof nativeRoles[number];
+export { modelReference, nativeRoles };
+export type { NativeRole };
 export type ConfigSource = { path: string; text: string; value: Record<string, unknown> };
 export type NativeDefinition = { description: string; mode: string; model: string; permissions: unknown[]; system: string };
 export type Ask = (question: string, suggested?: string) => Promise<string>;
+
+export class RoleCapabilityCompilationError extends Error {
+  readonly diagnostics: import('./capability-policy.ts').CapabilityDiagnostic[];
+  constructor(diagnostics: import('./capability-policy.ts').CapabilityDiagnostic[]) {
+    super(`OpenCode role capability compilation failed: ${diagnostics.map(item => `${item.code}${item.role ? ` (${item.role})` : ''}: ${item.message}`).join('; ')}`);
+    this.name = 'RoleCapabilityCompilationError';
+    this.diagnostics = diagnostics;
+  }
+}
 
 function object(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -73,15 +85,6 @@ export function projectConfiguration(project: string, sources: readonly ConfigSo
   return chooseConfiguration(resolve(project));
 }
 
-export function modelReference(value: unknown): string | undefined {
-  if (object(value) && typeof value.providerID === 'string' && typeof value.model === 'string') {
-    const variant = typeof value.variant === 'string' && value.variant ? `#${value.variant}` : '';
-    value = `${value.providerID}/${value.model}${variant}`;
-  }
-  if (typeof value !== 'string' || !/^[^\s/#]+\/[^\s#]+(?:#[^\s/#]+)?$/.test(value)) return undefined;
-  return value;
-}
-
 export function configuredModels(sources: readonly ConfigSource[]): string[] {
   const models = new Set<string>();
   const add = (value: unknown) => { const reference = modelReference(value); if (reference) models.add(reference); };
@@ -114,15 +117,9 @@ export function suggestedModel(role: NativeRole, sources: readonly ConfigSource[
 }
 
 export function loadNativeDefinitions(directory: string): Record<NativeRole, NativeDefinition> {
-  return Object.fromEntries(nativeRoles.map(role => {
-    const text = readFileSync(join(directory, `${role}.md`), 'utf8');
-    const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(text);
-    if (!match) throw new Error(`Missing native frontmatter: ${role}`);
-    const document = parseDocument(match[1]!);
-    const header: unknown = document.toJSON();
-    if (document.errors.length || !object(header) || typeof header.description !== 'string' || header.mode !== (role === 'lead' ? 'primary' : 'subagent') || !modelReference(header.model) || !Array.isArray(header.permissions)) throw new Error(`Invalid native template: ${role}`);
-    return [role, { description: header.description, mode: header.mode, model: header.model as string, permissions: header.permissions, system: match[2]!.trim() }];
-  })) as Record<NativeRole, NativeDefinition>;
+  const result = compileOpenCodeRoles(loadRoleDefinitions(directory));
+  if (!result.definitions) throw new RoleCapabilityCompilationError(result.diagnostics);
+  return result.definitions;
 }
 
 export async function askAssignments(definitions: Record<NativeRole, NativeDefinition>, sources: readonly ConfigSource[], ask: Ask): Promise<Record<NativeRole, string>> {
@@ -172,7 +169,14 @@ export function findMarkdownConflicts(sources: readonly ConfigSource[], target: 
   return [...paths];
 }
 
-export function updateNativeConfiguration(original: string, definitions: Record<NativeRole, NativeDefinition>, assignments: Record<NativeRole, string>, setDefault: boolean, setLeadModel = false): string {
+export interface NativeReconciliationOptions {
+  managedFields?: Partial<Record<NativeRole, Partial<Pick<NativeDefinition, 'description' | 'mode' | 'system'>>>>;
+  replaceFields?: Partial<Record<NativeRole, readonly ('description' | 'mode' | 'system')[]>>;
+  permissions?: Partial<Record<NativeRole, { prior: readonly AttributedRule[]; previousOrder: readonly PermissionRule[]; removeObsolete?: readonly PermissionRule[] }>>;
+  onPermissionPlan?: (role: NativeRole, plan: ReconciliationResult) => void;
+}
+
+export function updateNativeConfiguration(original: string, definitions: Record<NativeRole, NativeDefinition>, assignments: Record<NativeRole, string>, setDefault: boolean, setLeadModel = false, replaceModels: readonly NativeRole[] = [], reconciliation: NativeReconciliationOptions = {}): string {
   const value = parseConfiguration(original, 'selected configuration');
   const bom = original.startsWith('\uFEFF') ? '\uFEFF' : '';
   let text = bom ? original.slice(1) : original;
@@ -184,8 +188,18 @@ export function updateNativeConfiguration(original: string, definitions: Record<
     if (!model) throw new Error(`Invalid model assignment for ${role}`);
     const existing = object(value.agents) ? value.agents[role] : undefined;
     if (existing !== undefined && !object(existing)) throw new Error(`Expected a V2 agent object for ${role}`);
-    // Update only owned fields; preserve color, steps, requests, and unrelated roles.
-    for (const [field, content] of Object.entries({ ...definitions[role], model })) set(['agents', role, field], content);
+    if (!object(existing) || existing.model === undefined || replaceModels.includes(role)) set(['agents', role, 'model'], model);
+    for (const field of ['description', 'mode', 'system'] as const) {
+      const current = object(existing) ? existing[field] : undefined;
+      const managed = reconciliation.managedFields?.[role]?.[field];
+      if (current === undefined || reconciliation.replaceFields?.[role]?.includes(field) || managed !== undefined && current === managed) set(['agents', role, field], definitions[role][field]);
+    }
+    if (object(existing) && existing.permissions !== undefined && !Array.isArray(existing.permissions)) throw new Error(`Expected a native permission array for ${role}`);
+    const current = object(existing) && Array.isArray(existing.permissions) ? existing.permissions : [];
+    const plan = reconcilePermissions({ existing: current as PermissionRule[], desired: (definitions[role].permissions as PermissionRule[]).map(rule => ({ rule, sources: [`native:${role}`] })), retiringSources: [`native:${role}`], ...reconciliation.permissions?.[role] });
+    if (plan.preview.conflicts.length) throw new Error(`Permission reconciliation conflict for ${role}: ${plan.preview.conflicts.map(c => c.message).join(' ')}`);
+    reconciliation.onPermissionPlan?.(role, plan);
+    set(['agents', role, 'permissions'], plan.rules);
   }
   if (setDefault) set(['default_agent'], 'lead');
   if (setLeadModel) set(['model'], assignments.lead.split('#')[0]);
@@ -194,23 +208,46 @@ export function updateNativeConfiguration(original: string, definitions: Record<
 }
 
 export function saveInstallation(target: string, expected: string | undefined, updated: string, backupParent: string): string | undefined {
+  const checkAncestors = (path: string, leaf: 'file' | 'directory' | 'either'): void => {
+    const absolute = resolve(path), root = pathParse(absolute).root;
+    let cursor = root;
+    const parts = absolute.slice(root.length).split(/[\\/]+/).filter(Boolean);
+    for (let index = 0; index < parts.length; index++) {
+      cursor = join(cursor, parts[index]!);
+      const stat = lstatSync(cursor, { throwIfNoEntry: false });
+      if (!stat) continue;
+      if (stat.isSymbolicLink()) throw new Error(`Symlink path component refused: ${cursor}`);
+      const final = index === parts.length - 1;
+      if (final && leaf === 'file' && !stat.isFile()) throw new Error(`Refusing non-regular configuration file: ${cursor}`);
+      if (final && leaf === 'directory' && !stat.isDirectory()) throw new Error(`Expected directory: ${cursor}`);
+      if (!final && !stat.isDirectory()) throw new Error(`Non-directory path ancestor refused: ${cursor}`);
+    }
+  };
+  checkAncestors(target, 'file'); checkAncestors(backupParent, 'directory');
   const entry = lstatSync(target, { throwIfNoEntry: false });
   if (entry && (!entry.isFile() || entry.isSymbolicLink())) throw new Error('Refusing to replace a non-regular or symlink configuration file.');
+  const identity = entry ? `${entry.dev}:${entry.ino}` : undefined;
   const current = existsSync(target) ? readFileSync(target, 'utf8') : undefined;
   if (current !== expected) throw new Error('Configuration changed while answering prompts. Rerun the installer; nothing was overwritten.');
   let backup: string | undefined;
   if (expected !== undefined) {
     const directory = join(backupParent, `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
+    checkAncestors(backupParent, 'directory');
     mkdirSync(directory, { recursive: true, mode: 0o700 });
+    checkAncestors(directory, 'directory');
     backup = join(directory, basename(target));
     writeFileSync(backup, expected, { flag: 'wx', mode: 0o600 });
   }
   mkdirSync(dirname(target), { recursive: true });
+  checkAncestors(target, 'file');
   const temporary = `${target}.harness-${randomUUID()}.tmp`;
   try {
     writeFileSync(temporary, updated, { flag: 'wx', mode: 0o600 });
     if (expected !== undefined) chmodSync(temporary, lstatSync(target).mode & 0o777);
+    checkAncestors(target, 'file');
     if ((existsSync(target) ? readFileSync(target, 'utf8') : undefined) !== expected) throw new Error('Configuration changed before save. Nothing was overwritten.');
+    const latest = lstatSync(target, { throwIfNoEntry: false });
+    if ((latest ? `${latest.dev}:${latest.ino}` : undefined) !== identity) throw new Error('Configuration file identity changed before save. Nothing was overwritten.');
     renameSync(temporary, target);
   } finally {
     if (existsSync(temporary)) unlinkSync(temporary);

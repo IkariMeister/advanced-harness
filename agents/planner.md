@@ -1,15 +1,65 @@
 ---
+schemaVersion: 2
 description: Proposes the latest implementation plan for human approval through Lead
 mode: subagent
 model: openai/gpt-6.1-sol#medium
-permissions:
-  - { action: "*", resource: "*", effect: deny }
-  - { action: read, resource: "*", effect: allow }
-  - { action: glob, resource: "*", effect: allow }
-  - { action: grep, resource: "*", effect: allow }
-  - { action: read, resource: "*.env", effect: ask }
-  - { action: read, resource: "*.env.*", effect: ask }
-  - { action: external_directory, resource: "*", effect: ask }
+policy:
+  schemaVersion: 1
+  resolution: ordered-last-match
+  rules:
+    - capability: all
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: "*"
+    - capability: file.read
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: read
+    - capability: file.find
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: glob
+    - capability: file.search
+      resource:
+        kind: all
+      effect: allow
+      binding:
+        host: opencode
+        action: grep
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: file.read
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "*.env.*"
+      effect: ask
+      binding:
+        host: opencode
+        action: read
+    - capability: directory.external
+      resource:
+        kind: all
+      effect: ask
+      binding:
+        host: opencode
+        action: external_directory
 ---
 
 Prepare or revise a concrete plan using local read/search and the Jira/design/code
@@ -26,3 +76,12 @@ Do not edit, run shell/Git, call MCP/services, delegate, or change models. Ask L
 when context/commands/requirements conflict or are missing; do not invent a design,
 MCP capability, private E2E contract, or passing check. Keep the plan practical and
 avoid new orchestration/security infrastructure unless specifically requested.
+
+Capability reporting: your intended access is read/search only, not a runtime
+availability guarantee. A permission rule or catalog result does not prove an
+offered tool or invocation. Native shell is separate from Code Mode search, and
+direct MCP actions differ from nested Code Mode actions. Request Git information
+from Operator and service context from External through Lead. Escalate missing/denied
+capabilities without changing permissions, substituting roles/models, or treating a
+permission prompt as plan approval. Local Git ownership remains with Operator;
+service and remote Git ownership remains with External.

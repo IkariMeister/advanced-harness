@@ -2,6 +2,17 @@
 
 **Status:** approved direction, 2026-10-08. Native template configuration and a real-project pilot still need validation.
 
+The eight role sources use schema-versioned OpenCode-bound policy records. Their
+`ordered-last-match` resolution and native action bindings are preserved when compiled
+to OpenCode; this is not a host-neutral enforcement model. Unversioned legacy sources
+remain read-only compatible inputs. Source migration does not change installed
+configuration, permission receipts, or other host mappings.
+
+Task-specific workflow definitions for Jira issue work, teammate PR reviews, reported
+defects, and technical debt are documented in [task workflows](task-workflows.md).
+These are definitions only, not executable commands; command names and syntax remain
+TBD.
+
 ## What we are building
 
 An agent workflow inside OpenCode V2, not another execution platform. Lead coordinates the specialized roles using native tools, shell, Git, and MCP integrations. The human approves plans, findings/fixes, exceptions, and final publishing in the Lead conversation. No separate harness terminal, host service, custom plugin approval API, IPC, revision-token UI, or SQLite state engine is required.
@@ -17,24 +28,56 @@ The obsolete approval controller and integration spike have been removed. Native
 - Material plan/scope changes require renewed human approval. An accepted finding authorizes only its corresponding fix; a material approach change still returns to the human.
 - Final approval concerns the current implementation and verification results, and authorizes External to push/open the PR. Later material changes require renewed approval; only a human merges.
 - Conversational exceptions must identify the specific skipped requirement. Never report a waived check as passed or treat a blanket approval as permission for unrelated future work.
-- On interruption or lost approval context, summarize current Git/service state and ask before resuming. Do not retry an uncertain external action until its actual outcome is inspected.
+- On interruption, compaction, or lost context, preserve existing local and remote work untouched. Operator inspects local Git/worktree state (branch, HEAD, status, diffs, commits) and External inspects remote/service state (remote ref, PR, Jira) read-only. Lead presents the resume checklist, marks missing or lost conversational approvals as unconfirmed, and waits for explicit human confirmation before resuming. Existing diffs, commits, child claims, or dated notes never imply plan, fix, publishing, or cleanup approval. Return any material plan change to the human.
+- Before retrying any uncertain external or local mutation (such as git push, gh PR/issue/workflow operations, Jira transitions/comments, or worktree cleanup), inspect actual state read-only through its owner. If inspection confirms the mutation already completed as approved, record the verified outcome without repeating the write. If inspection shows it did not complete, partially applied, diverged, or remains inconclusive, report the exact observed state versus expected state to Lead and wait for explicit human confirmation before retrying or repairing.
 
-These are agent instructions, **not deterministic security enforcement**. OpenCode permission dialogs govern tool access, not plan state. Shell/MCP can perform powerful operations; role prompts and command patterns do not create a sandbox or exactly-once execution guarantee.
+These are agent instructions, **not deterministic security enforcement**. OpenCode permission dialogs govern tool access, not plan state. Shell/MCP can perform powerful operations; role prompts and command patterns do not create a sandbox, automatic recovery engine, workflow database, or exactly-once execution guarantee.
 
 ## Roles and access
 
-| Role | Native capabilities | Workflow responsibility |
+The matrix describes intended workflow capability and ownership, **not a runtime
+inventory**. Keep four facts separate: (1) tools actually offered/visible to a
+particular request, (2) the effective configured allow/ask/deny policy, (3) an
+observed invocation and its result, and (4) task ownership: which role owns the task. A catalog,
+permission rule, agent self-report, or successful invocation in another session
+does not establish all four. Record missing evidence as unverified.
+
+| Role | Intended native capabilities (not availability proof) | Workflow responsibility / escalation |
 | --- | --- | --- |
-| Lead | Local read/search, questions, seven named subagents | Human decisions, task sequencing, checklist; no direct implementation/publishing |
-| Operator | Local read/search, shell/local Git, memory edits | Bootstrap/worktrees, local Git information, shared memory, safe cleanup |
-| External | MCP, web/API, shell/remote Git | Jira/GitHub/design context and synchronization, approved push/PR, optional evidence publication |
-| Researcher | Local read/search | Understand code and requirements; ask External for service context |
-| Planner | Local read/search | Propose/revise plans; never approve or implement |
-| Implementer | Local read/search/edit, appropriate shell | Approved application code/tests/fixes; no remote publishing |
-| Reviewer | Local read/search, configured shell checks | Review/build/lint/unit/Roborazzi; findings instead of source fixes |
-| QA | Local read/search, configured device/test shell | Runtime/design/E2E checks; findings and optional capture |
+| Lead | Local read/search, questions, named subagent delegation; no shell/edit/MCP configured in the source template | Human decisions, sequencing, checklist. Delegate local Git to Operator, services to External, code to Implementer, verification to Reviewer/QA. Escalate unavailable capability to its owner/human. |
+| Operator | Local read/search; shell and edit are ASK in source template | Bootstrap/worktrees/local Git/memory/cleanup. No remote publishing or service access; report missing local tooling to Lead. |
+| External | Local read/search; shell generally ASK, `git push` and named `gh`/`gh.exe` operations narrowly ALLOW with merge DENY; execute ALLOW; web and named MCP patterns ASK | MCP/services/remote Git/gh and authorized publishing. Ask Lead about absent tools, auth, selection, or access; do not substitute another owner. |
+| Researcher | Local read/search; no shell/edit/MCP configured in source template | Inspect code/context; request local Git information from Operator and services from External through Lead. |
+| Planner | Local read/search; no shell/edit/MCP configured in source template | Propose plans only; request missing context through Lead, never approve or implement. |
+| Implementer | Local read/search/edit; shell ASK in source template | Approved source/tests/fixes. Request Git/worktree operations from Operator and services from External through Lead. |
+| Reviewer | Local read/search; shell ASK in source template | Review and configured checks; report findings, do not fix source. Ask Lead about missing commands/prerequisites. |
+| QA | Local read/search; shell ASK in source template | Runtime/design/E2E checks; report findings, do not edit. Ask Lead about missing device/test setup. |
+
+These are source-template policy intentions only. Project overrides, host version,
+session overlays, model request construction, plugins, and permission ordering can
+change effective configuration or exposure. Preserve the distinction when reporting:
+“configured ASK” is not “denied”; “catalog search returned no match” is not “native
+shell absent”; and “tool invocation succeeded” proves only that invocation in that
+session. A tool reported missing without offered-tool evidence or an actual authorized
+invocation/error remains **unverified**.
 
 Default-deny tool policies are followed by explicit role exceptions. Native templates use `ask` for broad shell and operational-file edits until a project supplies specific commands/paths. This can cause normal OpenCode permission prompts, not a separate approval terminal. Only External has MCP action patterns or Code Mode access. MCP patterns must match actual normalized `<server>_<tool>` names; aliases in the example are conventions to configure, not assumed working connections.
+
+Native tools such as `shell` are separate from Code Mode's `execute` catalog. `execute.search` discovers only that catalog; an empty result does not enumerate or disprove native tools. Direct MCP actions and nested Code Mode actions are also distinct routes: confirm which actual action/tool is exposed and configured rather than inferring one from the other. A configured MCP alias does not prove enabled/authenticated service access or a usable tool.
+
+If access is missing or denied, report the exact observed outcome without relabeling it as a tool-absence diagnosis. Escalate local Git/worktree/memory to Operator, MCP/services/remote Git to External, code changes to Implementer, verification prerequisites to Lead via Reviewer/QA, and plan/approval decisions to the human through Lead. Do not grant permissions, substitute roles/models, retry, restart, or invent a tool route to work around a gap. Permission dialogs authorize tool operations, not human plan approval.
+
+External's source policy allows native `git push` and only these `gh`/`gh.exe`
+commands: `pr create/edit/comment/review`, `issue create/edit/comment`, `workflow
+run`, and `run rerun/cancel`. Exact no-argument forms and argument-bearing forms are
+listed; all other shell/gh operations remain ASK, except `pr merge`, which is DENY.
+This policy is specific to shell commands and does not grant broad MCP access. The
+integration setup appends these scoped exceptions after broad ASK rules when the
+`gh` backend is selected; other roles keep their denies. Permission ALLOW does not
+grant conversational authorization: every write still requires the specified human
+decision, CI run/rerun/cancel and force/delete pushes require an explicit human
+request, and final publication approval remains required. These instructions and
+patterns are not a sandbox or an enforced approval gate.
 
 Operator/Implementer/Reviewer/QA shell access is not cryptographic ownership enforcement. Narrow allowlists and explicit deny rules for obvious remote Git/GitHub commands support the convention; indirect commands, scripts, aliases, and network access remain user-authority capabilities. Do not build another host layer to imply stronger guarantees.
 
@@ -42,15 +85,15 @@ Keep customizable role prompts and the agreed model/reasoning table. Validate mo
 
 ## Required workflow, optional extras
 
-1. Operator confirms repository/base branch, `AGENTS.md`, existing features/worktrees, and an agreed worktree path. Ask if another active feature or unrelated changes make setup unsafe.
-2. External reads Jira and the selected design source: Figma, otherwise Stitch, otherwise Jira. Ask on contradictions; do not silently mix design sources.
+1. Operator confirms repository/base branch, `AGENTS.md`, existing features/worktrees, and an agreed worktree path. Task bootstrap creates the isolated feature worktree under the configured worktree parent and initializes shared `MEMORY.md` if missing. Other existing worktrees and untouched canonical changes do not block bootstrap; stop and ask only on missing/invalid settings, target branch/worktree collision, or creation errors.
+2. Read project AGENTS.md and referenced context. External retrieves requirements from the services actually selected for this task. GitHub/Jira/design integrations are individually optional; ask about an absent service only when the task requires it. Never silently enable, substitute, or combine design sources.
 3. Researcher inspects related code; Planner supplies the plan; Lead waits for human approval.
 4. Implementer makes approved changes and writes tests. Reviewer runs required checks; QA verifies runtime and configured E2E behavior.
 5. Lead presents findings. Human accept/discard decisions guide scoped fixes, followed by affected rechecks and renewed approval for material plan changes.
-6. Lead asks for final implementation approval. External publishes the approved work and updates Jira. Process PR feedback through the same decisions; never merge.
-7. Ask which observed learnings should become approved `AGENTS.md` changes. On human-triggered merge verification, confirm merged state before safe worktree/branch cleanup.
+6. Lead asks for final implementation approval. External publishes through the configured GitHub backend and updates Jira only when selected and authorized. If the requested publishing workflow lacks a service, ask rather than claiming success. Process PR feedback through the same decisions; never merge.
+7. Evaluate candidate memory learnings once for approved consolidation into `AGENTS.md` (promote, keep in memory, or discard); approve resulting diff before publication, rejecting secrets and operational paths. A human's confirmation that the PR is merged triggers External to verify merged state and authorizes Operator to clean up the task worktree and local feature branch after safety checks. Preserve the remote branch; stop and ask if work is dirty, unpushed, or uncertain.
 
-Jira lifecycle updates are pre-authorized after agreeing the project's state mapping; synchronization failures require a human decision. If outcome is uncertain, inspect before retrying rather than duplicating external operations. Respect GitHub's required checks and human approvals.
+Jira lifecycle updates are pre-authorized only when Jira is selected and the human approves its state mapping and update scope; synchronization failures require a human decision. When Jira is not selected, use project/task acceptance criteria. If outcome is uncertain, inspect before retrying rather than duplicating external operations. Respect GitHub's required checks and human approvals.
 
 Required verification is named in each plan. Evidence capture/publication (screenshots, video, analytics/logcat) is optional unless explicitly made an acceptance criterion. An explicit human request to Lead authorizes that specific evidence action (for example, attaching a screenshot to the Jira issue) without a redundant approval ceremony; Lead relays the action and destination to External. It does not authorize pushing or opening a PR, so evidence for a PR still waits for final approval of the work. Confirm the authorized action, selected destination, and actually supported configured capability before publication. Ask Lead if destination or capability is unclear; tool availability or permission is not authorization. Failures are nonblocking unless evidence was expressly required; report missing evidence. Reuse clearly matching source/config artifacts when practical, with no cache/manifest system. Operational recordings/logs/screenshots stay out of application Git; tests, required baselines, and approved `AGENTS.md` rules are ordinary reviewed Git changes. Prefer a physical device, otherwise an emulator, and ask when selection is unclear. The private E2E command/API contract must be supplied before it can be invoked.
 
@@ -58,9 +101,11 @@ Reusing a clearly matching artifact is useful, but advanced cache manifests, dur
 
 ## Simple state and project setup
 
-The Lead checklist includes feature/issue, worktree, latest plan and approval decision, implementation progress, required checks/results, findings and decisions, final publishing approval, PR, and cleanup. Summarize it before compaction/interruption. Missing or conflicting context means ask, not infer approval.
+Reusable MCP connections/agent permissions and default GitHub/Jira/design choices are global. Repository identifiers, chosen optional services, Jira mappings, Android commands, and device/shared-path choices live only in project AGENTS.md or explicitly referenced context. There is no required separate project JSON profile. Existing profiles remain intact until migration is explicitly approved. See [configuration](configuration.md).
 
-Use one agreed `MEMORY.md` outside application worktrees, preferably in a visible project-data folder under `$HOME/Projects`. Operator maintains it with source/scope/confirmation labels and deduplication. Confirm additions to `AGENTS.md`; do not store secrets or operational artifacts in feature Git.
+The Lead checklist includes feature/issue, worktree, latest plan and approval decision, implementation progress, required checks/results, findings and decisions, final publishing approval, PR, and cleanup. Summarize it before compaction/interruption. When resuming after an interruption or compaction, inspect actual state read-only, present the checklist with missing approvals marked unconfirmed, and obtain explicit human confirmation before resuming work. Missing or conflicting context means ask, not infer approval.
+
+Use one agreed `MEMORY.md` outside application worktrees, preferably in a visible project-data folder under `$HOME/Projects`. Operator maintains it with serialized atomic writes, baseline verification, source/scope/confirmation labels, deduplication, and rejection of secrets and raw operational dumps. Precedence is **Current Human Decision > `AGENTS.md` > `MEMORY.md`**; surface conflicting facts or rule contradictions to the human via Lead rather than silently overwriting. Confirm additions to `AGENTS.md`; do not store secrets or operational artifacts in feature Git.
 
 No cross-machine unfinished-state synchronization or concurrent-feature coordinator is needed in product V1. One active feature is checked operationally, not guaranteed by a new locking daemon.
 
