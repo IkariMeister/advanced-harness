@@ -74,6 +74,8 @@ npm run harness:install -- --help
 
 Antigravity install likewise requires a typed `yes`; Enter, `no`, or any other answer cancels with no file, backup, or receipt written.
 
+In Antigravity's `define_subagent`, `enableWriteTools` grants both file editing and `run_command`. The installed Lead rule therefore enables write tools for External (`gh`, `git push`), Reviewer (lint/build/unit checks), and QA (runtime/E2E checks), and instructs them never to use file-edit tools on source; Researcher and Planner stay without write tools. The rule tells Lead to define each child once per session and reuse it when `define_subagent` reports that it already exists. A child defined in the same session under an older rule (for example without `run_command`) is not repaired in place: start a fresh Antigravity session after `harness:update`. Not verified here: Antigravity's enforcement of these tool groups and whether `define_subagent` can update an existing definition.
+
 ### Claude Code (project scope)
 
 `--host claude-code --scope project` shows the planned files and the fail-closed mapping, then requires a typed `yes`. Enter, `no`, or any other answer cancels with no file, backup, or receipt written. It writes:

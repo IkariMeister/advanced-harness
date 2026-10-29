@@ -26,7 +26,7 @@ test('compileAntigravitySubagentSpec maps each role to correct tool groups and m
   assert.equal(operator.model, 'flash_lite');
 
   const external = compileAntigravitySubagentSpec('external', roles.external);
-  assert.equal(external.enableWriteTools, false);
+  assert.equal(external.enableWriteTools, true);
   assert.equal(external.enableMCPTools, true);
   assert.equal(external.model, 'flash_lite');
 
@@ -36,7 +36,7 @@ test('compileAntigravitySubagentSpec maps each role to correct tool groups and m
   assert.equal(implementer.model, 'flash');
 
   const reviewer = compileAntigravitySubagentSpec('reviewer', roles.reviewer);
-  assert.equal(reviewer.enableWriteTools, false);
+  assert.equal(reviewer.enableWriteTools, true);
   assert.equal(reviewer.enableMCPTools, false);
   assert.equal(reviewer.model, 'pro');
 
@@ -46,7 +46,7 @@ test('compileAntigravitySubagentSpec maps each role to correct tool groups and m
   assert.equal(planner.model, 'pro');
 
   const qa = compileAntigravitySubagentSpec('qa', roles.qa);
-  assert.equal(qa.enableWriteTools, false);
+  assert.equal(qa.enableWriteTools, true);
   assert.equal(qa.enableMCPTools, false);
   assert.equal(qa.model, 'flash');
 
@@ -67,6 +67,30 @@ test('compileLeadOrchestrationRule generates valid rule conforming to 24KB limit
 
   const byteLength = Buffer.byteLength(rule.content, 'utf8');
   assert.ok(byteLength <= 24000, `Lead rule must be <= 24,000 bytes, got ${byteLength}`);
+});
+
+test('compileLeadOrchestrationRule grants command-running roles write tools with edit restrictions', () => {
+  const rule = compileLeadOrchestrationRule(roles);
+  const writeToolsFor = (role: string) => {
+    const row = rule.content.split('\n').find(line => line.startsWith(`| **${role}** |`));
+    assert.ok(row, `missing table row for ${role}`);
+    return row.split('|')[3]?.trim();
+  };
+
+  assert.equal(writeToolsFor('external'), 'true');
+  assert.equal(writeToolsFor('reviewer'), 'true');
+  assert.equal(writeToolsFor('qa'), 'true');
+  assert.equal(writeToolsFor('researcher'), 'false');
+  assert.equal(writeToolsFor('planner'), 'false');
+  assert.ok(rule.content.includes('Write Tools (edits + `run_command`)'));
+  assert.match(rule.content, /External, Reviewer, and QA have write tools enabled only so they can run commands; they must never use file-edit tools/);
+});
+
+test('compileLeadOrchestrationRule tells Lead to reuse existing subagent definitions', () => {
+  const rule = compileLeadOrchestrationRule(roles);
+  assert.ok(rule.content.includes('## Subagent Definition Lifecycle'));
+  assert.match(rule.content, /already exists, do not retry it; invoke the existing child with `invoke_subagent`/);
+  assert.match(rule.content, /does not match the table above .* Stop and ask the human to start a fresh session/);
 });
 
 test('compileAntigravityHooks configures PreToolUse gh pr merge guard', () => {
