@@ -36,7 +36,7 @@ import {
   preflightOpenCodeCommandDeployment,
   type WorkflowCommandId
 } from './workflow-commands.ts';
-import { parseHostSelection, HOST_CAPABILITIES, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 
 export interface UpdateFlowOptions {
   scope?: string;
@@ -100,7 +100,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
 
   if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
     for (const host of unsupportedHosts) {
-      errorOutput(`Update blocked: ${HOST_CAPABILITIES[host].displayName} native deployment is not implemented${host === 'cursor' ? ' (issue #46)' : ''}. No host adapters or files were changed.`);
+      errorOutput(`Update blocked: ${HOST_CAPABILITIES[host].displayName} ${describeBlockedHost(host)}. No host adapters or files were changed.`);
     }
     if (dispatch.multi && unsupportedHosts.length === 0) {
       errorOutput('Multi-host simultaneous update is not supported. Update each host deliberately.');
@@ -144,18 +144,6 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       ask,
       output,
       error: errorOutput,
-    });
-    return typeof result === 'number' ? result : 0;
-  }
-
-  if (dispatch.host === 'codex') {
-    const adapter = (deps.getHostAdapter ?? getHostAdapter)('codex');
-    if (!adapter || !adapter.update) throw new Error('Codex host adapter update is not available.');
-    const result = await adapter.update({
-      scope: scope as 'project' | 'global', project, home,
-      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
-      agentsDirectory: deps.agentsDirectory, commandsDirectory: deps.workflowCommandsDirectory,
-      ask, output, error: errorOutput,
     });
     return typeof result === 'number' ? result : 0;
   }

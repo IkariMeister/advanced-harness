@@ -77,25 +77,30 @@ test('injected installer cancellation makes no configuration or recovery writes'
   assert.equal(existsSync(join(root, 'recovery')), false);
 });
 
-test('Codex context selection is rejected before scope prompts or filesystem writes', async t => {
-  const root = makeTempRoot('codex-context-install-');
+test('Codex install is gated before Codex prompts or filesystem writes, even with --context', async t => {
+  const root = makeTempRoot('codex-gated-install-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  let prompts = 0;
-  await assert.rejects(runInstallerFlow({ host: 'codex', scope: 'project', project: root, context: 'local' }, {
-    ask: async () => { prompts++; return ''; }, output: () => {}, error: () => {}, home: root,
-  }), /--context for model preferences is supported only with --host antigravity/);
-  assert.equal(prompts, 0);
-  assert.deepEqual(readdirSync(root), []);
+  for (const context of [undefined, 'local']) {
+    let prompts = 0;
+    const errors: string[] = [];
+    const status = await runInstallerFlow({ host: 'codex', scope: 'project', project: root, ...(context ? { context } : {}) }, {
+      ask: async () => { prompts++; return ''; }, output: () => {}, error: message => errors.push(message), home: root,
+    });
+    assert.equal(status, 2);
+    assert.equal(prompts, 0);
+    assert.ok(errors.some(message => message.includes('Installation blocked') && message.includes('issue #45')), errors.join('\n'));
+    assert.deepEqual(readdirSync(root), []);
+  }
 });
 
-test('Antigravity context is forwarded to its adapter; Codex routing does not block normal install', async t => {
+test('Antigravity context is forwarded to its adapter while a Codex adapter is never invoked', async t => {
   const root = makeTempRoot('host-context-route-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); mkdirSync(project);
   const seen: string[] = [];
   const adapters = new Map<string, HostAdapter>([
     ['antigravity', { host: 'antigravity', install: async options => { seen.push(`antigravity:${options.context}`); return 0; } }],
-    ['codex', { host: 'codex', install: async options => { seen.push(`codex:${options.context ?? 'none'}`); return 0; } }],
+    ['codex', { host: 'codex', install: async () => { seen.push('codex'); return 0; } }],
   ]);
   const antigravity = await runInstallerFlow({ host: 'antigravity', scope: 'project', project, context: 'local' }, {
     ask: async () => '', output: () => {}, error: () => {}, home: root,
@@ -106,8 +111,8 @@ test('Antigravity context is forwarded to its adapter; Codex routing does not bl
     getHostAdapter: host => adapters.get(host),
   });
   assert.equal(antigravity, 0);
-  assert.equal(codex, 0);
-  assert.deepEqual(seen, ['antigravity:local', 'codex:none']);
+  assert.equal(codex, 2);
+  assert.deepEqual(seen, ['antigravity:local']);
 });
 
 test('injected installer explicitly replaces a preserved model only after its role-specific confirmation', async t => {

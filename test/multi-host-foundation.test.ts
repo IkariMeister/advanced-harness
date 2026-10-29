@@ -71,8 +71,10 @@ test('supportedHosts and parseHostSelection validate all hosts, aliases, and err
 });
 
 test('native dispatch selection is shared and fails closed for unsupported/mixed hosts', () => {
-  assert.deepEqual(selectNativeHost(['codex']), { host: 'codex', unsupported: [], multi: false });
-  assert.deepEqual(selectNativeHost(['codex', 'opencode']), { unsupported: [], multi: true });
+  assert.deepEqual(selectNativeHost(['claude-code']), { host: 'claude-code', unsupported: [], multi: false });
+  assert.deepEqual(selectNativeHost(['codex']), { unsupported: ['codex'], multi: false });
+  assert.deepEqual(selectNativeHost(['claude-code', 'opencode']), { unsupported: [], multi: true });
+  assert.deepEqual(selectNativeHost(['codex', 'opencode']), { unsupported: ['codex'], multi: true });
   assert.deepEqual(selectNativeHost(['cursor']), { unsupported: ['cursor'], multi: false });
 });
 
@@ -312,51 +314,23 @@ test('multi-host receipt lineage: host isolation, managedFiles restore, and asse
   }
 });
 
-test('Codex install/update dispatches to its adapter while unsupported Cursor fails before writes', async () => {
+test('Codex and Cursor install/update fail closed before adapters or writes', async () => {
   const tempProject = createTempDir('flow-multihost-test');
   const tempHome = createTempDir('flow-home');
   const logs: string[] = [];
   const ask = async (_q: string, suggested?: string) => suggested ?? '';
 
   try {
-    let installedHost: string | undefined;
-    const codexAdapter = { host: 'codex' as const, install: async () => { installedHost = 'codex'; }, update: async () => { installedHost = 'codex-update'; } };
-    const exitCode = await runInstallerFlow(
-      { scope: 'project', project: tempProject, host: 'codex' },
-      {
-        ask,
-        output: msg => logs.push(msg),
-        error: msg => logs.push(`ERR: ${msg}`),
-        home: tempHome,
-        getHostAdapter: host => host === 'codex' ? codexAdapter : undefined,
-      }
-    );
-    assert.equal(exitCode, 0);
-    assert.equal(installedHost, 'codex');
-
-    // Test update flow for non-opencode/non-antigravity host
-    const updateExitCode = await runUpdateFlow(
-      { scope: 'project', project: tempProject, host: 'codex' },
-      {
-        ask,
-        output: msg => logs.push(msg),
-        error: msg => logs.push(`ERR: ${msg}`),
-        home: tempHome,
-        getHostAdapter: host => host === 'codex' ? codexAdapter : undefined,
-      }
-    );
-    assert.equal(updateExitCode, 0);
-    assert.equal(installedHost, 'codex-update');
-
-    const unsupportedInstall = await runInstallerFlow({ scope: 'project', project: tempProject, host: 'cursor' }, {
-      ask, output: msg => logs.push(msg), error: msg => logs.push(`ERR: ${msg}`), home: tempHome,
-    });
-    const unsupportedUpdate = await runUpdateFlow({ scope: 'project', project: tempProject, host: 'cursor' }, {
-      ask, output: msg => logs.push(msg), error: msg => logs.push(`ERR: ${msg}`), home: tempHome,
-    });
-    assert.equal(unsupportedInstall, 2);
-    assert.equal(unsupportedUpdate, 2);
+    let adapterCalls = 0;
+    const adapter = (host: 'codex') => ({ host, install: async () => { adapterCalls++; }, update: async () => { adapterCalls++; } });
+    for (const host of ['codex', 'cursor'] as const) {
+      const deps = { ask, output: (msg: string) => logs.push(msg), error: (msg: string) => logs.push(`ERR: ${msg}`), home: tempHome, getHostAdapter: (id: string) => id === 'codex' ? adapter('codex') : undefined };
+      assert.equal(await runInstallerFlow({ scope: 'project', project: tempProject, host }, deps), 2, host);
+      assert.equal(await runUpdateFlow({ scope: 'project', project: tempProject, host }, deps), 2, host);
+    }
+    assert.equal(adapterCalls, 0);
     assert.ok(logs.some(l => l.includes('issue #46')));
+    assert.ok(logs.some(l => l.includes('issue #45') && l.includes('strict per-role isolation')));
   } finally {
     rmSync(tempProject, { recursive: true, force: true });
     rmSync(tempHome, { recursive: true, force: true });
