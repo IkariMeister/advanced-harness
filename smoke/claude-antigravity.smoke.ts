@@ -67,9 +67,12 @@ describe('SMK-AG Antigravity project lifecycle (non-TTY piped answers)', () => {
     assert.deepEqual(tree(box.project), pristine);
   });
 
-  it('SMK-AG-02 Enter at the confirmation follows the shown [yes] default', { todo: 'Gap: prompt shows [yes] but Enter cancels (src/antigravity-adapter.ts); safe, but contradicts the displayed default' }, async () => {
+  it('SMK-AG-02 Enter at the confirmation (default no) cancels with no writes', async () => {
     const result = await box.run('install-native-harness.ts', args(), { steps: antigravityInstall('') });
-    assert.equal(result.code, 0, result.transcript);
+    assert.equal(result.code, 1, result.transcript);
+    assert.match(result.stdout, /\(yes\/no\) \[no\]: /);
+    assert.match(result.stdout, /Installation canceled by user\. No files written\./);
+    assert.deepEqual(tree(box.project), pristine);
   });
 
   it('SMK-AG-03 install deploys rules, skills, merge guard hook, and MCP config; preferences go to AGENTS.md', async () => {

@@ -343,7 +343,9 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   if (preferencePlan.writes.length) preferencePlan.writes.forEach(file => output(`  ${file.path} (${file.currentContent === undefined ? 'new' : 'update'}${file.currentContent === undefined ? '' : `; private before-state backup under ${backupParent}`})`));
   else output('  None (preferences already match).');
 
-  const confirm = (await ask('\nConfirm installation of Antigravity harness configuration? (yes/no)', 'yes')).trim().toLowerCase();
+  // Enter does not apply a default here: only an explicit yes writes files.
+  output('');
+  const confirm = (await ask('Type yes to install the Antigravity harness configuration listed above (yes/no)', 'no')).trim().toLowerCase();
   if (confirm !== 'yes' && confirm !== 'y') {
     output('Installation canceled by user. No files written.');
     return 1;

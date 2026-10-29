@@ -72,6 +72,8 @@ npm run harness:install -- --help
 
 `--host <opencode|claude-code|antigravity|codex|cursor|all>` accepts host selections. OpenCode, Google Antigravity (#44), and Claude Code (#43, project scope only) are implemented as single-host installs. Codex (#45) and Cursor (#46) are not implemented. Any selection containing an unimplemented host, and any mixed or `all` selection, is rejected before adapters or filesystem mutations. Workflow artifact compilation is a pure library operation, not installation; caller-bound invocation artifacts are never automatically written as reusable commands.
 
+Antigravity install likewise requires a typed `yes`; Enter, `no`, or any other answer cancels with no file, backup, or receipt written.
+
 ### Claude Code (project scope)
 
 `--host claude-code --scope project` shows the planned files and the fail-closed mapping, then requires a typed `yes`. Enter, `no`, or any other answer cancels with no file, backup, or receipt written. It writes:

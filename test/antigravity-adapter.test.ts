@@ -103,9 +103,9 @@ test('installAntigravity performs full installation and preserves existing unrel
       recoveryDirectory: recoveryDir,
       agentsDirectory: rolesDir,
       commandsDirectory: commandsDir,
-      ask: async (_q, s) => {
+      ask: async (q, s) => {
         confirmed = true;
-        return s ?? 'yes';
+        return q.startsWith('Type yes to install the Antigravity') ? 'yes' : (s ?? 'yes');
       },
       output: msg => outputs.push(msg),
       error: msg => outputs.push(`ERROR: ${msg}`),
@@ -157,7 +157,7 @@ test('diagnoseAntigravity reports ok: false when uninstalled or when required ar
       home: tempHome,
       agentsDirectory: rolesDir,
       commandsDirectory: commandsDir,
-      ask: async (_q, s) => s ?? 'yes',
+      ask: async (q, s) => q.startsWith('Type yes to install the Antigravity') ? 'yes' : (s ?? 'yes'),
       output: () => {},
       error: () => {},
     });
@@ -244,7 +244,7 @@ test('runInstallerFlow delegates clean installation and isolates writes to suppl
         project: tempProject,
       },
       {
-        ask: async (_q, s) => s ?? 'yes',
+        ask: async (q, s) => q.startsWith('Type yes to install the Antigravity') ? 'yes' : (s ?? 'yes'),
         output: msg => outputs.push(msg),
         error: msg => errors.push(msg),
         home: tempHome,
@@ -278,7 +278,7 @@ test('installAntigravity in global scope deploys skills and script into global c
       home: tempHome,
       agentsDirectory: rolesDir,
       commandsDirectory: commandsDir,
-      ask: async (_q, s) => s ?? 'yes',
+      ask: async (q, s) => q.startsWith('Type yes to install the Antigravity') ? 'yes' : (s ?? 'yes'),
       output: () => {},
       error: () => {},
     });
@@ -330,8 +330,8 @@ test('installAntigravity preserves customized/unowned rules, skills, and guard s
       commandsDirectory: commandsDir,
       ask: async (question, suggested) => {
         askedQuestions.push(question);
-        // Default answer for customized files is 'no', final confirmation is 'yes'
-        return suggested ?? 'no';
+        // Default answer for customized files is 'no'; the final confirmation is answered 'yes' explicitly
+        return question.startsWith('Type yes to install the Antigravity') ? 'yes' : (suggested ?? 'no');
       },
       output: () => {},
       error: () => {},
@@ -436,7 +436,7 @@ test('installAntigravity aborts and writes nothing if files diverge during confi
           agentsDirectory: rolesDir,
           commandsDirectory: commandsDir,
           ask: async (question) => {
-            if (question.includes('Confirm installation')) {
+            if (question.includes('Type yes to install the Antigravity')) {
               // Mutate a planned file while confirmation prompt is open
               writeFileSync(rulePath, '# Mutated concurrently while prompt was open\n');
             }
@@ -458,5 +458,77 @@ test('installAntigravity aborts and writes nothing if files diverge during confi
   } finally {
     rmSync(tempProject, { recursive: true, force: true });
     rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+const isAntigravityConfirmation = (question: string) => question.trimStart().startsWith('Type yes to install the Antigravity');
+
+function antigravityConfirmationFixture(answer: string) {
+  const tempProject = makeTempRoot('ag-confirm-project-');
+  const tempHome = makeTempRoot('ag-confirm-home-');
+  const recoveryDir = join(tempHome, 'recovery');
+  const prompts: Array<{ question: string; suggested: string | undefined }> = [];
+  const outputs: string[] = [];
+  const errors: string[] = [];
+  const ask = async (question: string, suggested?: string) => {
+    prompts.push({ question, suggested });
+    return isAntigravityConfirmation(question) ? answer : (suggested ?? '');
+  };
+  const deps = {
+    ask,
+    output: (message: string) => { outputs.push(message); },
+    error: (message: string) => { errors.push(message); },
+    home: tempHome,
+    recoveryDirectory: recoveryDir,
+    agentsDirectory: rolesDir,
+    commandsDirectory: commandsDir,
+  };
+  const cleanup = () => {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  };
+  return { tempProject, tempHome, recoveryDir, prompts, outputs, deps, cleanup };
+}
+
+test('Enter at the Antigravity confirmation (default no) cancels with no writes', async () => {
+  const f = antigravityConfirmationFixture('');
+  try {
+    const code = await installAntigravity({ scope: 'project', project: f.tempProject, ...f.deps });
+    assert.equal(code, 1);
+    assert.ok(f.outputs.some(line => line.includes('Installation canceled by user. No files written.')));
+    assert.equal(existsSync(join(f.tempProject, '.agents')), false, 'no .agents directory is created');
+    assert.equal(existsSync(f.recoveryDir), false, 'no backups or receipts are written');
+    const confirmations = f.prompts.filter(p => isAntigravityConfirmation(p.question));
+    assert.equal(confirmations.length, 1, 'Enter is not retried or defaulted to yes');
+    assert.equal(confirmations[0]?.suggested, 'no', 'the displayed default is no');
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('an explicit no and an unrecognized answer both cancel the Antigravity install with no writes', async () => {
+  for (const answer of ['no', 'maybe']) {
+    const f = antigravityConfirmationFixture(answer);
+    try {
+      const code = await installAntigravity({ scope: 'project', project: f.tempProject, ...f.deps });
+      assert.equal(code, 1, answer);
+      assert.equal(existsSync(join(f.tempProject, '.agents')), false, answer);
+      assert.equal(existsSync(f.recoveryDir), false, answer);
+    } finally {
+      f.cleanup();
+    }
+  }
+});
+
+test('runInstallerFlow with Enter at the Antigravity confirmation cancels with no .agents directory', async () => {
+  const f = antigravityConfirmationFixture('');
+  try {
+    const code = await runInstallerFlow({ host: 'antigravity', scope: 'project', project: f.tempProject }, f.deps);
+    assert.equal(code, 1);
+    assert.equal(existsSync(join(f.tempProject, '.agents')), false);
+    assert.equal(existsSync(f.recoveryDir), false);
+    assert.equal(f.prompts.filter(p => isAntigravityConfirmation(p.question)).length, 1);
+  } finally {
+    f.cleanup();
   }
 });
