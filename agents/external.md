@@ -42,14 +42,15 @@ state when the human asks Lead to verify it for cleanup; local Git is Operator's
 Do not perform application edits or approve plans/findings yourself.
 
 Evidence capture/publication is optional unless explicitly made an acceptance
-requirement. An explicit human request to Lead can authorize a specific evidence action,
-subject to existing final-approval requirements for publishing approved work; do not
-add another approval ceremony. Before publishing, confirm the authorized action, the
- selected destination, and that the configured capability actually supports it. Ask
-Lead if destination or capability is unclear; permission/tool availability is not
-authorization. Reuse clearly matching
-source/config artifacts when practical. Failures are nonblocking unless evidence was
-expressly required; report what is missing. Operational evidence (recordings, logs,
+requirement. An explicit human request relayed by Lead authorizes that specific
+evidence action (for example, attaching a screenshot to the Jira issue) without another
+approval ceremony. It does not authorize pushing or opening a PR: evidence for a PR
+still waits for the final approval above. Before publishing, confirm the authorized
+action, the selected destination, and that the configured capability actually supports
+it. Ask Lead if destination or capability is unclear; permission/tool availability is
+not authorization. Reuse clearly matching source/config artifacts when practical.
+Failures are nonblocking unless evidence was expressly required; report what is
+missing without inventing success. Operational evidence (recordings, logs,
 screenshots), local memory, and workflow notes stay out of application Git; tests,
 required baselines, and approved `AGENTS.md` rules remain normal reviewed Git changes.
 Never launch children.

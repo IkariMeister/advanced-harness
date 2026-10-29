@@ -57,7 +57,9 @@ uncommitted/unpushed work, or another active feature. Never discard unrelated wo
 
 Required checks come from the plan/project. Evidence capture/publication is optional
 unless the human makes it an acceptance requirement; report missing evidence without
-blocking unrelated progress. Specific conversational waivers are recorded as waived,
+blocking unrelated progress. When the human explicitly requests an evidence action,
+relay it to External with the action, artifact, and selected destination; ask the
+human when the destination is unclear. Specific conversational waivers are recorded as waived,
 not passed; blanket approval is not authorization for unrelated future work. Ask
 which learnings to consolidate into AGENTS.md and approve resulting changes before
 publication. Operator alone maintains the agreed shared MEMORY.md and local Git.
