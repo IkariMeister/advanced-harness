@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { homedir } from 'node:os';
 import { parseConfiguration, saveInstallation, type Ask } from './native-installer.ts';
 import { contextData, contextPath, hasContextSection, prepareContextFiles, readContext, removeContext, updateContext } from './project-context.ts';
-import { createSharedLocations, defaultLocations, describeLocationPlan, emptyLocationPlan, pathsInstructions, planSharedLocations, validateLocations, validatePathsSettings, type PathsSettings, type SharedLocations } from './shared-locations.ts';
+import { createSharedLocations, defaultLocations, describeLocationPlan, emptyLocationPlan, pathsInstructions, planSharedLocations, validateLocations, validatePathsSettings, type LocationPlan, type PathsSettings, type SharedLocations } from './shared-locations.ts';
 
 export const checkNames = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'] as const;
 export type CheckName = typeof checkNames[number];
@@ -418,13 +418,17 @@ export async function runSharedLocationStep(root: string, deps: SharedLocationSt
   suggestion ??= defaultLocations(root, deps.globalDefaults, home);
   output(current ? 'Confirm shared locations (Enter keeps each):' : 'No shared locations are recorded for this project. Choose them (Enter accepts each suggestion):');
   let chosen: SharedLocations;
+  let plan: LocationPlan;
   for (;;) {
     const worktreeDirectory = expandPath((await ask('Parent directory for future worktrees (outside the checkout)', suggestion.worktreeDirectory)).trim() || suggestion.worktreeDirectory, home);
     const memoryPath = expandPath((await ask('Shared MEMORY.md path (outside checkout/worktrees)', suggestion.memoryPath)).trim() || suggestion.memoryPath, home);
-    try { validateLocations(resolve(root), { worktreeDirectory, memoryPath }); chosen = { worktreeDirectory, memoryPath }; break; }
-    catch (error) { output(`${(error as Error).message} Enter different paths.`); }
+    try {
+      chosen = { worktreeDirectory, memoryPath };
+      validateLocations(resolve(root), chosen);
+      plan = planSharedLocations(resolve(root), chosen);
+      break;
+    } catch (error) { output(`${(error as Error).message} Enter different paths.`); }
   }
-  const plan = planSharedLocations(chosen);
   const changed = !current || resolve(current.worktreeDirectory) !== resolve(chosen.worktreeDirectory) || resolve(current.memoryPath) !== resolve(chosen.memoryPath);
   const files: SetupFile[] = !changed ? [] : profile
     ? prepareSetup(root, { ...profile, ...chosen }, original, target)
@@ -604,7 +608,7 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   if (profile.shell !== shell) throw new Error('Collected shell differs from the selected shell. No files changed.');
   const files = prepareSetup(root, profile, original, target);
   const updated = files[0]!.updated;
-  const locations = planSharedLocations(profile);
+  const locations = planSharedLocations(profile.projectRoot, profile);
 
   output('\nReview project setup:');
   output(`Base branch: ${profile.baseBranch}; shell: ${profile.shell}`);
