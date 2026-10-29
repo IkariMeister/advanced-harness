@@ -1,16 +1,39 @@
 import { basename, dirname, join, resolve } from 'node:path';
 import { chooseConfiguration, discoverConfigurations, projectConfiguration } from './native-installer.ts';
+import type { HostId } from './host-registry.ts';
 
 export type UninstallTargetOptions = {
   scope?: string;
   project?: string;
   config?: string;
+  host?: HostId;
   home: string;
   cwd: string;
   xdgConfigHome?: string;
 };
 
+// Receipt-keyed file per host: Claude Code keys on <project>/.claude/settings.json (project only);
+// Antigravity keys on <project>/.agents/hooks.json or <home>/.gemini/config/hooks.json (global).
+function selectHostTarget(host: Exclude<HostId, 'opencode'>, options: UninstallTargetOptions): string {
+  if (options.config) throw new Error(`--config is supported only with --host opencode; ${host} uninstall targets its own receipt file.`);
+  if (host === 'claude-code') {
+    const scope = options.scope ?? 'project';
+    if (scope !== 'project') throw new Error('Claude Code harness is project-scoped; --scope global is not supported.');
+    if (!options.project) throw new Error('--project is required with --scope project.');
+    return join(resolve(options.cwd, options.project), '.claude', 'settings.json');
+  }
+  const scope = options.scope ?? (options.project ? 'project' : 'global');
+  if (!['global', 'project'].includes(scope)) throw new Error('--scope must be global or project.');
+  if (scope === 'project') {
+    if (!options.project) throw new Error('--project is required with --scope project.');
+    return join(resolve(options.cwd, options.project), '.agents', 'hooks.json');
+  }
+  if (options.project) throw new Error('--project cannot be combined with --scope global.');
+  return join(options.home, '.gemini', 'config', 'hooks.json');
+}
+
 export function selectUninstallTarget(options: UninstallTargetOptions): string {
+  if (options.host && options.host !== 'opencode') return selectHostTarget(options.host, options);
   const scope = options.scope ?? (options.project ? 'project' : options.config ? undefined : 'global');
   if (scope && !['global', 'project'].includes(scope)) throw new Error('--scope must be global or project.');
   if (scope === 'project' && !options.project) throw new Error('--project is required with --scope project.');
@@ -33,4 +56,11 @@ export function selectUninstallTarget(options: UninstallTargetOptions): string {
     }
   }
   return target;
+}
+
+/** Directory that bounds empty-directory pruning for a host target: the project root, or the Antigravity global config directory. */
+export function uninstallPruneRoot(host: HostId, target: string, home: string): string | undefined {
+  if (host === 'opencode') return undefined;
+  if (host === 'antigravity' && resolve(target) === resolve(join(home, '.gemini', 'config', 'hooks.json'))) return dirname(target);
+  return dirname(dirname(target));
 }

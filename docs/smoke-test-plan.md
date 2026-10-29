@@ -91,7 +91,7 @@ by `npm test`.
 | CC-01 | Enter at `Type yes to install` (default `no`) | Exit 1, "No files written", tree unchanged |
 | CC-02 | `yes` | `CLAUDE.md` Lead block, `.claude/settings.json` (`agent: lead`, `gh pr merge` denied), 8 agents, 6 commands, `AGENTS.md` untouched, no OpenCode calls |
 | CC-03 | `harness:doctor --host claude-code` | Exit 0, `HEALTHY (Installed: Yes)` |
-| CC-04 *(todo)* | Receipt-backed uninstall | **Known gap**, see below |
+| CC-04 | Receipt-backed uninstall (`--host claude-code --scope project`) | Exit 0; agents, commands, `settings.json`, and `CLAUDE.md` removed; `AGENTS.md` equals its pristine content |
 
 ### SMK-AG: Antigravity project lifecycle (`smoke/claude-antigravity.smoke.ts`)
 
@@ -101,7 +101,7 @@ by `npm test`.
 | AG-02 *(todo)* | Enter at a confirmation that shows `[yes]` | **Known gap**, see below |
 | AG-03 | `yes` with unconfigured model preferences | `.agents/` rules, 6 skills, merge-guard script and hook, MCP config; original `AGENTS.md` content preserved |
 | AG-04 | `harness:doctor --host antigravity` | Exit 0, `Installed: Yes` |
-| AG-05 *(todo)* | Receipt-backed uninstall | **Known gap**, see below |
+| AG-05 | Receipt-backed uninstall (`--host antigravity --scope project`) | Exit 0; rules, skills, merge-guard script, `hooks.json`, `mcp_config.json` removed; `AGENTS.md` equals its pristine content |
 
 ### SMK-PS / SMK-PI: project context (`smoke/project-context.smoke.ts`)
 
@@ -113,19 +113,14 @@ by `npm test`.
 
 ## Known gaps found by the suite
 
-These are recorded as `todo` tests. They report on every run but do not fail
+These are recorded as `todo` tests (CC-04 and AG-05 were resolved by the host-aware uninstall). They report on every run but do not fail
 it. When a gap is fixed, remove the `todo` option so the test becomes a gate.
 
-1. **Uninstall CLI is OpenCode-only** (CC-04, AG-05). `harness:uninstall`
-   accepts only `opencode.json(c)` targets (`src/uninstall-target.ts`). The
-   Claude Code and Antigravity installers write receipts, but the CLI crashes
-   with "Target must exist as a regular non-symlink file", so neither host can
-   be uninstalled through the CLI.
-2. **Antigravity confirmation default is misleading** (AG-02). The prompt
+1. **Antigravity confirmation default is misleading** (AG-02). The prompt
    shows `(yes/no) [yes]`, but Enter cancels (`src/antigravity-adapter.ts`).
    This fails safe, but it contradicts the displayed default. The Claude Code
    prompt correctly shows `[no]`.
-3. **Install does not stamp the harness version** (OC-08). `runInstallerFlow`
+2. **Install does not stamp the harness version** (OC-08). `runInstallerFlow`
    never passes a `harnessVersion` to `createSuccessorReceipt`. As a result,
    `harness:update` reports a brand-new install as "legacy or unversioned"
    until the first update is applied.
