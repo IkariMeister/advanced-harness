@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -8,7 +8,7 @@ import { formatSharedMemory } from './shared-memory.ts';
 export type SharedLocations = { worktreeDirectory: string; memoryPath: string };
 /** Context `paths` section used before full project settings exist. */
 export type PathsSettings = { version: 1 } & SharedLocations;
-export type LocationPlan = { directories: string[]; memoryFile?: string };
+export type LocationPlan = { projectRoot: string; locations: SharedLocations; directories: string[]; memoryFile?: string };
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
@@ -49,9 +49,35 @@ export const pathsInstructions = [
   'worktreeDirectory is the parent for future task worktrees; memoryPath is the shared Operator MEMORY.md. Both are outside this checkout by design: read them from here, never search the workspace for MEMORY.md or create one inside it.',
 ];
 
+/** Resolves the nearest existing ancestor through symlinks/junctions, then appends the missing tail. */
+export function physicalPath(path: string): string {
+  const missing: string[] = [];
+  let current = resolve(path);
+  while (!lstatSync(current, { throwIfNoEntry: false })) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    missing.unshift(basename(current));
+    current = parent;
+  }
+  let real: string;
+  try { real = realpathSync.native(current); }
+  catch { throw new Error(`Cannot resolve ${current} (for example a dangling link). No files changed.`); }
+  return join(real, ...missing);
+}
+
+/** Lexical checks can be bypassed by a linked ancestor, so compare where the paths really land. */
+export function validatePhysicalLocations(projectRoot: string, locations: SharedLocations): void {
+  try {
+    validateLocations(physicalPath(projectRoot), { worktreeDirectory: physicalPath(locations.worktreeDirectory), memoryPath: physicalPath(locations.memoryPath) });
+  } catch (error) {
+    throw new Error(`${(error as Error).message.replace(/\.$/, '')} once symlinks/junctions are resolved. No files changed.`);
+  }
+}
+
 /** Plans only missing locations; existing files are never overwritten. */
-export function planSharedLocations(locations: SharedLocations): LocationPlan {
-  const plan: LocationPlan = { directories: [] };
+export function planSharedLocations(projectRoot: string, locations: SharedLocations): LocationPlan {
+  validatePhysicalLocations(projectRoot, locations);
+  const plan: LocationPlan = { projectRoot, locations, directories: [] };
   const memoryDirectory = dirname(locations.memoryPath);
   for (const directory of [locations.worktreeDirectory, memoryDirectory]) {
     const entry = lstatSync(directory, { throwIfNoEntry: false });
@@ -77,6 +103,8 @@ export function emptyLocationPlan(plan: LocationPlan): boolean {
 
 /** Creates planned locations; `wx` refuses to replace a MEMORY.md that appeared meanwhile. */
 export function createSharedLocations(plan: LocationPlan): string[] {
+  // Revalidate: an ancestor may have been replaced by a link since the preview.
+  validatePhysicalLocations(plan.projectRoot, plan.locations);
   const created: string[] = [];
   for (const directory of plan.directories) {
     if (existsSync(directory)) continue;

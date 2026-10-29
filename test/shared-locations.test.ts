@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTempRoot } from './temp-directory.ts';
 import { checkNames, prepareSetup, runSetupFlow, runSharedLocationStep, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
 import { contextData, hasContextSection, removeContext, updateContext } from '../src/project-context.ts';
-import { createSharedLocations, defaultLocations, planSharedLocations, projectId, validatePathsSettings } from '../src/shared-locations.ts';
+import { createSharedLocations, defaultLocations, planSharedLocations, projectId, validateLocations, validatePathsSettings } from '../src/shared-locations.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { nativeRoles } from '../src/native-installer.ts';
 import { compileLeadOrchestrationRule } from '../src/antigravity-compiler.ts';
@@ -47,19 +47,72 @@ test('default locations are per project, outside the checkout, and validated', t
 });
 
 test('location plan creates only missing locations and never overwrites MEMORY.md', t => {
-  const { root } = fixture(t);
+  const { root, project } = fixture(t);
   const locations = { worktreeDirectory: join(root, 'trees'), memoryPath: join(root, 'data', 'MEMORY.md') };
-  const plan = planSharedLocations(locations);
-  assert.deepEqual(plan, { directories: [locations.worktreeDirectory, join(root, 'data')], memoryFile: locations.memoryPath });
+  const plan = planSharedLocations(project, locations);
+  assert.deepEqual(plan, { projectRoot: project, locations, directories: [locations.worktreeDirectory, join(root, 'data')], memoryFile: locations.memoryPath });
   assert.deepEqual(createSharedLocations(plan), [locations.worktreeDirectory, join(root, 'data'), locations.memoryPath]);
   assert.equal(readFileSync(locations.memoryPath, 'utf8'), '# Shared Operator memory\n\n');
   writeFileSync(locations.memoryPath, '# Shared Operator memory\n\n- kept\n');
-  assert.deepEqual(planSharedLocations(locations), { directories: [] });
-  assert.throws(() => createSharedLocations({ directories: [], memoryFile: locations.memoryPath }), /left untouched/);
+  assert.deepEqual(planSharedLocations(project, locations), { projectRoot: project, locations, directories: [] });
+  assert.throws(() => createSharedLocations({ projectRoot: project, locations, directories: [], memoryFile: locations.memoryPath }), /left untouched/);
   assert.equal(readFileSync(locations.memoryPath, 'utf8'), '# Shared Operator memory\n\n- kept\n');
   rmSync(locations.worktreeDirectory, { recursive: true });
   writeFileSync(locations.worktreeDirectory, 'not a directory');
-  assert.throws(() => planSharedLocations(locations), /not a regular directory/);
+  assert.throws(() => planSharedLocations(project, locations), /not a regular directory/);
+});
+
+/** Directory link that needs no OS privilege on Windows (junction); skips where links are not allowed. */
+function link(t: { skip: (message: string) => void }, target: string, path: string): boolean {
+  try { symlinkSync(target, path, process.platform === 'win32' ? 'junction' : 'dir'); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM') { t.skip('Directory links require OS privilege'); return false; } throw error; }
+}
+
+test('linked ancestors that land inside the checkout are rejected before planning and creating anything', t => {
+  const { root, project } = fixture(t);
+  if (!link(t, project, join(root, 'via-link'))) return;
+  const throughLink = { worktreeDirectory: join(root, 'trees'), memoryPath: join(root, 'via-link', 'data', 'MEMORY.md') };
+  validateLocations(project, throughLink); // The lexical check alone is fooled.
+  assert.throws(() => planSharedLocations(project, throughLink), /symlinks\/junctions are resolved/);
+  assert.throws(() => planSharedLocations(project, { worktreeDirectory: join(root, 'via-link', 'trees'), memoryPath: join(root, 'data', 'MEMORY.md') }), /symlinks\/junctions are resolved/);
+  assert.equal(existsSync(join(project, 'data')) || existsSync(join(project, 'trees')), false);
+  // A linked checkout path is resolved the same way, so legitimate outside paths still pass.
+  if (!link(t, project, join(root, 'app-link'))) return;
+  assert.equal(planSharedLocations(join(root, 'app-link'), { worktreeDirectory: join(root, 'trees'), memoryPath: join(root, 'data', 'MEMORY.md') }).memoryFile, join(root, 'data', 'MEMORY.md'));
+});
+
+test('creation revalidates when an ancestor is swapped for a link after the preview', t => {
+  const { root, project } = fixture(t);
+  const locations = { worktreeDirectory: join(root, 'trees'), memoryPath: join(root, 'shared', 'data', 'MEMORY.md') };
+  mkdirSync(join(root, 'shared'));
+  const plan = planSharedLocations(project, locations);
+  rmSync(join(root, 'shared'), { recursive: true });
+  if (!link(t, project, join(root, 'shared'))) return;
+  assert.throws(() => createSharedLocations(plan), /symlinks\/junctions are resolved/);
+  assert.equal(existsSync(join(project, 'data')), false, 'nothing created inside the checkout');
+  assert.equal(existsSync(locations.worktreeDirectory), false, 'nothing created at all');
+});
+
+test('setup and update refuse linked memory paths that land inside the checkout', async t => {
+  const { root, project, home, backups } = fixture(t);
+  if (!link(t, project, join(root, 'via-link'))) return;
+  const inside = join(root, 'via-link', 'data', 'MEMORY.md');
+  const original = '# App rules\n';
+  writeFileSync(join(project, 'AGENTS.md'), original);
+  await assert.rejects(runSetupFlow({ project }, {
+    ask: async (question, suggested) => question.startsWith('Shared MEMORY.md') ? inside : question.startsWith('Command shell') ? 'bash' : question.startsWith('Full preview') ? 'save' : suggested ?? '',
+    output: () => {}, error: () => {}, home, xdgConfigHome: join(root, 'xdg'), recoveryDirectory: backups,
+  }), /symlinks\/junctions are resolved/);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), original);
+  assert.equal(existsSync(join(project, 'data')) || existsSync(backups), false);
+
+  writeFileSync(join(project, 'AGENTS.md'), updateContext(original, 'paths', { version: 1, worktreeDirectory: join(root, 'trees'), memoryPath: join(root, 'data', 'MEMORY.md') }, ['interim']));
+  const outputs: string[] = [];
+  const steps = script([['Parent directory', ''], ['Shared MEMORY.md', inside], ['Parent directory', ''], ['Shared MEMORY.md', ''], ['Type paths', 'paths']]);
+  assert.equal(await runSharedLocationStep(project, { ask: steps.ask, output: message => outputs.push(message), home, backupParent: backups }), 'saved');
+  assert.match(outputs.join('\n'), /symlinks\/junctions are resolved\. No files changed\. Enter different paths\./);
+  assert.equal(existsSync(join(project, 'data')), false);
+  assert.equal(readFileSync(join(root, 'data', 'MEMORY.md'), 'utf8'), '# Shared Operator memory\n\n');
 });
 
 test('paths sections can be detected and removed without disturbing other instructions', () => {
