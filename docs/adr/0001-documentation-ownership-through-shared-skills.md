@@ -1,8 +1,8 @@
 # ADR: Documentation Ownership Through Shared Skills
 
-**Status:** Proposed  
-**Date:** 2026-10-30  
-**Project:** Advanced Harness  
+**Status:** Proposed\
+**Date:** 2026-10-30\
+**Project:** Advanced Harness\
 **Decision scope:** Documentation ownership, documentation workflows, and quality assurance
 
 ## Context
