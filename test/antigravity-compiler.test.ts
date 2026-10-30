@@ -106,13 +106,14 @@ test('compileAntigravityHooks configures PreToolUse gh pr merge guard', () => {
   assert.ok(firstHook.hooks[0]?.command.includes('antigravity-merge-guard.mjs'));
 });
 
-test('compileAntigravityHooks leaves the guard path unquoted so Windows hosts can resolve it (#94)', () => {
+test('compileAntigravityHooks leaves the guard path unquoted on Windows and keeps POSIX quoting (#94)', () => {
   const windowsPath = 'C:\\Users\\dev\\.gemini\\config\\scripts\\antigravity-merge-guard.mjs';
   const hooks = compileAntigravityHooks(windowsPath, 'win32');
   assert.equal(hooks['gh-pr-merge-guard']?.PreToolUse?.[0]?.hooks[0]?.command, `node ${windowsPath}`);
 
   const posixPath = '/home/dev/.gemini/config/scripts/antigravity-merge-guard.mjs';
-  assert.equal(compileAntigravityHooks(posixPath, 'linux')['gh-pr-merge-guard']?.PreToolUse?.[0]?.hooks[0]?.command, `node ${posixPath}`);
+  assert.equal(compileAntigravityHooks(posixPath, 'linux')['gh-pr-merge-guard']?.PreToolUse?.[0]?.hooks[0]?.command, `node "${posixPath}"`);
+  assert.equal(compileAntigravityHooks(posixPath, 'darwin')['gh-pr-merge-guard']?.PreToolUse?.[0]?.hooks[0]?.command, `node "${posixPath}"`);
 });
 
 test('compileAntigravityHooks rejects whitespace guard paths on Windows and keeps quoting elsewhere', () => {

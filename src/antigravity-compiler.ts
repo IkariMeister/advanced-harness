@@ -220,21 +220,22 @@ export function compileLeadOrchestrationRule(
 /**
  * Builds the merge-guard hook command. Antigravity on Windows passes hook command
  * arguments to Node without stripping quotes, so a quoted path resolves as
- * `<cwd>\"<path>"` and every run_command fails (#94). The path is therefore left
- * unquoted; a path containing whitespace cannot be expressed safely on Windows.
+ * `<cwd>\"<path>"` and every run_command fails (#94). On Windows the path is
+ * therefore left unquoted, and a path containing whitespace cannot be expressed
+ * safely. Other platforms keep the quoted form, which is unaffected.
  */
 export function antigravityMergeGuardCommand(guardScriptPath: string, platform: NodeJS.Platform = process.platform): string {
-  if (!/\s/.test(guardScriptPath)) {
-    return `node ${guardScriptPath}`;
+  if (platform !== 'win32') {
+    return `node "${guardScriptPath}"`;
   }
-  if (platform === 'win32') {
+  if (/\s/.test(guardScriptPath)) {
     throw new Error(
       `Antigravity merge-guard path contains whitespace: ${guardScriptPath}. ` +
       'Antigravity on Windows does not accept a quoted hook path, so the guard would block every run_command. ' +
       'Install from a location whose path has no spaces.'
     );
   }
-  return `node "${guardScriptPath}"`;
+  return `node ${guardScriptPath}`;
 }
 
 /**
