@@ -38,6 +38,7 @@ import {
 } from './workflow-commands.ts';
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 import { parseGlobalProjectDefaults, runSharedLocationStep, type GlobalProjectDefaults } from './project-setup.ts';
+import { checkAntigravityConfigMerge } from './antigravity-adapter.ts';
 
 export interface UpdateFlowOptions {
   scope?: string;
@@ -112,6 +113,23 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
 
   if (options.context && dispatch.host !== 'antigravity') throw new Error('--context for model preferences is supported only with --host antigravity.');
   if (options.context && scope !== 'project') throw new Error('--context can be used only with project scope.');
+
+  if (dispatch.host === 'antigravity') {
+    // Shared-location changes are written before the host update, so an Antigravity
+    // config that cannot be merged must stop the update before that step.
+    const blocked = checkAntigravityConfigMerge({
+      scope: scope as 'project' | 'global',
+      project,
+      home,
+      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
+      agentsDirectory: deps.agentsDirectory,
+      commandsDirectory: deps.workflowCommandsDirectory,
+    });
+    if (blocked) {
+      errorOutput(blocked);
+      return 1;
+    }
+  }
 
   if (project) {
     // Shared locations are host-neutral, so they are settled once before any host update.

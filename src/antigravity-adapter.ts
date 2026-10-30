@@ -291,19 +291,44 @@ export function preflightAntigravityDeployment(files: readonly AntigravityDeploy
   }
 }
 
+type AntigravityPlanLocations = Pick<AntigravityAdapterInstallOptions, 'scope' | 'project' | 'home' | 'recoveryDirectory' | 'agentsDirectory' | 'commandsDirectory'>;
+
+function resolveAntigravityLocations(options: AntigravityPlanLocations) {
+  const home = options.home ?? process.env.USERPROFILE ?? process.env.HOME ?? '';
+  return {
+    home,
+    agentsDir: options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)),
+    commandsDir: options.commandsDirectory ?? fileURLToPath(new URL('../commands/', import.meta.url)),
+    backupParent: options.recoveryDirectory ?? process.env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups'),
+    initialTarget: options.scope === 'project'
+      ? join(options.project ?? '', '.agents', 'hooks.json')
+      : join(home, '.gemini', 'config', 'hooks.json'),
+  };
+}
+
+/**
+ * Read-only check that the merged Antigravity configs can be planned. Returns the
+ * actionable error line when they cannot, so callers can stop before any other write.
+ */
+export function checkAntigravityConfigMerge(options: AntigravityPlanLocations): string | undefined {
+  const { home, agentsDir, commandsDir, backupParent, initialTarget } = resolveAntigravityLocations(options);
+  const head = discoverReceiptChain(backupParent, initialTarget, 'antigravity').head;
+  const priorManagedFiles = head?.receipt.version === 2 && head.receipt.managedFiles ? head.receipt.managedFiles : [];
+  try {
+    planAntigravityDeployment(options.scope, options.project, home, agentsDir, commandsDir, priorManagedFiles);
+    return undefined;
+  } catch (err) {
+    if (!(err instanceof AntigravityConfigMergeError)) throw err;
+    return formatAntigravityConfigMergeError(err, backupParent);
+  }
+}
+
 export async function installAntigravity(options: AntigravityAdapterInstallOptions): Promise<number> {
   const { scope, project, ask, output, error } = options;
-  const home = options.home ?? process.env.USERPROFILE ?? process.env.HOME ?? '';
-  const agentsDir = options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url));
-  const commandsDir = options.commandsDirectory ?? fileURLToPath(new URL('../commands/', import.meta.url));
-  const backupParent = options.recoveryDirectory ?? process.env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups');
+  const { home, agentsDir, commandsDir, backupParent, initialTarget } = resolveAntigravityLocations(options);
 
   output(`\nTarget Host: Google Antigravity\nScope: ${scope}`);
   if (project) output(`Project: ${project}`);
-
-  const initialTarget = scope === 'project'
-    ? join(project ?? '', '.agents', 'hooks.json')
-    : join(home, '.gemini', 'config', 'hooks.json');
 
   const snapshot = discoverReceiptChain(backupParent, initialTarget, 'antigravity');
   const priorManagedFiles = snapshot.head?.receipt.version === 2 && snapshot.head.receipt.managedFiles

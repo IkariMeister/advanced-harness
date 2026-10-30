@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSandbox, tree, type RunResult, type Sandbox } from './support/sandbox.ts';
-import { antigravityInstall } from './support/steps.ts';
+import { antigravityInstall, ask, setupSteps } from './support/steps.ts';
 
 const foreignGuard = { matcher: 'run_command', command: 'node scripts/antigravity-merge-guard.mjs' };
 
@@ -89,4 +89,32 @@ describe('SMK-AGC global scope (hooks.json edited after a global install, as rep
       assert.deepEqual(tree(box.recoveryDirectory), recovery);
     });
   }
+});
+
+describe('SMK-AGC project update with existing project settings', () => {
+  let box: Sandbox;
+  const hooksPath = () => join(box.project, '.agents', 'hooks.json');
+  before(async () => {
+    box = createSandbox('antigravity-conflict-settings');
+    const setup = await box.run('setup-native-project.ts', ['--scope', 'project', '--project', box.project], { steps: setupSteps('./gradlew assembleDebug', 'save') });
+    assert.equal(setup.code, 0, setup.transcript);
+    mkdirSync(join(box.project, '.agents'), { recursive: true });
+    writeFileSync(hooksPath(), JSON.stringify({ 'gh-pr-merge-guard': foreignGuard }, null, 2) + '\n');
+  });
+  after(() => box.dispose());
+
+  it('SMK-AGC-05 a hooks conflict stops update before shared-location changes can be confirmed', async () => {
+    const before = tree(box.root);
+    // Answers that would move the worktree parent and confirm writing it, if the update ever asked.
+    const locationSteps = [
+      ask('Parent directory for future worktrees', join(box.root, 'moved-worktrees')),
+      ask('Shared MEMORY.md path'),
+      ask('Type paths to apply', 'paths'),
+    ];
+    const result = await box.run('update-native-harness.ts', ['--host', 'antigravity', '--scope', 'project', '--project', box.project], { steps: locationSteps });
+    assertActionableFailure(result, hooksPath(), /or remove the "gh-pr-merge-guard" key, then re-run/);
+    assert.equal(result.unansweredSteps.length, locationSteps.length, 'no shared-location prompt was shown');
+    assert.doesNotMatch(result.stdout, /Shared-location changes|Backup \(keep private\)|Created: /);
+    assert.deepEqual(tree(box.root), before);
+  });
 });
