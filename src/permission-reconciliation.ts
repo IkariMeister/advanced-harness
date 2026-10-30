@@ -1,4 +1,5 @@
 /** Pure reconciliation for OpenCode's ordered, last-match permission rules. */
+import { isOpenCodeGuardrailRule } from './security-guardrails.ts';
 export interface PermissionRule { action: string; resource: string; effect: 'allow' | 'ask' | 'deny' }
 export interface PermissionRequirement { rule: PermissionRule; sources: readonly string[] }
 export interface AttributedRule { rule: PermissionRule; sources: readonly string[] }
@@ -45,8 +46,24 @@ function patternOverlap(a: string, b: string): boolean | 'unknown' {
   if (x !== undefined && y !== undefined) return x.startsWith(y) || y.startsWith(x);
   if (x !== undefined && !/[*?\[\]{}]/.test(b)) return b.startsWith(x);
   if (y !== undefined && !/[*?\[\]{}]/.test(a)) return a.startsWith(y);
-  return /[*?\[\]{}]/.test(a + b) ? 'unknown' : false;
+  if (/[?\[\]{}]/.test(a + b)) return 'unknown';
+  return /\*/.test(a + b) ? starGlobsIntersect(a, b) : false;
 }
+/** Exact intersection test for globs whose only wildcard is `*` (any run of characters). */
+function starGlobsIntersect(a: string, b: string): boolean {
+  const seen = new Set<string>();
+  const visit = (i: number, j: number): boolean => {
+    const key = `${i},${j}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    if (i === a.length && j === b.length) return true;
+    if (a[i] === '*' && (visit(i + 1, j) || j < b.length && visit(i, j + 1))) return true;
+    if (b[j] === '*' && (visit(i, j + 1) || i < a.length && visit(i + 1, j))) return true;
+    return i < a.length && j < b.length && a[i] !== '*' && b[j] !== '*' && a[i] === b[j] && visit(i + 1, j + 1);
+  };
+  return visit(0, 0);
+}
+const requiredDenial = (rule: PermissionRule) => rule.effect === 'deny' && (rule.action === 'shell' && /^gh(?:\.exe)? pr merge(?: \*)?$/.test(rule.resource) || isOpenCodeGuardrailRule(rule));
 
 export function reconcilePermissions(options: ReconcileOptions): ReconciliationResult {
   let rules = options.existing.map(r => ({ ...r }));
@@ -89,12 +106,15 @@ export function reconcilePermissions(options: ReconcileOptions): ReconciliationR
       continue;
     }
     if (matches.length) {
-      if (req.rule.effect === 'deny' && req.rule.action === 'shell' && /^gh(?:\.exe)? pr merge(?: \*)?$/.test(req.rule.resource) && rules.slice(rules.indexOf(matches[0]!) + 1).some(r => r.effect !== 'deny' && overlap(req.rule, r) !== false)) conflict('last-match', 'Existing required merge denial is overridden by a later rule.');
+      if (requiredDenial(req.rule) && rules.slice(rules.indexOf(matches[0]!) + 1).some(r => r.effect !== 'deny' && overlap(req.rule, r) !== false)) conflict('last-match', `Existing required denial ${req.rule.action} ${req.rule.resource} is overridden by a later rule.`);
       req.sources.forEach(s => owned.get(identity(req.rule))?.add(s));
       continue; // A coincidental match never becomes owned.
     }
-    let insertAt = rules.length;
-    for (let index = 0; index < rules.length; index++) {
+    // Security guardrails stay last: a new non-deny rule lands before the first one it overlaps.
+    const firstRequired = req.rule.effect === 'deny' ? -1 : rules.findIndex(r => isOpenCodeGuardrailRule(r) && overlap(req.rule, r) !== false);
+    const bound = firstRequired < 0 ? rules.length : firstRequired;
+    let insertAt = bound;
+    for (let index = 0; index < bound; index++) {
       const r = rules[index]!;
       // A single new policy batch has an explicitly reviewed internal order.
       if (additions.some(a => same(a, r))) continue;

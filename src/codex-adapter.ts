@@ -6,6 +6,7 @@ import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { saveInstallation, type Ask } from './native-installer.ts';
 import { nativeRoles, type NativeRole } from './native-role-types.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
+import { codexDestructiveGitPrefixes } from './security-guardrails.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, type ManagedFileEvidence } from './receipt-lineage.ts';
 
@@ -309,11 +310,16 @@ export function compileCodexAgent(role: NativeRole, model: string, reasoning: st
   return `name = ${quote(role)}\ndescription = ${quote(description)}\ndeveloper_instructions = ${quote(instructions)}\nmodel = ${quote(model.trim())}\nmodel_reasoning_effort = ${quote(reasoning)}\n`;
 }
 
+const codexMergePrefixes: readonly (readonly string[])[] = [['gh', 'pr', 'merge'], ['gh.exe', 'pr', 'merge']];
+/** Managed forbidden prefixes: direct merge plus destructive Git (BH-036). */
+export const codexForbiddenPrefixes: readonly (readonly string[])[] = [...codexMergePrefixes, ...codexDestructiveGitPrefixes];
+
 export function compileCodexMergeRule(): string {
-  return '# BEGIN advanced-harness managed merge rules\n# Denies identifiable direct CLI forms only; indirect/API routes are not blocked.\nprefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")\nprefix_rule(pattern = ["gh.exe", "pr", "merge"], decision = "forbidden")\n# END advanced-harness managed merge rules\n';
+  const rules = codexForbiddenPrefixes.map(pattern => `prefix_rule(pattern = [${pattern.map(token => JSON.stringify(token)).join(', ')}], decision = "forbidden")\n`).join('');
+  return `# BEGIN advanced-harness managed merge rules\n# Denies identifiable direct CLI forms only (gh pr merge, git reset --hard, git clean, force pushes); flags after the remote and indirect/API routes are not blocked.\n${rules}# END advanced-harness managed merge rules\n`;
 }
 
-function hasActiveCodexMergeRule(text: string, executable: 'gh' | 'gh.exe'): boolean {
+function hasActiveCodexPrefixRule(text: string, pattern: readonly string[]): boolean {
   type Token = { kind: 'identifier' | 'string' | 'punctuation'; value: string; line: number; column: number };
   const tokens: Token[] = [];
   const continuedLines = new Set<number>();
@@ -378,8 +384,8 @@ function hasActiveCodexMergeRule(text: string, executable: 'gh' | 'gh.exe'): boo
 
   const expected: Array<[Token['kind'], string]> = [
     ['identifier', 'prefix_rule'], ['punctuation', '('], ['identifier', 'pattern'], ['punctuation', '='],
-    ['punctuation', '['], ['string', executable], ['punctuation', ','], ['string', 'pr'],
-    ['punctuation', ','], ['string', 'merge'], ['punctuation', ']'], ['punctuation', ','],
+    ['punctuation', '['], ...pattern.flatMap((token, index): Array<[Token['kind'], string]> => index ? [['punctuation', ','], ['string', token]] : [['string', token]]),
+    ['punctuation', ']'], ['punctuation', ','],
     ['identifier', 'decision'], ['punctuation', '='], ['string', 'forbidden'], ['punctuation', ')'],
   ];
   // Accept only a complete canonical call as the entire unindented physical line.
@@ -792,12 +798,14 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
     else {
       assertSafeFilesystemPath(rules, 'file');
       const rulesText = readFileSync(rules, 'utf8');
-      if (!hasActiveCodexMergeRule(rulesText, 'gh') || !hasActiveCodexMergeRule(rulesText, 'gh.exe')) issues.push(`Codex direct gh pr merge rules are missing or malformed: ${rules}`);
+      if (!codexMergePrefixes.every(pattern => hasActiveCodexPrefixRule(rulesText, pattern))) issues.push(`Codex direct gh pr merge rules are missing or malformed: ${rules}`);
+      const missingGit = codexDestructiveGitPrefixes.filter(pattern => !hasActiveCodexPrefixRule(rulesText, pattern));
+      if (missingGit.length) issues.push(`Codex destructive Git rules are missing or malformed (${missingGit.map(pattern => pattern.join(' ')).join(', ')}): ${rules}`);
     }
   }
   if (!found) issues.push('Codex configuration is not installed in inspected project/global scope.');
   notes.push('Static TOML/artifact checks only. Codex Desktop load, model availability, MCP connectivity, and approval behavior are not runtime-verified.');
   notes.push('Shared permission settings are inherited; role files cannot override parent sandbox/approval/MCP settings.');
-  notes.push('Direct gh pr merge rule does not block indirect scripts or API routes.');
+  notes.push('Direct gh pr merge and destructive Git prefix rules do not block indirect scripts, API routes, or force flags placed after the remote.');
   return { ok: issues.length === 0, issues, notes };
 }

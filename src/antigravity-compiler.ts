@@ -465,11 +465,11 @@ export function getAntigravityMergeGuardMjsSource(): string {
   return `#!/usr/bin/env node
 
 /**
- * Antigravity PreToolUse Lifecycle Hook: gh pr merge guard
+ * Antigravity PreToolUse Lifecycle Hook: gh pr merge and destructive Git guard
  *
  * Reads PreToolUse JSON payload from stdin.
  * If the tool is run_command and attempts gh pr merge (or gh.exe pr merge),
- * responds with a hard DENY decision.
+ * git reset --hard, git clean, or a force push, responds with a hard DENY decision.
  * Otherwise responds with ALLOW.
  */
 
@@ -590,6 +590,58 @@ export function tokenizeCommand(segment) {
   return tokens;
 }
 
+export function commandInvocations(commandLine) {
+  const invocations = [];
+  for (const segment of splitCommandSegments(commandLine)) {
+    let tokens = tokenizeCommand(segment);
+    if (!tokens.length) continue;
+    if (tokens[0].startsWith('(')) {
+      tokens[0] = tokens[0].slice(1);
+      if (!tokens[0]) tokens.shift();
+    }
+    if (tokens.length && tokens[tokens.length - 1].endsWith(')')) {
+      tokens[tokens.length - 1] = tokens[tokens.length - 1].slice(0, -1);
+      if (!tokens[tokens.length - 1]) tokens.pop();
+    }
+    let startIdx = 0;
+    while (startIdx < tokens.length) {
+      const t = tokens[startIdx];
+      if (t === '&' || t === '.' || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || ['env', 'command', 'nohup', 'exec'].includes(t.toLowerCase())) {
+        startIdx++;
+        continue;
+      }
+      break;
+    }
+    if (startIdx < tokens.length) invocations.push(tokens.slice(startIdx));
+  }
+  return invocations;
+}
+
+const gitOptionsWithValue = ['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'];
+
+export function isDestructiveGitInvocation(tokens) {
+  const base = (tokens[0] || '').toLowerCase().replace(/\\\\/g, '/').split('/').pop() || '';
+  if (base !== 'git' && base !== 'git.exe') return false;
+  let index = 1;
+  while (index < tokens.length && tokens[index].startsWith('-')) {
+    index += gitOptionsWithValue.includes(tokens[index]) ? 2 : 1;
+  }
+  const subcommand = (tokens[index] || '').toLowerCase();
+  const args = tokens.slice(index + 1);
+  if (subcommand === 'clean') return true;
+  if (subcommand === 'reset') return args.includes('--hard');
+  if (subcommand === 'push') {
+    return args.some(arg => arg === '--force' || arg.startsWith('--force-with-lease') || arg === '--force-if-includes'
+      || /^-[A-Za-z]*f[A-Za-z]*$/.test(arg) || (arg.startsWith('+') && arg.length > 1));
+  }
+  return false;
+}
+
+export function isDestructiveGitCommand(commandLine) {
+  if (!commandLine || typeof commandLine !== 'string') return false;
+  return commandInvocations(commandLine).some(isDestructiveGitInvocation);
+}
+
 function isGhExecutable(token) {
   const normalized = token.toLowerCase().replace(/\\\\/g, '/');
   const base = normalized.split('/').pop() || '';
@@ -683,6 +735,12 @@ export function evaluatePreToolUse(payload) {
       return {
         decision: 'deny',
         reason: 'Direct merge via "gh pr merge" is denied by policy. A human must merge on GitHub.',
+      };
+    }
+    if (isDestructiveGitCommand(cmd)) {
+      return {
+        decision: 'deny',
+        reason: 'Destructive Git (reset --hard, clean, force push) is denied by policy. A human must run it.',
       };
     }
   }

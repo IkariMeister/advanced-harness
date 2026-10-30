@@ -154,6 +154,7 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       'Executes 8 native inline roles (1 primary Lead + 7 subagents).',
       'Permissions enforced natively by OpenCode runtime (allow, ask, deny).',
       'Permission dialogs authorize tool operations, not conversational plans.',
+      'Security guardrails are appended last to each role: read/edit deny for keystores, signing/local properties, google-services.json, private keys, and ~/.ssh, ~/.aws, gh credentials; shell deny for git reset --hard, git clean, and force pushes. Home-path matching on Windows separators is unverified.',
     ],
   },
   'claude-code': {
@@ -171,6 +172,7 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       'Per-role tools use tools/disallowedTools allowlists. Operator, Implementer, Reviewer, and QA have no Bash tool because per-role Bash scoping cannot be expressed exactly.',
       'MCP aliases (jira, github, figma, stitch) and OpenCode Code Mode have no verified Claude identity; no .mcp.json is written and External has no MCP tools.',
       'Claude permission evaluation is deny > ask > allow; source ordered-last-match exceptions are downgraded to Claude prompts, never to allows.',
+      'Project .claude/settings.json denies Read/Edit of sensitive paths (keystores, signing/local properties, google-services.json, private keys, ~/.ssh, ~/.aws, gh credentials) and Bash git reset --hard, git clean, and force pushes for every session and subagent.',
       'Project scope only. Claude Code runtime discovery, agent selection, and model aliases are not verified by this harness.',
     ],
   },
@@ -188,6 +190,7 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       'Lead orchestrates 7 child roles dynamically via define_subagent/invoke_subagent rules.',
       'Role/tool-group ownership (External MCP, Implementer writes) is instruction-level enforced via Lead rules.',
       'PreToolUse hook guards direct run_command calls; command patterns are workflow conventions, not a sandbox against indirect scripts, aliases, or separate processes.',
+      'The same hook denies destructive Git (reset --hard, clean, force pushes). Sensitive-path read/edit denial is instruction-level only: Antigravity file-tool hook payloads are unverified.',
     ],
   },
   codex: {
@@ -206,6 +209,7 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       'Lead and seven Codex subagent profiles use explicit user-selected models and reasoning settings; shared sandbox/approval/MCP configuration is inherited.',
       'Codex role ownership is instructional, not permission isolation. Approval behavior and Desktop runtime remain unverified.',
       'Codex agent reload semantics are unverified; use a deliberate fresh-session validation rather than assuming live reload.',
+      'Codex rules forbid direct git reset --hard, git clean, and force-push prefixes; flags after the remote and sensitive-path reads are not covered by prefix rules.',
     ],
   },
   cursor: {

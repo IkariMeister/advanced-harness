@@ -25,6 +25,7 @@ OpenCode configuration, receipts, backups, or permission ownership records.
 - Each role starts with deny-by-default, then enables its own capabilities. Broad shell/operational edits use OpenCode's normal `ask` permission until project-specific allowlists are agreed.
 - Only External has MCP/web/Code Mode permissions. MCP action patterns use the example server aliases `jira`, `github`, `figma`, and `stitch`; customize these to the actual normalized server/tool IDs. They do not create connections.
 - Operator owns local Git/worktrees/memory; External owns remote Git/services. Shell deny rules for common remote commands support that convention, but are not a security sandbox against scripts or aliases.
+- The installer appends the [security guardrails](../SECURITY.md#security-guardrails) last to every compiled role (they are not in these sources): read/edit deny for sensitive paths, and shell deny for destructive Git on roles that have shell. `.env` reads stay `ask`.
 - Implementer writes approved source/test changes. Reviewer/QA may run configured commands, but do not silently fix source. Required verification is independent of optional evidence capture.
 - Explicit models are unchanged. Validate every model/variant before delegation. Spark failed on the tested ChatGPT connection; Operator/External require an explicitly approved mapping or supported connection before a full pilot. No automatic model substitution.
 

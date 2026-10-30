@@ -8,7 +8,9 @@ import test from 'node:test';
 import { loadNativeDefinitions, nativeRoles, type NativeDefinition } from '../src/native-installer.ts';
 import { loadRoleDefinition, loadRoleDefinitions } from '../src/role-definitions.ts';
 import { compileOpenCodeRole, compileOpenCodeRoles } from '../src/opencode-role-compiler.ts';
+import { isOpenCodeGuardrailRule, openCodeGuardrailRules } from '../src/security-guardrails.ts';
 import { lowerOpenCodePolicy, type CapabilityPolicy } from '../src/capability-policy.ts';
+import type { PermissionRule } from '../src/permission-reconciliation.ts';
 
 const agents = new URL('../agents/', import.meta.url);
 const source = (role: typeof nativeRoles[number]) => readFileSync(new URL(`${role}.md`, agents), 'utf8');
@@ -97,7 +99,7 @@ test('OpenCode role compiler returns independent ordered permission data', () =>
   const compiled = compileOpenCodeRole(sourceDefinition);
   const lowered = lowerOpenCodePolicy('external', sourceDefinition.deployment.opencode.policy);
   assert.deepEqual(compiled.diagnostics, []);
-  assert.deepEqual(compiled.definition?.permissions, lowered.permissions);
+  assert.deepEqual(compiled.definition?.permissions, [...lowered.permissions!, ...openCodeGuardrailRules(lowered.permissions!)]);
   assert.deepEqual(compiled.definition?.permissions[0], lowered.permissions?.[0]);
   assert.notEqual(compiled.definition?.permissions, lowered.permissions);
   assert.notEqual(compiled.definition?.permissions[0], lowered.permissions?.[0]);
@@ -109,8 +111,10 @@ test('capability normalization round-trips ordered OpenCode rules without changi
     const policy = definitions[role].deployment.opencode.policy;
     const lowered = lowerOpenCodePolicy(role, policy);
     assert.deepEqual(lowered.diagnostics, [], role);
-    assert.deepEqual(lowered.permissions, legacyNormalizedDefinitions()[role].permissions, role);
-    assert.deepEqual(policy.rules.map(rule => rule.binding.action), legacyNormalizedDefinitions()[role].permissions.map(rule => (rule as { action: string }).action));
+    const sourcePermissions = legacyNormalizedDefinitions()[role].permissions.filter(rule => !isOpenCodeGuardrailRule(rule as PermissionRule));
+    assert.deepEqual(lowered.permissions, sourcePermissions, role);
+    assert.deepEqual(legacyNormalizedDefinitions()[role].permissions, [...lowered.permissions!, ...openCodeGuardrailRules(lowered.permissions!)], role);
+    assert.deepEqual(policy.rules.map(rule => rule.binding.action), sourcePermissions.map(rule => (rule as { action: string }).action));
   }
   const leadRules = definitions.lead.deployment.opencode.policy.rules;
   assert.deepEqual(leadRules[0], { capability: 'all', resource: { kind: 'all' }, effect: 'deny', binding: { host: 'opencode', action: '*' } });

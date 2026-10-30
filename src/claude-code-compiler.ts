@@ -4,6 +4,7 @@ import type { Capability, CapabilityPolicy, CapabilityRule } from './capability-
 import type { RoleDefinition } from './role-definitions.ts';
 import type { WorkflowCommand } from './workflow-commands.ts';
 import { HOST_MODEL_PRESETS, type HostRolePreset } from './host-registry.ts';
+import { claudeGuardrailDenyRules } from './security-guardrails.ts';
 
 /**
  * Pure Claude Code compilation. Every mapping here is fail-closed: a capability is granted
@@ -20,8 +21,9 @@ export const claudeMarkers = {
   reference: '@AGENTS.md',
 } as const;
 
-/** Project-level deny rules apply to every session and subagent, so they are safe to share. */
-export const claudeSettingsDeny = ['Bash(gh pr merge)', 'Bash(gh pr merge *)', 'Bash(gh.exe pr merge)', 'Bash(gh.exe pr merge *)'] as const;
+export const claudeMergeDeny = ['Bash(gh pr merge)', 'Bash(gh pr merge *)', 'Bash(gh.exe pr merge)', 'Bash(gh.exe pr merge *)'] as const;
+/** Project-level deny rules apply to every session and subagent, so they are safe to share: merge guard plus security guardrails. */
+export const claudeSettingsDeny: readonly string[] = [...claudeMergeDeny, ...claudeGuardrailDenyRules()];
 /** Prompt (never allow) for reads of environment files, matching the source *.env / *.env.* ask rules. */
 export const claudeSettingsAsk = ['Read(./.env)', 'Read(./.env.*)', 'Read(**/.env)', 'Read(**/.env.*)'] as const;
 
@@ -82,7 +84,7 @@ export function mapClaudeRolePolicy(role: NativeRole, policy: CapabilityPolicy):
     for (const pattern of patterns) {
       const value = pattern.resource.kind === 'native-pattern' ? pattern.resource.value : '';
       if (capability === 'shell.run' && pattern.effect === 'deny' && mergePattern.test(value)) {
-        mapped.push(`${role}: shell "${value}" deny is enforced by project settings (${claudeSettingsDeny.join(', ')}).`);
+        mapped.push(`${role}: shell "${value}" deny is enforced by project settings (${claudeMergeDeny.join(', ')}).`);
         continue;
       }
       if (capability === 'file.read' && pattern.effect === 'ask' && /^\*\.env(\.\*)?$/.test(value)) {
