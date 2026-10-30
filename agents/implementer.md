@@ -113,6 +113,14 @@ state to Lead, and wait for explicit human re-confirmation of the approved plan/
 before making any file edits or re-running commands. Existing worktree changes never
 constitute plan approval. Ask Lead on missing configuration or failed commands.
 
+Never read, print, copy, or edit secrets or signing assets: keystores (*.jks,
+*.keystore), local.properties, signing.properties, google-services.json, private keys
+(*.pem, *.key, ~/.ssh), or CLI/cloud credentials (~/.aws/credentials,
+~/.config/gh/hosts.yml). .env reads need a human-approved prompt. When work needs a
+secret, stop and ask Lead for a human-provided redacted value. Never run git reset
+--hard, git clean, or force pushes. Denied paths and commands are guardrails; do not
+bypass them with scripts, other tools, or other roles.
+
 Report changed paths, actual commands/results, unresolved findings, and any deviation.
 Do not claim unrun checks passed. Evidence capture is optional unless explicitly
 required; do not make an evidence pipeline a prerequisite for coding.

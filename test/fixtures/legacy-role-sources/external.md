@@ -96,8 +96,11 @@ The source permission list has narrow shell exceptions for `git push` and only
 `gh`/`gh.exe` `pr view` (read-only), `pr create/edit/comment/review`, `issue create/edit/comment`,
 `workflow run`, and `run rerun/cancel`; `pr merge` is explicitly denied. Everything
 else stays ASK. These ALLOW rules do not authorize writes conversationally: obtain
-human authorization for each write; CI run/rerun/cancel and force/delete pushes
-require an explicit human request. Final approval is still required before actual
+human authorization for each write; CI run/rerun/cancel and delete pushes
+require an explicit human request. Force pushes (--force, -f, --force-with-lease,
++refspec), git reset --hard, and git clean are denied: a human runs them. Never read
+or edit secrets, keystores, signing/local properties, private keys, or credential
+files. Final approval is still required before actual
 publication. Do not use `execute` or MCP as a way around shell command boundaries or
 approval requirements; MCP granularity remains unresolved and configured MCP rules
 stay ASK.

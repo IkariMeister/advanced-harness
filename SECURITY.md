@@ -88,6 +88,29 @@ showing how an upstream issue affects harness-owned behavior are welcome here.
 This policy does not extend maintenance guarantees to those services or to
 applications that use the harness.
 
+## Security guardrails
+
+Installed host configurations deny agents access to sensitive files and destructive
+Git commands. The shared list lives in `src/security-guardrails.ts`.
+
+- **Sensitive paths (read and edit denied):** Android keystores (`*.jks`,
+  `*.keystore`), `local.properties`, `signing.properties`,
+  `google-services.json`, private keys (`*.pem`, `*.key`, `~/.ssh`), and
+  `~/.aws/credentials` and `~/.config/gh/hosts.yml`. `.env` reads still prompt.
+- **Destructive Git (denied):** `git reset --hard`, `git clean`, and force pushes
+  (`--force`, `-f`, `--force-with-lease`, `+refspec`). A human runs these.
+
+| Host | Enforcement |
+| --- | --- |
+| OpenCode | Deny rules appended last to each role; ordered last-match keeps them in force. Bundled short force flags (`-uf`, `-fu`, up to three letters) are denied via `?` patterns. Update reconciliation inserts later setup rules before them and refuses later overrides. |
+| Claude Code | Project `.claude/settings.json` `Read`/`Edit`/`Bash` deny rules for every session and subagent. |
+| Antigravity | The `PreToolUse` hook denies destructive Git in `run_command`. Sensitive paths are instruction-level only. |
+| Codex (gated) | Managed `prefix_rule` entries forbid direct destructive Git prefixes; flags after the remote and bundled short flags are not matched. |
+
+Patterns are guardrails, not a sandbox: scripts, aliases, other tools, or separate
+processes can still reach these files and commands. OpenCode matching of `~`
+paths with Windows separators and runtime enforcement on each host are unverified.
+
 ## Secrets and MCP integrations
 
 Keep API tokens, SSH/private keys, cloud credentials, Android signing keystores

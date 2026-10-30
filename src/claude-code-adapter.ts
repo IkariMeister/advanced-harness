@@ -385,7 +385,7 @@ export async function diagnoseClaudeCode(options: ClaudeCodeDoctorOptions): Prom
       const ask = Array.isArray(permissions.ask) ? permissions.ask.map(String) : [];
       for (const rule of claudeSettingsDeny) if (!deny.includes(rule)) issues.push(`.claude/settings.json is missing deny rule ${rule}.`);
       for (const rule of claudeSettingsAsk) if (!ask.includes(rule)) issues.push(`.claude/settings.json is missing ask rule ${rule}.`);
-      if (!issues.some(issue => issue.startsWith('.claude/settings.json'))) notes.push('.claude/settings.json selects lead, denies gh pr merge, and prompts for .env reads.');
+      if (!issues.some(issue => issue.startsWith('.claude/settings.json'))) notes.push('.claude/settings.json selects lead, denies gh pr merge, sensitive-path Read/Edit, and destructive Git, and prompts for .env reads.');
     }
   } else {
     issues.push('.claude/settings.json is missing.');

@@ -2,8 +2,9 @@ import type { NativeDefinition } from './native-installer.ts';
 import type { NativeRole } from './native-role-types.ts';
 import type { RoleDefinition } from './role-definitions.ts';
 import { lowerOpenCodePolicy, type CapabilityDiagnostic } from './capability-policy.ts';
+import { openCodeGuardrailRules } from './security-guardrails.ts';
 
-/** Compile explicit OpenCode-specific role deployment data into the persisted V2 agent shape. */
+/** Compile explicit OpenCode-specific role deployment data into the persisted V2 agent shape; security guardrails are appended last. */
 export function compileOpenCodeRole(definition: RoleDefinition): { definition?: NativeDefinition; diagnostics: CapabilityDiagnostic[] } {
   const deployment = definition.deployment.opencode;
   const lowered = lowerOpenCodePolicy(definition.id, deployment.policy);
@@ -13,7 +14,7 @@ export function compileOpenCodeRole(definition: RoleDefinition): { definition?: 
     description: definition.description,
     mode: definition.orchestration,
     model: deployment.model,
-    permissions: lowered.permissions,
+    permissions: [...lowered.permissions, ...openCodeGuardrailRules(lowered.permissions)],
     system: definition.instructions
   }, diagnostics };
 }
