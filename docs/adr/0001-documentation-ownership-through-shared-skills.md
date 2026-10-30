@@ -73,7 +73,7 @@ Skills contain reusable procedures, templates, conventions, and tool instruction
 
 ## Workflow and Triggers
 
-Planner identifies documentation implications during planning, including whether an architectural change needs an ADR. Engineer updates implementation documentation with code where practical and runs applicable checks. Reviewer assesses it independently and may rerun checks or request evidence. Lead tracks unresolved findings and approvals. Operations publishes only through the existing authorized workflow.
+Planner identifies documentation implications during planning, including whether an architectural change needs an ADR. Engineer updates implementation documentation with code where practical and runs applicable checks. Reviewer assesses it independently and may rerun checks where the host lets Reviewer execute commands, or request evidence where it does not. Lead tracks unresolved findings and approvals. Operations publishes only through the existing authorized workflow.
 
 Documentation is expected when a change materially affects public APIs, integration contracts, installation/configuration/deployment, user-visible behavior, developer or operational workflows, architecture, supported host behavior, agent responsibilities, permissions, workflow commands, or relied-upon repository instructions. Trivial changes and internal refactors do not automatically require edits. When impact is uncertain, the responsible agent records an explicit assessment.
 
