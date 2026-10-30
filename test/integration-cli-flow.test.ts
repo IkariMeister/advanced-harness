@@ -308,3 +308,22 @@ test('an invalid new MCP URL is reported and re-prompted for the URL, not the al
   assert.equal(readFileSync(config, 'utf8'), original); assert.equal(readFileSync(preferences, 'utf8'), originalPreferences);
   assert.deepEqual(readdirSync(recovery).sort(), backups);
 });
+
+test('a closed prompt while asking for a new MCP URL aborts the flow instead of re-prompting, and writes nothing', async t => {
+  const { root, xdg, config, original, preferences, originalPreferences, recovery, backups } = await designFixture(t);
+  let urlPrompts = 0; const errors: string[] = [];
+  const ask = async (question: string) => {
+    if (question.startsWith('GitHub backend') || question.startsWith('jira: alias')) return 'none';
+    if (question.startsWith('Design source')) return 'stitch';
+    if (question.startsWith('stitch: alias')) return 'new';
+    if (question.startsWith('stitch: new unique alias')) return 'stitch-new';
+    // A second URL prompt means the rejection was swallowed; answer so a regression fails instead of hanging.
+    if (question.startsWith('stitch: supplied remote MCP URL')) { if (urlPrompts++) return 'https://stitch-new.example/mcp'; throw new Error('readline was closed'); }
+    if (question.startsWith('Type integrations')) return 'cancel';
+    throw new Error(`Unexpected prompt: ${question}`);
+  };
+  await assert.rejects(runIntegrationFlow({ scope: 'global' }, { ask, output: () => {}, error: text => errors.push(text), home: root, xdgConfigHome: xdg, recoveryDirectory: recovery }), /readline was closed/);
+  assert.equal(urlPrompts, 1); assert.deepEqual(errors, []);
+  assert.equal(readFileSync(config, 'utf8'), original); assert.equal(readFileSync(preferences, 'utf8'), originalPreferences);
+  assert.deepEqual(readdirSync(recovery).sort(), backups);
+});

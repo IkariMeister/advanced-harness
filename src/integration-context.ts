@@ -103,7 +103,8 @@ async function askSelections(servers: Record<string, Record<string, unknown>>, p
       try { normalizedServer(alias); } catch { continue; }
       let url: string;
       for (;;) {
-        try { url = validateEndpoint((await ask(`${service}: supplied remote MCP URL (no secrets)`)).trim()); break; }
+        const rawUrl = (await ask(`${service}: supplied remote MCP URL (no secrets)`)).trim();
+        try { url = validateEndpoint(rawUrl); break; }
         catch (err) { report(`${service}: ${(err as Error).message}`); }
       }
       const create = { type: 'remote' as const, url, disabled: true as const };
