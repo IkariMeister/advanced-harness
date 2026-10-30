@@ -102,10 +102,10 @@ Git commands. The shared list lives in `src/security-guardrails.ts`.
 
 | Host | Enforcement |
 | --- | --- |
-| OpenCode | Deny rules appended last to each role; ordered last-match keeps them in force. Update reconciliation inserts later setup rules before them and refuses later overrides. |
+| OpenCode | Deny rules appended last to each role; ordered last-match keeps them in force. Bundled short force flags (`-uf`, `-fu`, up to three letters) are denied via `?` patterns. Update reconciliation inserts later setup rules before them and refuses later overrides. |
 | Claude Code | Project `.claude/settings.json` `Read`/`Edit`/`Bash` deny rules for every session and subagent. |
 | Antigravity | The `PreToolUse` hook denies destructive Git in `run_command`. Sensitive paths are instruction-level only. |
-| Codex (gated) | Managed `prefix_rule` entries forbid direct destructive Git prefixes; flags after the remote are not matched. |
+| Codex (gated) | Managed `prefix_rule` entries forbid direct destructive Git prefixes; flags after the remote and bundled short flags are not matched. |
 
 Patterns are guardrails, not a sandbox: scripts, aliases, other tools, or separate
 processes can still reach these files and commands. OpenCode matching of `~`

@@ -209,7 +209,7 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       'Lead and seven Codex subagent profiles use explicit user-selected models and reasoning settings; shared sandbox/approval/MCP configuration is inherited.',
       'Codex role ownership is instructional, not permission isolation. Approval behavior and Desktop runtime remain unverified.',
       'Codex agent reload semantics are unverified; use a deliberate fresh-session validation rather than assuming live reload.',
-      'Codex rules forbid direct git reset --hard, git clean, and force-push prefixes; flags after the remote and sensitive-path reads are not covered by prefix rules.',
+      'Codex rules forbid direct git reset --hard, git clean, and force-push prefixes; force flags after the remote, bundled short flags (-uf), and sensitive-path reads are not covered by prefix rules.',
     ],
   },
   cursor: {

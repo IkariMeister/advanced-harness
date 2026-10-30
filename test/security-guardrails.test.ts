@@ -20,14 +20,15 @@ const agents = fileURLToPath(new URL('../agents/', import.meta.url));
 const definitions = loadNativeDefinitions(agents);
 const r = (action: string, resource: string, effect: PermissionRule['effect']): PermissionRule => ({ action, resource, effect });
 
-/** OpenCode-style ordered last-match evaluation where `*` matches any run of characters. */
+/** OpenCode-style ordered last-match evaluation where `*` matches any run of characters and `?` one character. */
 function effect(permissions: readonly PermissionRule[], action: string, value: string): PermissionRule['effect'] | undefined {
-  const matches = (pattern: string, text: string) => new RegExp(`^${pattern.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 's').test(text);
+  const literal = (part: string) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  const matches = (pattern: string, text: string) => new RegExp(`^${pattern.split('*').map(part => part.split('?').map(literal).join('.')).join('.*')}$`, 's').test(text);
   return permissions.filter(rule => (rule.action === '*' || rule.action === action) && matches(rule.resource, value)).at(-1)?.effect;
 }
 
 const sensitiveSamples = ['app/release.jks', 'keys/upload.keystore', 'local.properties', 'app/google-services.json', 'signing.properties', 'certs/server.pem', 'tls/private.key', '~/.ssh/id_ed25519', '~/.aws/credentials', '~/.config/gh/hosts.yml'];
-const destructiveSamples = ['git reset --hard', 'git reset --hard HEAD~1', 'git reset origin/main --hard', 'git clean -fdx', 'git clean -xdf', 'git push --force', 'git push --force origin feature', 'git push origin feature --force', 'git push -f origin feature', 'git push origin main -f', 'git push --force-with-lease', 'git push --force-with-lease=main origin main', 'git push origin +main'];
+const destructiveSamples = ['git reset --hard', 'git reset --hard HEAD~1', 'git reset origin/main --hard', 'git clean -fdx', 'git clean -xdf', 'git push --force', 'git push --force origin feature', 'git push origin feature --force', 'git push -f origin feature', 'git push origin main -f', 'git push --force-with-lease', 'git push --force-with-lease=main origin main', 'git push origin +main', 'git push -uf origin HEAD', 'git push -fu origin HEAD', 'git push origin HEAD -uf', 'git push -vuf', 'git push origin -qf main'];
 
 test('every OpenCode role denies sensitive-path reads after all source rules', () => {
   for (const role of nativeRoles) {
@@ -52,6 +53,7 @@ test('OpenCode edit and shell guardrails apply only to roles that can reach thos
   assert.equal(effect(definitions.operator.permissions as PermissionRule[], 'shell', 'git reset --soft HEAD~1'), 'ask');
   assert.equal(effect(definitions.operator.permissions as PermissionRule[], 'shell', 'git push-helper'), 'ask');
   assert.equal(effect(definitions.external.permissions as PermissionRule[], 'shell', 'git push origin feature'), 'allow');
+  for (const command of ['git push -u origin feature', 'git push --follow-tags', 'git push origin feature-fix', 'git push -u origin fix-f']) assert.equal(effect(definitions.external.permissions as PermissionRule[], 'shell', command), 'allow', command);
   assert.equal(effect(definitions.implementer.permissions as PermissionRule[], 'edit', 'app/src/main/App.kt'), 'allow');
 });
 

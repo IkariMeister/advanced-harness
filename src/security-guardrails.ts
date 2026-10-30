@@ -31,6 +31,14 @@ export const destructiveGitCommands = [
   'git push * +*',
 ] as const;
 
+/**
+ * OpenCode-only forms for bundled short force flags (`-uf`, `-fu`, `-vuf`, ...): `?`
+ * matches one character, so each cluster stays a single token. Claude Code has no
+ * single-character wildcard; its `git push *` exceptions are already downgraded to prompts.
+ */
+export const openCodeBundledForcePushCommands: readonly string[] = ['-?f', '-f?', '-??f', '-?f?', '-f??']
+  .flatMap(cluster => [`git push ${cluster}`, `git push ${cluster} *`, `git push * ${cluster}`, `git push * ${cluster} *`]);
+
 /** Codex prefix_rule token patterns; prefix rules cannot see flags after the remote. */
 export const codexDestructiveGitPrefixes: readonly (readonly string[])[] = [
   ['git', 'reset', '--hard'],
@@ -43,7 +51,7 @@ export const codexDestructiveGitPrefixes: readonly (readonly string[])[] = [
 const allOpenCodeGuardrails: readonly PermissionRule[] = [
   ...sensitivePaths.map(path => ({ action: 'read', resource: path.opencode, effect: 'deny' as const })),
   ...sensitivePaths.map(path => ({ action: 'edit', resource: path.opencode, effect: 'deny' as const })),
-  ...destructiveGitCommands.map(command => ({ action: 'shell', resource: command, effect: 'deny' as const })),
+  ...[...destructiveGitCommands, ...openCodeBundledForcePushCommands].map(command => ({ action: 'shell', resource: command, effect: 'deny' as const })),
 ];
 
 /**

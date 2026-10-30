@@ -46,10 +46,10 @@ function patternOverlap(a: string, b: string): boolean | 'unknown' {
   if (x !== undefined && y !== undefined) return x.startsWith(y) || y.startsWith(x);
   if (x !== undefined && !/[*?\[\]{}]/.test(b)) return b.startsWith(x);
   if (y !== undefined && !/[*?\[\]{}]/.test(a)) return a.startsWith(y);
-  if (/[?\[\]{}]/.test(a + b)) return 'unknown';
-  return /\*/.test(a + b) ? starGlobsIntersect(a, b) : false;
+  if (/[\[\]{}]/.test(a + b)) return 'unknown';
+  return /[*?]/.test(a + b) ? starGlobsIntersect(a, b) : false;
 }
-/** Exact intersection test for globs whose only wildcard is `*` (any run of characters). */
+/** Exact intersection test for globs whose only wildcards are `*` (any run) and `?` (one character). */
 function starGlobsIntersect(a: string, b: string): boolean {
   const seen = new Set<string>();
   const visit = (i: number, j: number): boolean => {
@@ -59,7 +59,7 @@ function starGlobsIntersect(a: string, b: string): boolean {
     if (i === a.length && j === b.length) return true;
     if (a[i] === '*' && (visit(i + 1, j) || j < b.length && visit(i, j + 1))) return true;
     if (b[j] === '*' && (visit(i, j + 1) || i < a.length && visit(i + 1, j))) return true;
-    return i < a.length && j < b.length && a[i] !== '*' && b[j] !== '*' && a[i] === b[j] && visit(i + 1, j + 1);
+    return i < a.length && j < b.length && a[i] !== '*' && b[j] !== '*' && (a[i] === b[j] || a[i] === '?' || b[j] === '?') && visit(i + 1, j + 1);
   };
   return visit(0, 0);
 }
