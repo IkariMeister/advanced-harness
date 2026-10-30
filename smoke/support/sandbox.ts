@@ -55,7 +55,8 @@ export function createSandbox(name: string): Sandbox {
   const openCodeLog = join(root, 'opencode-calls.jsonl');
   for (const directory of [home, xdgConfigHome, project, join(home, 'AppData', 'Roaming'), join(home, 'AppData', 'Local')]) mkdirSync(directory, { recursive: true });
   const gitConfig = join(home, '.gitconfig');
-  writeFileSync(gitConfig, '[user]\n\tname = Smoke Sandbox\n\temail = smoke@sandbox.invalid\n[init]\n\tdefaultBranch = main\n');
+  // Disable background auto-maintenance: its transient lock files race the project tree snapshot.
+  writeFileSync(gitConfig, '[user]\n\tname = Smoke Sandbox\n\temail = smoke@sandbox.invalid\n[init]\n\tdefaultBranch = main\n[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n');
   const stub = installOpenCodeStub(join(root, 'bin'));
 
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|XDG_.*|APPDATA|LOCALAPPDATA|ADVANCED_HARNESS_.*|OPENCODE_.*|GIT_CONFIG.*|NODE_OPTIONS|NODE_TEST_CONTEXT)$/i.test(key)));
