@@ -6,7 +6,7 @@ import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { saveInstallation, type Ask } from './native-installer.ts';
 import { nativeRoles, type NativeRole } from './native-role-types.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
-import { codexDestructiveGitPrefixes } from './security-guardrails.ts';
+import { codexDestructiveGitPrefixes, type CodexPrefixPattern } from './security-guardrails.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, type ManagedFileEvidence } from './receipt-lineage.ts';
 
@@ -310,16 +310,19 @@ export function compileCodexAgent(role: NativeRole, model: string, reasoning: st
   return `name = ${quote(role)}\ndescription = ${quote(description)}\ndeveloper_instructions = ${quote(instructions)}\nmodel = ${quote(model.trim())}\nmodel_reasoning_effort = ${quote(reasoning)}\n`;
 }
 
-const codexMergePrefixes: readonly (readonly string[])[] = [['gh', 'pr', 'merge'], ['gh.exe', 'pr', 'merge']];
+const codexMergePrefixes: readonly CodexPrefixPattern[] = [['gh', 'pr', 'merge'], ['gh.exe', 'pr', 'merge']];
 /** Managed forbidden prefixes: direct merge plus destructive Git (BH-036). */
-export const codexForbiddenPrefixes: readonly (readonly string[])[] = [...codexMergePrefixes, ...codexDestructiveGitPrefixes];
+export const codexForbiddenPrefixes: readonly CodexPrefixPattern[] = [...codexMergePrefixes, ...codexDestructiveGitPrefixes];
+
+const codexPatternSource = (pattern: CodexPrefixPattern): string => `[${pattern.map(token => typeof token === 'string' ? JSON.stringify(token) : codexPatternSource(token)).join(', ')}]`;
+const codexPatternLabel = (pattern: CodexPrefixPattern) => pattern.map(token => typeof token === 'string' ? token : `{${token.slice(0, 3).join('|')}${token.length > 3 ? '|…' : ''}}`).join(' ');
 
 export function compileCodexMergeRule(): string {
-  const rules = codexForbiddenPrefixes.map(pattern => `prefix_rule(pattern = [${pattern.map(token => JSON.stringify(token)).join(', ')}], decision = "forbidden")\n`).join('');
-  return `# BEGIN advanced-harness managed merge rules\n# Denies identifiable direct CLI forms only (gh pr merge, git reset --hard, git clean, force pushes); flags after the remote and indirect/API routes are not blocked.\n${rules}# END advanced-harness managed merge rules\n`;
+  const rules = codexForbiddenPrefixes.map(pattern => `prefix_rule(pattern = ${codexPatternSource(pattern)}, decision = "forbidden")\n`).join('');
+  return `# BEGIN advanced-harness managed merge rules\n# Denies identifiable direct CLI forms only (gh pr merge, git reset --hard, git clean, force pushes); force flags after an unlisted remote or a refspec are not matched, and indirect/API routes are not blocked.\n${rules}# END advanced-harness managed merge rules\n`;
 }
 
-function hasActiveCodexPrefixRule(text: string, pattern: readonly string[]): boolean {
+function hasActiveCodexPrefixRule(text: string, pattern: CodexPrefixPattern): boolean {
   type Token = { kind: 'identifier' | 'string' | 'punctuation'; value: string; line: number; column: number };
   const tokens: Token[] = [];
   const continuedLines = new Set<number>();
@@ -382,10 +385,17 @@ function hasActiveCodexPrefixRule(text: string, pattern: readonly string[]): boo
     index++;
   }
 
+  const list = (items: CodexPrefixPattern): Array<[Token['kind'], string]> => [
+    ['punctuation', '['],
+    ...items.flatMap((token, index): Array<[Token['kind'], string]> => [
+      ...(index ? [['punctuation', ','] as [Token['kind'], string]] : []),
+      ...(typeof token === 'string' ? [['string', token] as [Token['kind'], string]] : list(token)),
+    ]),
+    ['punctuation', ']'],
+  ];
   const expected: Array<[Token['kind'], string]> = [
     ['identifier', 'prefix_rule'], ['punctuation', '('], ['identifier', 'pattern'], ['punctuation', '='],
-    ['punctuation', '['], ...pattern.flatMap((token, index): Array<[Token['kind'], string]> => index ? [['punctuation', ','], ['string', token]] : [['string', token]]),
-    ['punctuation', ']'], ['punctuation', ','],
+    ...list(pattern), ['punctuation', ','],
     ['identifier', 'decision'], ['punctuation', '='], ['string', 'forbidden'], ['punctuation', ')'],
   ];
   // Accept only a complete canonical call as the entire unindented physical line.
@@ -800,7 +810,7 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
       const rulesText = readFileSync(rules, 'utf8');
       if (!codexMergePrefixes.every(pattern => hasActiveCodexPrefixRule(rulesText, pattern))) issues.push(`Codex direct gh pr merge rules are missing or malformed: ${rules}`);
       const missingGit = codexDestructiveGitPrefixes.filter(pattern => !hasActiveCodexPrefixRule(rulesText, pattern));
-      if (missingGit.length) issues.push(`Codex destructive Git rules are missing or malformed (${missingGit.map(pattern => pattern.join(' ')).join(', ')}): ${rules}`);
+      if (missingGit.length) issues.push(`Codex destructive Git rules are missing or malformed (${missingGit.map(codexPatternLabel).join(', ')}): ${rules}`);
     }
   }
   if (!found) issues.push('Codex configuration is not installed in inspected project/global scope.');

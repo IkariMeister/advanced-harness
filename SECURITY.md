@@ -77,10 +77,11 @@ Native deployment currently supports OpenCode V2 and Google Antigravity.
 Compilation of workflow artifacts for Claude Code, OpenAI Codex, and Cursor does
 not imply installed native permissions or runtime protection. Host controls and
 their limits differ; consult the [README](README.md) and
-[configuration guide](docs/configuration.md) for current capabilities. Proposed
-sensitive-path and destructive-command guardrails in
+[configuration guide](docs/configuration.md) for current capabilities. The
+sensitive-path and destructive-command guardrails from
 [BH-036 / issue #64](https://github.com/IkariMeister/advanced-harness/issues/64)
-must not be assumed to exist.
+are described under [Security guardrails](#security-guardrails), including what
+each host does not enforce.
 
 Vulnerabilities in upstream hosts, model providers, MCP servers, or dependencies
 should also be reported through their maintainers' private channels. Reports
@@ -96,20 +97,23 @@ Git commands. The shared list lives in `src/security-guardrails.ts`.
 - **Sensitive paths (read and edit denied):** Android keystores (`*.jks`,
   `*.keystore`), `local.properties`, `signing.properties`,
   `google-services.json`, private keys (`*.pem`, `*.key`, `~/.ssh`), and
-  `~/.aws/credentials` and `~/.config/gh/hosts.yml`. `.env` reads still prompt.
+  `~/.aws/credentials` and `~/.config/gh/hosts.yml`. `.env` reads still prompt
+  rather than being denied, so agents can ask before reading local configuration.
 - **Destructive Git (denied):** `git reset --hard`, `git clean`, and force pushes
   (`--force`, `-f`, `--force-with-lease`, `+refspec`). A human runs these.
 
 | Host | Enforcement |
 | --- | --- |
-| OpenCode | Deny rules appended last to each role; ordered last-match keeps them in force. Bundled short force flags (`-uf`, `-fu`, up to three letters) are denied via `?` patterns. Update reconciliation inserts later setup rules before them and refuses later overrides. |
+| OpenCode | Deny rules appended last to each role; ordered last-match keeps them in force. Home-directory paths also have `~`-free forms in both `/` and `\` separators. Bundled short force flags (`-uf`, `-fu`, up to four letters) are denied via `?` patterns. Update reconciliation inserts later setup rules before them and refuses later overrides. |
 | Claude Code | Project `.claude/settings.json` `Read`/`Edit`/`Bash` deny rules for every session and subagent. |
-| Antigravity | The `PreToolUse` hook denies destructive Git in `run_command`. Sensitive paths are instruction-level only. |
-| Codex (gated) | Managed `prefix_rule` entries forbid direct destructive Git prefixes; flags after the remote and bundled short flags are not matched. |
+| Antigravity | The `PreToolUse` hook denies destructive Git in `run_command`. Sensitive paths are instruction-level only until file-tool hook payloads are captured (see the [validation checklist](docs/guardrail-validation.md)). |
+| Codex (gated) | Managed `prefix_rule` entries forbid destructive Git prefixes, bundled short force flags, and force flags right after `origin` or `upstream`. Force flags after other remotes or a refspec are not matched. Sensitive paths are instruction-level only. |
 
 Patterns are guardrails, not a sandbox: scripts, aliases, other tools, or separate
-processes can still reach these files and commands. OpenCode matching of `~`
-paths with Windows separators and runtime enforcement on each host are unverified.
+processes can still reach these files and commands. Runtime enforcement on each
+host is checked by a human with the
+[guardrail validation checklist](docs/guardrail-validation.md); results are recorded
+on issue #64.
 
 ## Secrets and MCP integrations
 

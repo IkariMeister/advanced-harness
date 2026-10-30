@@ -124,12 +124,42 @@
         },
         {
           "action": "read",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "read",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         }
       ],
@@ -252,12 +282,42 @@
         },
         {
           "action": "read",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "read",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         },
         {
@@ -302,12 +362,42 @@
         },
         {
           "action": "edit",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "edit",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         },
         {
@@ -397,26 +487,6 @@
         },
         {
           "action": "shell",
-          "resource": "git push -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
           "resource": "git push -f?",
           "effect": "deny"
         },
@@ -437,22 +507,42 @@
         },
         {
           "action": "shell",
-          "resource": "git push -??f",
+          "resource": "git push -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -??f *",
+          "resource": "git push -?f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f",
+          "resource": "git push * -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f *",
+          "resource": "git push * -?f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f?? *",
           "effect": "deny"
         },
         {
@@ -477,22 +567,102 @@
         },
         {
           "action": "shell",
-          "resource": "git push -f??",
+          "resource": "git push -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -f?? *",
+          "resource": "git push -??f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f??",
+          "resource": "git push * -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f?? *",
+          "resource": "git push * -??f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f *",
           "effect": "deny"
         }
       ],
@@ -870,12 +1040,42 @@
         },
         {
           "action": "read",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "read",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         },
         {
@@ -965,26 +1165,6 @@
         },
         {
           "action": "shell",
-          "resource": "git push -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
           "resource": "git push -f?",
           "effect": "deny"
         },
@@ -1005,22 +1185,42 @@
         },
         {
           "action": "shell",
-          "resource": "git push -??f",
+          "resource": "git push -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -??f *",
+          "resource": "git push -?f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f",
+          "resource": "git push * -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f *",
+          "resource": "git push * -?f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f?? *",
           "effect": "deny"
         },
         {
@@ -1045,22 +1245,102 @@
         },
         {
           "action": "shell",
-          "resource": "git push -f??",
+          "resource": "git push -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -f?? *",
+          "resource": "git push -??f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f??",
+          "resource": "git push * -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f?? *",
+          "resource": "git push * -??f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f *",
           "effect": "deny"
         }
       ],
@@ -1148,12 +1428,42 @@
         },
         {
           "action": "read",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "read",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         }
       ],
@@ -1241,12 +1551,42 @@
         },
         {
           "action": "read",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "read",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         }
       ],
@@ -1354,12 +1694,42 @@
         },
         {
           "action": "read",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "read",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         },
         {
@@ -1404,12 +1774,42 @@
         },
         {
           "action": "edit",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "edit",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         },
         {
@@ -1499,26 +1899,6 @@
         },
         {
           "action": "shell",
-          "resource": "git push -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
           "resource": "git push -f?",
           "effect": "deny"
         },
@@ -1539,22 +1919,42 @@
         },
         {
           "action": "shell",
-          "resource": "git push -??f",
+          "resource": "git push -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -??f *",
+          "resource": "git push -?f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f",
+          "resource": "git push * -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f *",
+          "resource": "git push * -?f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f?? *",
           "effect": "deny"
         },
         {
@@ -1579,22 +1979,102 @@
         },
         {
           "action": "shell",
-          "resource": "git push -f??",
+          "resource": "git push -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -f?? *",
+          "resource": "git push -??f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f??",
+          "resource": "git push * -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f?? *",
+          "resource": "git push * -??f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f *",
           "effect": "deny"
         }
       ],
@@ -1697,12 +2177,42 @@
         },
         {
           "action": "read",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "read",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         },
         {
@@ -1792,26 +2302,6 @@
         },
         {
           "action": "shell",
-          "resource": "git push -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
           "resource": "git push -f?",
           "effect": "deny"
         },
@@ -1832,22 +2322,42 @@
         },
         {
           "action": "shell",
-          "resource": "git push -??f",
+          "resource": "git push -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -??f *",
+          "resource": "git push -?f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f",
+          "resource": "git push * -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f *",
+          "resource": "git push * -?f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f?? *",
           "effect": "deny"
         },
         {
@@ -1872,22 +2382,102 @@
         },
         {
           "action": "shell",
-          "resource": "git push -f??",
+          "resource": "git push -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -f?? *",
+          "resource": "git push -??f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f??",
+          "resource": "git push * -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f?? *",
+          "resource": "git push * -??f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f *",
           "effect": "deny"
         }
       ],
@@ -1990,12 +2580,42 @@
         },
         {
           "action": "read",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.aws/credentials",
           "effect": "deny"
         },
         {
           "action": "read",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
           "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "read",
+          "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         },
         {
@@ -2085,26 +2705,6 @@
         },
         {
           "action": "shell",
-          "resource": "git push -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
-          "resource": "git push * -?f *",
-          "effect": "deny"
-        },
-        {
-          "action": "shell",
           "resource": "git push -f?",
           "effect": "deny"
         },
@@ -2125,22 +2725,42 @@
         },
         {
           "action": "shell",
-          "resource": "git push -??f",
+          "resource": "git push -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -??f *",
+          "resource": "git push -?f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f",
+          "resource": "git push * -?f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -??f *",
+          "resource": "git push * -?f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f?? *",
           "effect": "deny"
         },
         {
@@ -2165,22 +2785,102 @@
         },
         {
           "action": "shell",
-          "resource": "git push -f??",
+          "resource": "git push -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push -f?? *",
+          "resource": "git push -??f *",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f??",
+          "resource": "git push * -??f",
           "effect": "deny"
         },
         {
           "action": "shell",
-          "resource": "git push * -f?? *",
+          "resource": "git push * -??f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f???",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -f??? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f??",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -?f?? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f?",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -??f? *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push -???f *",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push * -???f *",
           "effect": "deny"
         }
       ],

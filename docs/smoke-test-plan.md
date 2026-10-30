@@ -46,6 +46,9 @@ through `NODE_OPTIONS`. On POSIX it is a small shell wrapper.
 The stub mirrors the configuration. It proves the CLI wiring and the doctor's
 parsing, **not** OpenCode's real discovery, provider access, or model entitlement.
 
+The stub also cannot show whether a host enforces the security guardrails. That is
+checked by hand with the [guardrail validation checklist](guardrail-validation.md).
+
 ## Interactive prompts: non-TTY evidence only
 
 Every `harness:*` script refuses to run unless stdin and stdout are TTYs. The

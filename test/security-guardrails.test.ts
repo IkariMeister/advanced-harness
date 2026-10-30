@@ -9,7 +9,7 @@ import { loadNativeDefinitions, nativeRoles } from '../src/native-installer.ts';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 import { lowerOpenCodePolicy } from '../src/capability-policy.ts';
 import { reconcilePermissions, type PermissionRule } from '../src/permission-reconciliation.ts';
-import { claudeGuardrailDenyRules, destructiveGitCommands, isDestructiveGitInvocation, openCodeGuardrailRules, sensitivePaths } from '../src/security-guardrails.ts';
+import { claudeGuardrailDenyRules, destructiveGitCommands, isDestructiveGitInvocation, isOpenCodeGuardrailRule, openCodeGuardrailRules, sensitivePaths } from '../src/security-guardrails.ts';
 import { claudeSettingsDeny, mergeClaudeSettings } from '../src/claude-code-compiler.ts';
 import { compileCodexMergeRule, diagnoseCodex, installCodex } from '../src/codex-adapter.ts';
 import { getAntigravityMergeGuardMjsSource } from '../src/antigravity-compiler.ts';
@@ -27,8 +27,8 @@ function effect(permissions: readonly PermissionRule[], action: string, value: s
   return permissions.filter(rule => (rule.action === '*' || rule.action === action) && matches(rule.resource, value)).at(-1)?.effect;
 }
 
-const sensitiveSamples = ['app/release.jks', 'keys/upload.keystore', 'local.properties', 'app/google-services.json', 'signing.properties', 'certs/server.pem', 'tls/private.key', '~/.ssh/id_ed25519', '~/.aws/credentials', '~/.config/gh/hosts.yml'];
-const destructiveSamples = ['git reset --hard', 'git reset --hard HEAD~1', 'git reset origin/main --hard', 'git clean -fdx', 'git clean -xdf', 'git push --force', 'git push --force origin feature', 'git push origin feature --force', 'git push -f origin feature', 'git push origin main -f', 'git push --force-with-lease', 'git push --force-with-lease=main origin main', 'git push origin +main', 'git push -uf origin HEAD', 'git push -fu origin HEAD', 'git push origin HEAD -uf', 'git push -vuf', 'git push origin -qf main'];
+const sensitiveSamples = ['app/release.jks', 'keys/upload.keystore', 'local.properties', 'app/google-services.json', 'signing.properties', 'certs/server.pem', 'tls/private.key', '~/.ssh/id_ed25519', '~/.aws/credentials', '~/.config/gh/hosts.yml', 'C:\\Users\\dev\\.ssh\\id_ed25519', '/home/dev/.ssh/id_rsa', 'C:\\Users\\dev\\.aws\\credentials', '/home/dev/.aws/credentials', 'C:\\Users\\dev\\.config\\gh\\hosts.yml', 'app\\release.jks'];
+const destructiveSamples = ['git reset --hard', 'git reset --hard HEAD~1', 'git reset origin/main --hard', 'git clean -fdx', 'git clean -xdf', 'git push --force', 'git push --force origin feature', 'git push origin feature --force', 'git push -f origin feature', 'git push origin main -f', 'git push --force-with-lease', 'git push --force-with-lease=main origin main', 'git push origin +main', 'git push -uf origin HEAD', 'git push -fu origin HEAD', 'git push origin HEAD -uf', 'git push -vuf', 'git push origin -qf main', 'git push -vuqf origin HEAD', 'git push origin HEAD -fvuq'];
 
 test('every OpenCode role denies sensitive-path reads after all source rules', () => {
   for (const role of nativeRoles) {
@@ -45,7 +45,7 @@ test('OpenCode edit and shell guardrails apply only to roles that can reach thos
     const canEdit = permissions.some(rule => rule.action === 'edit' && rule.effect !== 'deny');
     const canShell = permissions.some(rule => rule.action === 'shell' && rule.effect !== 'deny');
     for (const path of sensitiveSamples) assert.equal(effect(permissions, 'edit', path), 'deny', `${role} edit ${path}`);
-    assert.equal(permissions.some(rule => rule.action === 'edit' && sensitivePaths.some(path => path.opencode === rule.resource)), canEdit, role);
+    assert.equal(permissions.some(rule => rule.action === 'edit' && sensitivePaths.some(path => (path.opencode as readonly string[]).includes(rule.resource))), canEdit, role);
     assert.equal(permissions.some(rule => rule.action === 'shell' && (destructiveGitCommands as readonly string[]).includes(rule.resource)), canShell, role);
     if (canShell) for (const command of destructiveSamples) assert.equal(effect(permissions, 'shell', command), 'deny', `${role} ${command}`);
   }
@@ -68,6 +68,22 @@ test('updating an install that predates guardrails appends them last without con
   }
 });
 
+test('updating a first BH-036 install adds separator-agnostic paths and four-letter clusters without conflicts', () => {
+  const addedLater = (rule: PermissionRule) => /^\*[/\\]\./.test(rule.resource) || /(?:^| )-[?f]{4}(?: |$)/.test(rule.resource);
+  for (const role of nativeRoles) {
+    const desired = definitions[role].permissions as PermissionRule[];
+    const old = desired.filter(rule => !addedLater(rule));
+    assert.ok(old.length < desired.length, role);
+    const plan = reconcilePermissions({ existing: old, prior: old.map(rule => ({ rule, sources: [`native:${role}`] })), previousOrder: old, desired: desired.map(rule => ({ rule, sources: [`native:${role}`] })), retiringSources: [`native:${role}`] });
+    assert.deepEqual(plan.preview.conflicts, [], role);
+    const key = (rule: PermissionRule) => `${rule.action} ${rule.resource} ${rule.effect}`;
+    assert.deepEqual(plan.rules.map(key).sort(), desired.map(key).sort(), role);
+    const guards = plan.rules.map(isOpenCodeGuardrailRule);
+    assert.equal(guards.indexOf(true) >= 0 && guards.slice(guards.indexOf(true)).every(Boolean), true, `${role} keeps guardrails last`);
+    for (const path of sensitiveSamples) assert.equal(effect(plan.rules, 'read', path), 'deny', `${role} read ${path}`);
+  }
+});
+
 test('later setup rules land before guardrails, and a later override of a guardrail fails closed', () => {
   const guard = r('shell', 'git push --force *', 'deny');
   const added = reconcilePermissions({ existing: [r('shell', '*', 'ask'), guard], desired: [{ rule: r('shell', 'git push *', 'allow'), sources: ['integration'] }] });
@@ -78,7 +94,7 @@ test('later setup rules land before guardrails, and a later override of a guardr
   assert.match(overridden.preview.conflicts[0]!.message, /required denial shell git push --force \*/);
   const disjoint = reconcilePermissions({ existing: [r('read', '*', 'allow'), r('read', '*.env', 'ask')], desired: [{ rule: r('read', '*.jks', 'deny'), sources: ['native:lead'] }] });
   assert.deepEqual(disjoint.preview.conflicts, [], 'star-only suffix globs are compared exactly');
-  assert.deepEqual(openCodeGuardrailRules([r('read', '*', 'allow')]).map(rule => rule.action), sensitivePaths.map(() => 'read'));
+  assert.deepEqual(openCodeGuardrailRules([r('read', '*', 'allow')]).map(rule => rule.action), sensitivePaths.flatMap(path => path.opencode.map(() => 'read')));
 });
 
 test('Claude settings deny sensitive-path Read/Edit and destructive Git for every session', () => {
@@ -119,6 +135,14 @@ test('Codex rules forbid destructive Git prefixes and doctor reports a missing o
   for (const pattern of ['["git", "reset", "--hard"]', '["git", "clean"]', '["git", "push", "--force"]', '["git", "push", "-f"]', '["git", "push", "--force-with-lease"]', '["gh", "pr", "merge"]']) {
     assert.ok(rules.includes(`prefix_rule(pattern = ${pattern}, decision = "forbidden")`), pattern);
   }
+  const listed = (source: string) => JSON.parse(source) as (string | string[])[];
+  const patterns = [...rules.matchAll(/^prefix_rule\(pattern = (\[.*\]), decision = "forbidden"\)$/gm)].map(match => listed(match[1]!));
+  const forbidden = (command: string) => patterns.some(pattern => pattern.every((token, index) => {
+    const actual = command.split(' ')[index];
+    return actual !== undefined && (typeof token === 'string' ? token === actual : token.includes(actual));
+  }));
+  for (const command of ['git push -uf origin HEAD', 'git push -fu origin HEAD', 'git push -vuf', 'git push origin --force', 'git push origin -f main', 'git push upstream -uf', 'git push origin --force-with-lease']) assert.ok(forbidden(command), command);
+  for (const command of ['git push -u origin feature', 'git push origin feature', 'git push --follow-tags', 'git push origin -u feature']) assert.ok(!forbidden(command), command);
   const root = mkdtempSync(join(tmpdir(), 'codex-guardrails-'));
   const project = join(root, 'project'), home = join(root, 'home'); mkdirSync(project); mkdirSync(home);
   const answers = ['', ...nativeRoles.flatMap(() => ['gpt-example', 'medium']), 'install'];
@@ -129,4 +153,8 @@ test('Codex rules forbid destructive Git prefixes and doctor reports a missing o
   const report = await diagnoseCodex({ project, home });
   assert.equal(report.ok, false);
   assert.ok(report.issues.some(issue => /destructive Git rules are missing or malformed \(git clean\)/.test(issue)), report.issues.join('\n'));
+  const remoteRule = readFileSync(path, 'utf8').split('\n').find(line => line.startsWith('prefix_rule(pattern = ["git", "push", ["origin"'))!;
+  writeFileSync(path, readFileSync(path, 'utf8').replace(`${remoteRule}\n`, ''));
+  const remoteReport = await diagnoseCodex({ project, home });
+  assert.ok(remoteReport.issues.some(issue => /git push \{origin\|upstream\} \{--force\|-f\|--force-with-lease\|…\}/.test(issue)), remoteReport.issues.join('\n'));
 });
