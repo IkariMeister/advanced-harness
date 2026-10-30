@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTempRoot } from './temp-directory.ts';
 import { runIntegrationFlow } from '../src/integration-cli-flow.ts';
@@ -231,4 +231,80 @@ test('integration production flow aborts without config or preference writes whe
   assert.equal(readFileSync(config, 'utf8'), beforeConfig);
   assert.equal(existsSync(join(configDir, 'harness.integrations.json')), false);
   assert.deepEqual((await import('node:fs')).readdirSync(recovery).sort(), beforeReceipts);
+});
+
+async function designFixture(t: { after(fn: () => void): void }) {
+  const { root, project } = fixture(t); const configDir = join(root, 'xdg', 'opencode'); mkdirSync(configDir, { recursive: true });
+  const config = join(configDir, 'opencode.json');
+  // Selecting an MCP alias globally reconciles role permissions, so the harness must be installed first.
+  await runInstallerFlow({ scope: 'global', config }, {
+    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
+    output: () => {}, error: () => {}, home: root, xdgConfigHome: join(root, 'xdg'), recoveryDirectory: join(root, 'recovery'), verify: async () => ({ ok: true } as never), printReport: () => {},
+  });
+  const original = JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), mcp: { servers: { 'figma-company': { type: 'remote', url: 'https://figma.example/mcp', disabled: true }, 'stitch-company': { type: 'remote', url: 'https://stitch.example/mcp', disabled: true } } } }, null, 2) + '\n';
+  writeFileSync(config, original);
+  const preferences = join(configDir, 'harness.integrations.json'); const originalPreferences = JSON.stringify({ version: 1, github: null, jira: null, design: { kind: 'figma', server: 'figma-company' } }, null, 2) + '\n';
+  writeFileSync(preferences, originalPreferences);
+  const recovery = join(root, 'recovery');
+  return { root, project, xdg: join(root, 'xdg'), config, original, preferences, originalPreferences, recovery, backups: readdirSync(recovery).sort() };
+}
+
+test('switching design source does not suggest the previous kind\'s server, in global and project scope, and cancellation writes nothing', async t => {
+  for (const scope of ['global', 'project'] as const) {
+    const { root, project, xdg, config, original, preferences, originalPreferences, recovery, backups } = await designFixture(t); const suggestions = new Map<string, string | undefined>();
+    const ask = async (question: string, suggested?: string) => {
+      if (question.startsWith('GitHub backend') || question.startsWith('jira: alias')) return 'none';
+      if (question.startsWith('Design source')) { assert.equal(suggested, 'figma'); return 'stitch'; }
+      if (question.startsWith('stitch: alias')) { suggestions.set(scope, suggested); return ''; }
+      if (question.startsWith('Type integrations')) return 'cancel';
+      throw new Error(`Unexpected prompt: ${question}`);
+    };
+    const output: string[] = [];
+    assert.equal(await runIntegrationFlow({ scope, ...(scope === 'project' ? { project } : {}) }, { ask, output: text => output.push(text), error: text => output.push(text), home: root, xdgConfigHome: xdg, recoveryDirectory: recovery }), 0);
+    assert.equal(suggestions.get(scope), 'none');
+    assert.ok(output.some(text => text.includes('"design": null')), 'Enter on the stitch prompt must not carry the figma alias over');
+    assert.ok(output.some(text => text.includes('Cancelled. No files or connections changed.')));
+    assert.equal(readFileSync(config, 'utf8'), original); assert.equal(readFileSync(preferences, 'utf8'), originalPreferences);
+    assert.equal(existsSync(join(project, 'AGENTS.md')), false); assert.deepEqual(readdirSync(recovery).sort(), backups);
+  }
+});
+
+test('keeping the same design source still suggests its previous server', async t => {
+  const { root, xdg, recovery } = await designFixture(t); let suggestion: string | undefined;
+  const ask = async (question: string, suggested?: string) => {
+    if (question.startsWith('GitHub backend') || question.startsWith('jira: alias')) return 'none';
+    if (question.startsWith('Design source')) return '';
+    if (question.startsWith('figma: alias')) { suggestion = suggested; return ''; }
+    if (question.startsWith('Type integrations')) return 'cancel';
+    throw new Error(`Unexpected prompt: ${question}`);
+  };
+  const output: string[] = [];
+  await runIntegrationFlow({ scope: 'global' }, { ask, output: text => output.push(text), error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery });
+  assert.equal(suggestion, 'figma-company');
+  assert.ok(output.some(text => text.includes('"server": "figma-company"')));
+});
+
+test('an invalid new MCP URL is reported and re-prompted for the URL, not the alias, and cancellation writes nothing', async t => {
+  const { root, xdg, config, original, preferences, originalPreferences, recovery, backups } = await designFixture(t);
+  const urls = ['not a url', 'http://design.example/mcp?token=x', 'https://stitch-new.example/mcp']; const asked: string[] = [];
+  const ask = async (question: string) => {
+    asked.push(question);
+    if (question.startsWith('GitHub backend') || question.startsWith('jira: alias')) return 'none';
+    if (question.startsWith('Design source')) return 'stitch';
+    if (question.startsWith('stitch: alias')) return 'new';
+    if (question.startsWith('stitch: new unique alias')) return 'stitch-new';
+    if (question.startsWith('stitch: supplied remote MCP URL')) return urls.shift()!;
+    if (question.startsWith('Type integrations')) return 'cancel';
+    throw new Error(`Unexpected prompt: ${question}`);
+  };
+  const output: string[] = []; const errors: string[] = [];
+  assert.equal(await runIntegrationFlow({ scope: 'global' }, { ask, output: text => output.push(text), error: text => errors.push(text), home: root, xdgConfigHome: xdg, recoveryDirectory: recovery }), 0);
+  assert.deepEqual(errors, ['stitch: Supply an absolute MCP endpoint URL.', 'stitch: Use HTTPS (or loopback HTTP), without credentials, query parameters, or fragments.']);
+  assert.equal(asked.filter(question => question.startsWith('stitch: alias')).length, 1);
+  assert.equal(asked.filter(question => question.startsWith('stitch: new unique alias')).length, 1);
+  assert.equal(asked.filter(question => question.startsWith('stitch: supplied remote MCP URL')).length, 3);
+  assert.ok(output.some(text => text === 'stitch-new: new disabled endpoint https://stitch-new.example/mcp'));
+  assert.ok(output.some(text => text.includes('Cancelled. No files or connections changed.')));
+  assert.equal(readFileSync(config, 'utf8'), original); assert.equal(readFileSync(preferences, 'utf8'), originalPreferences);
+  assert.deepEqual(readdirSync(recovery).sort(), backups);
 });
