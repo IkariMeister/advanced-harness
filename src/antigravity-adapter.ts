@@ -452,9 +452,10 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   return 0;
 }
 
-export async function diagnoseAntigravity(options: { project?: string | undefined; globalDirectory?: string | undefined; home?: string | undefined }): Promise<AntigravityDoctorResult> {
+export async function diagnoseAntigravity(options: { project?: string | undefined; globalDirectory?: string | undefined; home?: string | undefined; platform?: NodeJS.Platform | undefined }): Promise<AntigravityDoctorResult> {
   const issues: string[] = [];
   const notes: string[] = [];
+  const platform = options.platform ?? process.platform;
   const home = options.home ?? process.env.USERPROFILE ?? process.env.HOME ?? '';
   const project = options.project ? resolve(options.project) : undefined;
   const globalDir = options.globalDirectory ?? join(home, '.gemini', 'config');
@@ -529,6 +530,7 @@ export async function diagnoseAntigravity(options: { project?: string | undefine
 
           const hookList = guard.PreToolUse;
           let referencedScript: string | undefined;
+          let referencedQuoted = false;
 
           if (Array.isArray(hookList) && hookList.length > 0) {
             for (const entry of hookList) {
@@ -539,6 +541,7 @@ export async function diagnoseAntigravity(options: { project?: string | undefine
                     const candidate = match ? (match[1] ?? match[2] ?? match[3]) : undefined;
                     if (candidate && candidate.toLowerCase().endsWith('antigravity-merge-guard.mjs')) {
                       referencedScript = candidate;
+                      referencedQuoted = match?.[3] === undefined;
                       break;
                     }
                   }
@@ -554,6 +557,8 @@ export async function diagnoseAntigravity(options: { project?: string | undefine
             const actualScript = resolve(dirname(hookPath), referencedScript);
             if (!existsSync(actualScript)) {
               issues.push(`${label} merge-guard executable referenced in hooks.json does not exist: ${actualScript}`);
+            } else if (referencedQuoted && platform === 'win32') {
+              issues.push(`${label} hooks.json quotes the merge-guard path; Antigravity on Windows passes the quotes to Node and every run_command fails. Run harness:update to rewrite it.`);
             } else {
               notes.push(`${label} PreToolUse merge guard hook is configured.`);
             }

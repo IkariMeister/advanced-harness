@@ -256,6 +256,58 @@ test('diagnoseAntigravity reports ok: false when uninstalled or when required ar
   }
 });
 
+test('installAntigravity writes the platform merge-guard hook command and doctor flags the quoted form on Windows (#94)', async (t) => {
+  const tempProject = makeTempRoot('ag-hook-quote-');
+  const tempHome = makeTempRoot('ag-home-hook-quote-');
+
+  try {
+    const guardPath = join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs');
+    // An unquoted command can only reference a whitespace-free path: Windows install
+    // rejects such roots, and doctor cannot parse an unquoted spaced path anywhere.
+    const spacedRoot = /\s/.test(guardPath);
+    if (spacedRoot && process.platform === 'win32') {
+      t.skip(`temporary root contains whitespace, which Windows install rejects by design: ${tempProject}`);
+      return;
+    }
+
+    await installAntigravity({
+      scope: 'project',
+      project: tempProject,
+      home: tempHome,
+      agentsDirectory: rolesDir,
+      commandsDirectory: commandsDir,
+      ask: async (q, s) => q.startsWith('Type yes to install the Antigravity') ? 'yes' : (s ?? 'yes'),
+      output: () => {},
+      error: () => {},
+    });
+
+    const hooksPath = join(tempProject, '.agents', 'hooks.json');
+    const installed = JSON.parse(readFileSync(hooksPath, 'utf8'));
+    const expectedCommand = process.platform === 'win32' ? `node ${guardPath}` : `node "${guardPath}"`;
+    assert.equal(installed['gh-pr-merge-guard'].PreToolUse[0].hooks[0].command, expectedCommand);
+
+    if (!spacedRoot) {
+      installed['gh-pr-merge-guard'].PreToolUse[0].hooks[0].command = `node ${guardPath}`;
+      writeFileSync(hooksPath, JSON.stringify(installed, null, 2));
+      const diagWindows = await diagnoseAntigravity({ project: tempProject, home: tempHome, platform: 'win32' });
+      assert.equal(diagWindows.ok, true, diagWindows.issues.join('\n'));
+    }
+
+    installed['gh-pr-merge-guard'].PreToolUse[0].hooks[0].command = `node "${guardPath}"`;
+    writeFileSync(hooksPath, JSON.stringify(installed, null, 2));
+
+    const diagLegacyWindows = await diagnoseAntigravity({ project: tempProject, home: tempHome, platform: 'win32' });
+    assert.equal(diagLegacyWindows.ok, false);
+    assert.ok(diagLegacyWindows.issues.some(i => i.includes('quotes the merge-guard path') && i.includes('harness:update')));
+
+    const diagLegacyLinux = await diagnoseAntigravity({ project: tempProject, home: tempHome, platform: 'linux' });
+    assert.equal(diagLegacyLinux.ok, true, diagLegacyLinux.issues.join('\n'));
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
 test('runInstallerFlow delegates clean installation and isolates writes to supplied home', async () => {
   const tempProject = makeTempRoot('ag-installer-flow-');
   const tempHome = makeTempRoot('ag-home-flow-');
