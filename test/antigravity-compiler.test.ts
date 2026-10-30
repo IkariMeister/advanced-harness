@@ -106,6 +106,43 @@ test('compileAntigravityHooks configures PreToolUse gh pr merge guard', () => {
   assert.ok(firstHook.hooks[0]?.command.includes('antigravity-merge-guard.mjs'));
 });
 
+test('compileAntigravityHooks leaves the guard path unquoted so Windows hosts can resolve it (#94)', () => {
+  const windowsPath = 'C:\\Users\\dev\\.gemini\\config\\scripts\\antigravity-merge-guard.mjs';
+  const hooks = compileAntigravityHooks(windowsPath, 'win32');
+  assert.equal(hooks['gh-pr-merge-guard']?.PreToolUse?.[0]?.hooks[0]?.command, `node ${windowsPath}`);
+
+  const posixPath = '/home/dev/.gemini/config/scripts/antigravity-merge-guard.mjs';
+  assert.equal(compileAntigravityHooks(posixPath, 'linux')['gh-pr-merge-guard']?.PreToolUse?.[0]?.hooks[0]?.command, `node ${posixPath}`);
+});
+
+test('compileAntigravityHooks rejects whitespace guard paths on Windows and keeps quoting elsewhere', () => {
+  const spaced = 'C:\\Users\\Jane Doe\\.gemini\\config\\scripts\\antigravity-merge-guard.mjs';
+  assert.throws(() => compileAntigravityHooks(spaced, 'win32'), /path contains whitespace.*no spaces/s);
+  assert.throws(() => mergeAntigravityHooksConfig(undefined, spaced, undefined, 'win32'), /path contains whitespace/);
+
+  const posixSpaced = '/home/jane/My Projects/app/.agents/scripts/antigravity-merge-guard.mjs';
+  assert.equal(compileAntigravityHooks(posixSpaced, 'linux')['gh-pr-merge-guard']?.PreToolUse?.[0]?.hooks[0]?.command, `node "${posixSpaced}"`);
+});
+
+test('mergeAntigravityHooksConfig upgrades the legacy quoted guard without prior ownership evidence', () => {
+  const guardPath = 'C:\\Users\\dev\\.gemini\\config\\scripts\\antigravity-merge-guard.mjs';
+  const legacy = JSON.stringify({
+    'other-hook': { PreToolUse: [{ matcher: 'run_command', hooks: [{ command: './check.sh' }] }] },
+    'gh-pr-merge-guard': {
+      enabled: true,
+      PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: `node "${guardPath}"`, timeout: 10 }] }],
+    },
+  });
+
+  const merged = mergeAntigravityHooksConfig(legacy, guardPath, undefined, 'win32');
+  assert.equal(merged['gh-pr-merge-guard']?.PreToolUse?.[0]?.hooks[0]?.command, `node ${guardPath}`);
+  assert.ok(merged['other-hook']);
+
+  // A quoted command for a different script is still an unowned conflict
+  const foreign = legacy.replace('antigravity-merge-guard.mjs', 'someone-else.mjs');
+  assert.throws(() => mergeAntigravityHooksConfig(foreign, guardPath, undefined, 'win32'), /Conflicting unowned "gh-pr-merge-guard"/);
+});
+
 test('compileAntigravitySkill generates reusable skill without placeholder arguments', () => {
   const startIssue = compileAntigravitySkill('start-issue', commands['start-issue'], 'project');
   assert.equal(startIssue.relativePath, '.agents/skills/start-issue/SKILL.md');

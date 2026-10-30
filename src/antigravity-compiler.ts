@@ -218,9 +218,43 @@ export function compileLeadOrchestrationRule(
 }
 
 /**
+ * Builds the merge-guard hook command. Antigravity on Windows passes hook command
+ * arguments to Node without stripping quotes, so a quoted path resolves as
+ * `<cwd>\"<path>"` and every run_command fails (#94). The path is therefore left
+ * unquoted; a path containing whitespace cannot be expressed safely on Windows.
+ */
+export function antigravityMergeGuardCommand(guardScriptPath: string, platform: NodeJS.Platform = process.platform): string {
+  if (!/\s/.test(guardScriptPath)) {
+    return `node ${guardScriptPath}`;
+  }
+  if (platform === 'win32') {
+    throw new Error(
+      `Antigravity merge-guard path contains whitespace: ${guardScriptPath}. ` +
+      'Antigravity on Windows does not accept a quoted hook path, so the guard would block every run_command. ' +
+      'Install from a location whose path has no spaces.'
+    );
+  }
+  return `node "${guardScriptPath}"`;
+}
+
+/**
  * Compiles hooks.json with the pre-tool merge guard.
  */
-export function compileAntigravityHooks(guardScriptPath: string = 'scripts/antigravity-merge-guard.mjs'): AntigravityHookConfig {
+export function compileAntigravityHooks(
+  guardScriptPath: string = 'scripts/antigravity-merge-guard.mjs',
+  platform: NodeJS.Platform = process.platform
+): AntigravityHookConfig {
+  return buildAntigravityGuardHooks(antigravityMergeGuardCommand(guardScriptPath, platform));
+}
+
+/**
+ * The quoted hook command written by earlier harness versions; treated as owned on update.
+ */
+function compileLegacyAntigravityHooks(guardScriptPath: string): AntigravityHookConfig {
+  return buildAntigravityGuardHooks(`node "${guardScriptPath}"`);
+}
+
+function buildAntigravityGuardHooks(command: string): AntigravityHookConfig {
   return {
     'gh-pr-merge-guard': {
       enabled: true,
@@ -230,7 +264,7 @@ export function compileAntigravityHooks(guardScriptPath: string = 'scripts/antig
           hooks: [
             {
               type: 'command',
-              command: `node "${guardScriptPath}"`,
+              command,
               timeout: 10,
             },
           ],
@@ -337,9 +371,10 @@ export function isDeepEqual(a: unknown, b: unknown): boolean {
 export function mergeAntigravityHooksConfig(
   existingText: string | undefined,
   guardScriptPath: string,
-  priorOwnedContent?: string
+  priorOwnedContent?: string,
+  platform: NodeJS.Platform = process.platform
 ): AntigravityHookConfig {
-  const desiredHook = compileAntigravityHooks(guardScriptPath);
+  const desiredHook = compileAntigravityHooks(guardScriptPath, platform);
 
   if (existingText === undefined || !existingText.trim()) {
     return desiredHook;
@@ -375,8 +410,9 @@ export function mergeAntigravityHooksConfig(
       }
     }
     const matchesPrior = priorOwnedGuard !== undefined && isDeepEqual(existingHook, priorOwnedGuard);
+    const matchesLegacy = isDeepEqual(existingHook, compileLegacyAntigravityHooks(guardScriptPath)['gh-pr-merge-guard']);
 
-    if (!matchesDesired && !matchesPrior) {
+    if (!matchesDesired && !matchesPrior && !matchesLegacy) {
       throw new Error('Conflicting unowned "gh-pr-merge-guard" definition in existing hooks.json; resolve conflict before installation.');
     }
   }
