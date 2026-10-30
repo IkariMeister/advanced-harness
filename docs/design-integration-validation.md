@@ -39,6 +39,10 @@ $origEnv = @{
   USERPROFILE = $env:USERPROFILE
   XDG_CONFIG_HOME = $env:XDG_CONFIG_HOME
   ADVANCED_HARNESS_RECOVERY_DIR = $env:ADVANCED_HARNESS_RECOVERY_DIR
+  HARNESS_LIVE_OPENCODE = $env:HARNESS_LIVE_OPENCODE
+  OPENCODE_BIN = $env:OPENCODE_BIN
+  OPENCODE_CONFIG = $env:OPENCODE_CONFIG
+  OPENCODE_CONFIG_CONTENT = $env:OPENCODE_CONFIG_CONTENT
 }
 
 New-Item -ItemType Directory -Force -Path `
@@ -413,19 +417,21 @@ Fill out and record the following summary after completing an interactive TTY ru
 - **Platform**: Windows / macOS / Linux
 - **Sandbox location**: (e.g. `$HOME/Projects/advanced-harness-qa-design`)
 - **Redacted endpoints tested**: `https://mcp.figma.corp.example.test/mcp` (disabled)
+- **Validation execution type**: [Stub checks (--opencode) / Live OpenCode validation / Both]
 
 #### Observed journey outcomes:
-- **Journey 1 (Cancellation & spaces)**: PASS (Exit 0, no writes, recovery empty)
-- **Journey 2 (Per-project Figma & alternate context)**: PASS (Exit 0, marked section written, AGENTS.md linked)
-- **Journey 3 (Single-source replacement with Stitch)**: PASS (Exit 0, Figma replaced completely)
-- **Journey 4 (Per-project none selection)**: PASS (Exit 0, `"design": null`, no blocker)
-- **Journey 5 (Global registration & permission matrix)**: PASS (Exit 0, disabled server saved, External ASK, 7 DENY)
+- **Journey 1 (Cancellation & spaces)**: [PASS / FAIL / NOT RUN] (Exit 0, no writes, recovery empty)
+- **Journey 2 (Per-project Figma & alternate context)**: [PASS / FAIL / NOT RUN] (Exit 0, marked section written, AGENTS.md linked)
+- **Journey 3 (Single-source replacement with Stitch)**: [PASS / FAIL / NOT RUN] (Exit 0, Figma replaced completely)
+- **Journey 4 (Per-project none selection)**: [PASS / FAIL / NOT RUN] (Exit 0, `"design": null`, no blocker)
+- **Journey 5 (Global registration & permission matrix)**: [PASS / FAIL / NOT RUN] (Exit 0, disabled server saved, External ASK, 7 DENY)
 - **Journey 6 (Read-only check mode & exit codes)**:
-  - All-none: PASS (Exit 0, zero runtime calls)
-  - Cancel check: PASS (Exit 0, no checks performed)
-  - Not ready / disabled: PASS (Exit 1, guidance printed)
-  - Inconclusive: PASS (Exit 2, inconclusive error reported)
-- **Journey 7 (External discovery & 4-field reporting)**: PASS (Guidance verified, 4 fields documented)
+  - Case A (All-none selection): [PASS / FAIL / NOT RUN] (Exit 0, zero runtime calls)
+  - Case B (Check cancellation): [PASS / FAIL / NOT RUN] (Exit 0, no checks performed)
+  - Case C (Not ready / disabled status): [PASS / FAIL / NOT RUN] (Exit 1, guidance printed) — [Stub (--opencode) / Live OpenCode service]
+  - Case D (Connected status): [PASS / FAIL / NOT RUN] (Exit 0, connected status verified) — [Stub (--opencode) / Live OpenCode service]
+  - Case E (Inconclusive check): [PASS / FAIL / NOT RUN] (Exit 2, inconclusive error reported)
+- **Journey 7 (External discovery & 4-field reporting)**: [PASS / FAIL / NOT RUN] (Guidance verified, 4 fields documented)
 
 #### Disposable sandbox cleanup:
 Restore the original shell environment (or exit the dedicated `pwsh -NoProfile` subshell) before deleting the sandbox directory so the active terminal session does not retain paths pointing at deleted `$qa` subdirectories:
