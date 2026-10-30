@@ -26,12 +26,21 @@ as mutually exclusive design sources.
   (`Run integration setup/check in an interactive terminal. No files or connections changed.`)
   and does not constitute interactive smoke verification.
 - **Sandbox isolation**: Before running interactive tests, isolate environment and configuration
-  paths to a disposable sandbox directory. Clear all inherited runtime overrides.
+  paths to a disposable sandbox directory (preferably inside a dedicated `pwsh -NoProfile`
+  subshell), and save original environment values so they can be restored during cleanup.
+  Clear all inherited runtime overrides.
 
 Run the following PowerShell setup to prepare the disposable environment:
 
 ```powershell
 $qa = "$HOME\Projects\advanced-harness-qa-design"
+$origEnv = @{
+  HOME = $env:HOME
+  USERPROFILE = $env:USERPROFILE
+  XDG_CONFIG_HOME = $env:XDG_CONFIG_HOME
+  ADVANCED_HARNESS_RECOVERY_DIR = $env:ADVANCED_HARNESS_RECOVERY_DIR
+}
+
 New-Item -ItemType Directory -Force -Path `
   "$qa\home",
   "$qa\xdg\opencode",
@@ -323,14 +332,15 @@ Validates that `--check` operates strictly read-only and emits the documented ex
      ```
 
    - Prompt: `Type inspect to approve these read-only checks [cancel]:` Type `inspect`.
-   - Because `figma-custom` is disabled, the status check reports:
-     `figma: figma-custom: disabled`
-     `  Disabled. Approve connection explicitly before enabling; no enable/reload was attempted.`
-   - Followed by the optional discovery guidance prompt.
-   - Exits `1` (one or more checks not in `connected` status).
+   - **Runtime isolation note**: Approving `inspect` invokes `opencode api get /api/mcp?location[directory]=<cwd>` via the real `opencode` binary (because `OPENCODE_BIN` was cleared in prerequisites). An isolated `$env:XDG_CONFIG_HOME` does not prevent `opencode` from starting or querying an already-running shared background OpenCode service.
+     - When the inspected OpenCode service (or an `--opencode` stub) is running with the sandbox `$env:XDG_CONFIG_HOME` and matching working directory / `--project`, `figma-custom` is discovered as disabled and the status check reports:
+       `figma: figma-custom: disabled`
+       `  Disabled. Approve connection explicitly before enabling; no enable/reload was attempted.`
+       Followed by the optional discovery guidance prompt, exiting `1` (one or more checks not in `connected` status).
+     - If a shared host OpenCode service is already running under the host's real configuration rather than the sandbox `$env:XDG_CONFIG_HOME`, `/api/mcp` will instead report `figma: figma-custom: missing` (exiting `1`) or `Verification inconclusive; no settings updated.` (exiting `2`) if the service or location mismatches.
 
 4. **Case D: Connected status (Exit 0)**:
-   - When all selected servers report `connected` in OpenCode `/api/mcp` status.
+   - When the inspected OpenCode runtime (or `--opencode` stub) reports all selected servers as `connected` in `/api/mcp` status for the matching location.
    - Exits `0`.
 
 5. **Case E: Inconclusive check (Exit 2)**:
@@ -418,7 +428,16 @@ Fill out and record the following summary after completing an interactive TTY ru
 - **Journey 7 (External discovery & 4-field reporting)**: PASS (Guidance verified, 4 fields documented)
 
 #### Disposable sandbox cleanup:
+Restore the original shell environment (or exit the dedicated `pwsh -NoProfile` subshell) before deleting the sandbox directory so the active terminal session does not retain paths pointing at deleted `$qa` subdirectories:
+
 ```powershell
+foreach ($key in $origEnv.Keys) {
+  if ($null -eq $origEnv[$key]) {
+    Remove-Item "Env:\$key" -ErrorAction SilentlyContinue
+  } else {
+    Set-Item "Env:\$key" -Value $origEnv[$key]
+  }
+}
 Remove-Item -Recurse -Force "$HOME\Projects\advanced-harness-qa-design"
 ```
 ````
