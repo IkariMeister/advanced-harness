@@ -44,7 +44,7 @@ MCP entries are never invented. The installer asks for actual server IDs already
 
 - GitHub: **`gh`**, **`mcp`**, or **`none`**.
 - Jira: existing MCP alias, supplied new server, or **`none`**.
-- Design: **`figma`**, **`stitch`**, or **`none`**. No silent combination/fallback.
+- Design: **`figma`**, **`stitch`**, or **`none`**. No silent combination/fallback. For interactive verification and manual smoke steps, see [`docs/design-integration-validation.md`](design-integration-validation.md).
 
 Choose an existing alias/list number to preserve its complete settings. Global setup never copies project connections/credentials into global config automatically. New entries support supplied HTTPS remote OAuth endpoints (loopback HTTP is allowed), reject credentials/query strings/fragments, and stay **disabled**. Configure custom local/header-auth servers explicitly in OpenCode first, then reuse them. No endpoint is invented.
 
@@ -100,7 +100,7 @@ All-none makes **no OpenCode/gh calls** and is not a blocker. Otherwise type **`
 
 Optional `--opencode` and `--server` apply to checks only. Global checks can use `--project` to inspect the runtime location used by the UI; project overrides can affect effective connection identities/permissions. Check the intended location/server, not just global file presence.
 
-Status output distinguishes missing/disabled/pending/failed/needs-auth/connected servers and unavailable/unverified CLI auth. Exit 0 means selected status checks passed (or none selected), 1 means a selected check is not ready, and 2 means verification is inconclusive. No stored context/preferences are changed into claimed verified access results.
+Status output distinguishes missing/disabled/pending/failed/needs-auth/connected servers and unavailable/unverified CLI auth. Exit 0 means selected status checks passed (or none selected), 1 means a selected check is not ready, and 2 means verification is inconclusive. No stored context/preferences are changed into claimed verified access results. Detailed read-only verification smoke steps, exit code matrices, and capability reporting expectations are documented in [`docs/design-integration-validation.md`](design-integration-validation.md).
 
 **Connection/auth status does not prove exact tools, repository/project access, or permissions.** The documented MCP status API does not expose the tool catalog. The printed Lead prompt asks External for catalog-only discovery, then a separately approved read-only validation plan. Missing integrations require a question only when a task needs them. No automatic fallback, PR, issue transition/comment, design write, push, or merge is authorized.
 

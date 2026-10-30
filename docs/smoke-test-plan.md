@@ -162,7 +162,8 @@ The suite also made these observations, which are not asserted:
 - `--check` connection checks, `--check-remote`, and anything else that would
   reach GitHub, Jira, MCP servers, or `origin`.
 - Interactive TTY QA by a human, the MarsRoverIA pilot, and Android
-  build/device commands.
+  build/device commands; see [`docs/design-integration-validation.md`](design-integration-validation.md)
+  for the manual interactive TTY design integration validation and smoke checklist.
 
 ## Continuous integration
 
