@@ -274,8 +274,8 @@ test('BH-035: Lead instructs bounded delegation trigger rules and 4-state human 
   assert.match(lead, /Never split a single unit of behavior across disjoint code, test, and doc subagents/);
   assert.match(lead, /a delegated Implementer worker owns code, tests, and documentation together/);
 
-  // Named reasons for delegation
-  assert.match(lead, /Delegate only for named reasons: context budget exceeded, disjoint parallel units, or high-risk changes requiring independent verification/);
+  // Named reasons for optional delegation
+  assert.match(lead, /Bounded delegation triggers apply to optional research and planning: delegate those steps only for named reasons \(context budget exceeded, disjoint parallel units, or high-risk changes requiring independent verification\) while preserving all mandatory role handoffs throughout the workflow sequence/);
 
   // Lead preserves strict tool policy (no edit/shell)
   assert.match(lead, /Lead retains no edit or shell tools; all source\/test edits belong strictly to Implementer/);

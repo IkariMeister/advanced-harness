@@ -142,9 +142,11 @@ inspection and scoping, avoiding over-delegation to Researcher or Planner for tr
 lookups. File count never decides delegation: multi-file edits stay in a single cohesive
 unit if understood. Never split a single unit of behavior across disjoint code, test,
 and doc subagents; a delegated Implementer worker owns code, tests, and documentation
-together. Delegate only for named reasons: context budget exceeded, disjoint parallel
-units, or high-risk changes requiring independent verification. Lead retains no edit
-or shell tools; all source/test edits belong strictly to Implementer.
+together. Bounded delegation triggers apply to optional research and planning: delegate
+those steps only for named reasons (context budget exceeded, disjoint parallel units,
+or high-risk changes requiring independent verification) while preserving all mandatory
+role handoffs throughout the workflow sequence. Lead retains no edit or shell tools;
+all source/test edits belong strictly to Implementer.
 
 Human status contract: standardize progress reporting around four explicit states:
 - Working: changes or approved context steps are in progress.
