@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { saveInstallation, type Ask } from './native-installer.ts';
+import { chooseCodexCatalog, type CodexCatalogModel, type CodexModelDiscovery } from './codex-model-catalog.ts';
 import { nativeRoles, type NativeRole } from './native-role-types.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import { codexDestructiveGitPrefixes, type CodexPrefixPattern } from './security-guardrails.ts';
@@ -475,6 +476,8 @@ export async function installCodex(options: {
   scope: 'project' | 'global'; project?: string | undefined; home: string; recoveryDirectory?: string | undefined;
   agentsDirectory?: string | undefined; commandsDirectory?: string | undefined; ask: Ask; output(message: string): void; error(message: string): void;
   save?: typeof saveInstallation;
+  /** Live catalog for the role prompts; omitted means no discovery (wire discoverCodexModels() when the #45 gate lifts). */
+  discoverModels?: CodexModelDiscovery | undefined;
 }): Promise<number> {
   const { scope, project, home, ask, output } = options;
   const save = options.save ?? saveInstallation;
@@ -516,6 +519,9 @@ export async function installCodex(options: {
     selectedTools[id] = raw === '-' ? [] : raw ? raw.split(',').map(name => name.trim()).filter(Boolean) : defaults;
   }
   const configAfter = tomlConfigText(existing, selected, selectedTools);
+  let catalog: CodexCatalogModel[] | undefined;
+  try { catalog = await chooseCodexCatalog(options.discoverModels, ask, output); }
+  catch { throw new Error('Codex installation cancelled because an interactive prompt was rejected or closed; no changes made.'); }
   const definitions = loadRoleDefinitions(options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)));
   const files: PlannedFile[] = [{ path: configPath, content: configAfter, before: configBefore, kind: 'config' }];
   for (const role of nativeRoles) {
@@ -530,25 +536,41 @@ export async function installCodex(options: {
     const modelRaw = roleValue('model'); const effortRaw = roleValue('model_reasoning_effort');
     const modelSuggestion = typeof modelRaw === 'string' ? modelRaw : '';
     const effortSuggestion = typeof effortRaw === 'string' ? effortRaw : '';
+    // An off-catalog answer is kept only on an explicit "keep"; declining counts as an attempt.
+    const keepOffCatalog = async (subject: string): Promise<boolean> => {
+      try { return (await ask(`${role}: type keep to save ${subject} anyway (Enter chooses again)`, 'no')).trim() === 'keep'; }
+      catch { throw new Error(`Codex model prompt for ${role} was rejected or closed; no changes made.`); }
+    };
     let model = ''; let modelAttempts = 0;
-    while (!model || model === '-' || /[\r\n\0]/.test(model)) {
+    while (!model) {
       if (modelAttempts >= 3) throw new Error(`Codex model assignment for ${role} remained invalid after 3 attempts; no changes made.`);
       let answer: string;
-      try { answer = (await ask(`${role}: explicitly assigned Codex model ID (required)`, modelSuggestion)).trim(); }
+      try { answer = (await ask(`${role}: explicitly assigned Codex model ID${catalog ? ' or listed number' : ''} (required)`, modelSuggestion)).trim(); }
       catch { throw new Error(`Codex model prompt for ${role} was rejected or closed; no changes made.`); }
       modelAttempts++;
-      model = answer || (modelSuggestion && modelAttempts === 1 ? modelSuggestion : '');
-      if (!model || model === '-' || /[\r\n\0]/.test(model)) output(`Enter a valid explicit model ID for ${role}; no guessed fallback is used.`);
+      const candidate = catalog && /^\d+$/.test(answer) ? catalog[Number(answer) - 1]?.id ?? '' : answer || (modelSuggestion && modelAttempts === 1 ? modelSuggestion : '');
+      if (!candidate || candidate === '-' || /[\r\n\0]/.test(candidate)) { output(`Enter a valid explicit model ID for ${role}; no guessed fallback is used.`); continue; }
+      if (catalog && !catalog.some(entry => entry.id === candidate)) {
+        output(`${candidate} is absent from the live Codex catalog.`);
+        if (!(await keepOffCatalog(candidate))) continue;
+      }
+      model = candidate;
     }
+    const efforts = catalog?.find(entry => entry.id === model)?.efforts ?? [];
     let reasoning = ''; let effortAttempts = 0;
-    while (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(reasoning)) {
+    while (!reasoning) {
       if (effortAttempts >= 3) throw new Error(`Codex reasoning effort for ${role} remained invalid after 3 attempts; no changes made.`);
       let answer: string;
       try { answer = (await ask(`${role}: reasoning effort (low, medium, high)`, effortSuggestion)).trim(); }
       catch { throw new Error(`Codex reasoning prompt for ${role} was rejected or closed; no changes made.`); }
       effortAttempts++;
-      reasoning = answer || (effortSuggestion && effortAttempts === 1 ? effortSuggestion : '');
-      if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(reasoning)) output(`Enter one of the supported reasoning efforts: ${CODEX_REASONING_EFFORTS.join(', ')}.`);
+      const candidate = answer || (effortSuggestion && effortAttempts === 1 ? effortSuggestion : '');
+      if (!(CODEX_REASONING_EFFORTS as readonly string[]).includes(candidate)) { output(`Enter one of the supported reasoning efforts: ${CODEX_REASONING_EFFORTS.join(', ')}.`); continue; }
+      if (efforts.length && !efforts.includes(candidate)) {
+        output(`Reasoning effort ${candidate} is not listed for ${model} in the live Codex catalog (listed: ${efforts.join(', ')}).`);
+        if (!(await keepOffCatalog(`${model} with effort ${candidate}`))) continue;
+      }
+      reasoning = candidate;
     }
     const target = join(base, 'agents', `${role}.toml`);
     assertSafeFilesystemPath(target, 'file');
