@@ -87,6 +87,7 @@ otherwise remains compile-only and is covered by `npm test`.
 | OC-06 | `harness:update`: cancel, then `update` | Cancel changes nothing; apply succeeds; a rerun no longer reports an unknown installed version |
 | OC-07 | `harness:uninstall`: cancel, then `uninstall` | Cancel changes nothing; apply removes all harness agents and commands, keeps a backup, `AGENTS.md` untouched |
 | OC-08 | Fresh install receipt has a version stamp | Install exits 0; `harness:update` prints `Installed version: <version> (<commit>)` instead of `unknown` |
+| OC-09 | `harness:update` model reselection with live catalog, then cancel | Live catalog list printed with the entitlement disclaimer; installed models are catalog matches (no `absent` warning); cancel changes nothing; only read-only `opencode api get /api/model` calls |
 
 ### SMK-GL: OpenCode global scope (`smoke/opencode-lifecycle.smoke.ts`)
 

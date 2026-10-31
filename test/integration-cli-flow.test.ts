@@ -124,7 +124,7 @@ test('global integration production flow adds managed GH sources then repeats wi
     if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'no';
     if (/Replace existing|Make Lead|Also set|Replace customized/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install'; throw new Error(`Unexpected installer prompt: ${question}`);
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(`Unexpected installer prompt: ${question}`);
   };
   assert.equal(await runInstallerFlow({ scope: 'global', config }, { ask: installerAnswers, output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery, verify: async () => ({ ok: true } as never), printReport: () => {} }), 0);
   const choices = async (question: string) => {
@@ -165,7 +165,7 @@ test('integration source retirement asks to keep obsolete GH rules or explicitly
     const { root } = fixture(t); const xdg = join(root, 'xdg'); const configDir = join(xdg, 'opencode'); mkdirSync(configDir, { recursive: true });
     const config = join(configDir, 'opencode.json'); const recovery = join(root, 'recovery');
     await runInstallerFlow({ scope: 'global', config }, {
-      ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
+      ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
       output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery, verify: async () => ({ ok: true } as never), printReport: () => {},
     });
     const gh = async (question: string) => { if (question.startsWith('GitHub backend')) return 'gh'; if (question.startsWith('GitHub hostname')) return 'github.com'; if (question.startsWith('jira: alias')) return 'none'; if (question.startsWith('Design source')) return 'none'; if (question.startsWith('Type integrations')) return 'integrations'; throw new Error(question); };
@@ -193,7 +193,7 @@ test('integration production flow retains pending evidence on finalization failu
   const { root } = fixture(t); const xdg = join(root, 'xdg'); const configDir = join(xdg, 'opencode'); mkdirSync(configDir, { recursive: true });
   const config = join(configDir, 'opencode.json'); const recovery = join(root, 'recovery');
   await runInstallerFlow({ scope: 'global', config }, {
-    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
+    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
     output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery, verify: async () => ({ ok: true } as never), printReport: () => {},
   });
   const ask = async (question: string) => { if (question.startsWith('GitHub backend')) return 'gh'; if (question.startsWith('GitHub hostname')) return 'github.com'; if (question.startsWith('jira: alias')) return 'none'; if (question.startsWith('Design source')) return 'none'; if (question.startsWith('Type integrations')) return 'integrations'; throw new Error(question); };
@@ -208,7 +208,7 @@ test('integration production flow aborts without config or preference writes whe
   const { root } = fixture(t); const xdg = join(root, 'xdg'); const configDir = join(xdg, 'opencode'); mkdirSync(configDir, { recursive: true });
   const config = join(configDir, 'opencode.json'); const recovery = join(root, 'recovery');
   await runInstallerFlow({ scope: 'global', config }, {
-    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
+    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
     output: () => {}, error: () => {}, home: root, xdgConfigHome: xdg, recoveryDirectory: recovery, verify: async () => ({ ok: true } as never), printReport: () => {},
   });
   const beforeConfig = readFileSync(config, 'utf8');
@@ -238,7 +238,7 @@ async function designFixture(t: { after(fn: () => void): void }) {
   const config = join(configDir, 'opencode.json');
   // Selecting an MCP alias globally reconciles role permissions, so the harness must be installed first.
   await runInstallerFlow({ scope: 'global', config }, {
-    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
+    ask: async question => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install'; throw new Error(question); },
     output: () => {}, error: () => {}, home: root, xdgConfigHome: join(root, 'xdg'), recoveryDirectory: join(root, 'recovery'), verify: async () => ({ ok: true } as never), printReport: () => {},
   });
   const original = JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), mcp: { servers: { 'figma-company': { type: 'remote', url: 'https://figma.example/mcp', disabled: true }, 'stitch-company': { type: 'remote', url: 'https://stitch.example/mcp', disabled: true } } } }, null, 2) + '\n';

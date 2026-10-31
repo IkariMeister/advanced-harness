@@ -47,6 +47,18 @@ The 8-role engineering workflow provides fixed default role and model presets ta
 
 OpenCode's native role rules explicitly deny `gh pr merge` / `gh.exe pr merge`. Antigravity guards direct calls via a `PreToolUse` hook. Claude Code project settings deny identifiable `Bash(gh pr merge)` variants; its permission patterns are workflow guardrails, not a sandbox. Claude Code mapping is fail-closed: Operator, Implementer, Reviewer, and QA have no Bash tool where per-role Git/GH deny patterns cannot be scoped precisely; MCP service aliases are not mapped. The gated Codex adapter writes an execpolicy prefix rule for identifiable direct `gh pr merge` forms, but nothing is installed while the gate holds. The [security guardrails](SECURITY.md#security-guardrails) differ by host. OpenCode role rules and Claude Code project settings deny sensitive-path reads/edits (signing assets and credentials) and `git reset --hard`, `git clean`, and force pushes. Antigravity's hook denies the destructive Git commands, but its sensitive-path protection is instruction-only. The gated Codex rules forbid destructive Git prefixes (including bundled short force flags and force flags right after `origin`/`upstream`); its sensitive-path protection is instruction-only. These protections do not establish universal blocking of indirect scripts, MCP/API calls, or separate processes. Claude Code runtime behavior is not validated by static checks.
 
+Per-role model selection and discovery differ by host (shown by `harness:install`, `harness:update`, and `harness:doctor`):
+
+| Host | Per-role selection | Model discovery |
+| --- | --- | --- |
+| **OpenCode V2** | explicit model and variant per role | live catalog (`/api/model`) on request during install/update; configured IDs as a reported fallback |
+| **Claude Code** | fixed presets (not yet selectable) | unsupported |
+| **Antigravity** | fixed tiers; exact per-role binding unsupported | unsupported |
+| **OpenAI Codex** | explicit typed model and effort (install gated, #45) | unsupported |
+| **Cursor IDE** | unsupported (#46) | unsupported |
+
+The OpenCode presets above are only the template suggestions. An OpenCode choice absent from the live catalog is saved only after an explicit `keep`; nothing is substituted. **Catalog presence is not account entitlement or successful access.** Issue #70 is delivered in phases; Claude Code per-role selection and Antigravity per-role tier choice are still pending.
+
 OpenCode, Antigravity, and Cursor presets are preferences to validate against the active connection, not evidence of access. The gated Codex adapter asks for an explicit model ID and reasoning effort for each role; no guessed default or fallback is used. LiteLLM endpoints, deployment IDs, and reasoning mappings must be supplied explicitly. Selecting a primary agent does not necessarily change the session's selected model; verify both.
 
 ## Human control in the Lead conversation
