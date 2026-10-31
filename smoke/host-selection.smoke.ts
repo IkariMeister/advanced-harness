@@ -3,7 +3,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createSandbox, tree, type Sandbox } from './support/sandbox.ts';
-import { ask, openCodeInstall } from './support/steps.ts';
+import { ask, claudeCodeInstall, openCodeInstall } from './support/steps.ts';
 
 const multiHostNotice = /Select one host\. Multi-host and all selections are not supported/g;
 
@@ -19,7 +19,7 @@ describe('SMK-HS host selection prompt (non-TTY piped answers)', () => {
       ask('Select host (', 'opencode, claude-code, antigravity'),
       ask('Select host (', 'all'),
       ask('Select host (', 'claude-code'),
-      ask('Type yes to install the Claude Code harness'),
+      ...claudeCodeInstall(''),
     ] });
     assert.equal(result.code, 1, result.transcript);
     assert.deepEqual(result.unansweredSteps, []);
