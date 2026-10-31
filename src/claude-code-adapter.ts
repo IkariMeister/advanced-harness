@@ -6,6 +6,7 @@ import { parseDocument } from 'yaml';
 import type { HarnessVersionStamp } from './receipt-lineage.ts';
 import { formatVersionStamp } from './harness-version.ts';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
+import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
 import {
   createSuccessorReceipt,
   discoverReceiptChain,
@@ -219,7 +220,9 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   const targetInitial = readIfExists(plan.settingsPath);
   const targetFinal = plan.files.find(f => f.absolutePath === plan.settingsPath)?.content ?? (targetInitial ?? '');
   const configChanged = targetFinal !== (targetInitial ?? '');
-  if (!selectedFilesToWrite.length && !configChanged) {
+  const exclude = previewGitExclude(project, 'claude-code', output);
+  const filesChanged = selectedFilesToWrite.length > 0 || configChanged;
+  if (!filesChanged && exclude?.status !== 'change') {
     output('No selected file needs changes; no files, backups, or receipts were modified.');
     return 0;
   }
@@ -233,6 +236,11 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   if (confirm !== 'yes' && confirm !== 'y') {
     output('Installation canceled by user. No files written.');
     return 1;
+  }
+  if (!filesChanged) {
+    output('Harness files already match; no files, backups, or receipts were modified.');
+    finishGitExclude(exclude, output, error);
+    return 0;
   }
 
   for (const f of plan.files) assertSafeFilesystemPath(f.absolutePath, 'file');
@@ -292,6 +300,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
     throw err;
   }
   finalizeSuccessor(pending, targetFinal);
+  finishGitExclude(exclude, output, error);
 
   output('\nClaude Code harness deployment complete (runtime not verified).');
   output('• CLAUDE.md Lead block and .claude/settings.json (agent: lead, gh pr merge denied) are configured.');

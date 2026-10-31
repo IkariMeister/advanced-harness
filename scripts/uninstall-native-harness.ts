@@ -95,6 +95,7 @@ if (args.includes('--help')) {
         backupParent,
         host: effectiveReceiptHost(receipt!),
         pruneRoot: uninstallPruneRoot(host, target, home),
+        excludeRoot: options['--project'] ? resolve(process.cwd(), String(options['--project'])) : undefined,
         confirm: message => terminal.question(message),
         output: message => console.log(message),
         error: message => console.error(message),

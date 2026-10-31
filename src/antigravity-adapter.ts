@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
+import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
 import {
   createSuccessorReceipt,
   discoverReceiptChain,
@@ -402,6 +403,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   if (preferencePlan.writes.length) preferencePlan.writes.forEach(file => output(`  ${file.path} (${file.currentContent === undefined ? 'new' : 'update'}${file.currentContent === undefined ? '' : `; private before-state backup under ${backupParent}`})`));
   else output('  None (preferences already match).');
 
+  const exclude = previewGitExclude(scope === 'project' ? project : undefined, 'antigravity', output);
   if (options.harnessVersion) output(`Harness version: ${formatVersionStamp(options.harnessVersion)}`);
   // Enter does not apply a default here: only an explicit yes writes files.
   output('');
@@ -455,6 +457,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
 
   if (!hasWrites && !configChanged) {
     output('Configuration and artifacts already match; no files, backups, or receipts were modified.');
+    finishGitExclude(exclude, output, error);
     return 0;
   }
 
@@ -498,6 +501,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   }
 
   finalizeSuccessor(pending, targetFinal);
+  finishGitExclude(exclude, output, error);
 
   output('\nAntigravity harness deployment complete.');
   output('• Rules deployed for Lead orchestrator with subagent delegation contract.');

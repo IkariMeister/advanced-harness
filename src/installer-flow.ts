@@ -7,6 +7,7 @@ import { DiagnosticError, printReport, verifyRuntime } from './native-diagnostic
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from './receipt-lineage.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
+import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
 import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
@@ -233,9 +234,14 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   output('Assignments are stored inline in agents; no plugin or separate approval host is installed.');
   if (original !== undefined && configChanged) output(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
   output('After writing, runtime verification may start the OpenCode service. It will not restart/reload it or send paid model requests.');
+  const exclude = previewGitExclude(project, 'opencode', output);
   output(`Harness version: ${formatVersionStamp(stamp)}`);
   if (await ask('Type install to apply these changes', 'cancel') !== 'install') { output('Cancelled. No files were changed.'); return 0; }
-  if (!receipt && !configChanged && !commandsChanged) { output('Configuration and workflow commands already match; no configuration, backup, or receipt writes are needed.'); return 0; }
+  if (!receipt && !configChanged && !commandsChanged) {
+    output('Configuration and workflow commands already match; no configuration, backup, or receipt writes are needed.');
+    finishGitExclude(exclude, output, errorOutput);
+    return 0;
+  }
   const pending = (deps.writePending ?? writePendingSuccessor)(history, receipt!);
   const receiptPath = pending.path;
   let backup: string | undefined;
@@ -275,6 +281,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (commandFilesToWrite.length > 0) output(`Workflow commands deployed: ${commandsTargetDir}`);
   if (backup) output(`Backup: ${backup}`);
   output(`Private uninstall receipt retained at ${receiptPath}`);
+  finishGitExclude(exclude, output, errorOutput);
   const directory = project ?? cwd;
   try {
     const saved = parseConfiguration(finalText, target);
