@@ -25,6 +25,7 @@ export const claudeCodeInstall = (confirmation: string): Step[] => [
 ];
 
 export const antigravityInstall = (confirmation: string): Step[] => [
+  ...roles.filter(role => role !== 'lead').map(role => ask(`${role}: Antigravity model tier`)),
   ...roles.map(role => ask(`${role}: desired model preference`)),
   ask('Type yes to install the Antigravity', confirmation),
 ];

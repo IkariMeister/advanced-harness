@@ -12,7 +12,7 @@ The macOS preparation/validation checklist (manual prerequisites, isolated setup
 
 The workflow specification is in [`docs/opencode-native-workflow.md`](docs/opencode-native-workflow.md). Native agent templates are in [`agents/`](agents/README.md). The [interactive installer, diagnostics, and receipt-backed uninstall/adoption workflow](docs/installation.md), [context-only project setup](docs/project-setup.md), and [optional global connections/project selections](docs/configuration.md) are implemented locally with automated tests. Uninstall/adoption still needs the documented isolated interactive QA; it is not validated for live cleanup. Cloning this repository does not activate agents or configure MCP connections. Machine-specific model/service access, live setup migration, broader role permissions, and the full publishing/merge/cleanup lifecycle still need validation; see [GitHub issues](https://github.com/IkariMeister/advanced-harness/issues).
 
-Antigravity can store per-role **desired model labels** as non-enforcing preferences; see [global defaults and project context](docs/configuration.md#4-antigravity-desired-model-preferences). This does not change the fixed runtime tiers or verify exact model assignment. The separate manual `model: inherit` procedure remains [experimental](docs/antigravity-model-inheritance-experiment.md), with exact child-model binding unverified; neither this preference feature nor the experiment satisfies issue #70 acceptance.
+Antigravity can store per-role **desired model labels** as non-enforcing preferences; see [global defaults and project context](docs/configuration.md#4-antigravity-desired-model-preferences). Labels do not change the runtime tiers (chosen separately per child role) or verify exact model assignment. The separate manual `model: inherit` procedure remains [experimental](docs/antigravity-model-inheritance-experiment.md), with exact child-model binding unverified; neither this preference feature nor the experiment satisfies issue #70 acceptance.
 
 Six native project commands implement the human-approved task workflows in [task workflows](docs/task-workflows.md): `/start-issue`, `/review-pr`, `/address-pr-feedback`, `/report-defect`, `/assess-debt`, and `/grill-me`. Command Markdown is a prompt template, not an independently enforced approval gate. Arguments provide context, never approval. Project commands/arguments override global commands with the same names.
 
@@ -53,11 +53,11 @@ Per-role model selection and discovery differ by host (shown by `harness:install
 | --- | --- | --- |
 | **OpenCode V2** | explicit model and variant per role | live catalog (`/api/model`) on request during install/update; configured IDs as a reported fallback |
 | **Claude Code** | explicit alias (`sonnet`/`opus`/`haiku`/`inherit`) or full model ID per role; syntax checked only | unsupported; availability unverified |
-| **Antigravity** | fixed tiers; exact per-role binding unsupported | unsupported |
+| **Antigravity** | explicit tier (`inherit`/`flash_lite`/`flash`/`pro`) per child role; Lead uses the session model; exact per-role model binding unsupported | unsupported |
 | **OpenAI Codex** | explicit typed model and effort (install gated, #45) | unsupported |
 | **Cursor IDE** | unsupported (#46) | unsupported |
 
-The OpenCode and Claude Code presets above are only the default suggestions. An OpenCode choice absent from the live catalog is saved only after an explicit `keep`; nothing is substituted. **Catalog presence is not account entitlement or successful access.** Issue #70 is delivered in phases; Antigravity per-role tier choice is still pending.
+The OpenCode, Claude Code, and Antigravity presets above are only the default suggestions. An OpenCode choice absent from the live catalog is saved only after an explicit `keep`; nothing is substituted. **Catalog presence is not account entitlement or successful access.**
 
 OpenCode, Antigravity, and Cursor presets are preferences to validate against the active connection, not evidence of access. The gated Codex adapter asks for an explicit model ID and reasoning effort for each role; no guessed default or fallback is used. LiteLLM endpoints, deployment IDs, and reasoning mappings must be supplied explicitly. Selecting a primary agent does not necessarily change the session's selected model; verify both.
 

@@ -83,8 +83,8 @@ test('project preferences use global defaults as suggestions only and preserve a
   assert.ok(contextWrite.content.includes('Claude Opus 5.5'));
   assert.equal(plan.preferences.preferences.operator, 'Arbitrary model label');
   assert.ok(contextWrite.content.includes('Arbitrary model label'));
-  assert.ok(messages.includes('lead: existing Antigravity runtime tier inherit (unchanged).'));
-  assert.ok(messages.includes('operator: existing Antigravity runtime tier flash_lite (unchanged).'));
+  assert.ok(messages.includes('lead: Antigravity runtime tier inherit (not changed by this preference).'));
+  assert.ok(messages.includes('operator: Antigravity runtime tier flash_lite (not changed by this preference).'));
 });
 
 test('Antigravity preference cancellation writes no project/global settings, backup, or receipt', async t => {
@@ -238,11 +238,11 @@ test('predecessor edits injected during customized-artifact confirmation abort b
   const target = join(project, '.agents', 'hooks.json'); const targetOriginal = readFileSync(target, 'utf8');
   const recoveryBefore = snapshotTree(recovery);
   let injected = false;
-  await assert.rejects(installAntigravity({ ...options, ask: async question => {
+  await assert.rejects(installAntigravity({ ...options, ask: async (question, suggested) => {
     if (question.includes('Overwrite customized/unowned file')) {
       injected = true; writeFileSync(agents, `${managedAgents}\nHuman edit during prompt\n`); return 'yes';
     }
-    return defaultAnswer(question);
+    return defaultAnswer(question, suggested);
   } }), /recorded predecessor after-state/);
   assert.equal(injected, true, 'customized-artifact confirmation prompt was reached');
   assert.equal(readFileSync(agents, 'utf8'), `${managedAgents}\nHuman edit during prompt\n`);
@@ -274,7 +274,7 @@ test('retained prior context and global suggestion edits during preference promp
   // preference questions are open; it must not be absorbed into the new receipt.
   const project2 = join(root, 'project2'); mkdirSync(project2);
   assert.equal(await installAntigravity({ scope: 'global', home, recoveryDirectory: recovery, agentsDirectory: rolesDir, commandsDirectory: commandsDir,
-    ask: async question => question.trimStart().startsWith('lead: desired') ? '1' : 'yes', output: () => {}, error: () => {} }), 0);
+    ask: async question => question.trimStart().startsWith('lead: desired') ? '1' : question.includes('Antigravity model tier') ? '' : 'yes', output: () => {}, error: () => {} }), 0);
   const managedGlobalPrefs = readFileSync(globalPrefs, 'utf8');
   assert.ok(managedGlobalPrefs.includes('Claude Opus 5.5'));
   const globalRecoveryBefore = snapshotTree(recovery);
