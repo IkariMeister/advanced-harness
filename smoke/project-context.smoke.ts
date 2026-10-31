@@ -4,25 +4,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSandbox, tree, type Sandbox } from './support/sandbox.ts';
-import { ask } from './support/steps.ts';
-
-const setupSteps = (build: string, confirmation: string, gates: [string, string][] = []) => [
-  ask('Command shell', 'bash'),
-  ask('Base branch'),
-  ask('build: confirm command', build),
-  ask('lint: confirm command'),
-  ask('unit: confirm command'),
-  ask('roborazzi: confirm command'),
-  ask('runtime: confirm command'),
-  ask('e2e: confirm command'),
-  ...gates.flatMap(([name, command]) => [ask('Additional required project gate name', name), ask(`${name}: command`, command)]),
-  ask('Additional required project gate name'),
-  ask('Device preference', 'emulator'),
-  ask('Optional device serial'),
-  ask('Parent directory for future worktrees'),
-  ask('Shared MEMORY.md path'),
-  ask('Full preview: type save', confirmation),
-];
+import { ask, setupSteps } from './support/steps.ts';
 
 describe('SMK-PS project setup + SMK-PI project integrations (non-TTY piped answers)', () => {
   let box: Sandbox;

@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * Antigravity PreToolUse Lifecycle Hook: gh pr merge guard
+ * Antigravity PreToolUse Lifecycle Hook: gh pr merge and destructive Git guard
  *
  * Reads PreToolUse JSON payload from stdin.
  * If the tool is `run_command` and attempts `gh pr merge` (or `gh.exe pr merge`),
+ * `git reset --hard`, `git clean`, or a force push,
  * responds with a hard DENY decision.
  * Otherwise responds with ALLOW.
  */
 
 import { readFileSync } from 'node:fs';
+import { isDestructiveGitInvocation } from '../src/security-guardrails.ts';
 
 export interface PreToolUsePayload {
   toolCall?: {
@@ -160,14 +162,16 @@ function isGhExecutable(token: string): boolean {
   return base === 'gh' || base === 'gh.exe';
 }
 
-export function isGhPrMergeCommand(commandLine: string): boolean {
-  if (!commandLine || typeof commandLine !== 'string') {
-    return false;
-  }
-
-  const segments = splitCommandSegments(commandLine);
-
-  for (const segment of segments) {
+/**
+ * Returns each command segment's tokens starting at the executable, after stripping
+ * grouping parens and leading shell prefixes/wrappers:
+ * - PowerShell call operator & or .
+ * - Environment variable assignments like KEY=VAL
+ * - Wrappers like env, command, nohup, exec
+ */
+export function commandInvocations(commandLine: string): string[][] {
+  const invocations: string[][] = [];
+  for (const segment of splitCommandSegments(commandLine)) {
     let tokens = tokenizeCommand(segment);
     if (!tokens.length) continue;
 
@@ -180,32 +184,35 @@ export function isGhPrMergeCommand(commandLine: string): boolean {
       tokens[tokens.length - 1] = tokens[tokens.length - 1]!.slice(0, -1);
       if (!tokens[tokens.length - 1]) tokens.pop();
     }
-    if (!tokens.length) continue;
 
-    // Skip leading shell prefixes/wrappers:
-    // - PowerShell call operator & or .
-    // - Environment variable assignments like KEY=VAL
-    // - Wrappers like env, command, nohup, exec
     let startIdx = 0;
     while (startIdx < tokens.length) {
       const t = tokens[startIdx]!;
-      if (t === '&' || t === '.') {
-        startIdx++;
-        continue;
-      }
-      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
-        startIdx++;
-        continue;
-      }
-      const lower = t.toLowerCase();
-      if (['env', 'command', 'nohup', 'exec'].includes(lower)) {
+      if (t === '&' || t === '.' || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || ['env', 'command', 'nohup', 'exec'].includes(t.toLowerCase())) {
         startIdx++;
         continue;
       }
       break;
     }
 
-    if (startIdx >= tokens.length) continue;
+    if (startIdx < tokens.length) invocations.push(tokens.slice(startIdx));
+  }
+  return invocations;
+}
+
+/** True when any segment directly runs git reset --hard, git clean, or a force push. */
+export function isDestructiveGitCommand(commandLine: string): boolean {
+  if (!commandLine || typeof commandLine !== 'string') return false;
+  return commandInvocations(commandLine).some(isDestructiveGitInvocation);
+}
+
+export function isGhPrMergeCommand(commandLine: string): boolean {
+  if (!commandLine || typeof commandLine !== 'string') {
+    return false;
+  }
+
+  for (const tokens of commandInvocations(commandLine)) {
+    const startIdx = 0;
 
     const exeToken = tokens[startIdx]!;
     if (!isGhExecutable(exeToken)) {
@@ -255,6 +262,12 @@ export function evaluatePreToolUse(payload: PreToolUsePayload): PreToolUseDecisi
       return {
         decision: 'deny',
         reason: 'Direct merge via "gh pr merge" is denied by policy. A human must merge on GitHub.',
+      };
+    }
+    if (isDestructiveGitCommand(cmd)) {
+      return {
+        decision: 'deny',
+        reason: 'Destructive Git (reset --hard, clean, force push) is denied by policy. A human must run it.',
       };
     }
   }

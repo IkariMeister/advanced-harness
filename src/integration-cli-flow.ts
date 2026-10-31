@@ -53,7 +53,7 @@ export async function runIntegrationFlow(options: IntegrationFlowOptions, deps: 
     const servers = configuredServers(sources); output('Global MCP aliases (no endpoints/settings/credentials printed):');
     Object.keys(servers).sort().forEach((name, index) => output(`  ${index + 1}. ${name} (${servers[name]!.disabled === true ? 'disabled' : 'runtime unverified'})`));
     output('Each integration may be none. New entries are disabled remote OAuth servers; no connections will be attempted. No repository/Jira project data belongs in global preferences.');
-    const draft = await askGlobalIntegrations(servers, defaults, ask); settings = draft.settings;
+    const draft = await askGlobalIntegrations(servers, defaults, ask, errorOutput); settings = draft.settings;
     if ((draft.choices.length || settings.github?.backend === 'gh') && findMarkdownConflicts(sources, target, global).length) throw new Error('Resolve competing global named Markdown agent definitions before writing role permissions.');
     const active = draft.choices.length > 0 || settings.github?.backend === 'gh'; history = active ? discoverReceiptChain(recoveryDirectory, target, host) : undefined;
     const reconciliation = history ? receiptReconciliationOptions(history) : {};

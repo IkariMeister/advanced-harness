@@ -31,7 +31,7 @@ test('schema rejects unknown/missing fields, versions, malformed contracts, and 
   const valid = file(commandsDir, 'start-issue');
   for (const candidate of [
     valid.replace('schemaVersion: 1', 'schemaVersion: 2'),
-    valid.replace('description: Start approved work on a Jira issue', 'description: ""'),
+    valid.replace('description: Start approved work on a GitHub or Jira issue', 'description: ""'),
     valid.replace('  mode: full', '  mode: full\n  extra: true'),
     valid.replace('arguments:\n  mode: full', 'arguments:\n  mode: full\n  extra: true'),
     valid.replace('$ARGUMENTS', '$1'),
@@ -79,7 +79,7 @@ test('production update consumes canonical command sources and preserves customi
     const text = file(commandsDir, id);
     writeFileSync(join(source, `${id}.md`), text.replace('schemaVersion: 1', 'schemaVersion: 1'));
   }
-  const canonical = readFileSync(join(source, 'start-issue.md'), 'utf8').replace('Start approved work on a Jira issue', 'Updated canonical issue workflow');
+  const canonical = readFileSync(join(source, 'start-issue.md'), 'utf8').replace('Start approved work on a GitHub or Jira issue', 'Updated canonical issue workflow');
   writeFileSync(join(source, 'start-issue.md'), canonical);
   const custom = '---\ndescription: My customized command\n---\nDo not overwrite this user content.\n';
   writeFileSync(join(outputDir, 'review-pr.md'), custom);
@@ -89,7 +89,7 @@ test('production update consumes canonical command sources and preserves customi
     if (question.startsWith('Check remote')) return 'no';
     if (question.includes('system prompt to latest')) return 'no';
     if (question.includes('Replace customized workflow command')) return 'no';
-    if (question.startsWith('Type update')) return 'update';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'update';
     return fallback;
   };
   await runUpdateFlow({ scope: 'project', project }, {
@@ -121,7 +121,7 @@ test('planOpenCodeCommandDeployment distinguishes untouched older generated comm
     mkdirSync(output);
     const sourceDir = fileURLToPath(commandsDir);
 
-    const oldContent = '---\ndescription: Start approved work on a Jira issue\n---\nOld command body\n';
+    const oldContent = '---\ndescription: Start approved work on a GitHub or Jira issue\n---\nOld command body\n';
     const oldHash = createHash('sha256').update(oldContent).digest('hex');
     const userCustomContent = '---\ndescription: User custom\n---\nUser custom body\n';
 

@@ -3,10 +3,33 @@ import type { NativeRole } from './native-role-types.ts';
 import type { RoleDefinition } from './role-definitions.ts';
 import type { WorkflowCommand, WorkflowCommandId } from './workflow-commands.ts';
 
+/** Runtime tiers an Antigravity child subagent can be defined with; exact model binding is unsupported. */
+export const antigravityTiers = ['inherit', 'flash_lite', 'flash', 'pro'] as const;
+export type AntigravityTier = typeof antigravityTiers[number];
+export const antigravityChildRoles: readonly NativeRole[] = ['operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'];
+
+export const isAntigravityTier = (value: unknown): value is AntigravityTier => (antigravityTiers as readonly unknown[]).includes(value);
+
+/** Child-role tiers recorded in a compiled Lead rule's registration table. */
+export function parseAntigravityLeadRuleTiers(text: string): Partial<Record<NativeRole, string>> {
+  const tiers: Partial<Record<NativeRole, string>> = {};
+  for (const match of text.matchAll(/^\| \*\*(\w+)\*\* \| `([^`]*)` \|/gm)) {
+    const role = match[1] as NativeRole;
+    if ((antigravityChildRoles as readonly string[]).includes(role)) tiers[role] = match[2]!;
+  }
+  return tiers;
+}
+
+/** Presets with the chosen child tiers applied; Lead always runs on the session model. */
+export function antigravityPresetsWithTiers(tiers: Record<NativeRole, AntigravityTier>): Record<NativeRole, HostRolePreset> {
+  return Object.fromEntries(Object.entries(HOST_MODEL_PRESETS.antigravity).map(([role, preset]) =>
+    [role, role === 'lead' ? preset : { ...preset, model: tiers[role as NativeRole], tier: tiers[role as NativeRole] }])) as Record<NativeRole, HostRolePreset>;
+}
+
 export interface AntigravitySubagentSpec {
   name: NativeRole;
   description: string;
-  model: 'inherit' | 'flash_lite' | 'flash' | 'pro';
+  model: AntigravityTier;
   roleTitle: string;
   enableWriteTools: boolean;
   enableMCPTools: boolean;
@@ -164,8 +187,7 @@ export function compileLeadOrchestrationRule(
   roles: Record<NativeRole, RoleDefinition>,
   presets: Record<NativeRole, HostRolePreset> = HOST_MODEL_PRESETS.antigravity
 ): AntigravityRuleArtifact {
-  const childRoles: NativeRole[] = ['operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'];
-  const specs = childRoles.map(r => compileAntigravitySubagentSpec(r, roles[r], presets[r]));
+  const specs = antigravityChildRoles.map(r => compileAntigravitySubagentSpec(r, roles[r], presets[r]));
 
   const lines: string[] = [
     '# Advanced Harness Lead Orchestrator Rule',
@@ -218,9 +240,44 @@ export function compileLeadOrchestrationRule(
 }
 
 /**
+ * Builds the merge-guard hook command. Antigravity on Windows passes hook command
+ * arguments to Node without stripping quotes, so a quoted path resolves as
+ * `<cwd>\"<path>"` and every run_command fails (#94). On Windows the path is
+ * therefore left unquoted, and a path containing whitespace cannot be expressed
+ * safely. Other platforms keep the quoted form, which is unaffected.
+ */
+export function antigravityMergeGuardCommand(guardScriptPath: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') {
+    return `node "${guardScriptPath}"`;
+  }
+  if (/\s/.test(guardScriptPath)) {
+    throw new Error(
+      `Antigravity merge-guard path contains whitespace: ${guardScriptPath}. ` +
+      'Antigravity on Windows does not accept a quoted hook path, so the guard would block every run_command. ' +
+      'Install from a location whose path has no spaces.'
+    );
+  }
+  return `node ${guardScriptPath}`;
+}
+
+/**
  * Compiles hooks.json with the pre-tool merge guard.
  */
-export function compileAntigravityHooks(guardScriptPath: string = 'scripts/antigravity-merge-guard.mjs'): AntigravityHookConfig {
+export function compileAntigravityHooks(
+  guardScriptPath: string = 'scripts/antigravity-merge-guard.mjs',
+  platform: NodeJS.Platform = process.platform
+): AntigravityHookConfig {
+  return buildAntigravityGuardHooks(antigravityMergeGuardCommand(guardScriptPath, platform));
+}
+
+/**
+ * The quoted hook command written by earlier harness versions; treated as owned on update.
+ */
+function compileLegacyAntigravityHooks(guardScriptPath: string): AntigravityHookConfig {
+  return buildAntigravityGuardHooks(`node "${guardScriptPath}"`);
+}
+
+function buildAntigravityGuardHooks(command: string): AntigravityHookConfig {
   return {
     'gh-pr-merge-guard': {
       enabled: true,
@@ -230,7 +287,7 @@ export function compileAntigravityHooks(guardScriptPath: string = 'scripts/antig
           hooks: [
             {
               type: 'command',
-              command: `node "${guardScriptPath}"`,
+              command,
               timeout: 10,
             },
           ],
@@ -331,15 +388,33 @@ export function isDeepEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
+ * A merged Antigravity config file that cannot be planned without overwriting
+ * content the harness does not own. Planners attach the file path; installers
+ * report it as an actionable message instead of a crash.
+ */
+export class AntigravityConfigMergeError extends Error {
+  path?: string;
+  readonly reason: 'malformed' | 'conflict';
+  readonly entry: { kind: 'hook' | 'mcp-server'; id: string } | undefined;
+  constructor(message: string, reason: 'malformed' | 'conflict', entry?: { kind: 'hook' | 'mcp-server'; id: string }) {
+    super(message);
+    this.name = 'AntigravityConfigMergeError';
+    this.reason = reason;
+    this.entry = entry;
+  }
+}
+
+/**
  * Merges hooks.json while strictly preserving all unrelated hooks and top-level properties.
  * Rejects ambiguous conflicts or malformed JSON before writing.
  */
 export function mergeAntigravityHooksConfig(
   existingText: string | undefined,
   guardScriptPath: string,
-  priorOwnedContent?: string
+  priorOwnedContent?: string,
+  platform: NodeJS.Platform = process.platform
 ): AntigravityHookConfig {
-  const desiredHook = compileAntigravityHooks(guardScriptPath);
+  const desiredHook = compileAntigravityHooks(guardScriptPath, platform);
 
   if (existingText === undefined || !existingText.trim()) {
     return desiredHook;
@@ -349,11 +424,11 @@ export function mergeAntigravityHooksConfig(
   try {
     parsed = JSON.parse(existingText);
   } catch (err) {
-    throw new Error(`Malformed existing hooks.json: ${err instanceof Error ? err.message : String(err)}`);
+    throw new AntigravityConfigMergeError(`Malformed existing hooks.json: ${err instanceof Error ? err.message : String(err)}`, 'malformed');
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Invalid hooks.json: top-level value must be a JSON object.');
+    throw new AntigravityConfigMergeError('Invalid hooks.json: top-level value must be a JSON object.', 'malformed');
   }
 
   const existing = parsed as Record<string, unknown>;
@@ -375,9 +450,10 @@ export function mergeAntigravityHooksConfig(
       }
     }
     const matchesPrior = priorOwnedGuard !== undefined && isDeepEqual(existingHook, priorOwnedGuard);
+    const matchesLegacy = isDeepEqual(existingHook, compileLegacyAntigravityHooks(guardScriptPath)['gh-pr-merge-guard']);
 
-    if (!matchesDesired && !matchesPrior) {
-      throw new Error('Conflicting unowned "gh-pr-merge-guard" definition in existing hooks.json; resolve conflict before installation.');
+    if (!matchesDesired && !matchesPrior && !matchesLegacy) {
+      throw new AntigravityConfigMergeError('Conflicting unowned "gh-pr-merge-guard" definition in existing hooks.json; resolve conflict before installation.', 'conflict', { kind: 'hook', id: 'gh-pr-merge-guard' });
     }
   }
 
@@ -410,11 +486,11 @@ export function mergeAntigravityMcpConfig(
   try {
     parsed = JSON.parse(existingText);
   } catch (err) {
-    throw new Error(`Malformed existing mcp_config.json: ${err instanceof Error ? err.message : String(err)}`);
+    throw new AntigravityConfigMergeError(`Malformed existing mcp_config.json: ${err instanceof Error ? err.message : String(err)}`, 'malformed');
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Invalid mcp_config.json: top-level value must be a JSON object.');
+    throw new AntigravityConfigMergeError('Invalid mcp_config.json: top-level value must be a JSON object.', 'malformed');
   }
 
   const existing = parsed as Record<string, unknown>;
@@ -422,7 +498,7 @@ export function mergeAntigravityMcpConfig(
 
   if (Object.hasOwn(existing, 'mcpServers')) {
     if (!existing.mcpServers || typeof existing.mcpServers !== 'object' || Array.isArray(existing.mcpServers)) {
-      throw new Error('Invalid mcp_config.json: "mcpServers" property must be a JSON object.');
+      throw new AntigravityConfigMergeError('Invalid mcp_config.json: "mcpServers" property must be a JSON object.', 'malformed');
     }
     existingServers = { ...(existing.mcpServers as Record<string, unknown>) };
   }
@@ -446,7 +522,7 @@ export function mergeAntigravityMcpConfig(
       const matchesDesired = isDeepEqual(current, desired);
       const matchesPrior = priorOwnedServers !== undefined && Object.hasOwn(priorOwnedServers, id) && isDeepEqual(current, priorOwnedServers[id]);
       if (!matchesDesired && !matchesPrior) {
-        throw new Error(`Conflicting unowned MCP server "${id}" in existing mcp_config.json; resolve conflict before installation.`);
+        throw new AntigravityConfigMergeError(`Conflicting unowned MCP server "${id}" in existing mcp_config.json; resolve conflict before installation.`, 'conflict', { kind: 'mcp-server', id });
       }
     }
     existingServers[id] = desired;
@@ -465,11 +541,11 @@ export function getAntigravityMergeGuardMjsSource(): string {
   return `#!/usr/bin/env node
 
 /**
- * Antigravity PreToolUse Lifecycle Hook: gh pr merge guard
+ * Antigravity PreToolUse Lifecycle Hook: gh pr merge and destructive Git guard
  *
  * Reads PreToolUse JSON payload from stdin.
  * If the tool is run_command and attempts gh pr merge (or gh.exe pr merge),
- * responds with a hard DENY decision.
+ * git reset --hard, git clean, or a force push, responds with a hard DENY decision.
  * Otherwise responds with ALLOW.
  */
 
@@ -590,6 +666,58 @@ export function tokenizeCommand(segment) {
   return tokens;
 }
 
+export function commandInvocations(commandLine) {
+  const invocations = [];
+  for (const segment of splitCommandSegments(commandLine)) {
+    let tokens = tokenizeCommand(segment);
+    if (!tokens.length) continue;
+    if (tokens[0].startsWith('(')) {
+      tokens[0] = tokens[0].slice(1);
+      if (!tokens[0]) tokens.shift();
+    }
+    if (tokens.length && tokens[tokens.length - 1].endsWith(')')) {
+      tokens[tokens.length - 1] = tokens[tokens.length - 1].slice(0, -1);
+      if (!tokens[tokens.length - 1]) tokens.pop();
+    }
+    let startIdx = 0;
+    while (startIdx < tokens.length) {
+      const t = tokens[startIdx];
+      if (t === '&' || t === '.' || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || ['env', 'command', 'nohup', 'exec'].includes(t.toLowerCase())) {
+        startIdx++;
+        continue;
+      }
+      break;
+    }
+    if (startIdx < tokens.length) invocations.push(tokens.slice(startIdx));
+  }
+  return invocations;
+}
+
+const gitOptionsWithValue = ['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'];
+
+export function isDestructiveGitInvocation(tokens) {
+  const base = (tokens[0] || '').toLowerCase().replace(/\\\\/g, '/').split('/').pop() || '';
+  if (base !== 'git' && base !== 'git.exe') return false;
+  let index = 1;
+  while (index < tokens.length && tokens[index].startsWith('-')) {
+    index += gitOptionsWithValue.includes(tokens[index]) ? 2 : 1;
+  }
+  const subcommand = (tokens[index] || '').toLowerCase();
+  const args = tokens.slice(index + 1);
+  if (subcommand === 'clean') return true;
+  if (subcommand === 'reset') return args.includes('--hard');
+  if (subcommand === 'push') {
+    return args.some(arg => arg === '--force' || arg.startsWith('--force-with-lease') || arg === '--force-if-includes'
+      || /^-[A-Za-z]*f[A-Za-z]*$/.test(arg) || (arg.startsWith('+') && arg.length > 1));
+  }
+  return false;
+}
+
+export function isDestructiveGitCommand(commandLine) {
+  if (!commandLine || typeof commandLine !== 'string') return false;
+  return commandInvocations(commandLine).some(isDestructiveGitInvocation);
+}
+
 function isGhExecutable(token) {
   const normalized = token.toLowerCase().replace(/\\\\/g, '/');
   const base = normalized.split('/').pop() || '';
@@ -683,6 +811,12 @@ export function evaluatePreToolUse(payload) {
       return {
         decision: 'deny',
         reason: 'Direct merge via "gh pr merge" is denied by policy. A human must merge on GitHub.',
+      };
+    }
+    if (isDestructiveGitCommand(cmd)) {
+      return {
+        decision: 'deny',
+        reason: 'Destructive Git (reset --hard, clean, force push) is denied by policy. A human must run it.',
       };
     }
   }

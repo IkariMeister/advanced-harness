@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { parseConfiguration, saveInstallation, type Ask } from './native-installer.ts';
 import { contextData, contextPath, hasContextSection, prepareContextFiles, readContext, removeContext, updateContext } from './project-context.ts';
 import { createSharedLocations, defaultLocations, describeLocationPlan, emptyLocationPlan, pathsInstructions, planSharedLocations, validateLocations, validatePathsSettings, type LocationPlan, type PathsSettings, type SharedLocations } from './shared-locations.ts';
+import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
 
 export const checkNames = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'] as const;
 export type CheckName = typeof checkNames[number];
@@ -622,9 +623,10 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   output('Files to write:');
   for (const file of files) output(`  ${file.path}${file.original === undefined ? ' (new)' : ' (backup before updating)'}`);
   for (const line of describeLocationPlan(locations)) output(line);
+  const exclude = previewGitExclude(root, 'setup', output);
   output('Proposed context section:');
   output(updated.slice(updated.indexOf('<!-- advanced-harness:project:start -->'), updated.indexOf('<!-- advanced-harness:project:end -->') + '<!-- advanced-harness:project:end -->'.length));
-  output('Only context files and missing shared locations are written; no separate project profile, Git worktrees, or branches. An existing MEMORY.md is never overwritten. Paths are machine-specific: review before committing. No models/MCP/ignore rules are changed. Legacy files remain untouched.');
+  output('Only context files and missing shared locations are written; no separate project profile, Git worktrees, or branches. An existing MEMORY.md is never overwritten. Paths are machine-specific: review before committing. No models/MCP or tracked .gitignore files are changed. Legacy files remain untouched.');
 
   const confirm = await ask('Full preview: type save (or legacy setup) to save; Enter or anything else cancels', 'cancel');
   const result = confirmAndSaveSetup(confirm, files, backupParent);
@@ -636,6 +638,7 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   for (const backup of result.backups) if (backup) output(`Backup (keep private): ${backup}`);
   try { for (const created of createSharedLocations(locations)) output(`Created: ${created}`); }
   catch (error) { throw new Error(`Project settings were saved, but creating shared locations failed: ${(error as Error).message} Rerun harness:setup or harness:update to retry.`); }
+  finishGitExclude(exclude, output, deps.error);
   output('Setup choices saved, not runtime-validated. Run harness:doctor in this project, then approve command/device/integration validation with Lead.');
   return 0;
 }

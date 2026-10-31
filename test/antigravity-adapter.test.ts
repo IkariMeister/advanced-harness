@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
-import { planAntigravityDeployment, installAntigravity, diagnoseAntigravity } from '../src/antigravity-adapter.ts';
+import { planAntigravityDeployment, installAntigravity, diagnoseAntigravity, formatAntigravityConfigMergeError } from '../src/antigravity-adapter.ts';
+import { AntigravityConfigMergeError, mergeAntigravityMcpConfig } from '../src/antigravity-compiler.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { diagnoseHost } from '../src/native-diagnostics.ts';
@@ -256,6 +257,58 @@ test('diagnoseAntigravity reports ok: false when uninstalled or when required ar
   }
 });
 
+test('installAntigravity writes the platform merge-guard hook command and doctor flags the quoted form on Windows (#94)', async (t) => {
+  const tempProject = makeTempRoot('ag-hook-quote-');
+  const tempHome = makeTempRoot('ag-home-hook-quote-');
+
+  try {
+    const guardPath = join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs');
+    // An unquoted command can only reference a whitespace-free path: Windows install
+    // rejects such roots, and doctor cannot parse an unquoted spaced path anywhere.
+    const spacedRoot = /\s/.test(guardPath);
+    if (spacedRoot && process.platform === 'win32') {
+      t.skip(`temporary root contains whitespace, which Windows install rejects by design: ${tempProject}`);
+      return;
+    }
+
+    await installAntigravity({
+      scope: 'project',
+      project: tempProject,
+      home: tempHome,
+      agentsDirectory: rolesDir,
+      commandsDirectory: commandsDir,
+      ask: async (q, s) => q.startsWith('Type yes to install the Antigravity') ? 'yes' : (s ?? 'yes'),
+      output: () => {},
+      error: () => {},
+    });
+
+    const hooksPath = join(tempProject, '.agents', 'hooks.json');
+    const installed = JSON.parse(readFileSync(hooksPath, 'utf8'));
+    const expectedCommand = process.platform === 'win32' ? `node ${guardPath}` : `node "${guardPath}"`;
+    assert.equal(installed['gh-pr-merge-guard'].PreToolUse[0].hooks[0].command, expectedCommand);
+
+    if (!spacedRoot) {
+      installed['gh-pr-merge-guard'].PreToolUse[0].hooks[0].command = `node ${guardPath}`;
+      writeFileSync(hooksPath, JSON.stringify(installed, null, 2));
+      const diagWindows = await diagnoseAntigravity({ project: tempProject, home: tempHome, platform: 'win32' });
+      assert.equal(diagWindows.ok, true, diagWindows.issues.join('\n'));
+    }
+
+    installed['gh-pr-merge-guard'].PreToolUse[0].hooks[0].command = `node "${guardPath}"`;
+    writeFileSync(hooksPath, JSON.stringify(installed, null, 2));
+
+    const diagLegacyWindows = await diagnoseAntigravity({ project: tempProject, home: tempHome, platform: 'win32' });
+    assert.equal(diagLegacyWindows.ok, false);
+    assert.ok(diagLegacyWindows.issues.some(i => i.includes('quotes the merge-guard path') && i.includes('harness:update')));
+
+    const diagLegacyLinux = await diagnoseAntigravity({ project: tempProject, home: tempHome, platform: 'linux' });
+    assert.equal(diagLegacyLinux.ok, true, diagLegacyLinux.issues.join('\n'));
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
 test('runInstallerFlow delegates clean installation and isolates writes to supplied home', async () => {
   const tempProject = makeTempRoot('ag-installer-flow-');
   const tempHome = makeTempRoot('ag-home-flow-');
@@ -407,6 +460,7 @@ test('installAntigravity overwrites customized files when explicitly approved an
       commandsDirectory: commandsDir,
       ask: async (question) => {
         if (question.includes('Overwrite customized/unowned file')) return 'yes';
+        if (question.includes('Antigravity model tier')) return '';
         return 'yes';
       },
       output: () => {},
@@ -427,9 +481,9 @@ test('installAntigravity overwrites customized files when explicitly approved an
       recoveryDirectory: recoveryDir,
       agentsDirectory: rolesDir,
       commandsDirectory: commandsDir,
-      ask: async () => {
+      ask: async question => {
         promptAsked = true;
-        return 'yes';
+        return question.includes('Antigravity model tier') ? '' : 'yes';
       },
       output: () => {},
       error: () => {},
@@ -467,7 +521,7 @@ test('installAntigravity aborts and writes nothing if files diverge during confi
               // Mutate a planned file while confirmation prompt is open
               writeFileSync(rulePath, '# Mutated concurrently while prompt was open\n');
             }
-            return 'yes';
+            return question.includes('Antigravity model tier') ? '' : 'yes';
           },
           output: () => {},
           error: () => {},
@@ -594,5 +648,50 @@ test('runInstallerFlow with Enter at the Antigravity confirmation cancels with n
     assert.equal(f.prompts.filter(p => isAntigravityConfirmation(p.question)).length, 1);
   } finally {
     f.cleanup();
+  }
+});
+
+test('formatAntigravityConfigMergeError names the file and how to resolve an MCP server conflict', () => {
+  let caught: unknown;
+  try {
+    mergeAntigravityMcpConfig('{ "mcpServers": { "harness": { "command": "other" } } }', { harness: { command: 'node' } });
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof AntigravityConfigMergeError);
+  caught.path = join('C:', 'cfg', 'mcp_config.json');
+  const message = formatAntigravityConfigMergeError(caught, join('C:', 'backups'));
+  assert.equal(
+    message,
+    `Antigravity configuration conflict in ${join('C:', 'cfg', 'mcp_config.json')}: the MCP server "harness" does not match what the harness installs or last installed. Restore it to the content recorded in the latest Antigravity install receipt under ${join('C:', 'backups')}, or remove the "harness" entry from "mcpServers", then re-run. No files were changed.`
+  );
+});
+
+test('installAntigravity reports a conflicting hooks.json as one error line and returns 1 without prompting', async () => {
+  const tempProject = makeTempRoot('ag-conflict-project-');
+  const tempHome = makeTempRoot('ag-conflict-home-');
+  const recoveryDir = join(tempHome, 'recovery');
+  const hooksPath = join(tempProject, '.agents', 'hooks.json');
+  try {
+    mkdirSync(join(tempProject, '.agents'), { recursive: true });
+    writeFileSync(hooksPath, JSON.stringify({ 'gh-pr-merge-guard': { matcher: 'run_command', command: 'node scripts/antigravity-merge-guard.mjs' } }));
+    const errors: string[] = [];
+    const prompts: string[] = [];
+    const code = await installAntigravity({
+      scope: 'project', project: tempProject, home: tempHome, recoveryDirectory: recoveryDir,
+      agentsDirectory: rolesDir, commandsDirectory: commandsDir,
+      ask: async question => { prompts.push(question); return 'yes'; },
+      output: () => {}, error: message => errors.push(message),
+    });
+    assert.equal(code, 1);
+    assert.deepEqual(prompts, []);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0]!.includes(hooksPath));
+    assert.match(errors[0]!, /remove the "gh-pr-merge-guard" key, then re-run\. No files were changed\.$/);
+    assert.equal(existsSync(recoveryDir), false);
+    assert.deepEqual(JSON.parse(readFileSync(hooksPath, 'utf8'))['gh-pr-merge-guard'].command, 'node scripts/antigravity-merge-guard.mjs');
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
   }
 });

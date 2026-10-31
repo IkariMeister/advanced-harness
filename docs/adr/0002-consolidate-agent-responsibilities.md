@@ -1,8 +1,8 @@
 # ADR: Consolidate Agent Responsibilities While Preserving Specialized Reasoning and Independent Review
 
-**Status:** Proposed  
-**Date:** 2026-10-30  
-**Project:** Advanced Harness  
+**Status:** Proposed\
+**Date:** 2026-10-30\
+**Project:** Advanced Harness\
 **Decision scope:** Agent architecture, responsibility boundaries, model allocation, and workflow orchestration
 
 ## Context
@@ -41,7 +41,7 @@ Evaluate a conditional five-role target:
 | Reviewer | Independent critical review and verification | Strong reasoning |
 | Operations | Local Git, external integrations, authorized publication | Economical |
 
-Five logical roles do not mean five agents must run for each task. Operations remains split into Operator and External wherever the host cannot preserve the necessary capability and permission isolation. QA becomes shared validation skills available to Engineer and Reviewer. Researcher and Implementer merge into Engineer.
+Five logical roles do not mean five agents must run for each task. Operations remains split into Operator and External wherever the host cannot preserve the necessary capability and permission isolation. QA becomes shared validation skills available to Engineer and Reviewer. Researcher and Implementer merge into Engineer where the host can enforce read-only access before approval.
 
 ## Role Boundaries
 
@@ -57,7 +57,7 @@ Planner analyzes requirements and constraints, evaluates alternatives and risks,
 
 Engineer combines Researcher and Implementer responsibilities: inspect repository structure, patterns, dependencies, and tests; provide findings to Planner; implement approved changes; maintain tests; run applicable checks; update implementation documentation; and report deviations and evidence. Reuse the same context between research and implementation where safe session continuation is supported. Otherwise, produce a structured research artifact to avoid repeating discovery.
 
-Before implementation approval, Engineer stays within the permitted read-only research scope. After approval, implementation follows host-supported permissions. Material changes to the approved approach return to Lead and Planner, and to the human when required; Engineer must not silently reinterpret the plan.
+Before implementation approval, Engineer stays within the permitted read-only research scope. After approval, implementation follows host-supported permissions. As with Operations, prompt text alone does not enforce the pre-approval read-only boundary. Merging Researcher and Implementer on a host is conditional on that host withholding write and execution capabilities until approval, for example through a separate read-only session or a permission change granted at approval. Where the host cannot enforce this, keep Researcher and Implementer separate, or have the read-only Researcher produce the structured research artifact that Engineer starts from. Material changes to the approved approach return to Lead and Planner, and to the human when required; Engineer must not silently reinterpret the plan.
 
 ### Reviewer — Independent Evaluation
 
@@ -71,9 +71,9 @@ Combining Operator and External is conditional. Before consolidation on a host, 
 
 ### QA — Shared Validation Skills
 
-QA becomes reusable skills for Android builds, unit tests, static analysis, visual regression, end-to-end checks, and evidence collection. Skills describe reproducible procedures and artifact locations; they do not decide whether results are acceptable. Engineer uses applicable skills for self-verification and records actual results. Reviewer inspects evidence and selectively reruns checks.
+QA becomes reusable skills for Android builds, unit tests, static analysis, visual regression, end-to-end checks, and evidence collection. Skills describe reproducible procedures and artifact locations; they do not decide whether results are acceptable. Engineer uses applicable skills for self-verification and records actual results. Reviewer inspects evidence and, where the host gives Reviewer command execution, selectively reruns checks.
 
-Reviewer retains read-only access to source and baselines under the host permission model. Checks that write files use an approved disposable environment or another method that leaves the reviewed tree unchanged. A passing command is evidence about that command, not automatic acceptance. Baseline updates remain subject to Reviewer evaluation.
+Reviewer retains read-only access to source and baselines under the host permission model. Some hosts deny Reviewer command execution entirely. For example, the Claude Code mapping gives Reviewer no Bash tool. On those hosts Reviewer cannot rerun checks. Instead, Reviewer judges the recorded evidence (commands, exit status, output, and artifacts) and asks Lead to have checks rerun by a role that can execute them, such as Engineer or a separate QA context. Reviewer then evaluates the new evidence independently. The review report states which checks were rerun and which were judged from evidence only. Checks that write files use an approved disposable environment or another method that leaves the reviewed tree unchanged. A passing command is evidence about that command, not automatic acceptance. Baseline updates remain subject to Reviewer evaluation.
 
 ## Model Allocation
 
@@ -101,10 +101,10 @@ Use the current eight-role configuration as the baseline. Compare the target on 
 
 1. Record current eight-role behavior and representative baseline tasks.
 2. Define consolidated role contracts and QA skills without changing production configuration.
-3. Pilot Researcher + Implementer as Engineer on low-risk approved tasks.
+3. Pilot Researcher + Implementer as Engineer on low-risk approved tasks, only on hosts where pre-approval read-only access is enforced.
 4. Pilot shared QA skills while preserving independent Reviewer reasoning and read-only source access.
 5. Validate per-role model routing and actual host permissions.
-6. Evaluate Operations + External only where permission isolation is demonstrated; otherwise retain the split.
+6. Evaluate Operator + External as Operations only where permission isolation is demonstrated; otherwise retain the split.
 7. Compare quality, cost, latency, and handoffs.
 8. Obtain human approval for a concrete rollout plan before changing defaults.
 

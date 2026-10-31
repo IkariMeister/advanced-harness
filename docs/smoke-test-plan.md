@@ -46,6 +46,9 @@ through `NODE_OPTIONS`. On POSIX it is a small shell wrapper.
 The stub mirrors the configuration. It proves the CLI wiring and the doctor's
 parsing, **not** OpenCode's real discovery, provider access, or model entitlement.
 
+The stub also cannot show whether a host enforces the security guardrails. That is
+checked by hand with the [guardrail validation checklist](guardrail-validation.md).
+
 ## Interactive prompts: non-TTY evidence only
 
 Every `harness:*` script refuses to run unless stdin and stdout are TTYs. The
@@ -84,6 +87,7 @@ otherwise remains compile-only and is covered by `npm test`.
 | OC-06 | `harness:update`: cancel, then `update` | Cancel changes nothing; apply succeeds; a rerun no longer reports an unknown installed version |
 | OC-07 | `harness:uninstall`: cancel, then `uninstall` | Cancel changes nothing; apply removes all harness agents and commands, keeps a backup, `AGENTS.md` untouched |
 | OC-08 | Fresh install receipt has a version stamp | Install exits 0; `harness:update` prints `Installed version: <version> (<commit>)` instead of `unknown` |
+| OC-09 | `harness:update` model reselection with live catalog, then cancel | Live catalog list printed with the entitlement disclaimer; installed models are catalog matches (no `absent` warning); cancel changes nothing; only read-only `opencode api get /api/model` calls |
 
 ### SMK-GL: OpenCode global scope (`smoke/opencode-lifecycle.smoke.ts`)
 
@@ -162,7 +166,8 @@ The suite also made these observations, which are not asserted:
 - `--check` connection checks, `--check-remote`, and anything else that would
   reach GitHub, Jira, MCP servers, or `origin`.
 - Interactive TTY QA by a human, the MarsRoverIA pilot, and Android
-  build/device commands.
+  build/device commands; see [`docs/design-integration-validation.md`](design-integration-validation.md)
+  for the manual interactive TTY design integration validation and smoke checklist.
 
 ## Continuous integration
 

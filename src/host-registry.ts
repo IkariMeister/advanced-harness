@@ -136,7 +136,23 @@ export interface HostCapabilityProfile {
     global: string[];
   };
   ghPrMergeGuard: string;
+  modelSupport: HostModelSupport;
   disclosures: string[];
+}
+
+/**
+ * How a host lets the user choose role models and whether it can list available models.
+ * Discovery reports catalog presence only; it never establishes entitlement or successful access.
+ */
+export interface HostModelSupport {
+  selection: 'per-role-explicit' | 'per-role-tier' | 'fixed-preset' | 'unsupported';
+  discovery: 'live-catalog' | 'unsupported';
+  limitation: string;
+}
+
+export function describeModelSupport(host: HostId): string[] {
+  const { selection, discovery, limitation } = HOST_CAPABILITIES[host].modelSupport;
+  return [`Model selection: ${selection}; model discovery: ${discovery}.`, limitation];
 }
 
 export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
@@ -150,10 +166,16 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       global: ['opencode.json', 'opencode.jsonc'],
     },
     ghPrMergeGuard: 'Explicit deny rule in agents.*.permissions matching gh pr merge / gh.exe pr merge',
+    modelSupport: {
+      selection: 'per-role-explicit',
+      discovery: 'live-catalog',
+      limitation: 'Install can list the live OpenCode model catalog (/api/model) when you agree to query it; otherwise only configured model IDs are listed. Catalog presence is not proof of account entitlement or successful inference.',
+    },
     disclosures: [
       'Executes 8 native inline roles (1 primary Lead + 7 subagents).',
       'Permissions enforced natively by OpenCode runtime (allow, ask, deny).',
       'Permission dialogs authorize tool operations, not conversational plans.',
+      'Security guardrails are appended last to each role: read/edit deny for keystores, signing/local properties, google-services.json, private keys, and ~/.ssh, ~/.aws, gh credentials; shell deny for git reset --hard, git clean, and force pushes. Home-path matching on Windows separators is unverified.',
     ],
   },
   'claude-code': {
@@ -166,11 +188,17 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       global: ['~/.claude/settings.json', '~/.claude.json'],
     },
     ghPrMergeGuard: 'Project .claude/settings.json denies Bash(gh pr merge) and gh.exe variants; prefix patterns are a workflow guardrail, not a sandbox.',
+    modelSupport: {
+      selection: 'per-role-explicit',
+      discovery: 'unsupported',
+      limitation: 'Each role takes an explicit alias (sonnet/opus/haiku/inherit) or full model ID; Enter keeps the installed model, else the preset. Claude Code exposes no model catalog to this harness, so only syntax is checked and availability is unverified.',
+    },
     disclosures: [
       'Lead is the project default agent (.claude/settings.json agent: lead) and delegates only to 7 child subagents in .claude/agents via Agent(...) tool scoping.',
       'Per-role tools use tools/disallowedTools allowlists. Operator, Implementer, Reviewer, and QA have no Bash tool because per-role Bash scoping cannot be expressed exactly.',
       'MCP aliases (jira, github, figma, stitch) and OpenCode Code Mode have no verified Claude identity; no .mcp.json is written and External has no MCP tools.',
       'Claude permission evaluation is deny > ask > allow; source ordered-last-match exceptions are downgraded to Claude prompts, never to allows.',
+      'Project .claude/settings.json denies Read/Edit of sensitive paths (keystores, signing/local properties, google-services.json, private keys, ~/.ssh, ~/.aws, gh credentials) and Bash git reset --hard, git clean, and force pushes for every session and subagent.',
       'Project scope only. Claude Code runtime discovery, agent selection, and model aliases are not verified by this harness.',
     ],
   },
@@ -184,10 +212,16 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       global: ['~/.gemini/config/rules', '~/.gemini/config/skills', '~/.gemini/config/scripts/antigravity-merge-guard.mjs', '~/.gemini/config/hooks.json', '~/.gemini/config/mcp_config.json'],
     },
     ghPrMergeGuard: 'PreToolUse lifecycle hook (scripts/antigravity-merge-guard.mjs) inspects run_command calls and blocks gh pr merge / gh.exe pr merge with deny',
+    modelSupport: {
+      selection: 'per-role-tier',
+      discovery: 'unsupported',
+      limitation: 'Each child role takes an explicit runtime tier (inherit/flash_lite/flash/pro); Lead uses the session model. Exact per-role model binding and model discovery are unsupported. Desired-model preferences are non-enforcing labels.',
+    },
     disclosures: [
       'Lead orchestrates 7 child roles dynamically via define_subagent/invoke_subagent rules.',
       'Role/tool-group ownership (External MCP, Implementer writes) is instruction-level enforced via Lead rules.',
       'PreToolUse hook guards direct run_command calls; command patterns are workflow conventions, not a sandbox against indirect scripts, aliases, or separate processes.',
+      'The same hook denies destructive Git (reset --hard, clean, force pushes). Sensitive-path read/edit denial is instruction-level only: Antigravity file-tool hook payloads are unverified.',
     ],
   },
   codex: {
@@ -200,12 +234,18 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       global: ['~/.codex/config.toml', '~/.codex/agents', '~/.codex/rules', '~/.agents/skills'],
     },
     ghPrMergeGuard: 'Codex rules forbid identifiable direct gh pr merge forms; indirect/API routes are not universally blocked.',
+    modelSupport: {
+      selection: 'per-role-explicit',
+      discovery: 'live-catalog',
+      limitation: 'Each role requires an explicit model ID and reasoning effort. The adapter can list models via the experimental codex app-server model/list call; listing is not entitlement, and typed IDs are used unchecked when discovery is unavailable. Installation remains gated (issue #45), so discovery is exercised only by tests.',
+    },
     disclosures: [
       'Installation and update are gated pending strict per-role isolation (issue #45); the Codex adapter currently serves doctor checks and tests only.',
       'Workflow skills are installed as .agents/skills/<name>/SKILL.md; invocation binding remains caller-specific.',
       'Lead and seven Codex subagent profiles use explicit user-selected models and reasoning settings; shared sandbox/approval/MCP configuration is inherited.',
       'Codex role ownership is instructional, not permission isolation. Approval behavior and Desktop runtime remain unverified.',
       'Codex agent reload semantics are unverified; use a deliberate fresh-session validation rather than assuming live reload.',
+      'Codex rules forbid direct git reset --hard, git clean, and force-push prefixes, including bundled short flags (-uf, -vuf) and force flags right after origin/upstream; force flags after other remotes or a refspec are not matched. Sensitive-path reads are instruction-level only; the read-only sandbox baseline requires approval for edits.',
     ],
   },
   cursor: {
@@ -218,6 +258,11 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       global: ['~/.cursor/mcp.json'],
     },
     ghPrMergeGuard: 'No Cursor merge guard is deployed; native integration is tracked in issue #46.',
+    modelSupport: {
+      selection: 'unsupported',
+      discovery: 'unsupported',
+      limitation: 'Native roles are not deployed, so per-role model selection and discovery are unsupported (issue #46).',
+    },
     disclosures: [
       'Workflow artifacts can be compiled as .cursor/skills/<name>/SKILL.md with manual-only invocation metadata; artifacts are not installed.',
       'Native roles, permissions, MCP configuration, and runtime behavior are not deployed; integration is tracked in issue #46.',

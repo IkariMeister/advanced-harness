@@ -251,7 +251,7 @@ test('External permissions allow only scoped publishing commands and keep merge/
     for (const invocation of [`${executable} auth status`, `${executable} secret list`, `${executable} release create v1`]) assert.equal(effect(invocation), 'ask', invocation);
   }
   assert.equal(effect('git push'), 'allow');
-  assert.equal(effect('git push --force origin feature'), 'allow');
+  assert.equal(effect('git push --force origin feature'), 'deny');
   assert.equal(effect('git push origin --delete old-feature'), 'allow');
   assert.equal(effect('git status'), 'ask');
   assert.equal(effect('git fetch origin'), 'ask');
@@ -316,7 +316,7 @@ test('integration setup adds approved External git-push exceptions to legacy per
   const draft: IntegrationDraft = { profile: { ...profile, github: { backend: 'gh', hostname: 'github.com', repository: 'company/app' } }, choices: [{ name: 'atlassian' }] };
   const legacyAgents = JSON.parse(JSON.stringify(definitions)) as Record<string, { permissions: { action: string; resource: string; effect: string }[] }>;
   legacyAgents.external!.permissions = legacyAgents.external!.permissions.filter(rule => !(rule.action === 'shell' && (rule.resource === 'git push' || rule.resource === 'git push *')));
-  assert.ok(!legacyAgents.external!.permissions.some(rule => rule.action === 'shell' && rule.resource.startsWith('git push')));
+  assert.ok(!legacyAgents.external!.permissions.some(rule => rule.action === 'shell' && rule.resource.startsWith('git push') && rule.effect !== 'deny'));
   const original = JSON.stringify({ agents: legacyAgents });
   assert.equal(updateConnectionConfig(original, sources, [], false), original);
   const output = updateIntegrationConfig(original, sources, draft);
@@ -325,7 +325,7 @@ test('integration setup adds approved External git-push exceptions to legacy per
   const effective = (permissions: { action: string; resource: string; effect: string }[], command: string) => permissions.filter(rule => rule.action === 'shell' && (rule.resource === command || (rule.resource.endsWith('*') && command.startsWith(rule.resource.slice(0, -1))))).at(-1)?.effect;
 
   assert.equal(effective(agents.external!.permissions, 'git push'), 'allow');
-  assert.equal(effective(agents.external!.permissions, 'git push --force origin feature'), 'allow');
+  assert.equal(effective(agents.external!.permissions, 'git push --force origin feature'), 'deny');
   assert.equal(effective(agents.external!.permissions, 'git push origin --delete old-feature'), 'allow');
   assert.equal(effective(agents.external!.permissions, 'git fetch origin'), 'ask');
   for (const role of nativeRoles.filter(role => role !== 'external')) {

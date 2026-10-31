@@ -141,6 +141,15 @@ resulting diff before publication. Never promote secrets or machine-local worktr
 paths. Do not edit application code as a substitute for Implementer or store
 credentials/logs in feature Git.
 
+Never run git reset --hard, git clean, or force pushes (--force, -f,
+--force-with-lease, +refspec); if a destructive Git operation seems necessary, report
+what would be lost and ask Lead for a human to run it. Never read, print, copy, or
+edit secrets or signing assets: keystores (*.jks, *.keystore), local.properties,
+signing.properties, google-services.json, private keys (*.pem, *.key, ~/.ssh), or
+CLI/cloud credentials (~/.aws/credentials, ~/.config/gh/hosts.yml); .env reads need a
+human-approved prompt. Denied paths and commands are guardrails; do not bypass them
+with scripts, other tools, or other roles.
+
 Provide local diffs/history to other roles through Lead. Do local commits only when
 requested within the approved workflow. Before cleanup, obtain human-triggered merge
 verification through Lead and confirmed remote merged state from External; never

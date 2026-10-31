@@ -3,7 +3,8 @@ import { nativeRoles, type NativeRole } from './native-role-types.ts';
 import type { Capability, CapabilityPolicy, CapabilityRule } from './capability-policy.ts';
 import type { RoleDefinition } from './role-definitions.ts';
 import type { WorkflowCommand } from './workflow-commands.ts';
-import { HOST_MODEL_PRESETS, type HostRolePreset } from './host-registry.ts';
+import { HOST_MODEL_PRESETS } from './host-registry.ts';
+import { claudeGuardrailDenyRules } from './security-guardrails.ts';
 
 /**
  * Pure Claude Code compilation. Every mapping here is fail-closed: a capability is granted
@@ -20,12 +21,24 @@ export const claudeMarkers = {
   reference: '@AGENTS.md',
 } as const;
 
-/** Project-level deny rules apply to every session and subagent, so they are safe to share. */
-export const claudeSettingsDeny = ['Bash(gh pr merge)', 'Bash(gh pr merge *)', 'Bash(gh.exe pr merge)', 'Bash(gh.exe pr merge *)'] as const;
+export const claudeMergeDeny = ['Bash(gh pr merge)', 'Bash(gh pr merge *)', 'Bash(gh.exe pr merge)', 'Bash(gh.exe pr merge *)'] as const;
+/** Project-level deny rules apply to every session and subagent, so they are safe to share: merge guard plus security guardrails. */
+export const claudeSettingsDeny: readonly string[] = [...claudeMergeDeny, ...claudeGuardrailDenyRules()];
 /** Prompt (never allow) for reads of environment files, matching the source *.env / *.env.* ask rules. */
 export const claudeSettingsAsk = ['Read(./.env)', 'Read(./.env.*)', 'Read(**/.env)', 'Read(**/.env.*)'] as const;
 
 const mergePattern = /^gh(?:\.exe)? pr merge(?: \*)?$/;
+
+/** Subagent `model` aliases documented by Claude Code; any other valid value is treated as a full model ID. */
+export const claudeModelAliases = ['sonnet', 'opus', 'haiku', 'inherit'] as const;
+
+/** Syntax check only: Claude Code exposes no model catalog here, so availability is never established. */
+export function isClaudeModelValue(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 100 && /^[A-Za-z0-9][A-Za-z0-9._:@[\]-]*$/.test(value);
+}
+
+export const claudePresetModels = (): Record<NativeRole, string> =>
+  Object.fromEntries(nativeRoles.map(role => [role, HOST_MODEL_PRESETS['claude-code'][role].model])) as Record<NativeRole, string>;
 
 export interface ClaudeRoleMapping {
   role: NativeRole;
@@ -82,7 +95,7 @@ export function mapClaudeRolePolicy(role: NativeRole, policy: CapabilityPolicy):
     for (const pattern of patterns) {
       const value = pattern.resource.kind === 'native-pattern' ? pattern.resource.value : '';
       if (capability === 'shell.run' && pattern.effect === 'deny' && mergePattern.test(value)) {
-        mapped.push(`${role}: shell "${value}" deny is enforced by project settings (${claudeSettingsDeny.join(', ')}).`);
+        mapped.push(`${role}: shell "${value}" deny is enforced by project settings (${claudeMergeDeny.join(', ')}).`);
         continue;
       }
       if (capability === 'file.read' && pattern.effect === 'ask' && /^\*\.env(\.\*)?$/.test(value)) {
@@ -143,15 +156,16 @@ export function compileClaudeSubagentFile(
   role: NativeRole,
   definition: RoleDefinition,
   mapping: ClaudeRoleMapping,
-  preset: HostRolePreset = HOST_MODEL_PRESETS['claude-code'][role]
+  model: string = HOST_MODEL_PRESETS['claude-code'][role].model
 ): string {
+  if (!isClaudeModelValue(model)) throw new Error(`Invalid Claude Code model for ${role}. No files were changed.`);
   const frontmatter: Record<string, unknown> = {
     name: role,
     description: definition.description,
     tools: mapping.tools.join(', '),
   };
   if (mapping.disallowedTools.length) frontmatter.disallowedTools = mapping.disallowedTools.join(', ');
-  frontmatter.model = preset.model;
+  frontmatter.model = model;
   const preface = role === 'lead'
     ? 'Lead for this Claude Code project. Delegate only to the named child agents and follow the project AGENTS.md.'
     : 'Generated advanced-harness subagent. Tool availability is limited to the frontmatter tools list; tools not listed are unavailable by design.';
@@ -162,7 +176,7 @@ export function compileClaudeCommandFile(command: WorkflowCommand): string {
   return `---\n${stringifyYaml({ description: command.description }, { lineWidth: 0 }).trimEnd()}\n---\n${command.body}`;
 }
 
-export function compileClaudeLeadBlock(mappings: Record<NativeRole, ClaudeRoleMapping>): string {
+export function compileClaudeLeadBlock(mappings: Record<NativeRole, ClaudeRoleMapping>, models: Record<NativeRole, string> = claudePresetModels()): string {
   const lines = [
     '## Advanced Harness Lead orchestration',
     '',
@@ -170,7 +184,7 @@ export function compileClaudeLeadBlock(mappings: Record<NativeRole, ClaudeRoleMa
     '',
     '| Agent | Model | Scope |',
     '| :--- | :--- | :--- |',
-    ...claudeChildRoles.map(role => `| \`${role}\` | \`${HOST_MODEL_PRESETS['claude-code'][role].model}\` | ${mappings[role].tools.join(', ') || 'no tools'} |`),
+    ...claudeChildRoles.map(role => `| \`${role}\` | \`${models[role]}\` | ${mappings[role].tools.join(', ') || 'no tools'} |`),
     '',
     '- Present the latest plan and wait for explicit human approval in this conversation before implementation or publishing delegation.',
     '- Never merge pull requests. `gh pr merge` is denied in `.claude/settings.json`.',
