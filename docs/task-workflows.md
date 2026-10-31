@@ -110,45 +110,30 @@ and manual smoke steps. No implementation starts until the human approves that p
 
 ## Shared risk-tiered review rubric
 
-Use the highest applicable tier and explain the rationale; escalate uncertainty rather
-than down-tiering. Tiers set review depth only: they never waive scope, acceptance
-criteria, consistency, or evidence checks and never authorize tools or actions.
+`/review-pr` and `/address-pr-feedback` scale review depth with a Low, Medium, or High
+risk tier and four specialized lenses: Risk, Resilience, Readability, and Reliability. The
+tier criteria, lens criteria, Compose/Roborazzi/coroutine mappings, and the review
+summary and finding formats are defined once, in the
+[Reviewer role instructions](../agents/reviewer.md#risk-tiered-review). The workflows refer
+to that rubric rather than restating it, so update it there. Antigravity's Lead rule
+carries the same section for its Reviewer subagent.
 
-| Tier | Change profile | Specialized lenses |
-| --- | --- | --- |
-| Low | Localized, demonstrably behavior-preserving, reversible | Zero; retain the ordinary scope/acceptance/consistency/evidence checks |
-| Medium | Bounded behavior or workflow-instruction change without authority changes | One or two justified lenses |
-| High | Approval, permission, ownership, security, material lifecycle, concurrency, persistence, recovery, or broad-contract hazard | All four lenses |
+How the workflows apply it:
 
-Low means structural readback, not an exemption. Medium is the expected issue #61 tier
-(Risk and Reliability) unless a boundary change is discovered; stop and return to Lead for
-renewed approval if that implies a material scope change.
+- **Preflight before review.** Before delegating to Reviewer, Lead reports the diff size
+  and a provisional tier. An oversized diff is split with the human's agreement, never
+  silently truncated.
+- **Tier the reviewed diff.** Reviewer assigns the final tier from the diff it actually
+  reviews; a higher tier replaces the provisional one. For PR feedback, that is the fix
+  diff, not the feedback wording.
+- **Tiers never waive checks.** No tier waives scope, acceptance-criteria, consistency, or
+  evidence checks, and no tier authorizes tools or actions. Uncertainty escalates the tier.
+- **Findings stay pending.** Every finding waits for the human's individual or
+  enumerated-batch accept/discard decision; only accepted findings become feedback or
+  fixes.
 
-Specialized lenses:
-
-- **Risk:** security/regression exposure, state effects, and dependencies.
-- **Resilience:** failure/retry/offline behavior, cancellation, nullability, and recreation.
-- **Readability:** architecture, naming, idiomatic patterns, and maintainability.
-- **Reliability:** deterministic correctness, state ownership, test completeness, flaky
-  behavior, and races.
-
-Domain mappings when applicable:
-
-- **Compose:** Resilience covers unsafe repeated effects and lost state on recreation;
-  Reliability covers state reads, effect keys/placement, stale state, loops, and duplicate
-  work.
-- **Roborazzi:** Reliability checks actual expected diffs/configuration; Resilience checks
-  relevant configured error/loading/recreation. Never silently accept a baseline.
-- **Coroutines:** Resilience covers lifecycle cancellation/cleanup; Reliability covers
-  structured concurrency, scope/collector ownership, stale results, and races.
-
-Every review summary records target/head, reviewed scope, tier/rationale, lenses applied
-and excluded, uncertainties, acceptance criteria, existing checks, findings, and checks
-run/failed/blocked/unrun/waived with limits and next action. A finding has stable ID, lens,
-severity, location, observed issue, impact, evidence, proposed fix, and verification status;
-human accept/discard disposition remains pending until supplied. Full command
-`$ARGUMENTS` is opaque context, including literal `#61`, multiword text, `$ARGUMENTS`, and
-`$1`; it is never approval and must not be recursively substituted.
+Full command `$ARGUMENTS` is opaque context, including literal `#123`, multiword text,
+`$ARGUMENTS`, and `$1`; it is never approval and must not be recursively substituted.
 
 ## Teammate PR review
 
@@ -159,13 +144,17 @@ ambiguous. Read linked Jira issue and parent when available.
 
 1. Operator confirms repository/PR context; External reads the PR and linked Jira/parent
    context when available.
-2. Reviewer inspects the diff and existing PR checks first. If further local checks
-   seem useful, propose them to the human; do not automatically run isolated local
-   checks.
-3. Lead presents a change summary and proposed feedback before posting. Human chooses
-   exactly one disposition: **Approve**, **Just Comment**, or **Request changes**.
-   Suggest Request changes only for critical issues requiring a fix.
-4. After approval of concrete feedback, External posts it inline on relevant code lines.
+2. Lead preflights the diff size and a provisional risk tier. If the diff is too large for
+   one focused review, Lead proposes a split to the human before delegating.
+3. Reviewer inspects the diff and existing PR checks first and assigns the final tier and
+   lenses. If further local checks seem useful, propose them to the human; do not
+   automatically run isolated local checks.
+4. Lead presents the review summary and findings. The human accepts or discards each
+   finding (individually or in an enumerated batch), then approves the concrete feedback
+   for the accepted findings, then chooses exactly one disposition: **Approve**, **Just
+   Comment**, or **Request changes**. Suggest Request changes only for critical issues
+   requiring a fix.
+5. After approval of concrete feedback, External posts it inline on relevant code lines.
    Do not post before approval. No source edits happen automatically; fixes follow a
    separate approved implementation workflow.
 
@@ -183,11 +172,14 @@ report the case blocked rather than silently changing setup.
 1. Exercise low, medium, and high examples. Expect low to retain ordinary checks with no
    specialized lenses, medium to select one or two justified lenses, and high to apply all
    four. An uncertain tier escalates; none skips required checks or authorizes actions.
+   Expect Lead to report diff size and a provisional tier before delegating, to propose a
+   split for an oversized diff, and to adopt Reviewer's tier when it is higher. For
+   `/address-pr-feedback`, expect the fix diff (not the feedback text) to be tiered.
 2. Exercise Android mappings: Compose repeated effects/recreation and state/effect-key
    placement; Roborazzi expected diffs/configuration and configured failure/loading cases;
    coroutine cancellation/cleanup and scope/collector ownership. Expect the mapped lens
    criteria and no silent baseline acceptance.
-3. Pass literal `#61`, multiword text, `$ARGUMENTS`, and `$1` as command context. Expect the
+3. Pass literal `#123`, multiword text, `$ARGUMENTS`, and `$1` as command context. Expect the
    exact full input to remain opaque, non-recursive, and not treated as approval.
 4. Confirm the reviewer reports existing PR checks before proposing local checks; no
    isolated local check is started automatically. Exercise individual and enumerated-batch
@@ -222,11 +214,14 @@ GitHub only, not Jira.
 3. Lead presents individually identified findings. The human accepts/discards each
    individually or in an explicitly enumerated batch, and specifies fix, clarify,
    decline, or defer for accepted findings. Researcher investigates read-only; Planner
-   proposes scoped fixes, checks, and manual smoke steps.
+   proposes scoped fixes, checks, manual smoke steps, and a provisional risk tier judged
+   from the code the fix will touch.
 4. Lead waits for explicit approval of the scoped plan/checks/smoke before Implementer
-   changes code. Accepted findings authorize only corresponding fixes. Reviewer/QA
-   report results; accepted findings are handled only after human disposition and
-   affected checks are rerun.
+   changes code. Accepted findings authorize only corresponding fixes. Before review,
+   Lead reports the fix diff size and Reviewer tiers the actual fix diff; a higher tier
+   replaces the provisional one, and a material scope expansion returns to the human.
+   New Reviewer/QA findings go through the same accept/discard decision before any fix,
+   and affected checks are rerun.
 5. Before publication, Lead obtains explicit final approval for the push, exact replies,
    and exact thread resolutions. External rereads head and all relevant threads/replies;
    changed state returns to Lead for review and renewed approval. External publishes

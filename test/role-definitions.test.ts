@@ -35,24 +35,14 @@ test('strict role source compiler preserves current normalized OpenCode definiti
   const agentsDirectory = fileURLToPath(agents);
   const compiled = compileOpenCodeRoles(loadRoleDefinitions(agentsDirectory));
   assert.deepEqual(compiled.diagnostics, []);
-  const currentReviewerBody = /^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/.exec(source('reviewer'))?.[1]?.trim();
-  assert.ok(currentReviewerBody);
-  const expectedCurrent = structuredClone(baseline);
-  expectedCurrent.reviewer.system = currentReviewerBody;
-  assert.deepEqual(compiled.definitions, expectedCurrent);
-  assert.deepEqual(loadNativeDefinitions(agentsDirectory), expectedCurrent);
-  const legacyDefinitions = loadNativeDefinitions(fileURLToPath(legacyAgents));
-  assert.deepEqual(legacyDefinitions, baseline, 'captured compiled baseline continues to represent unchanged legacy role sources');
+  assert.deepEqual(compiled.definitions, baseline);
+  assert.deepEqual(loadNativeDefinitions(agentsDirectory), baseline);
+  assert.deepEqual(loadNativeDefinitions(fileURLToPath(legacyAgents)), baseline);
   for (const role of nativeRoles) {
     const current = source(role), prior = legacySource(role);
     const currentBody = /^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/.exec(current)?.[1]?.trim();
     const legacyBody = /^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/.exec(prior)?.[1]?.trim();
-    if (role !== 'reviewer') assert.equal(currentBody, legacyBody, `${role} source instructions preserved`);
-    else {
-      assert.equal(currentBody, currentReviewerBody, 'reviewer source is the explicit current reviewer compiler expectation');
-      assert.match(currentBody ?? '', /Risk-tiered review/);
-      assert.match(currentBody ?? '', /Finding format/);
-    }
+    assert.equal(currentBody, legacyBody, `${role} source instructions preserved`);
   }
   for (const role of nativeRoles) {
     const actual: NativeDefinition = compiled.definitions![role];
@@ -60,7 +50,7 @@ test('strict role source compiler preserves current normalized OpenCode definiti
     assert.equal(actual.mode, role === 'lead' ? 'primary' : 'subagent');
     assert.equal(actual.model, baseline[role].model);
     assert.deepEqual(actual.permissions, baseline[role].permissions);
-    assert.equal(actual.system, role === 'reviewer' ? currentReviewerBody : baseline[role].system);
+    assert.equal(actual.system, baseline[role].system);
     assert.notEqual(actual.permissions, baseline[role].permissions);
   }
 });

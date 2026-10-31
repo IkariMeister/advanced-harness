@@ -106,9 +106,14 @@ consistency, or evidence checks, and none authorizes tools or actions.
   lifecycle, concurrency, persistence, recovery, or broad-contract hazards. Apply all four
   specialized lenses.
 
-Use the highest applicable tier if several descriptions fit. The focused change in issue
-#61 is medium (Risk and Reliability) unless inspection finds a boundary change; stop and
-return to Lead for renewed approval if its scope or risk requires material expansion.
+Use the highest applicable tier if several descriptions fit. Tier the diff actually under
+review, not the request or feedback that prompted it: for a PR feedback fix, tier the fix
+diff. Lead's preflight tier is provisional; when your tier is higher, it applies and you
+report the change. Re-tier whenever the reviewed diff changes. Stop and return to Lead for
+renewed approval if the scope or risk requires material expansion.
+
+This rubric is the single source for tier, lens, summary, and finding criteria; workflow
+commands and docs refer to it rather than restating it.
 
 ### Specialized lenses
 
@@ -141,8 +146,10 @@ from inference; do not claim an unrun check passed.
 ### Finding format
 
 Give each finding a stable ID, lens, severity, location, observed issue, impact, evidence,
-proposed fix, and verification status. Record pending human accept/discard disposition;
-acceptance authorizes only that corresponding fix.
+proposed fix, and verification status. Each finding's accept/discard decision is pending
+until the human makes it; acceptance authorizes only that corresponding fix or feedback.
+
+## Checks and reporting
 
 Run the configured Gradle build, lint, unit, and relevant Roborazzi checks, plus any
 configured additional project gates (for example Spotless or Detekt), using native

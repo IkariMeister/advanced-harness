@@ -127,7 +127,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: true, // Antigravity bundles run_command with write tools; needed for lint/build/unit checks
         enableMCPTools: false,
         workspace: 'inherit',
-        instructionSummary: 'Runs lint/build/unit checks and reports code quality findings. Does not modify app code.',
+        instructionSummary: 'Runs lint/build/unit checks and reports risk-tiered code quality findings (see Reviewer Risk-Tiered Review below). Does not modify app code.',
       };
     case 'qa':
       return {
@@ -153,6 +153,18 @@ export function compileAntigravitySubagentSpec(
         instructionSummary: 'Coordinates child subagents, presents plans to human, and gates consequential actions.',
       };
   }
+}
+
+/**
+ * Extracts the body of the `## Risk-tiered review` section from the Reviewer instructions.
+ * Antigravity subagents receive only a summary, so the rubric must travel in the Lead rule.
+ */
+export function extractReviewerRubric(instructions: string): string {
+  const match = /^## Risk-tiered review\r?\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(instructions);
+  if (!match) {
+    throw new Error('Reviewer instructions are missing the "## Risk-tiered review" section required by the Antigravity Lead rule.');
+  }
+  return match[1]!.trim();
 }
 
 /**
@@ -202,6 +214,11 @@ export function compileLeadOrchestrationRule(
   lines.push('- **Implementer:** The ONLY subagent permitted to write application and test source code.');
   lines.push('- **Reviewer / QA:** Execute test and build commands to report findings; never modify application source directly.');
   lines.push('- **Precedence:** Current Human Decision > `AGENTS.md` > `MEMORY.md`.');
+  lines.push('');
+  lines.push('## Reviewer Risk-Tiered Review');
+  lines.push('When defining or invoking the Reviewer subagent, include this section verbatim in its instructions. It is the Reviewer rubric that the review workflows refer to.');
+  lines.push('');
+  lines.push(extractReviewerRubric(roles.reviewer.instructions));
   lines.push('');
 
   const content = lines.join('\n');

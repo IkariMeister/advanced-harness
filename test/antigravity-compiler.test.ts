@@ -6,6 +6,7 @@ import { loadWorkflowCommands } from '../src/workflow-commands.ts';
 import {
   compileAntigravitySubagentSpec,
   compileLeadOrchestrationRule,
+  extractReviewerRubric,
   compileAntigravityHooks,
   compileAntigravityMcpConfig,
   compileAntigravitySkill,
@@ -91,6 +92,17 @@ test('compileLeadOrchestrationRule tells Lead to reuse existing subagent definit
   assert.ok(rule.content.includes('## Subagent Definition Lifecycle'));
   assert.match(rule.content, /already exists, do not retry it; invoke the existing child with `invoke_subagent`/);
   assert.match(rule.content, /does not match the table above .* Stop and ask the human to start a fresh session/);
+});
+
+test('compileLeadOrchestrationRule carries the Reviewer risk-tiered rubric from agents/reviewer.md', () => {
+  const rule = compileLeadOrchestrationRule(roles);
+  const rubric = extractReviewerRubric(roles.reviewer.instructions);
+  assert.ok(rule.content.includes('## Reviewer Risk-Tiered Review'));
+  assert.match(rule.content, /include this section verbatim in its instructions/);
+  assert.ok(rule.content.includes(rubric), 'Lead rule embeds the rubric verbatim');
+  for (const text of ['### Specialized lenses', '### Finding format', '**Roborazzi:**', 'Tier the diff actually under']) assert.ok(rubric.includes(text), `rubric includes ${text}`);
+  assert.ok(!rubric.includes('## Checks and reporting'), 'extraction stops at the next section');
+  assert.throws(() => extractReviewerRubric('No rubric here.'), /missing the "## Risk-tiered review" section/);
 });
 
 test('compileAntigravityHooks configures PreToolUse gh pr merge guard', () => {
