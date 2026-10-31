@@ -103,3 +103,17 @@ test('BH-012: workflow commands reflect non-blocking worktrees, shared memory an
   assert.match(startIssue, /evaluate candidate memory learnings once for approved consolidation into AGENTS\.md/);
   assert.match(startIssue, /approve resulting diff before publication, rejecting secrets and operational paths/);
 });
+
+test('BH-035: workflow commands reflect bounded delegation and 4-state status contract', async () => {
+  const startIssue = await readFile(new URL('start-issue.md', root), 'utf8');
+  assert.match(startIssue, /Lead defaults to inline inspection and scoping for understood low-risk tasks/);
+  assert.match(startIssue, /File count never decides delegation/);
+  assert.match(startIssue, /delegated Implementer owns code, tests, and documentation together/);
+  assert.match(startIssue, /Standardize turn status reporting around Working, Checking, Ready, and Needs your decision/);
+
+  const feedback = await readFile(new URL('address-pr-feedback.md', root), 'utf8');
+  assert.match(feedback, /Lead inspects code and prepares the fix plan inline for understood low-risk findings/);
+  assert.match(feedback, /File count never decides delegation/);
+  assert.match(feedback, /delegated Implementer owns code, tests, and documentation together/);
+  assert.match(feedback, /Standardize progress reporting around Working, Checking, Ready, and Needs your decision/);
+});

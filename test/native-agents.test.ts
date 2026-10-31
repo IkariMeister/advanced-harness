@@ -259,3 +259,32 @@ test('BH-012: Lead and Operator enforce bootstrap rules, conflict precedence, an
   assert.match(operator, /Evaluate candidate learnings once for approved consolidation into AGENTS\.md/);
   assert.match(operator, /Never promote secrets or machine-local worktree paths/);
 });
+
+test('BH-035: Lead instructs bounded delegation trigger rules and 4-state human status reporting', () => {
+  const lead = template('lead').replace(/\s+/g, ' ');
+
+  // Inline-first execution for understood, low-risk edits/read inspection
+  assert.match(lead, /Lead defaults to direct inline execution for understood, low-risk read-only context inspection and scoping/);
+  assert.match(lead, /avoiding over-delegation to Researcher or Planner for trivial lookups/);
+
+  // File count never decides delegation
+  assert.match(lead, /File count never decides delegation: multi-file edits stay in a single cohesive unit if understood/);
+
+  // Never split a single unit of behavior across separate code/test/doc subagents
+  assert.match(lead, /Never split a single unit of behavior across disjoint code, test, and doc subagents/);
+  assert.match(lead, /a delegated Implementer worker owns code, tests, and documentation together/);
+
+  // Named reasons for delegation
+  assert.match(lead, /Delegate only for named reasons: context budget exceeded, disjoint parallel units, or high-risk changes requiring independent verification/);
+
+  // Lead preserves strict tool policy (no edit/shell)
+  assert.match(lead, /Lead retains no edit or shell tools; all source\/test edits belong strictly to Implementer/);
+  assert.ok(!permissionRules('lead').some(rule => ['shell', 'edit', 'execute'].includes(rule.action)));
+
+  // 4-state human status contract
+  assert.match(lead, /Human status contract: standardize progress reporting around four explicit states:/);
+  assert.match(lead, /- Working: changes or approved context steps are in progress\./);
+  assert.match(lead, /- Checking: verification, build, lint, or tests are running\./);
+  assert.match(lead, /- Ready: work is verified with evidence; ready for human review or PR publication\./);
+  assert.match(lead, /- Needs your decision: paused only at mandatory human gates/);
+});
