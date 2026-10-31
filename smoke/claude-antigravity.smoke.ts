@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSandbox, repoRoot, tree, type Sandbox } from './support/sandbox.ts';
-import { antigravityInstall, ask, roles } from './support/steps.ts';
+import { antigravityInstall, ask, claudeCodeInstall, roles } from './support/steps.ts';
 
 const commands = ['address-pr-feedback', 'assess-debt', 'grill-me', 'report-defect', 'review-pr', 'start-issue'];
 const headCommit = () => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
@@ -33,7 +33,7 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
   after(() => box.dispose());
 
   it('SMK-CC-01 Enter at the install confirmation cancels with no writes', async () => {
-    const result = await box.run('install-native-harness.ts', args(), { steps: [ask('Type yes to install the Claude Code harness')] });
+    const result = await box.run('install-native-harness.ts', args(), { steps: claudeCodeInstall('') });
     assert.equal(result.code, 1);
     assert.match(result.stdout, /Installation canceled by user\. No files written\./);
     assert.deepEqual(tree(box.project), pristine);
@@ -41,7 +41,7 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
   });
 
   it('SMK-CC-02 install deploys CLAUDE.md, settings, eight agents, and six commands; AGENTS.md preserved', async () => {
-    const result = await box.run('install-native-harness.ts', args(), { steps: [ask('Type yes to install the Claude Code harness', 'yes')] });
+    const result = await box.run('install-native-harness.ts', args(), { steps: claudeCodeInstall('yes') });
     assert.equal(result.code, 0, result.transcript);
     assert.match(result.stdout, /Harness version: \d+\.\d+\.\d+ \([0-9a-f]{40}\)/);
     assert.ok(receiptsFor(box.recoveryDirectory, 'claude-code').some(r => r.harnessVersion?.commit === headCommit()), 'receipt stamped with the checkout commit');
