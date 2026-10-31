@@ -53,6 +53,24 @@ test('BH-030: PR feedback workflow retrieves complete threads and gates scoped f
   assert.match(feedback, /Prompt safeguards guide behavior but are not a deterministic security boundary/i);
 });
 
+test('issue 61: PR workflows apply tiered lenses, structured findings, and opaque arguments', async () => {
+  const review = await readFile(new URL('review-pr.md', root), 'utf8');
+  const feedback = await readFile(new URL('address-pr-feedback.md', root), 'utf8');
+  for (const source of [review, feedback]) {
+    assert.match(source, /highest applicable.*risk tier/i);
+    assert.match(source, /Low.*zero specialized lenses/i);
+    assert.match(source, /Medium.*one or two/i);
+    assert.match(source, /High.*all four/i);
+    assert.match(source, /tiers.*do not waive|tiers.*never waive/i);
+    for (const lens of ['Risk', 'Resilience', 'Readability', 'Reliability']) assert.ok(source.includes(lens), `has ${lens} lens`);
+    for (const domain of ['Compose', 'Roborazzi', 'coroutines']) assert.match(source, new RegExp(domain, 'i'), `has ${domain} mapping`);
+    for (const field of ['stable ID', 'severity', 'location', 'observed issue', 'impact', 'evidence', 'proposed fix', 'verification status']) assert.ok(source.includes(field), `finding includes ${field}`);
+    assert.match(source, /#61/);
+  }
+  assert.match(review, /target\/head/);
+  assert.match(feedback, /run\/failed\/blocked\/unrun\/waived/);
+});
+
 test('workflow commands preserve their expected handoff behavior', async () => {
   const startIssue = await readFile(new URL('start-issue.md', root), 'utf8');
   assert.match(startIssue, /GitHub or Jira issue/);

@@ -108,6 +108,48 @@ if none is explicit, asks whether this is GitHub or Jira, confirms repository an
 and has External verify assignment. After requirements are clear, Lead presents a plan
 and manual smoke steps. No implementation starts until the human approves that plan.
 
+## Shared risk-tiered review rubric
+
+Use the highest applicable tier and explain the rationale; escalate uncertainty rather
+than down-tiering. Tiers set review depth only: they never waive scope, acceptance
+criteria, consistency, or evidence checks and never authorize tools or actions.
+
+| Tier | Change profile | Specialized lenses |
+| --- | --- | --- |
+| Low | Localized, demonstrably behavior-preserving, reversible | Zero; retain the ordinary scope/acceptance/consistency/evidence checks |
+| Medium | Bounded behavior or workflow-instruction change without authority changes | One or two justified lenses |
+| High | Approval, permission, ownership, security, material lifecycle, concurrency, persistence, recovery, or broad-contract hazard | All four lenses |
+
+Low means structural readback, not an exemption. Medium is the expected issue #61 tier
+(Risk and Reliability) unless a boundary change is discovered; stop and return to Lead for
+renewed approval if that implies a material scope change.
+
+Specialized lenses:
+
+- **Risk:** security/regression exposure, state effects, and dependencies.
+- **Resilience:** failure/retry/offline behavior, cancellation, nullability, and recreation.
+- **Readability:** architecture, naming, idiomatic patterns, and maintainability.
+- **Reliability:** deterministic correctness, state ownership, test completeness, flaky
+  behavior, and races.
+
+Domain mappings when applicable:
+
+- **Compose:** Resilience covers unsafe repeated effects and lost state on recreation;
+  Reliability covers state reads, effect keys/placement, stale state, loops, and duplicate
+  work.
+- **Roborazzi:** Reliability checks actual expected diffs/configuration; Resilience checks
+  relevant configured error/loading/recreation. Never silently accept a baseline.
+- **Coroutines:** Resilience covers lifecycle cancellation/cleanup; Reliability covers
+  structured concurrency, scope/collector ownership, stale results, and races.
+
+Every review summary records target/head, reviewed scope, tier/rationale, lenses applied
+and excluded, uncertainties, acceptance criteria, existing checks, findings, and checks
+run/failed/blocked/unrun/waived with limits and next action. A finding has stable ID, lens,
+severity, location, observed issue, impact, evidence, proposed fix, and verification status;
+human accept/discard disposition remains pending until supplied. Full command
+`$ARGUMENTS` is opaque context, including literal `#61`, multiword text, `$ARGUMENTS`, and
+`$1`; it is never approval and must not be recursively substituted.
+
 ## Teammate PR review
 
 **Inputs:** PR number and current repository. Ask if repository or PR identity is
@@ -130,6 +172,36 @@ ambiguous. Read linked Jira issue and parent when available.
 **Outputs/checks:** Change summary, existing-check status, proposed feedback and
 human's disposition; if authorized, inline comments and a report of posting result.
 Unavailable PR/check context is disclosed, not inferred.
+
+### Manual review smoke
+
+Prerequisites: an authorized local fixture or mock PR/check context, an interactive TTY,
+and no live-write authorization. Do not install prompts, broaden access, or make live
+GitHub writes for this smoke. If a fixture/session/TTY/runtime route is unavailable,
+report the case blocked rather than silently changing setup.
+
+1. Exercise low, medium, and high examples. Expect low to retain ordinary checks with no
+   specialized lenses, medium to select one or two justified lenses, and high to apply all
+   four. An uncertain tier escalates; none skips required checks or authorizes actions.
+2. Exercise Android mappings: Compose repeated effects/recreation and state/effect-key
+   placement; Roborazzi expected diffs/configuration and configured failure/loading cases;
+   coroutine cancellation/cleanup and scope/collector ownership. Expect the mapped lens
+   criteria and no silent baseline acceptance.
+3. Pass literal `#61`, multiword text, `$ARGUMENTS`, and `$1` as command context. Expect the
+   exact full input to remain opaque, non-recursive, and not treated as approval.
+4. Confirm the reviewer reports existing PR checks before proposing local checks; no
+   isolated local check is started automatically. Exercise individual and enumerated-batch
+   finding decisions; only accepted findings receive corresponding scoped fixes.
+5. Withhold feedback disposition, scoped-plan approval, and final publication approval in
+   separate runs. Expect no post, code change, push, reply, or thread resolution at the
+   corresponding boundary. Request changes is suggested only for critical fix-required
+   issues.
+6. Simulate stale PR head and interruption/uncertain write outcomes. Expect read-only
+   state inspection, no duplicate write, stop/escalation on divergence or uncertainty,
+   and no remote writes in this smoke.
+
+Record each case as passed, failed, blocked, or unrun with evidence and limits; do not
+claim static prompt coverage proves runtime behavior.
 
 **Example:** “Review PR 123 in this repository.” Reviewer reads the diff and check
 results, then Lead shows the summary and suggested inline comments. The human selects

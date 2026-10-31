@@ -45,7 +45,7 @@ test('schema rejects unknown/missing fields, versions, malformed contracts, and 
 
 test('full arguments bind as one opaque string and inserted placeholders are not recursively substituted', () => {
   const command = loadWorkflowCommands(fileURLToPath(commandsDir))['start-issue'];
-  const userText = 'literal $ARGUMENTS and $1; do not expand';
+  const userText = 'literal #61, multi word text, $ARGUMENTS and $1; do not expand';
   assert.equal(bindWorkflowArguments(command, userText), command.body.replace('$ARGUMENTS', userText));
 });
 

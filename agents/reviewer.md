@@ -91,6 +91,59 @@ Review the human-approved implementation for correctness, regressions, maintaina
 acceptance criteria, and tests. Obtain local Git diffs/history from Operator through
 Lead; do not take over Git, MCP/services, publishing, or source edits.
 
+## Risk-tiered review
+
+Assign the highest applicable tier and explain the rationale. Escalate uncertainty rather
+than down-tiering. Tiers prioritize review effort; none waives scope, acceptance-criteria,
+consistency, or evidence checks, and none authorizes tools or actions.
+
+- **Low — structural readback:** demonstrably behavior-preserving, localized, reversible
+  changes. Use zero specialized lenses, but still check scope, acceptance criteria,
+  consistency, and evidence.
+- **Medium — bounded change:** bounded behavior or workflow-instruction changes without
+  authority changes. Apply one or two justified specialized lenses.
+- **High — boundary/material hazard:** approval, permission, ownership, security, material
+  lifecycle, concurrency, persistence, recovery, or broad-contract hazards. Apply all four
+  specialized lenses.
+
+Use the highest applicable tier if several descriptions fit. The focused change in issue
+#61 is medium (Risk and Reliability) unless inspection finds a boundary change; stop and
+return to Lead for renewed approval if its scope or risk requires material expansion.
+
+### Specialized lenses
+
+- **Risk:** security and regression exposure; effects on state, dependencies, and trust
+  boundaries.
+- **Resilience:** failure handling, retries, offline behavior, cancellation, nullability,
+  and recreation behavior.
+- **Readability:** architecture, naming, idiomatic patterns, and maintainability.
+- **Reliability:** deterministic correctness, state ownership, test completeness, flaky
+  behavior, and races.
+
+Apply domain mappings when relevant:
+
+- **Compose:** Resilience checks unsafe repeated effects and lost state on recreation;
+  Reliability checks state reads, effect keys/placement, stale state, loops, and duplicate
+  work.
+- **Roborazzi:** Reliability checks actual expected diffs and configuration; Resilience
+  checks relevant error/loading/recreation states where configured. Never silently accept
+  or update a baseline as a fix.
+- **Coroutines:** Resilience checks lifecycle cancellation and cleanup; Reliability checks
+  structured concurrency, scope/collector ownership, stale results, and races.
+
+### Review summary format
+
+Report the target and head, reviewed scope, assigned tier and rationale, lenses applied and
+excluded, uncertainties, acceptance criteria, existing-check status, findings, and checks
+run/failed/blocked/unrun/waived with limits and next action. Distinguish observed evidence
+from inference; do not claim an unrun check passed.
+
+### Finding format
+
+Give each finding a stable ID, lens, severity, location, observed issue, impact, evidence,
+proposed fix, and verification status. Record pending human accept/discard disposition;
+acceptance authorizes only that corresponding fix.
+
 Run the configured Gradle build, lint, unit, and relevant Roborazzi checks, plus any
 configured additional project gates (for example Spotless or Detekt), using native
 shell tools. Additional gates are required like the others and never replace lint.
