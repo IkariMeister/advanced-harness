@@ -190,10 +190,14 @@ test('doctor passes after installation and reports tampering with subagents, set
 
   const leadPath = join(h.project, '.claude', 'agents', 'lead.md');
   const lead = readFileSync(leadPath, 'utf8');
+  // A different valid model is an explicit choice, not tampering; an invalid value is reported.
   writeFileSync(leadPath, lead.replace('model: sonnet', 'model: opus'));
+  const otherModel = await diagnoseClaudeCode({ project: h.project });
+  assert.equal(otherModel.ok, true, otherModel.issues.join('\n'));
+  writeFileSync(leadPath, lead.replace('model: sonnet', 'model: "two words"'));
   const badModel = await diagnoseClaudeCode({ project: h.project });
   assert.equal(badModel.ok, false);
-  assert.ok(badModel.issues.some(issue => /lead\.md (model|is outdated|is customized)/.test(issue)));
+  assert.ok(badModel.issues.some(issue => /lead\.md model "two words" is missing or invalid/.test(issue)), badModel.issues.join('\n'));
   writeFileSync(leadPath, lead);
 
   const settingsPath = join(h.project, '.claude', 'settings.json');
@@ -325,4 +329,102 @@ test('install stamps harnessVersion on the Claude Code receipt and prints it bef
   assert.equal(versionBeforeConfirm, true, 'version line printed before the final confirmation');
   const head = discoverReceiptChain(h.recovery, join(h.project, '.claude', 'settings.json'), 'claude-code').head;
   assert.deepEqual(head?.receipt.version === 2 ? head.receipt.harnessVersion : undefined, { version: '9.8.7', commit });
+});
+
+const modelPrompt = (question: string) => /^(\w+): Claude Code model \(/.exec(question)?.[1];
+const frontmatterModel = (h: ReturnType<typeof harness>, role: string) => /^model: (.*)$/m.exec(readFileSync(join(h.project, '.claude', 'agents', `${role}.md`), 'utf8'))?.[1];
+
+test('per-role Claude Code models accept a listed number, an alias, or a full ID and update the Lead table', async t => {
+  const h = harness(t, (question, suggested) => {
+    const role = modelPrompt(question);
+    if (role === 'planner') return '3';
+    if (role === 'reviewer') return 'inherit';
+    if (role === 'implementer') return 'claude-sonnet-5-5';
+    if (role) return '';
+    return question.startsWith('Type yes') ? 'yes' : suggested ?? '';
+  });
+  assert.equal(await install(h), 0, h.errors.join('\n'));
+  assert.equal(frontmatterModel(h, 'planner'), 'haiku');
+  assert.equal(frontmatterModel(h, 'reviewer'), 'inherit');
+  assert.equal(frontmatterModel(h, 'implementer'), 'claude-sonnet-5-5');
+  assert.equal(frontmatterModel(h, 'lead'), 'sonnet', 'Enter keeps the preset on a fresh install');
+  const memory = readFileSync(join(h.project, 'CLAUDE.md'), 'utf8');
+  assert.match(memory, /\| `planner` \| `haiku` \|/);
+  assert.match(memory, /\| `implementer` \| `claude-sonnet-5-5` \|/);
+  assert.ok(h.output.some(line => /discovery is unsupported and availability is unverified/.test(line)));
+  assert.ok(h.output.includes('  implementer: claude-sonnet-5-5 is not a documented alias; it is written as typed and its availability is unverified.'));
+  assert.equal((await diagnoseClaudeCode({ project: h.project })).ok, true);
+});
+
+test('a rerun suggests installed models; Enter keeps them with no writes, and a change rewrites only affected files', async t => {
+  const h = harness(t, (question) => modelPrompt(question) === 'planner' ? 'haiku' : confirmOnly('yes')(question));
+  assert.equal(await install(h), 0);
+  const suggestions: Record<string, string | undefined> = {};
+  const keep = await runWith(h, (question, suggested) => { const role = modelPrompt(question); if (role) suggestions[role] = suggested; return confirmOnly('yes')(question); });
+  assert.equal(keep.status, 0);
+  assert.equal(suggestions.planner, 'haiku');
+  assert.equal(suggestions.reviewer, 'opus');
+  assert.ok(keep.output.some(line => /No selected file needs changes/.test(line)));
+
+  const researcherBefore = readFileSync(join(h.project, '.claude', 'agents', 'researcher.md'), 'utf8');
+  const change = await runWith(h, question => modelPrompt(question) === 'qa' ? 'opus' : confirmOnly('yes')(question));
+  assert.equal(change.status, 0, change.errors.join('\n'));
+  assert.equal(frontmatterModel(h, 'qa'), 'opus');
+  assert.equal(frontmatterModel(h, 'planner'), 'haiku');
+  assert.match(readFileSync(join(h.project, 'CLAUDE.md'), 'utf8'), /\| `qa` \| `opus` \|/);
+  assert.equal(readFileSync(join(h.project, '.claude', 'agents', 'researcher.md'), 'utf8'), researcherBefore);
+  assert.ok(change.output.includes('  .claude/agents/qa.md (update)'));
+  assert.ok(change.output.includes('  .claude/agents/researcher.md (current (up to date))'));
+});
+
+test('three invalid model answers stop before any file, backup, or receipt', async t => {
+  const h = harness(t, question => modelPrompt(question) === 'external' ? 'two words' : confirmOnly('yes')(question));
+  assert.equal(await install(h), 2);
+  assert.equal(h.prompts.filter(question => modelPrompt(question) === 'external').length, 3);
+  assert.ok(h.errors.some(line => /external remained invalid after 3 attempts\. No files were changed\./.test(line)));
+  assert.equal(h.prompts.some(question => question.startsWith('Type yes')), false);
+  assert.equal(existsSync(join(h.project, '.claude')), false);
+  assert.equal(existsSync(join(h.project, 'CLAUDE.md')), false);
+  assert.equal(existsSync(h.recovery), false);
+});
+
+test('an invalid answer is retried, and a closed model prompt stops without writes', async t => {
+  let tries = 0;
+  const retried = harness(t, question => modelPrompt(question) === 'lead' && tries++ === 0 ? 'bad value' : confirmOnly('yes')(question));
+  assert.equal(await install(retried), 0);
+  assert.equal(frontmatterModel(retried, 'lead'), 'sonnet');
+  assert.ok(retried.output.some(line => /without spaces for lead; nothing is substituted/.test(line)));
+
+  const closed = harness(t);
+  closed.deps.ask = async question => { if (modelPrompt(question)) throw new Error('stdin closed'); return ''; };
+  assert.equal(await install(closed), 2);
+  assert.ok(closed.errors.includes('Claude Code model prompt was closed or rejected. No files were changed.'));
+  assert.equal(existsSync(join(closed.project, '.claude')), false);
+  assert.equal(existsSync(closed.recovery), false);
+});
+
+test('declining overwrite of a customized role file reports that its entered model was not applied', async t => {
+  const h = harness(t, confirmOnly('yes'));
+  assert.equal(await install(h), 0);
+  const plannerPath = join(h.project, '.claude', 'agents', 'planner.md');
+  const customized = `${readFileSync(plannerPath, 'utf8')}\nTeam addition.\n`;
+  writeFileSync(plannerPath, customized);
+  const run = await runWith(h, question => modelPrompt(question) === 'planner' ? 'haiku' : question.startsWith('Overwrite customized/unowned file .claude/agents/planner.md') ? 'no' : confirmOnly('yes')(question));
+  assert.equal(run.status, 0, run.errors.join('\n'));
+  assert.ok(run.output.includes('  Preserving customized file: .claude/agents/planner.md; the model entered for it was not applied'));
+  assert.equal(readFileSync(plannerPath, 'utf8'), customized);
+});
+
+test('Claude Code update uses the same per-role model prompts', async t => {
+  const h = harness(t, confirmOnly('yes'));
+  assert.equal(await install(h), 0);
+  const prompts: string[] = [];
+  const status = await runUpdateFlow({ scope: 'project', project: h.project, host: 'claude-code' }, {
+    ask: async question => { prompts.push(question); return modelPrompt(question) === 'operator' ? 'sonnet' : confirmOnly('yes')(question); },
+    output: () => {}, error: () => {}, home: h.root, recoveryDirectory: h.recovery,
+    sharedLocations: async () => 'skipped' as const,
+  });
+  assert.equal(status, 0);
+  assert.equal(prompts.filter(question => modelPrompt(question)).length, nativeRoles.length);
+  assert.equal(frontmatterModel(h, 'operator'), 'sonnet');
 });

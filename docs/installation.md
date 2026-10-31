@@ -78,16 +78,18 @@ In Antigravity's `define_subagent`, `enableWriteTools` grants both file editing 
 
 ### Claude Code (project scope)
 
-`--host claude-code --scope project` shows the planned files and the fail-closed mapping, then requires a typed `yes`. Enter, `no`, or any other answer cancels with no file, backup, or receipt written. It writes:
+`--host claude-code --scope project` first asks for each role's model: a listed number, an alias (`sonnet`, `opus`, `haiku`, or `inherit` for the main session's model), or a full model ID such as `claude-sonnet-5-5`. Enter keeps the model in the installed role file, otherwise the README preset. Claude Code exposes no model catalog to this harness, so **discovery is unsupported**: only syntax is checked (no spaces, at most 100 characters), a full ID is written as typed, and availability or entitlement is never established. An invalid answer is re-asked; after three invalid answers for one role, or if the prompt is closed, installation stops with no file, backup, or receipt written. Nothing is substituted.
+
+It then shows the planned files and the fail-closed mapping, and requires a typed `yes`. Enter, `no`, or any other answer cancels with no file, backup, or receipt written. It writes:
 
 - `CLAUDE.md`: a marked Lead block (`<!-- advanced-harness:lead:start -->` … `<!-- advanced-harness:lead:end -->`) followed by `@AGENTS.md`. Content outside the markers is preserved. Malformed or duplicate markers are refused.
-- `.claude/agents/lead.md` plus `operator`, `external`, `researcher`, `planner`, `implementer`, `reviewer`, and `qa` subagents. Models follow the README presets: Lead, Researcher, Implementer, and QA `sonnet`; Operator and External `haiku`; Planner and Reviewer `opus`.
+- `.claude/agents/lead.md` plus `operator`, `external`, `researcher`, `planner`, `implementer`, `reviewer`, and `qa` subagents, each with the chosen `model`. The README presets are the fresh-install defaults: Lead, Researcher, Implementer, and QA `sonnet`; Operator and External `haiku`; Planner and Reviewer `opus`. The Lead block's child table lists the chosen models. If you decline to overwrite a customized role file, the model entered for it is not applied and the installer says so.
 - `.claude/commands/` with the six workflow commands.
 - `.claude/settings.json`, merged: `"agent": "lead"`, deny `Bash(gh pr merge)`/`Bash(gh pr merge *)` and the `gh.exe` variants, deny `Read`/`Edit` of the [sensitive paths](../SECURITY.md#security-guardrails) and `Bash` destructive Git commands, and prompts for `.env` reads. Unrelated keys are preserved. An existing different `agent` value blocks installation.
 
 Per-role tools use `tools` allowlists plus `disallowedTools`. Lead can read, search, ask the human, and delegate only to the seven children. Operator and Implementer can edit (prompted). External can use Bash, WebFetch, and WebSearch (prompted, with the source's allow exceptions downgraded to prompts). Operator, Implementer, Reviewer, and QA have **no Bash tool** because the source's per-role `git`/`gh` deny patterns cannot be scoped exactly in Claude Code. No MCP or Code Mode identity is mapped, so no `.mcp.json` is written. Customized files prompt with default `no`; overwrites are backed up.
 
-Global scope is refused. The same adapter handles `harness:update --host claude-code`, which is a no-op when everything matches. `harness:doctor --host claude-code --project <dir>` checks the files, subagent frontmatter, the Lead block, and the settings rules. It does not invoke Claude Code.
+Global scope is refused. The same adapter handles `harness:update --host claude-code`, including the model prompts; pressing Enter for every role keeps the installed models, and the run is a no-op when everything matches. `harness:doctor --host claude-code --project <dir>` checks the files, subagent frontmatter (any syntactically valid `model` is accepted as an explicit choice; a missing or invalid one is reported), the Lead block, and the settings rules. It does not invoke Claude Code.
 
 Not verified here: Claude Code discovery of subagents, `agent: lead`, `Agent(...)` delegation, `tools`/`disallowedTools` semantics, Bash deny matching, or command placeholders. Run the documented human smoke before relying on these behaviors.
 
@@ -150,7 +152,7 @@ For every role:
 
 **Catalog presence is not entitlement.** A listed model can still be rejected by your account or connection; only a separately approved model run establishes access.
 
-Other hosts report their own limits before their prompts (also shown by `harness:doctor`): Claude Code and Antigravity currently write fixed presets/tiers with no model discovery, Codex requires typed model IDs with no discovery (installation gated, issue #45), and Cursor has no native roles (issue #46).
+Other hosts report their own limits before their prompts (also shown by `harness:doctor`): Claude Code takes an explicit per-role alias or model ID with no model discovery ([Claude Code](#claude-code-project-scope)), Antigravity currently writes fixed tiers with no model discovery, Codex requires typed model IDs with no discovery (installation gated, issue #45), and Cursor has no native roles (issue #46).
 
 The installer does not invent provider deployment IDs, create model connections, or send a paid test request. Spark was rejected by the tested ChatGPT connection: choose a supported model explicitly or change the connection rather than accepting Spark without checking. All assignments are stored in the selected configuration's `agents.<role>.model`; source templates are unchanged.
 

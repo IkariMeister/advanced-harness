@@ -18,6 +18,12 @@ export const openCodeInstall = (confirmation: string, project?: string): Step[] 
   ask('Type install to apply', confirmation),
 ];
 
+/** Claude Code install/update: Enter keeps each role model, then confirm or cancel. */
+export const claudeCodeInstall = (confirmation: string): Step[] => [
+  ...roles.map(role => ask(`${role}: Claude Code model`)),
+  ask('Type yes to install the Claude Code harness', confirmation),
+];
+
 export const antigravityInstall = (confirmation: string): Step[] => [
   ...roles.map(role => ask(`${role}: desired model preference`)),
   ask('Type yes to install the Antigravity', confirmation),

@@ -52,12 +52,12 @@ Per-role model selection and discovery differ by host (shown by `harness:install
 | Host | Per-role selection | Model discovery |
 | --- | --- | --- |
 | **OpenCode V2** | explicit model and variant per role | live catalog (`/api/model`) on request during install/update; configured IDs as a reported fallback |
-| **Claude Code** | fixed presets (not yet selectable) | unsupported |
+| **Claude Code** | explicit alias (`sonnet`/`opus`/`haiku`/`inherit`) or full model ID per role; syntax checked only | unsupported; availability unverified |
 | **Antigravity** | fixed tiers; exact per-role binding unsupported | unsupported |
 | **OpenAI Codex** | explicit typed model and effort (install gated, #45) | unsupported |
 | **Cursor IDE** | unsupported (#46) | unsupported |
 
-The OpenCode presets above are only the template suggestions. An OpenCode choice absent from the live catalog is saved only after an explicit `keep`; nothing is substituted. **Catalog presence is not account entitlement or successful access.** Issue #70 is delivered in phases; Claude Code per-role selection and Antigravity per-role tier choice are still pending.
+The OpenCode and Claude Code presets above are only the default suggestions. An OpenCode choice absent from the live catalog is saved only after an explicit `keep`; nothing is substituted. **Catalog presence is not account entitlement or successful access.** Issue #70 is delivered in phases; Antigravity per-role tier choice is still pending.
 
 OpenCode, Antigravity, and Cursor presets are preferences to validate against the active connection, not evidence of access. The gated Codex adapter asks for an explicit model ID and reasoning effort for each role; no guessed default or fallback is used. LiteLLM endpoints, deployment IDs, and reasoning mappings must be supplied explicitly. Selecting a primary agent does not necessarily change the session's selected model; verify both.
 
