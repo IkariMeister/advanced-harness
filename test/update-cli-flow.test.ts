@@ -555,7 +555,7 @@ test('update flow auto-updates untouched older generated commands and updates re
   const commandsDir = join(project, '.opencode', 'commands');
   mkdirSync(commandsDir, { recursive: true });
 
-  const oldContent = '---\ndescription: Start approved work on a Jira issue\n---\nOld start issue content\n';
+  const oldContent = '---\ndescription: Start approved work on a GitHub or Jira issue\n---\nOld start issue content\n';
   const { createHash } = await import('node:crypto');
   const oldHash = createHash('sha256').update(oldContent).digest('hex');
   writeFileSync(join(commandsDir, 'start-issue.md'), oldContent);
