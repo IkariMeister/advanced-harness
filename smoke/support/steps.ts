@@ -10,6 +10,7 @@ export const roles = ['lead', 'operator', 'external', 'researcher', 'planner', '
 /** OpenCode installer: accept every suggested model/variant, keep defaults, then confirm or cancel. */
 export const openCodeInstall = (confirmation: string, project?: string): Step[] => [
   ...(project === undefined ? [] : [ask('Project directory', project)]),
+  ask('Query the live OpenCode model catalog', 'no'),
   ...roles.flatMap(role => [ask(`${role}: model ID`), ask(`${role}: reasoning variant`)]),
   ask('Make Lead the default agent'),
   ask('Also set the root default model'),

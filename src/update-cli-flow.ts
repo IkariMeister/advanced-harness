@@ -4,10 +4,12 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   agentDirectories,
+  askAssignments,
   chooseConfiguration,
   discoverConfigurations,
   findMarkdownConflicts,
   loadNativeDefinitions,
+  modelReference,
   nativeRoles,
   parseConfiguration,
   projectConfiguration,
@@ -16,6 +18,7 @@ import {
   type Ask
 } from './native-installer.ts';
 import { DiagnosticError, printReport, verifyRuntime } from './native-diagnostics.ts';
+import { chooseModelCatalog, type ModelDiscovery } from './opencode-model-catalog.ts';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import {
   createSuccessorReceipt,
@@ -36,7 +39,7 @@ import {
   preflightOpenCodeCommandDeployment,
   type WorkflowCommandId
 } from './workflow-commands.ts';
-import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 import { parseGlobalProjectDefaults, runSharedLocationStep, type GlobalProjectDefaults } from './project-setup.ts';
 import { checkAntigravityConfigMerge } from './antigravity-adapter.ts';
 
@@ -73,6 +76,7 @@ export interface UpdateFlowDependencies {
   printReport?: typeof printReport;
   getHostAdapter?: typeof getHostAdapter;
   sharedLocations?: typeof runSharedLocationStep;
+  discoverModels?: ModelDiscovery;
 }
 
 export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlowDependencies): Promise<number> {
@@ -104,6 +108,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
     for (const host of unsupportedHosts) {
       errorOutput(`Update blocked: ${HOST_CAPABILITIES[host].displayName} ${describeBlockedHost(host)}. No host adapters or files were changed.`);
+      for (const line of describeModelSupport(host)) output(line);
     }
     if (dispatch.multi && unsupportedHosts.length === 0) {
       errorOutput('Multi-host simultaneous update is not supported. Update each host deliberately.');
@@ -113,6 +118,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
 
   if (options.context && dispatch.host !== 'antigravity') throw new Error('--context for model preferences is supported only with --host antigravity.');
   if (options.context && scope !== 'project') throw new Error('--context can be used only with project scope.');
+  if (dispatch.host) for (const line of describeModelSupport(dispatch.host)) output(line);
 
   if (dispatch.host === 'antigravity') {
     // Shared-location changes are written before the host update, so an Antigravity
@@ -342,15 +348,28 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     ? existingConfig.agents as Record<string, Record<string, unknown>>
     : {};
 
-  // Build assignments preserving installed models
-  const assignments = Object.fromEntries(
-    nativeRoles.map(role => [
-      role,
-      (existingAgents[role]?.model && typeof existingAgents[role]?.model === 'string'
-        ? existingAgents[role]?.model
-        : definitions[role].model) as string
-    ])
-  ) as Record<typeof nativeRoles[number], string>;
+  // Installed models are preserved unless the user explicitly chooses to reselect them.
+  const reselectModels = /^(y|yes)$/i.test((await ask('Choose new models for the harness roles? (Enter/no preserves installed models)', 'no')).trim());
+  const assignments = reselectModels
+    ? await askAssignments(
+      definitions,
+      sources,
+      ask,
+      await chooseModelCatalog(sources, { directory: project ?? cwd, ...(options.opencode ? { executable: options.opencode } : {}) }, ask, output, deps.discoverModels),
+      output
+    )
+    : Object.fromEntries(
+      nativeRoles.map(role => [
+        role,
+        (existingAgents[role]?.model && typeof existingAgents[role]?.model === 'string'
+          ? existingAgents[role]?.model
+          : definitions[role].model) as string
+      ])
+    ) as Record<typeof nativeRoles[number], string>;
+  // Rewrite only models that changed, so an unchanged object-form model keeps its shape.
+  const replaceModels = reselectModels
+    ? nativeRoles.filter(role => existingAgents[role]?.model !== undefined && modelReference(existingAgents[role]?.model) !== assignments[role])
+    : [];
 
   const update = deps.updateConfiguration ?? updateNativeConfiguration;
   const updated = update(
@@ -359,7 +378,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     assignments,
     false,
     false,
-    [],
+    replaceModels,
     reconciliation
   );
 
@@ -386,6 +405,12 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
 
   output('\nSummary of Planned Updates:');
   output(`  Roles updating prompt: ${updatePrompts.length ? updatePrompts.join(', ') : 'none'}`);
+  for (const role of nativeRoles) {
+    const installed = existingAgents[role]?.model;
+    if (installed === undefined) output(`  ${role} model: ${assignments[role]} (${reselectModels ? 'selected' : 'template default for a missing role; choose new models to change it'})`);
+    else if (replaceModels.includes(role)) output(`  ${role} model: ${modelReference(installed) ?? '(invalid installed model)'} -> ${assignments[role]}`);
+  }
+  if (!replaceModels.length && nativeRoles.every(role => existingAgents[role]?.model !== undefined)) output('  Role models: preserved');
   output(`  Configuration file: ${target}`);
   output(`  Private backup will be created under: ${backupParent}`);
   output(`  Recovery: If update fails or is rejected, restore via existing receipt restore chain.`);

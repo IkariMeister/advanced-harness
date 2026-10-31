@@ -131,7 +131,7 @@ export function printReport(report: Report): void {
   console.log('If the UI disagrees with this server, check its project/server connection. Restarting the shared service may interrupt work; do it deliberately, not automatically.');
 }
 
-import { HOST_CAPABILITIES, HOST_MODEL_PRESETS, getHostAdapter, type HostId, type HostRolePreset } from './host-registry.ts';
+import { HOST_CAPABILITIES, HOST_MODEL_PRESETS, describeModelSupport, getHostAdapter, type HostId, type HostRolePreset } from './host-registry.ts';
 
 export interface HostDiagnosticReport {
   host: HostId;
@@ -249,6 +249,8 @@ export function printHostDiagnosticReport(report: HostDiagnosticReport): void {
       for (const url of finding.referenceUrls) console.log(`    Reference: ${url}`);
     }
   }
+  console.log('Model Selection & Discovery:');
+  for (const line of describeModelSupport(report.host)) console.log(`  ${line}`);
   console.log('Fixed Role / Model Presets:');
   for (const role of nativeRoles) {
     const p = report.rolePresets[role];
