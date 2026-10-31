@@ -366,6 +366,23 @@ export function isDeepEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
+ * A merged Antigravity config file that cannot be planned without overwriting
+ * content the harness does not own. Planners attach the file path; installers
+ * report it as an actionable message instead of a crash.
+ */
+export class AntigravityConfigMergeError extends Error {
+  path?: string;
+  readonly reason: 'malformed' | 'conflict';
+  readonly entry: { kind: 'hook' | 'mcp-server'; id: string } | undefined;
+  constructor(message: string, reason: 'malformed' | 'conflict', entry?: { kind: 'hook' | 'mcp-server'; id: string }) {
+    super(message);
+    this.name = 'AntigravityConfigMergeError';
+    this.reason = reason;
+    this.entry = entry;
+  }
+}
+
+/**
  * Merges hooks.json while strictly preserving all unrelated hooks and top-level properties.
  * Rejects ambiguous conflicts or malformed JSON before writing.
  */
@@ -385,11 +402,11 @@ export function mergeAntigravityHooksConfig(
   try {
     parsed = JSON.parse(existingText);
   } catch (err) {
-    throw new Error(`Malformed existing hooks.json: ${err instanceof Error ? err.message : String(err)}`);
+    throw new AntigravityConfigMergeError(`Malformed existing hooks.json: ${err instanceof Error ? err.message : String(err)}`, 'malformed');
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Invalid hooks.json: top-level value must be a JSON object.');
+    throw new AntigravityConfigMergeError('Invalid hooks.json: top-level value must be a JSON object.', 'malformed');
   }
 
   const existing = parsed as Record<string, unknown>;
@@ -414,7 +431,7 @@ export function mergeAntigravityHooksConfig(
     const matchesLegacy = isDeepEqual(existingHook, compileLegacyAntigravityHooks(guardScriptPath)['gh-pr-merge-guard']);
 
     if (!matchesDesired && !matchesPrior && !matchesLegacy) {
-      throw new Error('Conflicting unowned "gh-pr-merge-guard" definition in existing hooks.json; resolve conflict before installation.');
+      throw new AntigravityConfigMergeError('Conflicting unowned "gh-pr-merge-guard" definition in existing hooks.json; resolve conflict before installation.', 'conflict', { kind: 'hook', id: 'gh-pr-merge-guard' });
     }
   }
 
@@ -447,11 +464,11 @@ export function mergeAntigravityMcpConfig(
   try {
     parsed = JSON.parse(existingText);
   } catch (err) {
-    throw new Error(`Malformed existing mcp_config.json: ${err instanceof Error ? err.message : String(err)}`);
+    throw new AntigravityConfigMergeError(`Malformed existing mcp_config.json: ${err instanceof Error ? err.message : String(err)}`, 'malformed');
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Invalid mcp_config.json: top-level value must be a JSON object.');
+    throw new AntigravityConfigMergeError('Invalid mcp_config.json: top-level value must be a JSON object.', 'malformed');
   }
 
   const existing = parsed as Record<string, unknown>;
@@ -459,7 +476,7 @@ export function mergeAntigravityMcpConfig(
 
   if (Object.hasOwn(existing, 'mcpServers')) {
     if (!existing.mcpServers || typeof existing.mcpServers !== 'object' || Array.isArray(existing.mcpServers)) {
-      throw new Error('Invalid mcp_config.json: "mcpServers" property must be a JSON object.');
+      throw new AntigravityConfigMergeError('Invalid mcp_config.json: "mcpServers" property must be a JSON object.', 'malformed');
     }
     existingServers = { ...(existing.mcpServers as Record<string, unknown>) };
   }
@@ -483,7 +500,7 @@ export function mergeAntigravityMcpConfig(
       const matchesDesired = isDeepEqual(current, desired);
       const matchesPrior = priorOwnedServers !== undefined && Object.hasOwn(priorOwnedServers, id) && isDeepEqual(current, priorOwnedServers[id]);
       if (!matchesDesired && !matchesPrior) {
-        throw new Error(`Conflicting unowned MCP server "${id}" in existing mcp_config.json; resolve conflict before installation.`);
+        throw new AntigravityConfigMergeError(`Conflicting unowned MCP server "${id}" in existing mcp_config.json; resolve conflict before installation.`, 'conflict', { kind: 'mcp-server', id });
       }
     }
     existingServers[id] = desired;

@@ -84,7 +84,7 @@ async function choice(ask: Ask, question: string, options: string[], defaultValu
   for (;;) { const answer = (await ask(question, defaultValue)).trim() || defaultValue; if (options.includes(answer)) return answer; }
 }
 
-async function askSelections(servers: Record<string, Record<string, unknown>>, previous: GlobalIntegrations, ask: Ask, allowNew: boolean): Promise<{ settings: GlobalIntegrations; choices: ServerChoice[] }> {
+async function askSelections(servers: Record<string, Record<string, unknown>>, previous: GlobalIntegrations, ask: Ask, allowNew: boolean, report: (message: string) => void = () => {}): Promise<{ settings: GlobalIntegrations; choices: ServerChoice[] }> {
   const available = { ...servers };
   const initialNames = Object.keys(servers).sort();
   const usedInitialNumbers = new Map<number, string>();
@@ -102,7 +102,11 @@ async function askSelections(servers: Record<string, Record<string, unknown>>, p
       if (!/^[a-zA-Z0-9_-]+$/.test(alias) || Object.hasOwn(available, alias)) continue;
       try { normalizedServer(alias); } catch { continue; }
       let url: string;
-      try { url = validateEndpoint((await ask(`${service}: supplied remote MCP URL (no secrets)`)).trim()); } catch { continue; }
+      for (;;) {
+        const rawUrl = (await ask(`${service}: supplied remote MCP URL (no secrets)`)).trim();
+        try { url = validateEndpoint(rawUrl); break; }
+        catch (err) { report(`${service}: ${(err as Error).message}`); }
+      }
       const create = { type: 'remote' as const, url, disabled: true as const };
       available[alias] = create;
       selected.set(alias, { name: alias, create });
@@ -123,14 +127,14 @@ async function askSelections(servers: Record<string, Record<string, unknown>>, p
   const designKind = await choice(ask, 'Design source: figma, stitch, or none (never silently combine)', ['figma', 'stitch', 'none'], previous.design?.kind ?? 'none');
   let design: GlobalIntegrations['design'] = null;
   if (designKind !== 'none') {
-    const server = await selectServer(designKind, previous.design?.server);
+    const server = await selectServer(designKind, previous.design?.kind === designKind ? previous.design.server : undefined);
     if (server) design = { kind: designKind as 'figma' | 'stitch', server };
   }
   return { settings: validateGlobalIntegrations({ version: 1, github, jira: jiraServer ? { server: jiraServer } : null, design }), choices: [...selected.values()] };
 }
 
-export async function askGlobalIntegrations(servers: Record<string, Record<string, unknown>>, previous: GlobalIntegrations, ask: Ask) {
-  return askSelections(servers, previous, ask, true);
+export async function askGlobalIntegrations(servers: Record<string, Record<string, unknown>>, previous: GlobalIntegrations, ask: Ask, report?: (message: string) => void) {
+  return askSelections(servers, previous, ask, true, report);
 }
 
 export async function askProjectIntegrations(servers: Record<string, Record<string, unknown>>, defaults: GlobalIntegrations, previous: ProjectIntegrations | undefined, ask: Ask): Promise<ProjectIntegrations> {
