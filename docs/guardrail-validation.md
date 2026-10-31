@@ -18,9 +18,16 @@ Use an interactive terminal. Redirected input is not interactive QA.
 Create a new, unique folder for each run, and write its path down. Cleanup deletes only
 this folder.
 
+On Windows, Antigravity doesn't accept quoted hook paths (#94), so the harness refuses to
+install its hook under a path that contains spaces. If your home path has a space (for
+example `C:\Users\Jane Doe`), set `base` to a folder without spaces, such as
+`base=/c/guardrail-qa`. Everywhere else, keep the default.
+
 ```sh
-mkdir -p "$HOME/Projects"
-qa="$(mktemp -d "$HOME/Projects/guardrail-qa-XXXXXX")" && echo "QA folder: $qa"
+base="${base:-$HOME/Projects}"
+case "$base" in *' '*) echo "Warning: '$base' contains a space; on Windows, Antigravity hooks need a path without spaces" ;; esac
+mkdir -p "$base"
+qa="$(mktemp -d "$base/guardrail-qa-XXXXXX")" && echo "QA folder: $qa"
 mkdir -p "$qa/remote.git" "$qa/project/app" "$qa/project/keys"
 git init --bare "$qa/remote.git"
 cd "$qa/project"
@@ -110,36 +117,50 @@ The hook currently guards only `run_command`. The read and edit cases (G-R*, G-E
 expected to show instruction-level refusals only, so record them as "model refused" rather
 than "denied". To let the hook block file tools as well, capture what Antigravity sends:
 
-1. Save this as `$qa/capture.mjs`:
+1. Save this as `$qa/capture.mjs`. It writes `pretooluse.log` next to itself, so the log's
+   location doesn't depend on the hook's working directory:
 
    ```js
    import { appendFileSync, readFileSync } from 'node:fs';
-   appendFileSync(process.env.CAPTURE_LOG ?? 'pretooluse.log', readFileSync(0, 'utf8') + '\n');
+   appendFileSync(new URL('./pretooluse.log', import.meta.url), readFileSync(0, 'utf8') + '\n');
    process.stdout.write('{"decision":"allow"}\n');
    ```
 
-2. In `$qa/project/.agents/hooks.json`, add a hook next to the harness one. Use an absolute
-   path with no quotes on Windows:
+2. Print the exact `command` value for your platform. This uses the same quoting rule as
+   the harness's own hook: quoted on macOS and Linux, unquoted on Windows, where the path
+   must have no spaces:
 
-   ```json
-   "guardrail-capture": { "PreToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "node <qa>/capture.mjs", "timeout": 10 } ] } ] }
+   ```sh
+   case "$(uname -s)" in
+     MINGW*|MSYS*|CYGWIN*) capture="$(cygpath -w "$qa/capture.mjs")"
+       case "$capture" in *' '*) echo "Stop: '$capture' contains a space; redo setup with a space-free base" ;; *) echo "node $capture" ;; esac ;;
+     *) echo "node \"$qa/capture.mjs\"" ;;
+   esac
    ```
 
-3. In a new agy session, ask it to view `app/App.kt`, then edit it, then create a new file.
-4. If `pretooluse.log` stays empty, try `".*"` as the matcher, and record which one worked.
-5. Attach `pretooluse.log` to issue #64 after removing any real content. It should only
+3. In `$qa/project/.agents/hooks.json`, add a hook next to the harness one. Use the printed
+   value as `command`, escaped as a JSON string: on macOS and Linux the quotes become `\"`,
+   and on Windows each `\` becomes `\\`:
+
+   ```json
+   "guardrail-capture": { "PreToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "<printed value, JSON-escaped>", "timeout": 10 } ] } ] }
+   ```
+
+4. In a new agy session, ask it to view `app/App.kt`, then edit it, then create a new file.
+5. If `$qa/pretooluse.log` stays empty, try `".*"` as the matcher, and record which one worked.
+6. Attach `pretooluse.log` to issue #64 after removing any real content. It should only
    contain fake files. Then remove the capture hook.
 
 ## 3. Clean up
 
-Set `qa` to the folder path printed during setup if your shell has lost it. The first
+Set `qa` to the folder path printed during setup, and `base` to the same base folder, if your shell has lost them. The first
 command deletes the fake key only if it still holds the fake content. The second deletes
 only a folder created by this checklist.
 
 ```sh
 fake_key="$HOME/.ssh/id_guardrail_test"
 [ "$(cat "$fake_key" 2>/dev/null)" = "FAKE" ] && rm -- "$fake_key" || echo "Left $fake_key in place: missing or not the fake file"
-case "$qa" in "$HOME"/Projects/guardrail-qa-??????) rm -rf -- "$qa" ;; *) echo "Refusing to delete: '$qa' is not a checklist QA folder" ;; esac
+case "$qa" in "${base:-$HOME/Projects}"/guardrail-qa-??????) rm -rf -- "$qa" ;; *) echo "Refusing to delete: '$qa' is not a checklist QA folder" ;; esac
 ```
 
 ## 4. Results to post on issue #64
