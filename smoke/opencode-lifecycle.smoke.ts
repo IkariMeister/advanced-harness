@@ -76,7 +76,7 @@ describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
     const receipts = () => [...tree(box.recoveryDirectory).keys()].filter(file => file.startsWith('native-install-')).sort();
     const beforeConfig = readFileSync(config(), 'utf8');
     const beforeReceipts = receipts();
-    const preview = [ask('Check remote repository', 'no')];
+    const preview = [ask('Check remote repository', 'no'), ask('Choose new models')];
     const cancelled = await box.run('update-native-harness.ts', projectArgs(), { steps: [...preview, ask('Type update to apply', '')] });
     assert.equal(cancelled.code, 0, cancelled.transcript);
     assert.match(cancelled.stdout, /Update cancelled\. No files or receipts were modified\./);
@@ -111,9 +111,36 @@ describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
     try {
       const install = await fresh.run('install-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: openCodeInstall('install') });
       assert.equal(install.code, 0, install.transcript);
-      const update = await fresh.run('update-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: [ask('Check remote repository', 'no'), ask('Type update to apply', '')] });
+      const update = await fresh.run('update-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: [ask('Check remote repository', 'no'), ask('Choose new models'), ask('Type update to apply', '')] });
       assert.doesNotMatch(update.stdout, /Installed version: unknown/);
       assert.match(update.stdout, /Installed version: \d+\.\d+\.\d+ \([0-9a-f]{40}\)/);
+    } finally { fresh.dispose(); }
+  });
+
+  it('SMK-OC-09 update model reselection lists the live catalog read-only; cancelling writes nothing', async () => {
+    const fresh = createSandbox('opencode-catalog');
+    try {
+      const args = ['--host', 'opencode', '--scope', 'project', '--project', fresh.project];
+      const install = await fresh.run('install-native-harness.ts', args, { steps: openCodeInstall('install') });
+      assert.equal(install.code, 0, install.transcript);
+      const configPath = join(fresh.project, 'opencode.jsonc');
+      const before = readFileSync(configPath, 'utf8');
+      const callsBefore = fresh.openCodeCalls().length;
+      const update = await fresh.run('update-native-harness.ts', args, { steps: [
+        ask('Check remote repository', 'no'),
+        ask('Choose new models', 'yes'),
+        ask('Query the live OpenCode model catalog', 'yes'),
+        ...roles.flatMap(role => [ask(`${role}: model ID`), ask(`${role}: reasoning variant`)]),
+        ask('Type update to apply', ''),
+      ] });
+      assert.equal(update.code, 0, update.transcript);
+      assert.deepEqual(update.unansweredSteps, []);
+      assert.match(update.stdout, /Live OpenCode catalog models \(listed by OpenCode; not proof of account entitlement/);
+      assert.doesNotMatch(update.stdout, /absent (or disabled )?(from|in) the live catalog/);
+      assert.match(update.stdout, /Update cancelled\. No files or receipts were modified\./);
+      assert.equal(readFileSync(configPath, 'utf8'), before);
+      const calls = fresh.openCodeCalls().slice(callsBefore);
+      assert.ok(calls.length > 0 && calls.every(call => call.args[0] === 'api' && call.args[1] === 'get' && String(call.args[2]).startsWith('/api/model')), JSON.stringify(calls));
     } finally { fresh.dispose(); }
   });
 });

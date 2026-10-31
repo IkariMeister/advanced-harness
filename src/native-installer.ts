@@ -122,25 +122,39 @@ export function loadNativeDefinitions(directory: string): Record<NativeRole, Nat
   return result.definitions;
 }
 
-export async function askAssignments(definitions: Record<NativeRole, NativeDefinition>, sources: readonly ConfigSource[], ask: Ask): Promise<Record<NativeRole, string>> {
-  const choices = configuredModels(sources);
+/**
+ * Numbered choices shown to the user. `live` is present only when the runtime catalog was read;
+ * it holds `provider/model` and `provider/model#variant` entries for enabled models.
+ */
+export type ModelChoices = { choices: readonly string[]; live?: ReadonlySet<string> };
+
+export async function askAssignments(definitions: Record<NativeRole, NativeDefinition>, sources: readonly ConfigSource[], ask: Ask, catalog: ModelChoices = { choices: configuredModels(sources) }, output: (message: string) => void = () => {}): Promise<Record<NativeRole, string>> {
+  const { choices, live } = catalog;
   const assignments = {} as Record<NativeRole, string>;
   for (const role of nativeRoles) {
     const suggested = suggestedModel(role, sources, definitions[role].model);
-    let selected: string | undefined;
-    while (!selected) {
-      const answer = (await ask(`${role}: model ID or listed number (provider/model#variant)`, suggested)).trim();
-      const candidate = /^\d+$/.test(answer) ? choices[Number(answer) - 1] : answer || suggested;
-      selected = modelReference(candidate);
+    let assignment: string | undefined;
+    while (!assignment) {
+      let selected: string | undefined;
+      while (!selected) {
+        const answer = (await ask(`${role}: model ID or listed number (provider/model#variant)`, suggested)).trim();
+        const candidate = /^\d+$/.test(answer) ? choices[Number(answer) - 1] : answer || suggested;
+        selected = modelReference(candidate);
+      }
+      const [base = '', selectedVariant] = selected.split('#');
+      let variant: string | undefined;
+      while (variant === undefined) {
+        const answer = (await ask(`${role}: reasoning variant (- for no variant)`, selectedVariant ?? '-')).trim() || selectedVariant || '-';
+        if (answer === '-') variant = '';
+        else if (/^[^\s/#]+$/.test(answer)) variant = answer;
+      }
+      const candidate = `${base}${variant ? `#${variant}` : ''}`;
+      if (!live || live.has(candidate)) { assignment = candidate; continue; }
+      // Never substitute: an off-catalog choice is kept only on an explicit answer, otherwise re-prompted.
+      output(live.has(base) ? `Variant ${variant} of ${base} is absent from the live catalog.` : `${base} is absent or disabled in the live catalog.`);
+      if ((await ask(`${role}: type keep to save ${candidate} anyway (Enter chooses again)`, 'no')).trim() === 'keep') assignment = candidate;
     }
-    const [base, selectedVariant] = selected.split('#');
-    let variant: string | undefined;
-    while (variant === undefined) {
-      const answer = (await ask(`${role}: reasoning variant (- for no variant)`, selectedVariant ?? '-')).trim() || selectedVariant || '-';
-      if (answer === '-') variant = '';
-      else if (/^[^\s/#]+$/.test(answer)) variant = answer;
-    }
-    assignments[role] = `${base}${variant ? `#${variant}` : ''}`;
+    assignments[role] = assignment;
   }
   return assignments;
 }
