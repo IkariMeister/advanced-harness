@@ -54,7 +54,7 @@ Per-role model selection and discovery differ by host (shown by `harness:install
 | **OpenCode V2** | explicit model and variant per role | live catalog (`/api/model`) on request during install/update; configured IDs as a reported fallback |
 | **Claude Code** | explicit alias (`sonnet`/`opus`/`haiku`/`inherit`) or full model ID per role; syntax checked only | unsupported; availability unverified |
 | **Antigravity** | explicit tier (`inherit`/`flash_lite`/`flash`/`pro`) per child role; Lead uses the session model; exact per-role model binding unsupported | unsupported |
-| **OpenAI Codex** | explicit typed model and effort (install gated, #45) | unsupported |
+| **OpenAI Codex** | explicit model and effort per role (install gated, #45) | experimental `codex app-server` `model/list` in the gated adapter; typed IDs as a reported fallback |
 | **Cursor IDE** | unsupported (#46) | unsupported |
 
 The OpenCode, Claude Code, and Antigravity presets above are only the default suggestions. An OpenCode choice absent from the live catalog is saved only after an explicit `keep`; nothing is substituted. **Catalog presence is not account entitlement or successful access.**
