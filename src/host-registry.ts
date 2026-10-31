@@ -189,9 +189,9 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
     },
     ghPrMergeGuard: 'Project .claude/settings.json denies Bash(gh pr merge) and gh.exe variants; prefix patterns are a workflow guardrail, not a sandbox.',
     modelSupport: {
-      selection: 'fixed-preset',
+      selection: 'per-role-explicit',
       discovery: 'unsupported',
-      limitation: 'Per-role model selection is not offered yet; fixed aliases (sonnet/opus/haiku) are written. Claude Code exposes no model catalog to this harness, and alias availability is unverified.',
+      limitation: 'Each role takes an explicit alias (sonnet/opus/haiku/inherit) or full model ID; Enter keeps the installed model, else the preset. Claude Code exposes no model catalog to this harness, so only syntax is checked and availability is unverified.',
     },
     disclosures: [
       'Lead is the project default agent (.claude/settings.json agent: lead) and delegates only to 7 child subagents in .claude/agents via Agent(...) tool scoping.',

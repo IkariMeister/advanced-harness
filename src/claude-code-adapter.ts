@@ -20,11 +20,13 @@ import { saveInstallation, type Ask } from './native-installer.ts';
 import { nativeRoles, type NativeRole } from './native-role-types.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
-import { HOST_MODEL_PRESETS } from './host-registry.ts';
 import {
   claudeChildRoles,
   claudeDisclosures,
   claudeMarkers,
+  claudeModelAliases,
+  claudePresetModels,
+  isClaudeModelValue,
   claudeSettingsAsk,
   claudeSettingsDeny,
   compileClaudeCommandFile,
@@ -79,12 +81,50 @@ const readIfExists = (path: string): string | undefined => existsSync(path) ? re
 const defaultAgentsDirectory = () => fileURLToPath(new URL('../agents/', import.meta.url));
 const defaultCommandsDirectory = () => fileURLToPath(new URL('../commands/', import.meta.url));
 
+/** Valid models in installed role files; a missing or invalid value falls back to the preset. */
+export function installedClaudeModels(project: string): Record<NativeRole, string> {
+  const models = claudePresetModels();
+  for (const role of nativeRoles) {
+    const text = readIfExists(join(project, '.claude', 'agents', `${role}.md`));
+    const model = text === undefined ? undefined : frontmatterOf(text)?.model;
+    if (isClaudeModelValue(model)) models[role] = model;
+  }
+  return models;
+}
+
+/**
+ * Asks for an explicit model per role. Enter keeps the shown default (installed, else preset).
+ * Only syntax is checked: no catalog exists to establish availability or entitlement.
+ */
+export async function askClaudeModels(defaults: Record<NativeRole, string>, ask: Ask, output: (message: string) => void): Promise<Record<NativeRole, string>> {
+  output('\nClaude Code role models. Claude Code exposes no model catalog to this harness: discovery is unsupported and availability is unverified.');
+  claudeModelAliases.forEach((alias, index) => output(`  ${index + 1}. ${alias}${alias === 'inherit' ? ' (use the main session model)' : ''}`));
+  output('Enter a listed number, an alias, or a full model ID (written as typed, not checked). Enter keeps the shown model.');
+  const models = {} as Record<NativeRole, string>;
+  for (const role of nativeRoles) {
+    for (let attempt = 1; !models[role]; attempt++) {
+      const answer = (await ask(`${role}: Claude Code model (number, alias, or full model ID)`, defaults[role])).trim() || defaults[role];
+      const model = /^\d+$/.test(answer) ? claudeModelAliases[Number(answer) - 1] : answer;
+      if (isClaudeModelValue(model)) {
+        models[role] = model;
+        if (!(claudeModelAliases as readonly string[]).includes(model)) output(`  ${role}: ${model} is not a documented alias; it is written as typed and its availability is unverified.`);
+      } else if (attempt >= 3) {
+        throw new Error(`Claude Code model for ${role} remained invalid after 3 attempts. No files were changed.`);
+      } else {
+        output(`Enter a listed number, an alias, or a model ID without spaces for ${role}; nothing is substituted.`);
+      }
+    }
+  }
+  return models;
+}
+
 export function planClaudeDeployment(
   project: string,
   agentsDirectory: string,
   commandsDirectory: string,
-  priorManagedFiles: readonly ManagedFileEvidence[] = []
-): { files: ClaudeCodeDeploymentItem[]; mappings: Record<NativeRole, ClaudeRoleMapping>; settingsPath: string } {
+  priorManagedFiles: readonly ManagedFileEvidence[] = [],
+  models: Record<NativeRole, string> = installedClaudeModels(project)
+): { files: ClaudeCodeDeploymentItem[]; mappings: Record<NativeRole, ClaudeRoleMapping>; settingsPath: string; models: Record<NativeRole, string> } {
   const roles = loadRoleDefinitions(agentsDirectory);
   const mappings = mappingsFor(roles);
   const commands = loadWorkflowCommands(commandsDirectory);
@@ -97,7 +137,7 @@ export function planClaudeDeployment(
   raw.push({
     relativePath: 'CLAUDE.md',
     absolutePath: memoryPath,
-    content: mergeClaudeMemory(readIfExists(memoryPath), compileClaudeLeadBlock(mappings)),
+    content: mergeClaudeMemory(readIfExists(memoryPath), compileClaudeLeadBlock(mappings, models)),
     kind: 'instructions',
     merged: true,
   });
@@ -105,7 +145,7 @@ export function planClaudeDeployment(
     raw.push({
       relativePath: `.claude/agents/${role}.md`,
       absolutePath: join(project, '.claude', 'agents', `${role}.md`),
-      content: compileClaudeSubagentFile(role, roles[role], mappings[role]),
+      content: compileClaudeSubagentFile(role, roles[role], mappings[role], models[role]),
       kind: 'rules',
       merged: false,
     });
@@ -160,7 +200,7 @@ export function planClaudeDeployment(
     }
     return { ...item, currentContent, status };
   });
-  return { files, mappings, settingsPath };
+  return { files, mappings, settingsPath, models };
 }
 
 export async function installClaudeCode(options: ClaudeCodeInstallOptions): Promise<number> {
@@ -183,11 +223,30 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
 
   let plan: ReturnType<typeof planClaudeDeployment>;
   try {
+    // Plan once with the installed models so malformed targets stop before any model prompt.
     plan = planClaudeDeployment(project, agentsDir, commandsDir, priorManagedFiles);
   } catch (err) {
     error(err instanceof Error ? err.message : String(err));
     return 2;
   }
+
+  let models: Record<NativeRole, string>;
+  try {
+    models = await askClaudeModels(plan.models, ask, output);
+  } catch (err) {
+    error(err instanceof Error && err.message.endsWith('No files were changed.') ? err.message : 'Claude Code model prompt was closed or rejected. No files were changed.');
+    return 2;
+  }
+  if (nativeRoles.some(role => models[role] !== plan.models[role])) {
+    try {
+      plan = planClaudeDeployment(project, agentsDir, commandsDir, priorManagedFiles, models);
+    } catch (err) {
+      error(err instanceof Error ? err.message : String(err));
+      return 2;
+    }
+  }
+  output('\nModel assignments (availability unverified):');
+  for (const role of nativeRoles) output(`  ${role}: ${models[role]}`);
 
   if (!existsSync(join(project, 'AGENTS.md'))) {
     output('Warning: AGENTS.md was not found in this project. The @AGENTS.md reference in CLAUDE.md will add nothing until it exists.');
@@ -212,7 +271,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
       if (answer === 'yes' || answer === 'y') {
         selectedFilesToWrite.push(f);
       } else {
-        output(`  Preserving customized file: ${f.relativePath}`);
+        output(`  Preserving customized file: ${f.relativePath}${f.kind === 'rules' ? '; the model entered for it was not applied' : ''}`);
       }
     }
   }
@@ -364,7 +423,7 @@ export async function diagnoseClaudeCode(options: ClaudeCodeDoctorOptions): Prom
     if (!meta) { issues.push(`${role}.md has invalid YAML frontmatter.`); continue; }
     if (meta.name !== role) issues.push(`${role}.md name must be "${role}".`);
     if (typeof meta.description !== 'string' || !meta.description.trim()) issues.push(`${role}.md is missing a description.`);
-    if (meta.model !== HOST_MODEL_PRESETS['claude-code'][role].model) issues.push(`${role}.md model is ${String(meta.model)}; expected ${HOST_MODEL_PRESETS['claude-code'][role].model}.`);
+    if (!isClaudeModelValue(meta.model)) issues.push(`${role}.md model ${JSON.stringify(meta.model ?? null)} is missing or invalid; rerun the installer to choose one explicitly.`);
     const tools = listOf(meta.tools);
     const disallowed = listOf(meta.disallowedTools);
     if (!tools.length) issues.push(`${role}.md must declare a tools allowlist.`);
