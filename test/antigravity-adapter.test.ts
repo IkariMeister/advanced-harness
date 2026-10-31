@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
-import { planAntigravityDeployment, installAntigravity, diagnoseAntigravity } from '../src/antigravity-adapter.ts';
+import { planAntigravityDeployment, installAntigravity, diagnoseAntigravity, formatAntigravityConfigMergeError } from '../src/antigravity-adapter.ts';
+import { AntigravityConfigMergeError, mergeAntigravityMcpConfig } from '../src/antigravity-compiler.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { diagnoseHost } from '../src/native-diagnostics.ts';
@@ -646,5 +647,50 @@ test('runInstallerFlow with Enter at the Antigravity confirmation cancels with n
     assert.equal(f.prompts.filter(p => isAntigravityConfirmation(p.question)).length, 1);
   } finally {
     f.cleanup();
+  }
+});
+
+test('formatAntigravityConfigMergeError names the file and how to resolve an MCP server conflict', () => {
+  let caught: unknown;
+  try {
+    mergeAntigravityMcpConfig('{ "mcpServers": { "harness": { "command": "other" } } }', { harness: { command: 'node' } });
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof AntigravityConfigMergeError);
+  caught.path = join('C:', 'cfg', 'mcp_config.json');
+  const message = formatAntigravityConfigMergeError(caught, join('C:', 'backups'));
+  assert.equal(
+    message,
+    `Antigravity configuration conflict in ${join('C:', 'cfg', 'mcp_config.json')}: the MCP server "harness" does not match what the harness installs or last installed. Restore it to the content recorded in the latest Antigravity install receipt under ${join('C:', 'backups')}, or remove the "harness" entry from "mcpServers", then re-run. No files were changed.`
+  );
+});
+
+test('installAntigravity reports a conflicting hooks.json as one error line and returns 1 without prompting', async () => {
+  const tempProject = makeTempRoot('ag-conflict-project-');
+  const tempHome = makeTempRoot('ag-conflict-home-');
+  const recoveryDir = join(tempHome, 'recovery');
+  const hooksPath = join(tempProject, '.agents', 'hooks.json');
+  try {
+    mkdirSync(join(tempProject, '.agents'), { recursive: true });
+    writeFileSync(hooksPath, JSON.stringify({ 'gh-pr-merge-guard': { matcher: 'run_command', command: 'node scripts/antigravity-merge-guard.mjs' } }));
+    const errors: string[] = [];
+    const prompts: string[] = [];
+    const code = await installAntigravity({
+      scope: 'project', project: tempProject, home: tempHome, recoveryDirectory: recoveryDir,
+      agentsDirectory: rolesDir, commandsDirectory: commandsDir,
+      ask: async question => { prompts.push(question); return 'yes'; },
+      output: () => {}, error: message => errors.push(message),
+    });
+    assert.equal(code, 1);
+    assert.deepEqual(prompts, []);
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0]!.includes(hooksPath));
+    assert.match(errors[0]!, /remove the "gh-pr-merge-guard" key, then re-run\. No files were changed\.$/);
+    assert.equal(existsSync(recoveryDir), false);
+    assert.deepEqual(JSON.parse(readFileSync(hooksPath, 'utf8'))['gh-pr-merge-guard'].command, 'node scripts/antigravity-merge-guard.mjs');
+  } finally {
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempHome, { recursive: true, force: true });
   }
 });

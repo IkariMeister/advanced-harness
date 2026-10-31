@@ -22,6 +22,7 @@ import {
   mergeAntigravityHooksConfig,
   mergeAntigravityMcpConfig,
   getAntigravityMergeGuardMjsSource,
+  AntigravityConfigMergeError,
 } from './antigravity-compiler.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import { HOST_CAPABILITIES, HOST_MODEL_PRESETS, type HostRolePreset } from './host-registry.ts';
@@ -101,6 +102,16 @@ export function planAntigravityDeployment(
     return undefined;
   };
 
+  // Merge failures name the file they came from so installers can report it.
+  const mergeAt = <T>(path: string, merge: () => T): T => {
+    try {
+      return merge();
+    } catch (err) {
+      if (err instanceof AntigravityConfigMergeError) err.path = path;
+      throw err;
+    }
+  };
+
   if (scope === 'project') {
     if (!projectRoot) throw new Error('Project scope requires a valid project root directory.');
     targetConfig = join(projectRoot, '.agents', 'hooks.json');
@@ -135,7 +146,7 @@ export function planAntigravityDeployment(
 
     // 4. hooks.json with resolved absolute path to guard script
     const existingHooks = existsSync(targetConfig) ? readFileSync(targetConfig, 'utf8') : undefined;
-    const hooksMerged = mergeAntigravityHooksConfig(existingHooks, guardScriptPath, getPriorContent(targetConfig));
+    const hooksMerged = mergeAt(targetConfig, () => mergeAntigravityHooksConfig(existingHooks, guardScriptPath, getPriorContent(targetConfig)));
     rawFiles.push({
       relativePath: '.agents/hooks.json',
       absolutePath: targetConfig,
@@ -147,7 +158,7 @@ export function planAntigravityDeployment(
     // 5. mcp_config.json
     const mcpTarget = join(projectRoot, '.agents', 'mcp_config.json');
     const existingMcp = existsSync(mcpTarget) ? readFileSync(mcpTarget, 'utf8') : undefined;
-    const mcpMerged = mergeAntigravityMcpConfig(existingMcp, {}, getPriorContent(mcpTarget));
+    const mcpMerged = mergeAt(mcpTarget, () => mergeAntigravityMcpConfig(existingMcp, {}, getPriorContent(mcpTarget)));
     rawFiles.push({
       relativePath: '.agents/mcp_config.json',
       absolutePath: mcpTarget,
@@ -191,7 +202,7 @@ export function planAntigravityDeployment(
 
     // 4. hooks.json
     const existingHooks = existsSync(targetConfig) ? readFileSync(targetConfig, 'utf8') : undefined;
-    const hooksMerged = mergeAntigravityHooksConfig(existingHooks, guardScriptPath, getPriorContent(targetConfig));
+    const hooksMerged = mergeAt(targetConfig, () => mergeAntigravityHooksConfig(existingHooks, guardScriptPath, getPriorContent(targetConfig)));
     rawFiles.push({
       relativePath: 'hooks.json',
       absolutePath: targetConfig,
@@ -203,7 +214,7 @@ export function planAntigravityDeployment(
     // 5. mcp_config.json
     const mcpTarget = join(baseDir, 'mcp_config.json');
     const existingMcp = existsSync(mcpTarget) ? readFileSync(mcpTarget, 'utf8') : undefined;
-    const mcpMerged = mergeAntigravityMcpConfig(existingMcp, {}, getPriorContent(mcpTarget));
+    const mcpMerged = mergeAt(mcpTarget, () => mergeAntigravityMcpConfig(existingMcp, {}, getPriorContent(mcpTarget)));
     rawFiles.push({
       relativePath: 'mcp_config.json',
       absolutePath: mcpTarget,
@@ -255,6 +266,19 @@ export function planAntigravityDeployment(
   return { targetConfig, filesToDeploy };
 }
 
+/** One-line, actionable report for a merged config file that blocks planning. */
+export function formatAntigravityConfigMergeError(err: AntigravityConfigMergeError, recoveryDirectory: string): string {
+  const file = err.path ?? 'the Antigravity configuration';
+  if (err.reason === 'malformed' || !err.entry) {
+    const detail = err.message.replace(/\s+/g, ' ').trim().replace(/\.?$/, '.');
+    return `Antigravity configuration problem in ${file}: ${detail} Fix the JSON or move the file aside, then re-run. No files were changed.`;
+  }
+  const entry = err.entry.kind === 'hook'
+    ? { label: `"${err.entry.id}" hook`, removal: `remove the "${err.entry.id}" key` }
+    : { label: `MCP server "${err.entry.id}"`, removal: `remove the "${err.entry.id}" entry from "mcpServers"` };
+  return `Antigravity configuration conflict in ${file}: the ${entry.label} does not match what the harness installs or last installed. Restore it to the content recorded in the latest Antigravity install receipt under ${recoveryDirectory}, or ${entry.removal}, then re-run. No files were changed.`;
+}
+
 export function preflightAntigravityDeployment(files: readonly AntigravityDeploymentItem[]): void {
   for (const f of files) {
     assertSafeFilesystemPath(f.absolutePath, 'file');
@@ -267,19 +291,44 @@ export function preflightAntigravityDeployment(files: readonly AntigravityDeploy
   }
 }
 
+type AntigravityPlanLocations = Pick<AntigravityAdapterInstallOptions, 'scope' | 'project' | 'home' | 'recoveryDirectory' | 'agentsDirectory' | 'commandsDirectory'>;
+
+function resolveAntigravityLocations(options: AntigravityPlanLocations) {
+  const home = options.home ?? process.env.USERPROFILE ?? process.env.HOME ?? '';
+  return {
+    home,
+    agentsDir: options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)),
+    commandsDir: options.commandsDirectory ?? fileURLToPath(new URL('../commands/', import.meta.url)),
+    backupParent: options.recoveryDirectory ?? process.env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups'),
+    initialTarget: options.scope === 'project'
+      ? join(options.project ?? '', '.agents', 'hooks.json')
+      : join(home, '.gemini', 'config', 'hooks.json'),
+  };
+}
+
+/**
+ * Read-only check that the merged Antigravity configs can be planned. Returns the
+ * actionable error line when they cannot, so callers can stop before any other write.
+ */
+export function checkAntigravityConfigMerge(options: AntigravityPlanLocations): string | undefined {
+  const { home, agentsDir, commandsDir, backupParent, initialTarget } = resolveAntigravityLocations(options);
+  const head = discoverReceiptChain(backupParent, initialTarget, 'antigravity').head;
+  const priorManagedFiles = head?.receipt.version === 2 && head.receipt.managedFiles ? head.receipt.managedFiles : [];
+  try {
+    planAntigravityDeployment(options.scope, options.project, home, agentsDir, commandsDir, priorManagedFiles);
+    return undefined;
+  } catch (err) {
+    if (!(err instanceof AntigravityConfigMergeError)) throw err;
+    return formatAntigravityConfigMergeError(err, backupParent);
+  }
+}
+
 export async function installAntigravity(options: AntigravityAdapterInstallOptions): Promise<number> {
   const { scope, project, ask, output, error } = options;
-  const home = options.home ?? process.env.USERPROFILE ?? process.env.HOME ?? '';
-  const agentsDir = options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url));
-  const commandsDir = options.commandsDirectory ?? fileURLToPath(new URL('../commands/', import.meta.url));
-  const backupParent = options.recoveryDirectory ?? process.env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups');
+  const { home, agentsDir, commandsDir, backupParent, initialTarget } = resolveAntigravityLocations(options);
 
   output(`\nTarget Host: Google Antigravity\nScope: ${scope}`);
   if (project) output(`Project: ${project}`);
-
-  const initialTarget = scope === 'project'
-    ? join(project ?? '', '.agents', 'hooks.json')
-    : join(home, '.gemini', 'config', 'hooks.json');
 
   const snapshot = discoverReceiptChain(backupParent, initialTarget, 'antigravity');
   const priorManagedFiles = snapshot.head?.receipt.version === 2 && snapshot.head.receipt.managedFiles
@@ -301,7 +350,14 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   // customized Antigravity artifacts retain their existing explicit-overwrite flow.
   assertAntigravityPreferencePredecessorState(predecessorStates);
 
-  const plan = planAntigravityDeployment(scope, project, home, agentsDir, commandsDir, priorManagedFiles);
+  let plan: ReturnType<typeof planAntigravityDeployment>;
+  try {
+    plan = planAntigravityDeployment(scope, project, home, agentsDir, commandsDir, priorManagedFiles);
+  } catch (err) {
+    if (!(err instanceof AntigravityConfigMergeError)) throw err;
+    error(formatAntigravityConfigMergeError(err, backupParent));
+    return 1;
+  }
 
   const selectedFilesToWrite: AntigravityDeploymentItem[] = [];
 

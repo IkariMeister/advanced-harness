@@ -21,3 +21,22 @@ export const antigravityInstall = (confirmation: string): Step[] => [
   ...roles.map(role => ask(`${role}: desired model preference`)),
   ask('Type yes to install the Antigravity', confirmation),
 ];
+
+/** harness:setup in project scope: configure only the build check, accept the remaining suggestions, then confirm or cancel. */
+export const setupSteps = (build: string, confirmation: string, gates: [string, string][] = []): Step[] => [
+  ask('Command shell', 'bash'),
+  ask('Base branch'),
+  ask('build: confirm command', build),
+  ask('lint: confirm command'),
+  ask('unit: confirm command'),
+  ask('roborazzi: confirm command'),
+  ask('runtime: confirm command'),
+  ask('e2e: confirm command'),
+  ...gates.flatMap(([name, command]) => [ask('Additional required project gate name', name), ask(`${name}: command`, command)]),
+  ask('Additional required project gate name'),
+  ask('Device preference', 'emulator'),
+  ask('Optional device serial'),
+  ask('Parent directory for future worktrees'),
+  ask('Shared MEMORY.md path'),
+  ask('Full preview: type save', confirmation),
+];
