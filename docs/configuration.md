@@ -128,8 +128,9 @@ Check mode does not automatically read legacy profiles. Rerun the respective set
 
 Antigravity installation/update can record a desired human-readable label for each
 of the eight roles. These are instructional preferences, not runtime model
-assignments, discovered provider IDs, entitlement evidence, or access checks. The
-existing Antigravity runtime tiers remain unchanged.
+assignments, discovered provider IDs, entitlement evidence, or access checks. They
+do not change the Antigravity runtime tiers, which are chosen separately per child
+role during the same install/update ([Google Antigravity](installation.md#google-antigravity)).
 
 Global-scope choices are stored in
 `~/.gemini/config/harness.model-preferences.json` and act only as suggestions for
@@ -161,6 +162,6 @@ no preference, context, backup, or receipt writes. Updates preserve the earliest
 managed-file before-state in the existing receipt lifecycle; malformed preference
 data, concurrent changes, or uninstall conflicts stop rather than overwrite.
 
-These preferences do not automate switching the Lead or child model. Actual model
-selection, catalog discovery, entitlement, and exact-model binding remain separate
-unresolved validation; issue #70 acceptance remains outstanding.
+These preferences do not automate switching the Lead or child model. Child runtime
+tiers are selected explicitly at install/update; exact per-role model binding and
+catalog discovery are unsupported on Antigravity, and entitlement remains unverified.
