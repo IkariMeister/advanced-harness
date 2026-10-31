@@ -68,7 +68,7 @@ export async function promptAntigravityModelPreferences(
   output('Type 4 to enter any custom label. These examples are not discovered provider IDs or entitlement evidence.');
   const preferences = {} as Record<NativeRole, string | null>;
   for (const role of nativeRoles) {
-    output(`${role}: existing Antigravity runtime tier ${runtimeTiers[role]} (unchanged).`);
+    output(`${role}: Antigravity runtime tier ${runtimeTiers[role]} (not changed by this preference).`);
     const existing = defaults.preferences[role];
     const matchingExample = existing === null ? -1 : ANTIGRAVITY_MODEL_LABELS.indexOf(existing as typeof ANTIGRAVITY_MODEL_LABELS[number]);
     const suggested = existing === null ? '0' : matchingExample >= 0 ? String(matchingExample + 1) : '4';
