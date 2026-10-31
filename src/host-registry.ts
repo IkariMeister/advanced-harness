@@ -236,8 +236,8 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
     ghPrMergeGuard: 'Codex rules forbid identifiable direct gh pr merge forms; indirect/API routes are not universally blocked.',
     modelSupport: {
       selection: 'per-role-explicit',
-      discovery: 'unsupported',
-      limitation: 'Each role requires an explicitly typed model ID and reasoning effort; no Codex model catalog is queried and no fallback is used. Installation remains gated (issue #45).',
+      discovery: 'live-catalog',
+      limitation: 'Each role requires an explicit model ID and reasoning effort. The adapter can list models via the experimental codex app-server model/list call; listing is not entitlement, and typed IDs are used unchecked when discovery is unavailable. Installation remains gated (issue #45), so discovery is exercised only by tests.',
     },
     disclosures: [
       'Installation and update are gated pending strict per-role isolation (issue #45); the Codex adapter currently serves doctor checks and tests only.',

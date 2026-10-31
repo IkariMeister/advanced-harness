@@ -58,8 +58,8 @@ test('every host declares its model selection and discovery support', () => {
     assert.ok(support.limitation.length > 0, host);
     assert.equal(describeModelSupport(host).length, 2);
   }
-  assert.equal(HOST_CAPABILITIES.opencode.modelSupport.discovery, 'live-catalog');
-  for (const host of ['claude-code', 'antigravity', 'codex', 'cursor'] as const) assert.equal(HOST_CAPABILITIES[host].modelSupport.discovery, 'unsupported', host);
+  for (const host of ['opencode', 'codex'] as const) assert.equal(HOST_CAPABILITIES[host].modelSupport.discovery, 'live-catalog', host);
+  for (const host of ['claude-code', 'antigravity', 'cursor'] as const) assert.equal(HOST_CAPABILITIES[host].modelSupport.discovery, 'unsupported', host);
 });
 
 function installAnswers(models: Record<string, string[]>, extra: (question: string) => string | undefined = () => undefined) {
