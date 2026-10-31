@@ -89,7 +89,7 @@ test('production update consumes canonical command sources and preserves customi
     if (question.startsWith('Check remote')) return 'no';
     if (question.includes('system prompt to latest')) return 'no';
     if (question.includes('Replace customized workflow command')) return 'no';
-    if (question.startsWith('Type update')) return 'update';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'update';
     return fallback;
   };
   await runUpdateFlow({ scope: 'project', project }, {

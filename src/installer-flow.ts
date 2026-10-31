@@ -2,14 +2,15 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { agentDirectories, askAssignments, chooseConfiguration, configuredModels, discoverConfigurations, findMarkdownConflicts, loadNativeDefinitions, modelReference, nativeRoles, parseConfiguration, projectConfiguration, saveInstallation, updateNativeConfiguration, type Ask } from './native-installer.ts';
+import { agentDirectories, askAssignments, chooseConfiguration, discoverConfigurations, findMarkdownConflicts, loadNativeDefinitions, modelReference, nativeRoles, parseConfiguration, projectConfiguration, saveInstallation, updateNativeConfiguration, type Ask } from './native-installer.ts';
 import { DiagnosticError, printReport, verifyRuntime } from './native-diagnostics.ts';
+import { chooseModelCatalog, type ModelDiscovery } from './opencode-model-catalog.ts';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from './receipt-lineage.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 
-import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string; context?: string }
@@ -35,6 +36,7 @@ export interface InstallerFlowDependencies {
   verify?: typeof verifyRuntime;
   printReport?: typeof printReport;
   getHostAdapter?: typeof getHostAdapter;
+  discoverModels?: ModelDiscovery;
 }
 
 export async function runInstallerFlow(options: InstallerFlowOptions, deps: InstallerFlowDependencies): Promise<number> {
@@ -61,6 +63,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (unsupportedHosts.length > 0 || selectedHosts.length > 1) {
     for (const host of unsupportedHosts) {
       errorOutput(`Installation blocked: ${HOST_CAPABILITIES[host].displayName} ${describeBlockedHost(host)}. No host adapters or files were changed.`);
+      for (const line of describeModelSupport(host)) output(line);
     }
     if (dispatch.multi && unsupportedHosts.length === 0) {
       errorOutput('Multi-host simultaneous installation is not supported. Install each host deliberately.');
@@ -73,6 +76,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
 
   const harnessRoot = deps.harnessRoot ?? resolve(fileURLToPath(new URL('..', import.meta.url)));
   const stamp = toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand));
+  if (dispatch.host) for (const line of describeModelSupport(dispatch.host)) output(line);
 
   if (dispatch.host === 'claude-code') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('claude-code');
@@ -135,14 +139,9 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   for (const source of sources) output(`  ${source.path}`);
   if (!sources.length) output('  None; a new configuration will be created.');
   if (env.OPENCODE_CONFIG_CONTENT || env.OPENCODE_CONFIG) output('Warning: environment config overrides may affect runtime behavior; they are not edited by this installer.');
-  output('\nConfigured model IDs (not proof of account access):');
-  const choices = configuredModels(sources);
-  choices.forEach((model, index) => output(`  ${index + 1}. ${model}`));
-  if (!choices.length) output('  None declared. Enter IDs verified in OpenCode /models.');
-  output('Each role requires your choice. Enter a listed number or provider/model#variant; Enter accepts the shown suggestion.');
-  output('Unknown account access/variants must be checked in /models. Spark previously failed with the tested ChatGPT account.');
+  const catalog = await chooseModelCatalog(sources, { directory: project ?? cwd, ...(options.opencode ? { executable: options.opencode } : {}) }, ask, output, deps.discoverModels);
   const definitions = (deps.loadDefinitions ?? loadNativeDefinitions)(deps.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)));
-  const assignments = await askAssignments(definitions, sources, ask);
+  const assignments = await askAssignments(definitions, sources, ask, catalog, output);
   const existingConfig = original === undefined ? {} : parseConfiguration(original, target);
   const existingAgents = existingConfig.agents && typeof existingConfig.agents === 'object' ? existingConfig.agents as Record<string, Record<string, unknown>> : {};
   const replaceModels = [] as typeof nativeRoles[number][];

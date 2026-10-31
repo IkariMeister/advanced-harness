@@ -134,16 +134,23 @@ Do not use redirected stdin as interactive evidence. Record fixture location, co
 - Project scope: the global files and direct/`.opencode` files from the filesystem root through the chosen project, including ancestors above Git roots.
 - Only configuration paths and model IDs are displayed. Raw provider settings, credentials, MCP headers, and agent prompts are not printed.
 - Current role assignments, the root model, and provider model/variant declarations supply choices and suggestions. Expanded model objects are supported, including custom-provider deployment aliases.
-- These are **filesystem declarations**, not the running server's effective model catalog or proof of account access. Environment overrides, disabled providers/models, higher-priority configuration, and connection entitlements can affect actual behavior. Check `/models` before choosing an ID/variant and validate after installation.
+- These are **filesystem declarations**, not the running server's effective model catalog or proof of account access. Environment overrides, disabled providers/models, higher-priority configuration, and connection entitlements can affect actual behavior. They are listed only when live discovery is declined or unavailable (see [model assignment](#model-assignment)); validate after installation.
 
 For project scope the installer reuses a local `.opencode` config when present. Otherwise it uses the project's direct config, except when a discovered ancestor `.opencode` config would override it: then it creates a project `.opencode/opencode.jsonc`. Both JSON and JSONC in the target directory require explicit selection; invalid or duplicate-key configuration is rejected instead of rewritten.
 
 ## Model assignment
 
+Before the role prompts, the installer asks whether to query the **live OpenCode model catalog** (Enter accepts `yes`). This is a read-only `opencode api get /api/model` call for the chosen project; it may start the OpenCode service but sends no model requests. When it succeeds, the numbered list shows every enabled catalog model and each of its variants (`provider/model#variant`). When you decline, or the catalog cannot be read (CLI missing, service unreachable, unexpected response), the installer says so and lists the configured model IDs instead; raw CLI output is never printed.
+
 For every role:
 
-1. Enter `provider/model`, `provider/model#variant`, or a number from the declared model list. Enter accepts the displayed current/default/template suggestion.
+1. Enter `provider/model`, `provider/model#variant`, or a number from the list. Enter accepts the displayed current/default/template suggestion.
 2. Confirm or change the reasoning variant. **`-` means no variant**; `none` is a literal variant name, not removal. LiteLLM/custom aliases and nested model IDs such as `openrouter/anthropic/...` are allowed.
+3. With a live catalog, a model or variant absent from it is reported, then saved only if you type `keep`; Enter chooses again. Nothing is substituted. Without a live catalog, choices cannot be checked before saving.
+
+**Catalog presence is not entitlement.** A listed model can still be rejected by your account or connection; only a separately approved model run establishes access.
+
+Other hosts report their own limits before their prompts (also shown by `harness:doctor`): Claude Code and Antigravity currently write fixed presets/tiers with no model discovery, Codex requires typed model IDs with no discovery (installation gated, issue #45), and Cursor has no native roles (issue #46).
 
 The installer does not invent provider deployment IDs, create model connections, or send a paid test request. Spark was rejected by the tested ChatGPT connection: choose a supported model explicitly or change the connection rather than accepting Spark without checking. All assignments are stored in the selected configuration's `agents.<role>.model`; source templates are unchanged.
 
@@ -308,8 +315,9 @@ npm run harness:update -- --check-remote
 1. **Discovery**: Compares the local harness checkout (`package.json` version and git commit) against the installed version stamp recorded in the active receipt. If `--check-remote` is specified (or approved at the prompt), it runs a read-only `git ls-remote` to check `origin/main`.
 2. **Report/Preview-only**: The update command never runs `git pull` or modifies the harness git checkout. If a newer remote commit is detected, it prints the exact git commands for you to review and run manually.
 3. **Per-role inspection and opt-in**: Shows a unified diff for each role where source template prompts have changed. Models, permissions, and custom fields are flagged as preserved. Prompt updates are strictly opt-in per role (default Enter keeps installed prompt).
-4. **Safe recovery**: Updates write an exact private backup and a pending successor receipt first. On failure, pending evidence is retained. You can restore through the existing receipt chain (`npm run harness:uninstall`) to rollback cleanly.
-5. **Confirmation**: Final confirmation requires typing `update`. Cancellation leaves all files and receipts unchanged.
+4. **Optional model reselection**: `Choose new models for the harness roles?` defaults to no, which preserves every installed model without querying OpenCode. Answering `yes` runs the same live-catalog [model assignment](#model-assignment) prompts, with each installed model as the Enter default. Only roles whose model changed are rewritten (an unchanged expanded model object keeps its shape), and the summary lists each `old -> new` change before you type `update`. A role missing from the configuration is listed with the template model it would receive.
+5. **Safe recovery**: Updates write an exact private backup and a pending successor receipt first. On failure, pending evidence is retained. You can restore through the existing receipt chain (`npm run harness:uninstall`) to rollback cleanly.
+6. **Confirmation**: Final confirmation requires typing `update`. Cancellation leaves all files and receipts unchanged.
 
 Install stamps each new receipt with the harness version (`package.json` version and git commit), and the install prints it as `Harness version: ...` before confirmation. Later receipts from integrations, permission setup and prompt deployment carry that stamp forward, so `harness:update` can report the installed version.
 
