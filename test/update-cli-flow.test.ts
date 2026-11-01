@@ -41,7 +41,7 @@ test('update flow cancellation makes no configuration or recovery writes', async
   const answer = (question: string) => {
     if (question.startsWith('Check remote')) return 'no';
     if (question.includes('system prompt to latest')) return 'no';
-    if (question.startsWith('Type update')) return 'cancel';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'cancel';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -191,7 +191,7 @@ test('blank and unknown final answers cancel without writes or recovery artifact
     const initial = JSON.stringify(createDummyInstalledConfig()); writeFileSync(config, initial);
     const recovery = join(root, `recovery-${finalAnswer ? 'unknown' : 'blank'}`);
     const status = await runUpdateFlow({ scope: 'project', project, checkRemote: false }, {
-      ask: async question => question.startsWith('Type update') ? finalAnswer : question.includes('system prompt to latest') ? 'no' : (() => { throw new Error(question); })(),
+      ask: async question => question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? finalAnswer : question.includes('system prompt to latest') ? 'no' : (() => { throw new Error(question); })(),
       output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery,
       runCommand: (_cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : ''
     });
@@ -215,7 +215,7 @@ test('update flow default-on-Enter keeps installed system prompt', async t => {
     if (question.startsWith('Check remote')) return 'no';
     // Empty string simulates pressing Enter on default [no]
     if (question.includes('system prompt to latest')) return '';
-    if (question.startsWith('Type update')) return 'update';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'update';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -258,7 +258,7 @@ test('missing role permission preview agrees with saved rules and final order', 
   writeFileSync(config, JSON.stringify(dummy, null, 2));
   const output: string[] = [];
   const status = await runUpdateFlow({ scope: 'project', project }, {
-    ask: async question => question.startsWith('Check remote') ? 'no' : question.includes('system prompt to latest') ? 'no' : question.startsWith('Type update') ? 'update' : (() => { throw new Error(question); })(),
+    ask: async question => question.startsWith('Check remote') ? 'no' : question.includes('system prompt to latest') ? 'no' : question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'update' : (() => { throw new Error(question); })(),
     output: text => output.push(text), error: text => output.push(text), home: root,
     recoveryDirectory: join(root, 'recovery'),
     runCommand: (_cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : '',
@@ -304,7 +304,7 @@ test('receipt-managed prompt remains unchanged when prompt update is declined', 
   agents.lead.system = `${agents.lead.system}\nsource template changed line`;
   const output: string[] = [];
   const invoke = (promptAnswer: string) => runUpdateFlow({ scope: 'project', project }, {
-    ask: async question => question.startsWith('Check remote') ? 'no' : question.includes('system prompt to latest') ? promptAnswer : question.startsWith('Type update') ? 'update' : (() => { throw new Error(question); })(),
+    ask: async question => question.startsWith('Check remote') ? 'no' : question.includes('system prompt to latest') ? promptAnswer : question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'update' : (() => { throw new Error(question); })(),
     output: text => output.push(text), error: () => {}, home: root, recoveryDirectory: recovery,
     agentsDirectory,
     loadDefinitions: () => agents,
@@ -356,7 +356,7 @@ test('update flow applies prompt when explicitly selected and records harness ve
     if (question.startsWith('Check remote')) return 'no';
     if (question.includes('Update lead system prompt')) return 'yes';
     if (question.includes('system prompt to latest')) return 'no';
-    if (question.startsWith('Type update')) return 'update';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'update';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -408,7 +408,7 @@ test('update flow checkRemote reports newer remote version and prints pull guida
   const answer = (question: string) => {
     if (question.startsWith('Check remote')) return 'yes';
     if (question.includes('system prompt to latest')) return 'no';
-    if (question.startsWith('Type update')) return 'cancel';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'cancel';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -445,7 +445,7 @@ test('update flow pending-write or finalization failure retains pending recovery
   const answer = (question: string) => {
     if (question.startsWith('Check remote')) return 'no';
     if (question.includes('system prompt to latest')) return 'no';
-    if (question.startsWith('Type update')) return 'update';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'update';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -488,7 +488,7 @@ test('update flow adds missing commands, records managedFiles in receipt, and un
   const answer = (question: string) => {
     if (question.startsWith('Check remote')) return 'no';
     if (question.includes('system prompt to latest')) return 'no';
-    if (question.startsWith('Type update')) return 'update';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'update';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -555,7 +555,7 @@ test('update flow auto-updates untouched older generated commands and updates re
   const commandsDir = join(project, '.opencode', 'commands');
   mkdirSync(commandsDir, { recursive: true });
 
-  const oldContent = '---\ndescription: Start approved work on a Jira issue\n---\nOld start issue content\n';
+  const oldContent = '---\ndescription: Start approved work on a GitHub or Jira issue\n---\nOld start issue content\n';
   const { createHash } = await import('node:crypto');
   const oldHash = createHash('sha256').update(oldContent).digest('hex');
   writeFileSync(join(commandsDir, 'start-issue.md'), oldContent);
@@ -593,7 +593,7 @@ test('update flow auto-updates untouched older generated commands and updates re
     if (question.includes('Replace customized workflow command')) {
       throw new Error(`Untouched older command should not prompt for replacement: ${question}`);
     }
-    if (question.startsWith('Type update')) return 'update';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'update';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -659,7 +659,7 @@ test('update flow partial command write failure retains pending recovery evidenc
   const answer = (question: string) => {
     if (question.startsWith('Check remote')) return 'no';
     if (question.includes('system prompt to latest')) return 'no';
-    if (question.startsWith('Type update')) return 'update';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'update';
     throw new Error(`Unexpected question: ${question}`);
   };
 

@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
+import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
 import {
   createSuccessorReceipt,
   discoverReceiptChain,
@@ -23,6 +24,12 @@ import {
   mergeAntigravityMcpConfig,
   getAntigravityMergeGuardMjsSource,
   AntigravityConfigMergeError,
+  antigravityChildRoles,
+  antigravityPresetsWithTiers,
+  antigravityTiers,
+  isAntigravityTier,
+  parseAntigravityLeadRuleTiers,
+  type AntigravityTier,
 } from './antigravity-compiler.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import { HOST_CAPABILITIES, HOST_MODEL_PRESETS, type HostRolePreset } from './host-registry.ts';
@@ -59,19 +66,62 @@ export interface AntigravityDeploymentItem {
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 
+const presetTiers = (): Record<NativeRole, AntigravityTier> =>
+  Object.fromEntries(nativeRoles.map(role => [role, HOST_MODEL_PRESETS.antigravity[role].tier ?? 'inherit'])) as Record<NativeRole, AntigravityTier>;
+
+function leadRulePathFor(scope: 'project' | 'global', projectRoot: string | undefined, home: string): string | undefined {
+  if (scope === 'global') return join(home, '.gemini', 'config', 'rules', 'advanced-harness-lead.md');
+  return projectRoot ? join(projectRoot, '.agents', 'rules', 'advanced-harness-lead.md') : undefined;
+}
+
+/** Valid child tiers in the installed Lead rule; a missing or invalid row falls back to the preset. */
+export function installedAntigravityTiers(scope: 'project' | 'global', projectRoot: string | undefined, home: string): Record<NativeRole, AntigravityTier> {
+  const tiers = presetTiers();
+  const path = leadRulePathFor(scope, projectRoot, home);
+  if (path && existsSync(path)) {
+    for (const [role, tier] of Object.entries(parseAntigravityLeadRuleTiers(readFileSync(path, 'utf8')))) {
+      if (isAntigravityTier(tier)) tiers[role as NativeRole] = tier;
+    }
+  }
+  return tiers;
+}
+
+/**
+ * Asks for an explicit runtime tier per child role. Enter keeps the shown default (installed, else preset).
+ * Antigravity binds tiers, not exact models, and exposes no model catalog to this harness.
+ */
+export async function askAntigravityTiers(defaults: Record<NativeRole, AntigravityTier>, ask: Ask, output: (message: string) => void): Promise<Record<NativeRole, AntigravityTier>> {
+  output('\nAntigravity child role tiers. Exact per-role model binding and model discovery are unsupported; the tier sets only the define_subagent model tier.');
+  antigravityTiers.forEach((tier, index) => output(`  ${index + 1}. ${tier}${tier === 'inherit' ? ' (use the session model)' : ''}`));
+  output('Enter a listed number or tier name. Enter keeps the shown tier. Lead always runs on the session model (inherit) and is not configurable here.');
+  const tiers = { lead: 'inherit' } as Record<NativeRole, AntigravityTier>;
+  for (const role of antigravityChildRoles) {
+    for (let attempt = 1; !tiers[role]; attempt++) {
+      const answer = (await ask(`${role}: Antigravity model tier (number or ${antigravityTiers.join('/')})`, defaults[role])).trim() || defaults[role];
+      const tier = /^\d+$/.test(answer) ? antigravityTiers[Number(answer) - 1] : answer;
+      if (isAntigravityTier(tier)) tiers[role] = tier;
+      else if (attempt >= 3) throw new Error(`Antigravity tier for ${role} remained invalid after 3 attempts. No files were changed.`);
+      else output(`Enter a listed number or one of ${antigravityTiers.join(', ')} for ${role}; nothing is substituted.`);
+    }
+  }
+  return tiers;
+}
+
 export function planAntigravityDeployment(
   scope: 'project' | 'global',
   projectRoot: string | undefined,
   home: string,
   agentsDir: string,
   commandsDir: string,
-  priorManagedFiles?: readonly ManagedFileEvidence[]
+  priorManagedFiles?: readonly ManagedFileEvidence[],
+  tiers: Record<NativeRole, AntigravityTier> = installedAntigravityTiers(scope, projectRoot, home)
 ): {
   targetConfig: string;
   filesToDeploy: AntigravityDeploymentItem[];
+  tiers: Record<NativeRole, AntigravityTier>;
 } {
   const roles = loadRoleDefinitions(agentsDir);
-  const leadRule = compileLeadOrchestrationRule(roles);
+  const leadRule = compileLeadOrchestrationRule(roles, antigravityPresetsWithTiers(tiers));
   const commands = loadWorkflowCommands(commandsDir);
 
   const rawFiles: Array<{
@@ -263,7 +313,7 @@ export function planAntigravityDeployment(
     };
   });
 
-  return { targetConfig, filesToDeploy };
+  return { targetConfig, filesToDeploy, tiers };
 }
 
 /** One-line, actionable report for a merged config file that blocks planning. */
@@ -359,6 +409,19 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     return 1;
   }
 
+  let tiers: Record<NativeRole, AntigravityTier>;
+  try {
+    tiers = await askAntigravityTiers(plan.tiers, ask, output);
+  } catch (err) {
+    error(err instanceof Error && err.message.endsWith('No files were changed.') ? err.message : 'Antigravity tier prompt was closed or rejected. No files were changed.');
+    return 2;
+  }
+  if (nativeRoles.some(role => tiers[role] !== plan.tiers[role])) {
+    plan = planAntigravityDeployment(scope, project, home, agentsDir, commandsDir, priorManagedFiles, tiers);
+  }
+  output('\nRole tiers (tier only; exact model and availability unverified):');
+  for (const role of nativeRoles) output(`  ${role}: ${tiers[role]}${role === 'lead' ? ' (session model)' : ''}`);
+
   const selectedFilesToWrite: AntigravityDeploymentItem[] = [];
 
   output('\nFiles to deploy:');
@@ -379,7 +442,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
       if (answer === 'yes' || answer === 'y') {
         selectedFilesToWrite.push(f);
       } else {
-        output(`  Preserving customized file: ${f.relativePath}`);
+        output(`  Preserving customized file: ${f.relativePath}${f.kind === 'rules' ? '; the tiers entered above were not applied' : ''}`);
       }
     }
   }
@@ -391,17 +454,18 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     ...(options.context ? { context: options.context } : {}),
     ask,
     output,
-    runtimeTiers: Object.fromEntries(nativeRoles.map(role => [role, HOST_MODEL_PRESETS.antigravity[role].model])) as Record<NativeRole, string>,
+    runtimeTiers: tiers,
   });
   assertNoAntigravityPreferenceDeploymentOverlap(preferencePlan.paths, plan.filesToDeploy);
   output('\nDesired model preference preview (labels only; no runtime assignment or access verification):');
   for (const role of nativeRoles) {
-    output(`  ${role} (existing runtime tier ${HOST_MODEL_PRESETS.antigravity[role].model}, unchanged): ${preferencePlan.preferences.preferences[role] ?? 'unconfigured'}`);
+    output(`  ${role} (runtime tier ${tiers[role]}, not changed by preferences): ${preferencePlan.preferences.preferences[role] ?? 'unconfigured'}`);
   }
   output('Preference files to update:');
   if (preferencePlan.writes.length) preferencePlan.writes.forEach(file => output(`  ${file.path} (${file.currentContent === undefined ? 'new' : 'update'}${file.currentContent === undefined ? '' : `; private before-state backup under ${backupParent}`})`));
   else output('  None (preferences already match).');
 
+  const exclude = previewGitExclude(scope === 'project' ? project : undefined, 'antigravity', output);
   if (options.harnessVersion) output(`Harness version: ${formatVersionStamp(options.harnessVersion)}`);
   // Enter does not apply a default here: only an explicit yes writes files.
   output('');
@@ -455,6 +519,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
 
   if (!hasWrites && !configChanged) {
     output('Configuration and artifacts already match; no files, backups, or receipts were modified.');
+    finishGitExclude(exclude, output, error);
     return 0;
   }
 
@@ -498,11 +563,13 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   }
 
   finalizeSuccessor(pending, targetFinal);
+  finishGitExclude(exclude, output, error);
 
   output('\nAntigravity harness deployment complete.');
   output('• Rules deployed for Lead orchestrator with subagent delegation contract.');
   output('• PreToolUse hook installed to block "gh pr merge".');
   output('• Workflow skills and MCP config generated.\n');
+  output('• Child role tiers are written to the Lead rule table; exact models and access are not configured or verified.');
   output('• Per-role desired model labels saved as preferences only; effective models/access are not configured or verified.');
 
   return 0;
@@ -539,6 +606,11 @@ export async function diagnoseAntigravity(options: { project?: string | undefine
         issues.push(`${label} Lead rule exceeds 24KB limit (${size} bytes).`);
       } else {
         notes.push(`${label} Lead orchestration rule is present (${size} bytes).`);
+        const tiers = parseAntigravityLeadRuleTiers(readFileSync(leadRulePath, 'utf8'));
+        for (const role of antigravityChildRoles) {
+          if (!isAntigravityTier(tiers[role])) issues.push(`${label} Lead rule tier for ${role} ${tiers[role] === undefined ? 'is missing' : `"${tiers[role]}" is invalid`}; rerun the installer to choose one explicitly.`);
+        }
+        notes.push(`${label} child role tiers: ${antigravityChildRoles.map(role => `${role}=${tiers[role] ?? '?'}`).join(', ')} (tiers only; exact models and availability unverified).`);
       }
     }
 

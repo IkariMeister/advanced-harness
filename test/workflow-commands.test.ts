@@ -22,7 +22,7 @@ for (const name of commands) {
 
 test('workflow commands require explicit human disposition at consequential gates', async () => {
   const startIssue = await readFile(new URL('start-issue.md', root), 'utf8');
-  assert.match(startIssue, /waits for explicit human approval before implementation/i);
+  assert.match(startIssue, /waits for explicit conversational human approval before implementation/i);
   assert.match(startIssue, /accept\/discard decisions before fixing/i);
   const review = await readFile(new URL('review-pr.md', root), 'utf8');
   assert.match(review, /choose exactly one disposition: Approve, Just Comment, or Request changes/i);
@@ -54,8 +54,17 @@ test('BH-030: PR feedback workflow retrieves complete threads and gates scoped f
 });
 
 test('workflow commands preserve their expected handoff behavior', async () => {
-  assert.match(await readFile(new URL('start-issue.md', root), 'utf8'), /Figma[\s\S]*otherwise Stitch[\s\S]*otherwise Jira/i);
-  assert.match(await readFile(new URL('start-issue.md', root), 'utf8'), /assigns[\s\S]*worktree[\s\S]*In Progress/i);
+  const startIssue = await readFile(new URL('start-issue.md', root), 'utf8');
+  assert.match(startIssue, /GitHub or Jira issue/);
+  assert.match(startIssue, /reads repository instructions and project context, then shared `MEMORY\.md`/);
+  assert.match(startIssue, /External verifies that the issue is assigned/);
+  assert.doesNotMatch(startIssue, /External assigns/);
+  assert.match(startIssue, /GitHub work must not require Jira configuration or access/);
+  assert.match(startIssue, /linked parent when present/);
+  assert.match(startIssue, /explicitly confirmed/);
+  assert.match(startIssue, /absent optional mapping does not block/);
+  assert.match(startIssue, /Nonvisual work does not require a design service/);
+  assert.match(startIssue, /preserve existing worktrees and unrelated changes/i);
   assert.match(await readFile(new URL('start-issue.md', root), 'utf8'), /smoke plan[\s\S]*approval before implementation/i);
   assert.match(await readFile(new URL('review-pr.md', root), 'utf8'), /Approve, Just Comment, or Request changes/);
   assert.match(await readFile(new URL('review-pr.md', root), 'utf8'), /inline on relevant code lines/);
@@ -97,11 +106,12 @@ test('BH-010: workflow commands enforce interruption handling and inspect-before
 
 test('BH-012: workflow commands reflect non-blocking worktrees, shared memory and approved rule consolidation', async () => {
   const startIssue = await readFile(new URL('start-issue.md', root), 'utf8');
-  assert.match(startIssue, /initializes shared MEMORY\.md if missing/);
-  assert.match(startIssue, /Other existing worktrees and untouched canonical changes do not block bootstrap/);
-  assert.match(startIssue, /stop and ask only on missing\/invalid settings, target branch\/worktree collision, or creation errors/);
-  assert.match(startIssue, /evaluate candidate memory learnings once for approved consolidation into AGENTS\.md/);
-  assert.match(startIssue, /approve resulting diff before publication, rejecting secrets and operational paths/);
+  assert.match(startIssue, /shared `MEMORY\.md`/);
+  assert.match(startIssue, /Never write memory automatically/);
+  assert.match(startIssue, /Preserve existing worktrees and unrelated changes/);
+  assert.match(startIssue, /ask on missing\/conflicting settings, collisions, or unsafe state/);
+  assert.match(startIssue, /evaluate candidate memory learnings once for approved consolidation into `AGENTS\.md`/);
+  assert.match(startIssue, /approve the resulting diff before publication, rejecting secrets and operational paths/);
 });
 
 test('BH-035: workflow commands reflect bounded delegation and 4-state status contract', async () => {

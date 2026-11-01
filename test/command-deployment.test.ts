@@ -32,7 +32,7 @@ test('installer flow in project scope deploys commands and records managedFiles 
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'yes';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -83,7 +83,7 @@ test('installer flow in global scope deploys commands to global commands directo
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'yes';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -122,7 +122,7 @@ test('answering no to workflow commands prompt leaves commands folder untouched 
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'no';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -160,7 +160,7 @@ test('cancellation at final confirmation creates no commands files, backups, or 
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'yes';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'cancel';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'cancel';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -191,7 +191,7 @@ test('idempotent rerun when commands already exist and match does not re-write o
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'yes';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -231,7 +231,7 @@ test('differing customized command file: default no preserves it; yes overwrites
       if (question.startsWith('Install workflow slash commands')) return 'yes';
       if (question.startsWith('Overwrite ')) return 'no';
       if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-      if (question.startsWith('Type install')) return 'install';
+      if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
       throw new Error(`Unexpected question: ${question}`);
     };
 
@@ -273,7 +273,7 @@ test('differing customized command file: default no preserves it; yes overwrites
       if (question.startsWith('Install workflow slash commands')) return 'yes';
       if (question.startsWith('Overwrite ')) return 'yes';
       if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-      if (question.startsWith('Type install')) return 'install';
+      if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
       throw new Error(`Unexpected question: ${question}`);
     };
 
@@ -319,7 +319,7 @@ test('harness uninstall cleanly removes new command files and restores overwritt
     if (question.startsWith('Install workflow slash commands')) return 'yes';
     if (question.startsWith('Overwrite ')) return 'yes';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -385,7 +385,7 @@ test('commands installation honors displayed yes default on Enter', async t => {
     // Empty string simulates pressing Enter at prompt
     if (question.startsWith('Install workflow slash commands')) return '';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -427,7 +427,7 @@ test('original managed-file baseline is preserved across upgrades (v1 -> v2 -> u
     if (question.startsWith('Install workflow slash commands')) return 'yes';
     if (question.startsWith('Overwrite ')) return 'yes';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -461,7 +461,7 @@ test('original managed-file baseline is preserved across upgrades (v1 -> v2 -> u
       return 'yes';
     }
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
 
@@ -539,7 +539,7 @@ test('partial command deployment failure retains pending recovery evidence', asy
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'yes';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
 

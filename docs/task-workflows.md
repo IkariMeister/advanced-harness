@@ -8,7 +8,7 @@ commands with the same names.
 
 | Command | Purpose | Arguments |
 | --- | --- | --- |
-| `/start-issue` | Start a Jira issue | `$ARGUMENTS` (full input) |
+| `/start-issue` | Start a GitHub or Jira issue | `$ARGUMENTS` (full input) |
 | `/review-pr` | Review a teammate PR | `$ARGUMENTS` (full input) |
 | `/address-pr-feedback` | Triage and address PR review feedback | `$ARGUMENTS` (full input) |
 | `/report-defect` | Draft/report defect and optionally investigate | `$1` parent; `$2` description (last positional consumes remainder) |
@@ -44,41 +44,54 @@ operations, transitions, comments, cleanup), inspect actual state read-only befo
 record verified completion without repeating the mutation, or report incomplete/diverged/
 inconclusive state and wait for human confirmation before retrying or repairing.
 
-## Start a Jira issue
+## Start a GitHub or Jira issue
 
-**Inputs:** Jira issue key/URL; confirmed human user identity in Jira; current
-repository identity and safety/bootstrap information from Operator; applicable project
-instructions.
+**Inputs:** GitHub or Jira issue key/URL; confirmed human identity in the selected
+tracker; current repository identity and safety/bootstrap information from Operator;
+applicable project instructions and shared memory.
 
 **Ordered steps and approvals:**
 
-1. Lead confirms the issue key/URL and the human's Jira user identity (or asks External
-    to verify the identity with the human). Resolve only minimal identity/repository
-    safety ambiguity needed to act; do not begin research or planning.
-2. External assigns the Jira issue to that confirmed human user. If identity is unknown,
-    stop and ask; do not guess or leave the issue unassigned while proceeding.
+1. Operator reads repository instructions and project context, then shared `MEMORY.md`,
+    before Lead asks which tracker to use. Reuse only an explicitly remembered,
+    nonconflicting tracker choice; otherwise ask. Lead confirms issue key/URL, repository,
+    safety context, and human identity in the selected tracker. A bare `#96` does not
+    identify a GitHub repository. GitHub does not require Jira configuration or access.
+    Resolve minimal ambiguity and do not begin research/planning.
+2. External verifies the issue is assigned to the confirmed human before research or
+    planning; do not autoassign or proceed unassigned. If identity/assignment is unclear,
+    stop and ask.
 3. Operator inspects the current repository, instructions, base branch, existing
     worktrees, and unrelated changes, then creates an isolated task worktree and
     initializes shared `MEMORY.md` if missing. Other existing worktrees and untouched
     canonical changes do not block bootstrap; stop and ask only on missing/invalid settings,
     target branch/worktree collision, or creation errors.
-4. External transitions the actual issue to the project's equivalent of **In Progress**.
-    External reads the issue and linked parent for context, not scope expansion. Unavailable
-    context, uncertain permissions, or an unclear/unsafe transition are blockers: stop
-    and ask rather than guess or continue into research/planning.
-5. Inspect linked designs in this order: Figma linked on the issue or parent first;
-   otherwise Stitch; otherwise Jira. Ask before combining design sources, or if
-   required design context is unavailable. Clarify missing or conflicting requirements.
-6. Once requirements are clear, Lead defaults to inline inspection and scoping for understood low-risk tasks, or Researcher automatically inspects relevant code and Planner prepares an implementation plan when delegation is justified. File count never decides delegation; a delegated Implementer owns code, tests, and documentation together for a single behavior unit. Reuse an adequate existing smoke plan and add missing coverage, or draft one if absent. Manual smoke is the default; propose automation where practical. Include prerequisites, steps, and expected outcomes. Standardize turn reporting around four states: Working, Checking, Ready, and Needs your decision.
+4. External reads the issue and linked parent when present for context, not scope expansion.
+    Apply only explicitly confirmed lifecycle mappings. Never invent GitHub In Progress/In
+    Review states. An absent optional mapping is nonblocking; an explicitly required but
+    unresolved transition blocks. Unavailable required context/access blocks.
+5. Use only the explicitly selected design source; do not silently fall back or combine.
+    Nonvisual tasks need no design service. Clarify missing or conflicting requirements.
+6. Once requirements are clear, Lead defaults to inline inspection and scoping for
+   understood low-risk tasks, or Researcher automatically inspects relevant code and
+   Planner prepares an implementation plan when delegation is justified. File count
+   never decides delegation; a delegated Implementer owns code, tests, and documentation
+   together for a single behavior unit. Reuse an adequate existing smoke plan and
+   add missing coverage, or draft one if absent. Manual smoke is the default; propose
+   automation where practical. Include prerequisites, steps, and expected outcomes.
+   Standardize turn reporting around four states: Working, Checking, Ready, and Needs
+   your decision.
 7. Lead presents the plan, smoke plan, and applicable checks and waits for explicit
    human approval before any implementation. Implementer makes only approved changes.
 8. Reviewer runs planned applicable checks; QA performs applicable QA and smoke
    verification. Lead presents findings for individual or explicit-batch accept/discard
    decisions. Implement accepted fixes within their scope and recheck affected checks.
-9. Lead requests final human approval before any push or PR creation. External publishes
-   only after that approval. On PR open, transition Jira to In Review if possible; ask
-   about ambiguous mappings, permissions, or uncertain transition outcomes. Never
-   invent a Done transition or other unconfirmed lifecycle behavior. Agents never merge.
+ 9. Lead requests final human approval before any push or PR creation. External publishes
+    only after that approval. Apply lifecycle updates only when the selected tracker has
+    an explicitly confirmed mapping: transition the issue to In Review only when that
+    mapping exists. An absent optional mapping is nonblocking; ask about explicitly
+    required but unresolved mappings, permissions, or uncertain transition outcomes.
+    Never invent lifecycle states. Agents never merge.
 10. Evaluate candidate memory learnings once for approved consolidation into `AGENTS.md`
     (promote, keep in memory, or discard); approve resulting diff before publication,
     rejecting secrets and operational paths. A human's confirmation that the PR is merged
@@ -90,16 +103,15 @@ instructions.
     branch only if safe. Stop and ask if anything is dirty, unpushed, or uncertain;
     preserve unrelated work.
 
-**Outputs/checks:** Issue assignment and confirmed context; approved plan and smoke
+**Outputs/checks:** Assignment verification and confirmed context; approved plan and smoke
 plan; implementation, applicable check/QA/smoke results, finding decisions, PR and
-confirmed Jira state where available; cleanup report. Record unavailable/not-run checks
-honestly. Evidence capture is optional unless explicitly required.
+confirmed selected-tracker lifecycle state where mapped; cleanup report. Record
+unavailable/not-run checks honestly. Evidence capture is optional unless explicitly required.
 
-**Example:** “Start PROJ-42 at https://… in this repository.” Lead confirms the human's
-Jira identity, then External assigns the issue to that user. Operator creates the task
-worktree; External transitions the issue to In Progress. After requirements and design
-context are clear, Lead presents a plan and manual smoke steps. No implementation starts
-until the human approves that plan.
+**Example:** “Start #96 in this repository.” Lead first checks remembered tracker choice;
+if none is explicit, asks whether this is GitHub or Jira, confirms repository and identity,
+and has External verify assignment. After requirements are clear, Lead presents a plan
+and manual smoke steps. No implementation starts until the human approves that plan.
 
 ## Teammate PR review
 
@@ -184,7 +196,7 @@ authorization are separate decisions.
 3. Separately ask whether investigation is authorized. Approval to create the bug is
    not investigation authorization. If authorized, Researcher investigates and Lead
    presents results. Ask separately before appending findings to the bug.
-4. Stop without implementation. Any fix follows the regular Start a Jira issue
+4. Stop without implementation. Any fix follows the regular Start a GitHub or Jira issue
    workflow as a separately scoped task.
 
 **Outputs/checks:** Draft and its approval decision; created child-bug reference/result
@@ -211,8 +223,7 @@ as applicable.
 3. Human approves or discards each proposal individually or as an explicitly listed
    batch. External creates only approved issues in the selected destination(s).
 4. Do not implement fixes. Implementation requires a separately approved workflow.
-   A GitHub-only implementation entry point is not defined by the Jira issue workflow
-   and is out of scope here; do not invent a mapping.
+    Use the tracker explicitly selected for that task; do not invent a mapping.
 
 **Outputs/checks:** Prioritized findings, proposed issues/destinations and individual
 approval decisions; references/results for approved issues only. Disclose access or

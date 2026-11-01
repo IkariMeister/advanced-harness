@@ -28,7 +28,7 @@ Workflow source compilation can emit deterministic host-specific command/skill a
 
 **Gate.** `harness:install --host codex` and `harness:update --host codex` are refused before any Codex prompt, file write, backup or receipt, and the registry adapter throws if called directly. Issue #45 requires strict per-role isolation and rejects shared-permission fallbacks; Codex subagents inherit the parent sandbox, approval and MCP settings, so that requirement is unmet. The gate lifts only when isolation is supported or the requirement is explicitly revised by its owner. `harness:doctor --host codex` and workflow artifact compilation remain available. The rest of this section documents the gated adapter and applies once the gate is lifted.
 
-`harness:install --host codex` and `harness:update --host codex` write project `.codex/` or global `~/.codex/` files after explicit confirmation. Every role requires a model ID and reasoning effort; an existing role's values are the Enter defaults, while a new role requires explicit values. There is no guessed preset or fallback. Required answers allow at most three invalid attempts; a closed/rejected prompt aborts before writes. Enter preserves previously selected MCP servers and their disabled-tool entries; enter `-` to clear only selection tracking (it does not re-enable servers or remove disabled tools). Existing shared `AGENTS.md` files are never rewritten. Workflow skills use `.agents/skills/<name>/SKILL.md`; existing differing skills are preserved because that directory may be shared with other hosts.
+`harness:install --host codex` and `harness:update --host codex` write project `.codex/` or global `~/.codex/` files after explicit confirmation. Every role requires a model ID and reasoning effort; an existing role's values are the Enter defaults, while a new role requires explicit values. There is no guessed preset or fallback. Choices can come from the live `model/list` catalog, with off-catalog values kept only on an explicit `keep` ([Codex model discovery](installation.md#openai-codex-installation-gated)). Required answers allow at most three invalid attempts; a closed/rejected prompt aborts before writes. Enter preserves previously selected MCP servers and their disabled-tool entries; enter `-` to clear only selection tracking (it does not re-enable servers or remove disabled tools). Existing shared `AGENTS.md` files are never rewritten. Workflow skills use `.agents/skills/<name>/SKILL.md`; existing differing skills are preserved because that directory may be shared with other hosts.
 
 Codex install/update and doctor share one bounded, offset-preserving TOML scanner for basic tables, dotted/quoted keys, scalar values, arrays, and inline tables. Comments, whitespace, line endings, and untouched source slices are preserved. Unsupported multiline strings/arrays, array-of-table forms, and TOML syntax outside this subset are refused rather than normalized. Codex uninstall is not implemented; do not use the OpenCode-only uninstall route as a substitute.
 
@@ -128,8 +128,9 @@ Check mode does not automatically read legacy profiles. Rerun the respective set
 
 Antigravity installation/update can record a desired human-readable label for each
 of the eight roles. These are instructional preferences, not runtime model
-assignments, discovered provider IDs, entitlement evidence, or access checks. The
-existing Antigravity runtime tiers remain unchanged.
+assignments, discovered provider IDs, entitlement evidence, or access checks. They
+do not change the Antigravity runtime tiers, which are chosen separately per child
+role during the same install/update ([Google Antigravity](installation.md#google-antigravity)).
 
 Global-scope choices are stored in
 `~/.gemini/config/harness.model-preferences.json` and act only as suggestions for
@@ -161,6 +162,6 @@ no preference, context, backup, or receipt writes. Updates preserve the earliest
 managed-file before-state in the existing receipt lifecycle; malformed preference
 data, concurrent changes, or uninstall conflicts stop rather than overwrite.
 
-These preferences do not automate switching the Lead or child model. Actual model
-selection, catalog discovery, entitlement, and exact-model binding remain separate
-unresolved validation; issue #70 acceptance remains outstanding.
+These preferences do not automate switching the Lead or child model. Child runtime
+tiers are selected explicitly at install/update; exact per-role model binding and
+catalog discovery are unsupported on Antigravity, and entitlement remains unverified.
