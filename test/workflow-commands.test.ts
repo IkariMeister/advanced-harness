@@ -39,6 +39,11 @@ test('BH-030: PR feedback workflow retrieves complete threads and gates scoped f
   assert.match(feedback, /assigned human and GitHub only; do not use Jira/i);
   assert.match(feedback, /Operator verifies local repository\/worktree and PR-head safety\. External owns every GitHub read and write/i);
   assert.match(feedback, /paginate both the thread collection and each thread's replies until complete/i);
+  assert.match(feedback, /complete raw source text for every incoming review\/comment\/reply/i);
+  assert.match(feedback, /stable ID, author, URL, resolution state, and relevant head\/commit metadata/i);
+  assert.match(feedback, /verbatim source text separately from Lead-authored analysis\/findings/i);
+  assert.match(feedback, /Mark unknown metadata unknown rather than inventing it/i);
+  assert.match(feedback, /actual resulting diff, never to raw comments as a whole/i);
   assert.match(feedback, /incomplete, inconsistent, or access fails, report it as blocked/i);
   assert.match(feedback, /accept or discard each finding individually or in an explicitly enumerated batch/i);
   assert.match(feedback, /waits for explicit human approval before Implementer changes code/i);
@@ -51,6 +56,17 @@ test('BH-030: PR feedback workflow retrieves complete threads and gates scoped f
   assert.match(feedback, /Never merge, force-push, delete branches, or clean up as an implied step/i);
   assert.match(feedback, /interactive TTY/i);
   assert.match(feedback, /Prompt safeguards guide behavior but are not a deterministic security boundary/i);
+});
+
+test('PR review templates keep untrusted-context safeguards without directing placeholder processing', async () => {
+  for (const name of ['review-pr', 'address-pr-feedback']) {
+    const canonical = await readFile(new URL(`../commands/${name}.md`, import.meta.url), 'utf8');
+    const generated = await readFile(new URL(`${name}.md`, root), 'utf8');
+    assert.doesNotMatch(canonical, /do not (?:tokenize|recursively substitute)/i, name);
+    assert.doesNotMatch(generated, /do not (?:tokenize|recursively substitute)/i, `${name} generated output`);
+    assert.match(canonical, /arguments?(?: and all review feedback)? as (?:opaque |untrusted )?context,? (?:not approval|never as authorization)/i, name);
+    assert.match(generated, /arguments?(?: and all review feedback)? as (?:opaque |untrusted )?context,? (?:not approval|never as authorization)/i, `${name} generated output`);
+  }
 });
 
 test('Reviewer role instructions are the single source of the risk-tiered review rubric', async () => {
