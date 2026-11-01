@@ -40,7 +40,7 @@ test('injected production installer flow writes a fresh configuration and finali
     if (question.startsWith('Make Lead')) return 'no';
     if (question.startsWith('Also set')) return 'no';
     if (question.startsWith('Replace customized')) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
   const output: string[] = [];
@@ -69,7 +69,7 @@ test('injected installer cancellation makes no configuration or recovery writes'
     if (question.includes(': model ID')) return 'local/model#low';
     if (question.includes(': reasoning variant')) return 'low';
     if (question.startsWith('Install workflow slash commands')) return 'no';
-    if (question.startsWith('Make Lead') || question.startsWith('Also set') || question.startsWith('Replace') || question.startsWith('Type install')) return 'no';
+    if (question.startsWith('Make Lead') || question.startsWith('Also set') || question.startsWith('Replace') || question.startsWith('Query the live OpenCode') || question.startsWith('Type install')) return 'no';
     throw new Error(`Unexpected question: ${question}`);
   };
   await runInstallerFlow({ scope: 'project', project }, { ask: async question => answer(question), output: () => {}, error: () => {}, home: root, recoveryDirectory: join(root, 'recovery') });
@@ -128,7 +128,7 @@ test('injected installer explicitly replaces a preserved model only after its ro
     if (question.startsWith('Replace existing ')) return 'no';
     if (question.startsWith('Install workflow slash commands')) return 'no';
     if (question.startsWith('Make Lead') || question.startsWith('Also set') || question.startsWith('Replace customized')) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
   await runInstallerFlow({ scope: 'project', project }, {
@@ -148,7 +148,7 @@ test('installer verification returns failure and inconclusive statuses instead o
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'no';
     if (question.startsWith('Make Lead') || question.startsWith('Also set') || question.startsWith('Replace')) return 'no';
-    if (question.startsWith('Type install')) return target;
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return target;
     throw new Error(`Unexpected question: ${question}`);
   };
   const base = { scope: 'project', project };
@@ -166,7 +166,7 @@ test('installer injected project and config paths use injected home/cwd', async 
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, 'sandbox-home'); const cwd = join(root, 'sandbox-cwd');
   const project = join(home, 'project'); mkdirSync(project, { recursive: true });
-  const asks = async (question: string) => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'cancel'; throw new Error(question); };
+  const asks = async (question: string) => { if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-'; if (question.startsWith('Install workflow slash commands')) return 'no'; if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'cancel'; throw new Error(question); };
   await runInstallerFlow({ scope: 'project', project: '~/project', config: '$HOME/project/opencode.json' }, { ask: asks, output: () => {}, error: () => {}, home, cwd, recoveryDirectory: join(root, 'recovery') }).catch(error => { throw error; });
   assert.equal(existsSync(join(project, 'opencode.json')), false);
   assert.equal(existsSync(join(cwd, 'project')), false);
@@ -179,7 +179,7 @@ test('installer pending-write and finalization failures retain the expected evid
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'no';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'install';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(question);
   };
   const pendingProject = join(root, 'pending'); mkdirSync(pendingProject);
@@ -201,7 +201,7 @@ test('repeated injected installer flow is a true no-op without a new receipt or 
   const answer = async (question: string) => {
     if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'no';
-    if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install';
+    if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
     throw new Error(`Unexpected question: ${question}`);
   };
   const deps = { ask: answer, output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery, verify: async () => ({ ok: true } as never), printReport: () => {} };
@@ -223,7 +223,7 @@ test('installer obsolete owned rule defaults to keep and can be explicitly remov
       const askInitial = async (question: string) => {
         if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-';
         if (question.startsWith('Install workflow slash commands')) return 'no';
-        if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install';
+        if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
         throw new Error(question);
       };
       const deps = { ask: askInitial, output: () => {}, error: () => {}, home: root, recoveryDirectory: recovery, verify: async () => ({ ok: true } as never), printReport: () => {} };
@@ -233,7 +233,7 @@ test('installer obsolete owned rule defaults to keep and can be explicitly remov
         if (question.includes(': model ID')) return 'local/model'; if (question.includes(': reasoning variant')) return '-';
         if (question.startsWith('Remove obsolete owned external permission')) return remove ? 'yes' : 'no';
         if (question.startsWith('Install workflow slash commands')) return 'no';
-        if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Type install')) return 'install';
+        if (/Replace|Make Lead|Also set/.test(question)) return 'no'; if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'install';
         throw new Error(`Unexpected upgrade prompt: ${question}`);
       };
       await runInstallerFlow({ scope: 'project', project }, { ...deps, ask: askUpgrade, loadDefinitions: () => changed });
@@ -258,7 +258,7 @@ test('installer flow retries invalid scope/model/variant inputs and honors defau
     if (question.startsWith('lead: reasoning variant')) return leadVariantReplies.shift() ?? '-';
     if (question.includes(': model ID')) return '';
     if (question.includes(': reasoning variant')) return '';
-    if (question.startsWith('Type install')) return 'cancel';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'cancel';
     return '';
   };
   assert.equal(await runInstallerFlow({}, {
@@ -284,7 +284,7 @@ test('global installer selects default, XDG, and injected config directories and
     if (question.includes(': reasoning variant')) return '-';
     if (question.startsWith('Install workflow slash commands')) return 'no';
     if (/Replace|Make Lead|Also set/.test(question)) return 'no';
-    if (question.startsWith('Type install')) return 'cancel';
+    if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return 'cancel';
     throw new Error(`Unexpected prompt: ${question}`);
   };
   for (const [label, deps, expected] of [
@@ -326,10 +326,10 @@ test('OpenCode install stamps harnessVersion on the head receipt and prints it b
     let sawVersionBeforeConfirm = false;
     const code = await runInstallerFlow({ scope: 'project', project }, {
       ask: async question => {
-        if (question.startsWith('Type install')) sawVersionBeforeConfirm = output.includes(expectedLine);
+        if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) sawVersionBeforeConfirm = output.includes(expectedLine);
         if (/^(lead|operator|external|researcher|planner|implementer|reviewer|qa): model/.test(question)) return 'local/model#low';
         if (/^(lead|operator|external|researcher|planner|implementer|reviewer|qa): reasoning/.test(question)) return '-';
-        if (question.startsWith('Type install')) return decision;
+        if (question.startsWith('Query the live OpenCode')) return 'no'; if (question.startsWith('Type install')) return decision;
         return question.startsWith('Install workflow slash commands') || question.startsWith('Make Lead') || question.startsWith('Also set') || question.startsWith('Replace') ? 'no' : '';
       },
       output: text => output.push(text), error: text => output.push(text),

@@ -12,7 +12,9 @@ The macOS preparation/validation checklist (manual prerequisites, isolated setup
 
 The workflow specification is in [`docs/opencode-native-workflow.md`](docs/opencode-native-workflow.md). Native agent templates are in [`agents/`](agents/README.md). The [interactive installer, diagnostics, and receipt-backed uninstall/adoption workflow](docs/installation.md), [context-only project setup](docs/project-setup.md), and [optional global connections/project selections](docs/configuration.md) are implemented locally with automated tests. Uninstall/adoption still needs the documented isolated interactive QA; it is not validated for live cleanup. Cloning this repository does not activate agents or configure MCP connections. Machine-specific model/service access, live setup migration, broader role permissions, and the full publishing/merge/cleanup lifecycle still need validation; see [GitHub issues](https://github.com/IkariMeister/advanced-harness/issues).
 
-Antigravity can store per-role **desired model labels** as non-enforcing preferences; see [global defaults and project context](docs/configuration.md#4-antigravity-desired-model-preferences). This does not change the fixed runtime tiers or verify exact model assignment. The separate manual `model: inherit` procedure remains [experimental](docs/antigravity-model-inheritance-experiment.md), with exact child-model binding unverified; neither this preference feature nor the experiment satisfies issue #70 acceptance.
+Architecture decisions are indexed in [`docs/adr/`](docs/adr/README.md), including the proposed [multi-methodology development architecture](docs/adr/0003-multi-methodology-development-architecture.md).
+
+Antigravity can store per-role **desired model labels** as non-enforcing preferences; see [global defaults and project context](docs/configuration.md#4-antigravity-desired-model-preferences). Labels do not change the runtime tiers (chosen separately per child role) or verify exact model assignment. The separate manual `model: inherit` procedure remains [experimental](docs/antigravity-model-inheritance-experiment.md), with exact child-model binding unverified; neither this preference feature nor the experiment satisfies issue #70 acceptance.
 
 Six native project commands implement the human-approved task workflows in [task workflows](docs/task-workflows.md): `/start-issue`, `/review-pr`, `/address-pr-feedback`, `/report-defect`, `/assess-debt`, and `/grill-me`. Command Markdown is a prompt template, not an independently enforced approval gate. Arguments provide context, never approval. Project commands/arguments override global commands with the same names.
 
@@ -46,6 +48,18 @@ The 8-role engineering workflow provides fixed default role and model presets ta
 | **Cursor IDE**  | `standard` | `fast` | `standard` | `high-reasoning` |
 
 OpenCode's native role rules explicitly deny `gh pr merge` / `gh.exe pr merge`. Antigravity guards direct calls via a `PreToolUse` hook. Claude Code project settings deny identifiable `Bash(gh pr merge)` variants; its permission patterns are workflow guardrails, not a sandbox. Claude Code mapping is fail-closed: Operator, Implementer, Reviewer, and QA have no Bash tool where per-role Git/GH deny patterns cannot be scoped precisely; MCP service aliases are not mapped. The gated Codex adapter writes an execpolicy prefix rule for identifiable direct `gh pr merge` forms, but nothing is installed while the gate holds. The [security guardrails](SECURITY.md#security-guardrails) differ by host. OpenCode role rules and Claude Code project settings deny sensitive-path reads/edits (signing assets and credentials) and `git reset --hard`, `git clean`, and force pushes. Antigravity's hook denies the destructive Git commands, but its sensitive-path protection is instruction-only. The gated Codex rules forbid destructive Git prefixes (including bundled short force flags and force flags right after `origin`/`upstream`); its sensitive-path protection is instruction-only. These protections do not establish universal blocking of indirect scripts, MCP/API calls, or separate processes. Claude Code runtime behavior is not validated by static checks.
+
+Per-role model selection and discovery differ by host (shown by `harness:install`, `harness:update`, and `harness:doctor`):
+
+| Host | Per-role selection | Model discovery |
+| --- | --- | --- |
+| **OpenCode V2** | explicit model and variant per role | live catalog (`/api/model`) on request during install/update; configured IDs as a reported fallback |
+| **Claude Code** | explicit alias (`sonnet`/`opus`/`haiku`/`inherit`) or full model ID per role; syntax checked only | unsupported; availability unverified |
+| **Antigravity** | explicit tier (`inherit`/`flash_lite`/`flash`/`pro`) per child role; Lead uses the session model; exact per-role model binding unsupported | unsupported |
+| **OpenAI Codex** | explicit model and effort per role (install gated, #45) | experimental `codex app-server` `model/list` in the gated adapter; typed IDs as a reported fallback |
+| **Cursor IDE** | unsupported (#46) | unsupported |
+
+The OpenCode, Claude Code, and Antigravity presets above are only the default suggestions. An OpenCode choice absent from the live catalog is saved only after an explicit `keep`; nothing is substituted. **Catalog presence is not account entitlement or successful access.**
 
 OpenCode, Antigravity, and Cursor presets are preferences to validate against the active connection, not evidence of access. The gated Codex adapter asks for an explicit model ID and reasoning effort for each role; no guessed default or fallback is used. LiteLLM endpoints, deployment IDs, and reasoning mappings must be supplied explicitly. Selecting a primary agent does not necessarily change the session's selected model; verify both.
 

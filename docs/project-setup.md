@@ -48,11 +48,11 @@ Setup does not interpret existing instructions: read them and resolve conflicts 
 
 Existing targets receive exact private backups under `$HOME/Projects/advanced-harness-backups` before per-file atomic replacement. Backups may contain existing secrets; keep them private. All targets are checked for concurrent changes before the first write, then rechecked individually. Symlink/non-regular targets and symlinked parent directories are refused. A rare error after the first write can leave partial setup: the error reports completed writes and backups; inspect those files rather than rolling back newer user work blindly. This is not a multi-file transaction.
 
-Cancellation changes no files/directories. Setup preserves OpenCode config, models, MCP, `.gitignore`, app sources, and all instructions outside the selected section.
+Cancellation changes no files/directories. Setup preserves OpenCode config, models, MCP, tracked `.gitignore` files, app sources, and all instructions outside the selected section.
 
 ## Git and worktrees
 
-Context may contain machine-specific paths. **Review before publishing**; setup does not stage, commit, push, or add ignore rules. Use environment-based instructions or deliberate per-machine adjustments where portability is needed. Never put credentials in project context.
+Context may contain machine-specific paths. **Review before publishing**; setup does not stage, commit, or push. Its only ignore rules are the previewed harness scratch patterns, written to the local, untracked `info/exclude` file shared by all worktrees, never to `.gitignore`. See [local Git exclude](installation.md#local-git-exclude-for-harness-scratch-state-bh-038). Use environment-based instructions or deliberate per-machine adjustments where portability is needed. Never put credentials in project context.
 
 Reviewed context files follow ordinary Git/worktree behavior. Untracked context changes do not automatically appear in another worktree; confirm availability through Operator rather than guessing settings. Run commands in the active feature worktree, not the canonical checkout merely because it appears in context. Shared memory remains at the agreed external location.
 

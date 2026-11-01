@@ -460,6 +460,7 @@ test('installAntigravity overwrites customized files when explicitly approved an
       commandsDirectory: commandsDir,
       ask: async (question) => {
         if (question.includes('Overwrite customized/unowned file')) return 'yes';
+        if (question.includes('Antigravity model tier')) return '';
         return 'yes';
       },
       output: () => {},
@@ -480,9 +481,9 @@ test('installAntigravity overwrites customized files when explicitly approved an
       recoveryDirectory: recoveryDir,
       agentsDirectory: rolesDir,
       commandsDirectory: commandsDir,
-      ask: async () => {
+      ask: async question => {
         promptAsked = true;
-        return 'yes';
+        return question.includes('Antigravity model tier') ? '' : 'yes';
       },
       output: () => {},
       error: () => {},
@@ -520,7 +521,7 @@ test('installAntigravity aborts and writes nothing if files diverge during confi
               // Mutate a planned file while confirmation prompt is open
               writeFileSync(rulePath, '# Mutated concurrently while prompt was open\n');
             }
-            return 'yes';
+            return question.includes('Antigravity model tier') ? '' : 'yes';
           },
           output: () => {},
           error: () => {},

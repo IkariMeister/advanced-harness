@@ -210,7 +210,7 @@ test('harness:update settles shared locations before the host update, independen
   writeFileSync(join(project, 'AGENTS.md'), updateContext('# App\n', 'paths', { version: 1, ...recorded }, ['interim']));
   const steps = script([['Parent directory', ''], ['Shared MEMORY.md', ''], ['Type paths', 'paths']]);
   const status = await runUpdateFlow({ scope: 'project', project, checkRemote: false }, {
-    ask: async question => steps.remaining.length ? steps.ask(question) : question.includes('system prompt to latest') ? 'no' : question.startsWith('Type update') ? 'cancel' : assert.fail(question),
+    ask: async question => steps.remaining.length ? steps.ask(question) : question.includes('system prompt to latest') ? 'no' : question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'cancel' : assert.fail(question),
     output: () => {}, error: () => {}, home, xdgConfigHome: join(root, 'xdg'), recoveryDirectory: join(root, 'recovery'), runCommand: () => '',
   });
   assert.equal(status, 0);
@@ -219,7 +219,7 @@ test('harness:update settles shared locations before the host update, independen
 
   let called = 0;
   await runUpdateFlow({ scope: 'global', checkRemote: false }, {
-    ask: async question => question.includes('system prompt to latest') ? 'no' : question.startsWith('Type update') ? 'cancel' : '',
+    ask: async question => question.includes('system prompt to latest') ? 'no' : question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'cancel' : '',
     output: () => {}, error: () => {}, home, xdgConfigHome: join(root, 'xdg'), recoveryDirectory: join(root, 'recovery'), runCommand: () => '',
     sharedLocations: async () => { called++; return 'skipped'; },
   }).catch(() => undefined);

@@ -3,10 +3,33 @@ import type { NativeRole } from './native-role-types.ts';
 import type { RoleDefinition } from './role-definitions.ts';
 import type { WorkflowCommand, WorkflowCommandId } from './workflow-commands.ts';
 
+/** Runtime tiers an Antigravity child subagent can be defined with; exact model binding is unsupported. */
+export const antigravityTiers = ['inherit', 'flash_lite', 'flash', 'pro'] as const;
+export type AntigravityTier = typeof antigravityTiers[number];
+export const antigravityChildRoles: readonly NativeRole[] = ['operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'];
+
+export const isAntigravityTier = (value: unknown): value is AntigravityTier => (antigravityTiers as readonly unknown[]).includes(value);
+
+/** Child-role tiers recorded in a compiled Lead rule's registration table. */
+export function parseAntigravityLeadRuleTiers(text: string): Partial<Record<NativeRole, string>> {
+  const tiers: Partial<Record<NativeRole, string>> = {};
+  for (const match of text.matchAll(/^\| \*\*(\w+)\*\* \| `([^`]*)` \|/gm)) {
+    const role = match[1] as NativeRole;
+    if ((antigravityChildRoles as readonly string[]).includes(role)) tiers[role] = match[2]!;
+  }
+  return tiers;
+}
+
+/** Presets with the chosen child tiers applied; Lead always runs on the session model. */
+export function antigravityPresetsWithTiers(tiers: Record<NativeRole, AntigravityTier>): Record<NativeRole, HostRolePreset> {
+  return Object.fromEntries(Object.entries(HOST_MODEL_PRESETS.antigravity).map(([role, preset]) =>
+    [role, role === 'lead' ? preset : { ...preset, model: tiers[role as NativeRole], tier: tiers[role as NativeRole] }])) as Record<NativeRole, HostRolePreset>;
+}
+
 export interface AntigravitySubagentSpec {
   name: NativeRole;
   description: string;
-  model: 'inherit' | 'flash_lite' | 'flash' | 'pro';
+  model: AntigravityTier;
   roleTitle: string;
   enableWriteTools: boolean;
   enableMCPTools: boolean;
@@ -176,8 +199,7 @@ export function compileLeadOrchestrationRule(
   roles: Record<NativeRole, RoleDefinition>,
   presets: Record<NativeRole, HostRolePreset> = HOST_MODEL_PRESETS.antigravity
 ): AntigravityRuleArtifact {
-  const childRoles: NativeRole[] = ['operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'];
-  const specs = childRoles.map(r => compileAntigravitySubagentSpec(r, roles[r], presets[r]));
+  const specs = antigravityChildRoles.map(r => compileAntigravitySubagentSpec(r, roles[r], presets[r]));
 
   const lines: string[] = [
     '# Advanced Harness Lead Orchestrator Rule',

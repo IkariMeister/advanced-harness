@@ -4,6 +4,7 @@ import type { AnyReceipt } from './installation-receipt.ts';
 import { planUninstall } from './installation-receipt.ts';
 import { applyManagedFilePlan, planV2Restore, prepareManagedFilePlan } from './receipt-lineage.ts';
 import type { HostId } from './host-registry.ts';
+import { finishGitExclude, previewGitExclude, type GitExcludeOwner } from './git-exclude.ts';
 
 export async function runUninstallFlow(input: {
   receipt: AnyReceipt;
@@ -16,6 +17,8 @@ export async function runUninstallFlow(input: {
   host?: HostId;
   /** Directory that bounds empty-directory pruning (project root, or the Antigravity global config directory). */
   pruneRoot?: string | undefined;
+  /** Project root whose local Git exclude block this host releases; omitted for global targets. */
+  excludeRoot?: string | undefined;
 }): Promise<number> {
   const plan = planUninstall(input.receipt, input.current);
   if (plan.conflicts.length) {
@@ -31,6 +34,8 @@ export async function runUninstallFlow(input: {
   }
   input.output(`Planned actions (${plan.actions.length}):`);
   for (const action of plan.actions) input.output(`  ${action}`);
+  const excludeOwner = (['opencode', 'claude-code', 'antigravity'] as const).find(owner => owner === (input.host ?? 'opencode')) as GitExcludeOwner | undefined;
+  const exclude = excludeOwner ? previewGitExclude(input.excludeRoot, excludeOwner, input.output, { remove: true }) : undefined;
   if ((await input.confirm('Type uninstall to continue: ')).trim() !== 'uninstall') {
     input.output('Cancelled; no configuration writes made.');
     return 0;
@@ -74,6 +79,7 @@ export async function runUninstallFlow(input: {
       return 1;
     }
   }
+  finishGitExclude(exclude, input.output, input.error);
   return 0;
 }
 
