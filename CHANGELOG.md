@@ -4,41 +4,55 @@ All notable changes to Advanced Harness are listed here. Versions follow the
 process in [docs/releasing.md](docs/releasing.md); `main` carries a `-dev`
 version between releases.
 
-## Unreleased (0.2.0-dev)
+## Unreleased
+
+## v0.2.0 — 2026-11-01
+
+Milestone: Security Guardrails, Model Discovery & Core Role Contracts.
 
 ### Added
 
-- Claude Code host support (BH-026, #77) and explicit per-role model selection (#70).
-- OpenAI Codex Desktop support, with install and update gated pending strict
-  per-role isolation (#45); live model list discovery for Codex role prompts (#113).
-- Antigravity explicit per-role runtime tier selection (#109).
-- Live OpenCode model catalog and per-host model support reporting (#70).
-- Sensitive-path and destructive Git guardrails across hosts (BH-036, #102, #105),
-  with a host validation checklist.
+- Sensitive-path and destructive Git guardrails across hosts (BH-036, #102),
+  with OpenCode and Codex gap fixes and a host validation checklist (#105).
+- Per-role model selection and live model discovery (BH-043): live OpenCode model
+  catalog and per-host support reporting (#106), Claude Code explicit per-role
+  models (#107), Antigravity per-role runtime tiers (#109) and Codex live model
+  list discovery (#113).
 - Lead bounded delegation triggers and a four-state status contract (BH-035, #112).
+- Risk-tiered PR reviews with the 4R lens taxonomy for the Reviewer role
+  (BH-033, #115).
+- Harness scratch state kept in the local `.git/info/exclude` (BH-038, #111).
+- Claude Code host support (BH-026, #77).
+- OpenAI Codex Desktop support, with install and update gated pending strict
+  per-role isolation (#78).
 - GitHub issue startup for workflows (#108).
-- Harness scratch state kept in the local `.git/info/exclude` (#111).
-- Additional required project gates recorded by setup (BH-004).
-- Defined, created and surfaced shared worktree and memory locations.
-- Sandboxed CLI smoke suite, run in CI on Ubuntu and Windows.
-- Architecture decision records (#100, #114) and the design integration
-  validation checklist (#98).
+- Setup records additional required project gates such as Spotless and Detekt
+  (BH-004, #90).
+- Shared worktree and memory locations are defined, created and surfaced (#93).
+- Sandboxed CLI smoke suite, run in CI on Ubuntu and Windows (#79).
+- Architecture decision records (#100, #114), the design integration validation
+  checklist (#98) and clarified evidence publication authorization (#87).
 - Release process: `-dev` versions on `main`, this changelog, a release checklist,
-  CI on `release/**` branches and a tag/version check on `v*` tags (BH-044, #116).
-- Release-tag checkouts compare with the newest `v*` release tag during
-  `harness:update`; `harness:doctor` prints the checkout version (BH-044, #116).
+  CI on `release/**` branches and a tag/version check on `v*` tags. Release-tag
+  checkouts compare with the newest `v*` tag during `harness:update`, and
+  `harness:doctor` prints the checkout version (BH-044, #117).
 
 ### Fixed
 
-- `harnessVersion` stamped on install receipts for all hosts (#82).
-- `harness:uninstall` removes Claude Code and Antigravity installs.
-- Antigravity install confirmation defaults to no (#81); config conflicts are
-  reported as an actionable error (#104); merge-guard hook path is no longer
-  quoted (#101); `run_command` enabled for External, Reviewer and QA (#95).
-- `harness:install` and `harness:update` prompt for a single host.
-- Install reports an incomplete install when a declined role leaves nothing to write.
-- Shared locations that resolve into the checkout through links are rejected.
+- `harnessVersion` stamped on install receipts for all hosts (#86).
+- `harness:uninstall` removes Claude Code and Antigravity installs (#83).
+- Antigravity: install confirmation defaults to no (#85), config conflicts are
+  reported as an actionable error (#104), the merge-guard hook path is no longer
+  quoted (#101) and `run_command` is enabled for External, Reviewer and QA (#99).
+- `harness:install` and `harness:update` prompt for a single host (#89).
 - Design server default scoped to its kind; invalid MCP URLs are re-prompted (#103).
+
+### Upgrading from v0.1.0
+
+Check out the tag (`git fetch --tags origin && git checkout v0.2.0`), run
+`npm ci`, then `npm run harness:update` for each installed project. Update
+previews prompt, permission and guardrail changes before writing and keeps your
+models and customizations.
 
 ## v0.1.0 — 2026-10-27
 
