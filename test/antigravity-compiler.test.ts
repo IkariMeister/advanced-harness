@@ -91,8 +91,10 @@ test('compileLeadOrchestrationRule grants command-running roles write tools with
 test('compileLeadOrchestrationRule tells Lead to reuse existing subagent definitions', () => {
   const rule = compileLeadOrchestrationRule(roles);
   assert.ok(rule.content.includes('## Subagent Definition Lifecycle'));
-  assert.match(rule.content, /already exists, do not retry it; invoke the existing child with `invoke_subagent`/);
-  assert.match(rule.content, /does not match the table above .* Stop and ask the human to start a fresh session/);
+  assert.match(rule.content, /already exists, do not retry `define_subagent` or invoke the existing child yet\. First verify the existing definition against the complete compiled spec, including every instruction and runtime setting\. Invoke the existing child only after full equivalence is confirmed\./);
+  assert.doesNotMatch(rule.content, /already exists[^\n]*invoke the existing child with `invoke_subagent`/);
+  assert.match(rule.content, /full instruction content all match the compiled spec/);
+  assert.match(rule.content, /stale, differs from any part of the complete compiled spec, or cannot be fully verified, do not invoke it or work around the mismatch\. Stop and ask the human to start a fresh session/);
 });
 
 test('compileLeadOrchestrationRule carries the Reviewer risk-tiered rubric from agents/reviewer.md', () => {
@@ -103,10 +105,13 @@ test('compileLeadOrchestrationRule carries the Reviewer risk-tiered rubric from 
   assert.ok(start >= 0 && end > start, 'static reviewer snapshot contains rubric boundaries');
   const expectedRubric = snapshot.slice(start + '## Risk-tiered review\n'.length, end).trim();
   const rubric = extractReviewerRubric(roles.reviewer.instructions);
-  assert.ok(rule.content.includes('## Reviewer Risk-Tiered Review'));
-  assert.match(rule.content, /include this section verbatim in its instructions/);
+  const standaloneReviewer = compileAntigravitySubagentSpec('reviewer', roles.reviewer);
+  assert.ok(standaloneReviewer.instructionSummary.includes(expectedRubric), 'standalone Reviewer spec embeds independent rubric text');
+  assert.ok(rule.content.includes('## Reviewer Full Instruction Content'));
   assert.equal(rubric, expectedRubric, 'extractor matches the independent static current-reviewer snapshot');
-  assert.ok(rule.content.includes(expectedRubric), 'Lead rule embeds the independently expected rubric verbatim');
+  assert.ok(rule.content.includes(standaloneReviewer.instructionSummary), 'Lead rule embeds the complete compiled standalone Reviewer instructions');
+  assert.ok(!rule.content.split('\n').some(line => line.startsWith('| **reviewer** |') && line.includes('\n')));
+  assert.ok(!standaloneReviewer.instructionSummary.includes('see Reviewer Risk-Tiered Review below'));
 });
 
 function requireReviewerSnapshot(): string {

@@ -102,11 +102,17 @@ test('PR workflows apply the shared rubric with preflight, ordered gates, and no
     assert.equal(source.match(/accept or discard each finding/g)?.length, 1, 'one accept/discard gate');
   }
   assert.match(review, /never silently truncate/);
+  assert.match(review, /counts must come from External's PR diff or Operator's local diff/i);
+  assert.ok(review.indexOf('preflights the diff') < review.indexOf('Reviewer examines the diff and existing PR checks first'), 'PR diff preflight precedes Reviewer inspection');
+  assert.ok(review.indexOf('Reviewer examines the diff and existing PR checks first') < review.indexOf('Propose further local checks to the human'), 'existing PR checks precede any proposal for local checks');
   const order = ['accept or discard each finding', 'approve the concrete feedback text', 'choose exactly one disposition'].map(step => review.indexOf(step));
   assert.ok(order.every(index => index >= 0), 'review-pr names each decision');
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'review-pr asks for finding decisions, then feedback text, then disposition');
   assert.match(review, /only accepted findings become proposed feedback, and discarded findings are not posted/);
   assert.match(feedback, /Reviewer tiers that fix diff/);
+  assert.match(feedback, /Resolved threads are read-only context: never re-triage or reopen them/);
+  assert.match(feedback, /Only unresolved threads are presented for human decisions/);
+  assert.match(feedback, /counts from External's PR diff or Operator's local diff/);
   assert.match(feedback, /rather than from the feedback wording/);
   assert.ok(feedback.indexOf('accept or discard each finding') < feedback.indexOf('provisional risk tier'), 'feedback is triaged before the fix is tiered');
   assert.match(docs, /\(\.\.\/agents\/reviewer\.md#risk-tiered-review\)/);

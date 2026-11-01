@@ -150,7 +150,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: true, // Antigravity bundles run_command with write tools; needed for lint/build/unit checks
         enableMCPTools: false,
         workspace: 'inherit',
-        instructionSummary: 'Runs lint/build/unit checks and reports risk-tiered code quality findings (see Reviewer Risk-Tiered Review below). Does not modify app code.',
+        instructionSummary: 'Runs lint/build/unit checks and reports risk-tiered code quality findings. Does not modify app code.\n\n## Risk-tiered review\n\n' + extractReviewerRubric(definition.instructions),
       };
     case 'qa':
       return {
@@ -212,21 +212,27 @@ export function compileLeadOrchestrationRule(
     '3. **Child Subagent Delegation:** Lead coordinates the 7 specialized child roles using Antigravity\'s `define_subagent` and `invoke_subagent` APIs. Lead must configure child subagents with the exact parameters listed in the table below.',
     '',
     '## Subagent Role Registration Table',
-    'When invoking child roles, call `define_subagent` (or use existing definitions) matching these parameters:',
+    'When invoking child roles, call `define_subagent` (or use existing definitions) matching these parameters. The role descriptions below are compact labels; pass each role\'s complete instruction content from the compiled spec, not merely its table description.',
     '',
     '| Role | Model Tier | Write Tools (edits + `run_command`) | MCP Tools | Workspace | Role Description |',
     '| :--- | :--- | :--- | :--- | :--- | :--- |',
   ];
 
   for (const s of specs) {
-    lines.push(`| **${s.name}** | \`${s.model}\` | ${s.enableWriteTools ? 'true' : 'false'} | ${s.enableMCPTools ? 'true' : 'false'} | \`${s.workspace}\` | ${s.instructionSummary} |`);
+    lines.push(`| **${s.name}** | \`${s.model}\` | ${s.enableWriteTools ? 'true' : 'false'} | ${s.enableMCPTools ? 'true' : 'false'} | \`${s.workspace}\` | ${s.description.replace(/[\r\n|]/g, ' ')} |`);
   }
 
   lines.push('');
+  const reviewerSpec = specs.find(spec => spec.name === 'reviewer')!;
+  lines.push('## Reviewer Full Instruction Content');
+  lines.push('Pass the following complete content as the Reviewer subagent instruction summary; this is sourced from the compiled standalone Reviewer spec.');
+  lines.push('');
+  lines.push(reviewerSpec.instructionSummary);
+  lines.push('');
   lines.push('## Subagent Definition Lifecycle');
-  lines.push('- Define each child role at most once per session. Before calling `define_subagent`, reuse any existing definition for that role.');
-  lines.push('- If `define_subagent` reports that the agent already exists, do not retry it; invoke the existing child with `invoke_subagent`.');
-  lines.push('- If an existing definition does not match the table above (for example, it was created under an older version of this rule), do not work around it. Stop and ask the human to start a fresh session.');
+  lines.push('- Define each child role at most once per session. Before calling `define_subagent`, reuse an existing definition only when its role, model/tier, tool groups, workspace, and full instruction content all match the compiled spec.');
+  lines.push('- If `define_subagent` reports that the agent already exists, do not retry `define_subagent` or invoke the existing child yet. First verify the existing definition against the complete compiled spec, including every instruction and runtime setting. Invoke the existing child only after full equivalence is confirmed.');
+  lines.push('- If an existing definition is stale, differs from any part of the complete compiled spec, or cannot be fully verified, do not invoke it or work around the mismatch. Stop and ask the human to start a fresh session.');
   lines.push('');
   lines.push('## Subagent Execution Constraints');
   lines.push('- **Write Tools:** In Antigravity, write tools include both file editing and `run_command`. External, Reviewer, and QA have write tools enabled only so they can run commands; they must never use file-edit tools on application, test, or configuration source.');
@@ -237,12 +243,6 @@ export function compileLeadOrchestrationRule(
   lines.push('- **Reviewer / QA:** Execute test and build commands to report findings; never modify application source directly.');
   lines.push('- **Precedence:** Current Human Decision > `AGENTS.md` > `MEMORY.md`.');
   lines.push('');
-  lines.push('## Reviewer Risk-Tiered Review');
-  lines.push('When defining or invoking the Reviewer subagent, include this section verbatim in its instructions. It is the Reviewer rubric that the review workflows refer to.');
-  lines.push('');
-  lines.push(extractReviewerRubric(roles.reviewer.instructions));
-  lines.push('');
-
   const content = lines.join('\n');
   const byteLength = Buffer.byteLength(content, 'utf8');
 

@@ -66,10 +66,10 @@ applicable project instructions and shared memory.
     initializes shared `MEMORY.md` if missing. Other existing worktrees and untouched
     canonical changes do not block bootstrap; stop and ask only on missing/invalid settings,
     target branch/worktree collision, or creation errors.
-4. External reads the issue and linked parent when present for context, not scope expansion.
-    Apply only explicitly confirmed lifecycle mappings. Never invent GitHub In Progress/In
-    Review states. An absent optional mapping is nonblocking; an explicitly required but
-    unresolved transition blocks. Unavailable required context/access blocks.
+ 4. External reads the issue and linked parent when present for context, not scope expansion.
+   Apply only explicitly confirmed lifecycle mappings. Never invent GitHub In Progress/In
+   Review states. An absent optional mapping is nonblocking; an explicitly required but
+   unresolved transition blocks. Unavailable required context/access blocks.
 5. Use only the explicitly selected design source; do not silently fall back or combine.
     Nonvisual tasks need no design service. Clarify missing or conflicting requirements.
 6. Once requirements are clear, Researcher automatically inspects relevant code and
@@ -81,7 +81,7 @@ applicable project instructions and shared memory.
 8. Reviewer runs planned applicable checks; QA performs applicable QA and smoke
    verification. Lead presents findings for individual or explicit-batch accept/discard
    decisions. Implement accepted fixes within their scope and recheck affected checks.
- 9. Lead requests final human approval before any push or PR creation. External publishes
+9. Lead requests final human approval before any push or PR creation. External publishes
     only after that approval. Apply lifecycle updates only when the selected tracker has
     an explicitly confirmed mapping: transition the issue to In Review only when that
     mapping exists. An absent optional mapping is nonblocking; ask about explicitly
@@ -221,9 +221,9 @@ GitHub only, not Jira.
    proposes scoped fixes, checks, manual smoke steps, and a provisional risk tier judged
    from the code the fix will touch.
 4. Lead waits for explicit approval of the scoped plan/checks/smoke before Implementer
-    changes code. Accepted findings authorize only corresponding fixes; approval is
-    limited to accepted fix scope and the actual resulting diff, never raw comments as a
-    whole. Before review,
+   changes code. Accepted findings authorize only corresponding fixes; approval is
+   limited to accepted fix scope and the actual resulting diff, never raw comments as a
+   whole. Before review,
    Lead reports the fix diff size and Reviewer tiers the actual fix diff; a higher tier
    replaces the provisional one, and a material scope expansion returns to the human.
    New Reviewer/QA findings go through the same accept/discard decision before any fix,

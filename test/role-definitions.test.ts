@@ -100,6 +100,7 @@ test('capability normalization round-trips ordered OpenCode rules without changi
     const lowered = lowerOpenCodePolicy(role, policy);
     assert.deepEqual(lowered.diagnostics, [], role);
     const sourcePermissions = legacyNormalizedDefinitions()[role].permissions.filter(rule => !isOpenCodeGuardrailRule(rule as PermissionRule));
+    assert.notEqual(lowered.permissions, legacyNormalizedDefinitions()[role].permissions, `${role}: normalized permissions are independently allocated from the original snapshot`);
     assert.deepEqual(lowered.permissions, sourcePermissions, role);
     assert.deepEqual(legacyNormalizedDefinitions()[role].permissions, [...lowered.permissions!, ...openCodeGuardrailRules(lowered.permissions!)], role);
     assert.deepEqual(policy.rules.map(rule => rule.binding.action), sourcePermissions.map(rule => (rule as { action: string }).action));
