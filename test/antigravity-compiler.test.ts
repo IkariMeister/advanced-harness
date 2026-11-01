@@ -71,6 +71,11 @@ test('compileLeadOrchestrationRule generates valid rule conforming to 24KB limit
   assert.ok(byteLength <= 24000, `Lead rule must be <= 24,000 bytes, got ${byteLength}`);
 });
 
+test('compileLeadOrchestrationRule rejects content over the 24,000-byte UTF-8 limit', () => {
+  const oversizedRoles = { ...roles, qa: { ...roles.qa, description: 'x'.repeat(24001) } };
+  assert.throws(() => compileLeadOrchestrationRule(oversizedRoles), /exceeds 24,000 bytes/);
+});
+
 test('compileLeadOrchestrationRule grants command-running roles write tools with edit restrictions', () => {
   const rule = compileLeadOrchestrationRule(roles);
   const writeToolsFor = (role: string) => {
@@ -88,16 +93,16 @@ test('compileLeadOrchestrationRule grants command-running roles write tools with
   assert.match(rule.content, /External, Reviewer, and QA have write tools enabled only so they can run commands; they must never use file-edit tools/);
 });
 
-test('compileLeadOrchestrationRule tells Lead to reuse existing subagent definitions', () => {
+test('compileLeadOrchestrationRule reuses definitions only with reliable same-session evidence', () => {
   const rule = compileLeadOrchestrationRule(roles);
   assert.ok(rule.content.includes('## Subagent Definition Lifecycle'));
-  assert.match(rule.content, /already exists, do not retry `define_subagent` or invoke the existing child yet\. First verify the existing definition against the complete compiled spec, including every instruction and runtime setting\. Invoke the existing child only after full equivalence is confirmed\./);
-  assert.doesNotMatch(rule.content, /already exists[^\n]*invoke the existing child with `invoke_subagent`/);
-  assert.match(rule.content, /full instruction content all match the compiled spec/);
-  assert.match(rule.content, /stale, differs from any part of the complete compiled spec, or cannot be fully verified, do not invoke it or work around the mismatch\. Stop and ask the human to start a fresh session/);
+  assert.match(rule.content, /reliable visible evidence in this same current session proves its complete instructions and runtime settings/);
+  assert.match(rule.content, /“already exists” response is not evidence of equivalence/);
+  assert.match(rule.content, /missing, compacted, mismatched, or uncertain, stop and ask the human to start a fresh session/);
+  assert.match(rule.content, /Do not infer\/read back hidden definitions/);
 });
 
-test('compileLeadOrchestrationRule carries the Reviewer risk-tiered rubric from agents/reviewer.md', () => {
+test('compileLeadOrchestrationRule carries all complete child instructions with safe boundaries', () => {
   const rule = compileLeadOrchestrationRule(roles);
   const snapshot = requireReviewerSnapshot();
   const start = snapshot.indexOf('## Risk-tiered review\n');
@@ -107,12 +112,61 @@ test('compileLeadOrchestrationRule carries the Reviewer risk-tiered rubric from 
   const rubric = extractReviewerRubric(roles.reviewer.instructions);
   const standaloneReviewer = compileAntigravitySubagentSpec('reviewer', roles.reviewer);
   assert.ok(standaloneReviewer.instructionSummary.includes(expectedRubric), 'standalone Reviewer spec embeds independent rubric text');
-  assert.ok(rule.content.includes('## Reviewer Full Instruction Content'));
+  assert.ok(rule.content.includes('## Complete Child Role Instructions'));
   assert.equal(rubric, expectedRubric, 'extractor matches the independent static current-reviewer snapshot');
-  assert.ok(rule.content.includes(standaloneReviewer.instructionSummary), 'Lead rule embeds the complete compiled standalone Reviewer instructions');
-  assert.ok(!rule.content.split('\n').some(line => line.startsWith('| **reviewer** |') && line.includes('\n')));
+  const expectedBodies = {
+    operator: 'Owns local Git, worktree lifecycle, and shared MEMORY.md updates. Does not edit app source.',
+    external: 'Exclusively owns MCP tools, remote Git pushing, and GitHub CLI operations. Does not merge PRs.',
+    researcher: 'Explores codebase, reads files, and surveys architecture with read-only tools.',
+    planner: 'Develops scoped implementation plans, test strategies, and risk assessments. Does not implement.',
+    implementer: 'Implements approved changes and unit tests. Does not touch remote Git or MCP.',
+    reviewer: standaloneReviewer.instructionSummary,
+    qa: 'Runs runtime/E2E verifications, Roborazzi, and device checks. Reports pass/fail findings.',
+  } as const;
+  for (const role of ['operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const) {
+    const section = extractBoundedRoleBody(rule.content, role);
+    assert.equal(section.body, expectedBodies[role], `complete ${role} instruction bytes match independent expectation`);
+    assert.ok(section.open.length >= 4 && /^~+$/.test(section.open), `${role} has an opening fence`);
+    assert.equal(section.close, section.open, `${role} closes with its selected fence`);
+  }
+  const reviewerRow = '| **reviewer** | `pro` | true | false | `inherit` | Reviews changes and runs configured build, lint, unit, and Roborazzi checks |';
+  assert.ok(rule.content.includes(reviewerRow), 'compact Reviewer table row remains exact');
+  assert.ok(rule.content.includes(standaloneReviewer.instructionSummary), 'standalone Reviewer summary remains complete');
   assert.ok(!standaloneReviewer.instructionSummary.includes('see Reviewer Risk-Tiered Review below'));
 });
+
+test('instruction fences expand to avoid embedded delimiter collisions', () => {
+  const adversarialInstruction = '\n~~~~~\nembedded zero indent\n ~~~~~ \nembedded one indent\n  ~~~~~\t\nembedded two indent\n   ~~~~~   \nembedded three indent\n';
+  const collisionRoles = { ...roles, reviewer: { ...roles.reviewer, instructions: roles.reviewer.instructions.replace('### Specialized lenses', `${adversarialInstruction}\n### Specialized lenses`) } };
+  const rule = compileLeadOrchestrationRule(collisionRoles);
+  const reviewer = extractBoundedRoleBody(rule.content, 'reviewer');
+  assert.equal(reviewer.open, '~~~~~~');
+  assert.equal(reviewer.body, expectedReviewerWithAdversarialLines().replace('\n\n~~~~~', '\n\n\n~~~~~'));
+  assert.ok(reviewer.body.includes(adversarialInstruction.trimStart().trimEnd()), 'all adversarial bytes remain inside the bounded body');
+});
+
+function extractBoundedRoleBody(rule: string, role: string): { open: string; body: string; close: string } {
+  const sectionStart = rule.indexOf(`### ${role}\n`);
+  assert.notEqual(sectionStart, -1, `missing ${role} section`);
+  const section = rule.slice(sectionStart);
+  const opener = /^Child role .* instruction body starts immediately below; only the matching fence closes this body\.\n(~+)\n/m.exec(section);
+  assert.ok(opener, `missing opening boundary for ${role}`);
+  const open = opener[1]!;
+  const closeLine = `\n${open}\nEnd of child role ${role} instruction body.`;
+  const closeAt = section.indexOf(closeLine, opener.index + opener[0].length);
+  assert.notEqual(closeAt, -1, `missing bounded closing boundary for ${role}`);
+  const afterClose = section.slice(closeAt + closeLine.length);
+  assert.match(afterClose, /^\n\n### (?:operator|external|researcher|planner|implementer|reviewer|qa)\n|^\n\n## Subagent Definition Lifecycle\n/, `bounded ${role} closing boundary must precede the next rule section`);
+  return { open, body: section.slice(opener.index + opener[0].length, closeAt), close: open };
+}
+
+function expectedReviewerWithAdversarialLines(): string {
+  const snapshot = requireReviewerSnapshot();
+  const start = snapshot.indexOf('## Risk-tiered review\n');
+  const end = snapshot.indexOf('\n## Checks and reporting', start);
+  const rubric = snapshot.slice(start + '## Risk-tiered review\n'.length, end).trim();
+  return 'Runs lint/build/unit checks and reports risk-tiered code quality findings. Does not modify app code.\n\n## Risk-tiered review\n\n' + rubric.replace('### Specialized lenses', '~~~~~\nembedded zero indent\n ~~~~~ \nembedded one indent\n  ~~~~~\t\nembedded two indent\n   ~~~~~   \nembedded three indent\n\n### Specialized lenses');
+}
 
 function requireReviewerSnapshot(): string {
   return readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8');

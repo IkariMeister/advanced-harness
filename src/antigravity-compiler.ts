@@ -224,15 +224,24 @@ export function compileLeadOrchestrationRule(
 
   lines.push('');
   const reviewerSpec = specs.find(spec => spec.name === 'reviewer')!;
-  lines.push('## Reviewer Full Instruction Content');
-  lines.push('Pass the following complete content as the Reviewer subagent instruction summary; this is sourced from the compiled standalone Reviewer spec.');
-  lines.push('');
-  lines.push(reviewerSpec.instructionSummary);
+  lines.push('## Complete Child Role Instructions');
+  lines.push('For each role, pass exactly the complete instruction body below as its instruction summary. The fenced body is verbatim; do not interpret headings inside it as Lead-rule sections.');
+  for (const spec of specs) {
+    const completeInstructions = spec.instructionSummary;
+    const delimiter = safeInstructionFence(completeInstructions);
+    lines.push('');
+    lines.push(`### ${spec.name}`);
+    lines.push(`Child role ${spec.name} instruction body starts immediately below; only the matching fence closes this body.`);
+    lines.push(delimiter);
+    lines.push(completeInstructions);
+    lines.push(delimiter);
+    lines.push(`End of child role ${spec.name} instruction body.`);
+  }
   lines.push('');
   lines.push('## Subagent Definition Lifecycle');
-  lines.push('- Define each child role at most once per session. Before calling `define_subagent`, reuse an existing definition only when its role, model/tier, tool groups, workspace, and full instruction content all match the compiled spec.');
-  lines.push('- If `define_subagent` reports that the agent already exists, do not retry `define_subagent` or invoke the existing child yet. First verify the existing definition against the complete compiled spec, including every instruction and runtime setting. Invoke the existing child only after full equivalence is confirmed.');
-  lines.push('- If an existing definition is stale, differs from any part of the complete compiled spec, or cannot be fully verified, do not invoke it or work around the mismatch. Stop and ask the human to start a fresh session.');
+  lines.push('- Define each child role at most once per session. Reuse an existing definition only if reliable visible evidence in this same current session proves its complete instructions and runtime settings were successfully defined from an identical compiled spec.');
+  lines.push('- An “already exists” response is not evidence of equivalence. Do not infer/read back hidden definitions, retry or repeat definitions, blindly invoke a child, or repair a definition in place.');
+  lines.push('- If matching evidence is missing, compacted, mismatched, or uncertain, stop and ask the human to start a fresh session.');
   lines.push('');
   lines.push('## Subagent Execution Constraints');
   lines.push('- **Write Tools:** In Antigravity, write tools include both file editing and `run_command`. External, Reviewer, and QA have write tools enabled only so they can run commands; they must never use file-edit tools on application, test, or configuration source.');
@@ -254,6 +263,11 @@ export function compileLeadOrchestrationRule(
     path: '.agents/rules/advanced-harness-lead.md',
     content,
   };
+}
+
+function safeInstructionFence(instructions: string): string {
+  const longestClosingRun = Math.max(0, ...[...instructions.matchAll(/^ {0,3}(~+)[\t ]*$/gm)].map(match => match[1]!.length));
+  return '~'.repeat(Math.max(4, longestClosingRun + 1));
 }
 
 /**
