@@ -1,9 +1,9 @@
 # ADR: Multi-Methodology Development Architecture
 
-**Status:** Proposed  
-**Date:** 2026-10-31  
-**Version:** 1.1  
-**Project:** Advanced Harness  
+**Status:** Proposed\
+**Date:** 2026-10-31\
+**Version:** 1.1\
+**Project:** Advanced Harness\
 **Decision scope:** Methodology selection, task execution boundaries, workflow governance, and evaluation
 
 ## Context
