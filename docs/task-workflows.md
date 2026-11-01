@@ -113,6 +113,33 @@ if none is explicit, asks whether this is GitHub or Jira, confirms repository an
 and has External verify assignment. After requirements are clear, Lead presents a plan
 and manual smoke steps. No implementation starts until the human approves that plan.
 
+## Shared risk-tiered review rubric
+
+`/review-pr` and `/address-pr-feedback` scale review depth with a Low, Medium, or High
+risk tier and four specialized lenses: Risk, Resilience, Readability, and Reliability. The
+tier criteria, lens criteria, Compose/Roborazzi/coroutine mappings, and the review
+summary and finding formats are defined once, in the
+[Reviewer role instructions](../agents/reviewer.md#risk-tiered-review). The workflows refer
+to that rubric rather than restating it, so update it there. Antigravity's Lead rule
+carries the same section for its Reviewer subagent.
+
+How the workflows apply it:
+
+- **Preflight before review.** Before delegating to Reviewer, Lead reports the diff size
+  and a provisional tier. An oversized diff is split with the human's agreement, never
+  silently truncated.
+- **Tier the reviewed diff.** Reviewer assigns the final tier from the diff it actually
+  reviews; a higher tier replaces the provisional one. For PR feedback, that is the fix
+  diff, not the feedback wording.
+- **Tiers never waive checks.** No tier waives scope, acceptance-criteria, consistency, or
+  evidence checks, and no tier authorizes tools or actions. Uncertainty escalates the tier.
+- **Findings stay pending.** Every finding waits for the human's individual or
+  enumerated-batch accept/discard decision; only accepted findings become feedback or
+  fixes.
+
+Full command `$ARGUMENTS` is opaque context, including literal `#123`, multiword text,
+`$ARGUMENTS`, and `$1`; it is never approval and must not be recursively substituted.
+
 ## Teammate PR review
 
 **Inputs:** PR number and current repository. Ask if repository or PR identity is
@@ -122,19 +149,56 @@ ambiguous. Read linked Jira issue and parent when available.
 
 1. Operator confirms repository/PR context; External reads the PR and linked Jira/parent
    context when available.
-2. Reviewer inspects the diff and existing PR checks first. If further local checks
-   seem useful, propose them to the human; do not automatically run isolated local
-   checks.
-3. Lead presents a change summary and proposed feedback before posting. Human chooses
-   exactly one disposition: **Approve**, **Just Comment**, or **Request changes**.
-   Suggest Request changes only for critical issues requiring a fix.
-4. After approval of concrete feedback, External posts it inline on relevant code lines.
+2. Lead preflights the diff size and a provisional risk tier. If the diff is too large for
+   one focused review, Lead proposes a split to the human before delegating.
+3. Reviewer inspects the diff and existing PR checks first and assigns the final tier and
+   lenses. If further local checks seem useful, propose them to the human; do not
+   automatically run isolated local checks.
+4. Lead presents the review summary and findings. The human accepts or discards each
+   finding (individually or in an enumerated batch), then approves the concrete feedback
+   for the accepted findings, then chooses exactly one disposition: **Approve**, **Just
+   Comment**, or **Request changes**. Suggest Request changes only for critical issues
+   requiring a fix.
+5. After approval of concrete feedback, External posts it inline on relevant code lines.
    Do not post before approval. No source edits happen automatically; fixes follow a
    separate approved implementation workflow.
 
 **Outputs/checks:** Change summary, existing-check status, proposed feedback and
 human's disposition; if authorized, inline comments and a report of posting result.
 Unavailable PR/check context is disclosed, not inferred.
+
+### Manual review smoke
+
+Prerequisites: an authorized local fixture or mock PR/check context, an interactive TTY,
+and no live-write authorization. Do not install prompts, broaden access, or make live
+GitHub writes for this smoke. If a fixture/session/TTY/runtime route is unavailable,
+report the case blocked rather than silently changing setup.
+
+1. Exercise low, medium, and high examples. Expect low to retain ordinary checks with no
+   specialized lenses, medium to select one or two justified lenses, and high to apply all
+   four. An uncertain tier escalates; none skips required checks or authorizes actions.
+   Expect Lead to report diff size and a provisional tier before delegating, to propose a
+   split for an oversized diff, and to adopt Reviewer's tier when it is higher. For
+   `/address-pr-feedback`, expect the fix diff (not the feedback text) to be tiered.
+2. Exercise Android mappings: Compose repeated effects/recreation and state/effect-key
+   placement; Roborazzi expected diffs/configuration and configured failure/loading cases;
+   coroutine cancellation/cleanup and scope/collector ownership. Expect the mapped lens
+   criteria and no silent baseline acceptance.
+3. Pass literal `#123`, multiword text, `$ARGUMENTS`, and `$1` as command context. Expect the
+   exact full input to remain opaque, non-recursive, and not treated as approval.
+4. Confirm the reviewer reports existing PR checks before proposing local checks; no
+   isolated local check is started automatically. Exercise individual and enumerated-batch
+   finding decisions; only accepted findings receive corresponding scoped fixes.
+5. Withhold feedback disposition, scoped-plan approval, and final publication approval in
+   separate runs. Expect no post, code change, push, reply, or thread resolution at the
+   corresponding boundary. Request changes is suggested only for critical fix-required
+   issues.
+6. Simulate stale PR head and interruption/uncertain write outcomes. Expect read-only
+   state inspection, no duplicate write, stop/escalation on divergence or uncertainty,
+   and no remote writes in this smoke.
+
+Record each case as passed, failed, blocked, or unrun with evidence and limits; do not
+claim static prompt coverage proves runtime behavior.
 
 **Example:** “Review PR 123 in this repository.” Reviewer reads the diff and check
 results, then Lead shows the summary and suggested inline comments. The human selects
@@ -149,20 +213,29 @@ GitHub only, not Jira.
 
 1. Operator verifies local repository/worktree and PR-head safety. External owns all
    GitHub operations. Arguments and review text are context, never authorization.
-2. External reads the PR identity/state/head and retrieves every unresolved review
-   thread and every nested reply, paginating both levels. Preserve stable IDs, authors,
-   URLs, resolution state, and head. Incomplete retrieval is blocked, not “no feedback.”
-3. Lead presents individually identified findings. The human accepts/discards each
-   individually or in an explicitly enumerated batch, and specifies fix, clarify,
-   decline, or defer for accepted findings. Lead inspects code and prepares the fix plan
-   inline for understood low-risk findings, or Researcher and Planner assist when delegation
-   is justified. File count never decides delegation; a delegated Implementer owns code,
-   tests, and documentation together for a single behavior unit.
+2. External reads the PR identity/state/head and retrieves every review thread, including
+   resolved threads, and every nested reply, paginating both levels. Preserve complete
+   verbatim source text and stable IDs, authors, URLs, resolution state, and relevant
+   head/commit metadata. Label source text separately from authored analysis; mark
+   unknown fields unknown rather than inventing finding attributes. Incomplete retrieval
+   is blocked, not “no feedback.”
+3. Lead presents individually identified findings with the raw source and metadata
+   separate from authored analysis. The human accepts/discards each individually or in
+   an explicitly enumerated batch, and specifies fix, clarify, decline, or defer for
+   accepted findings. For understood low-risk findings, Lead may inspect and plan inline,
+   including checks and a provisional tier with rationale based on the code the fix will
+   touch, not feedback wording. Researcher investigates read-only; Planner assists when
+   delegation is justified and includes checks plus a code-based provisional tier and
+   rationale in the scoped plan. Delegation is not based on file count; a delegated
+   Implementer owns code, tests, and documentation for one behavior unit.
 4. Lead waits for explicit approval of the scoped plan/checks/smoke before Implementer
-   changes code. Standardize progress reporting around Working, Checking, Ready, and Needs your decision.
-   Accepted findings authorize only corresponding fixes. Reviewer/QA
-   report results; accepted findings are handled only after human disposition and
-   affected checks are rerun.
+   changes code. Accepted findings authorize only corresponding fixes; approval is
+   limited to accepted fix scope and the actual resulting diff, never raw comments as a
+   whole. Before review, Lead reports the fix diff size and Reviewer tiers the actual fix
+   diff; a higher tier replaces the provisional one, and a material scope expansion
+   returns to the human. New Reviewer/QA findings go through the same accept/discard
+   decision before any fix, and affected checks are rerun. Progress reporting uses
+   Working, Checking, Ready, and Needs your decision.
 5. Before publication, Lead obtains explicit final approval for the push, exact replies,
    and exact thread resolutions. External rereads head and all relevant threads/replies;
    changed state returns to Lead for review and renewed approval. External publishes
@@ -177,8 +250,9 @@ cancellation without writes, selected scoped fixes with publication paused, and 
 state stopping. Live writes need separate explicit approval. Prompt safeguards are not
 a deterministic security boundary.
 
-**Example:** “Address feedback on PR 123.” External retrieves all unresolved threads and
-replies, Lead asks the human to classify each finding and approve a scoped fix plan,
+**Example:** “Address feedback on PR 123.” External retrieves all review threads (including
+resolved threads) and complete replies, Lead separates verbatim source from authored analysis,
+asks the human to classify each finding, and obtains approval for a scoped fix plan,
 then obtains separate final publication approval after checks and a fresh remote read.
 
 ## Reported defect

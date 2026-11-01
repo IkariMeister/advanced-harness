@@ -35,24 +35,12 @@ test('strict role source compiler preserves current normalized OpenCode definiti
   const agentsDirectory = fileURLToPath(agents);
   const compiled = compileOpenCodeRoles(loadRoleDefinitions(agentsDirectory));
   assert.deepEqual(compiled.diagnostics, []);
-  assert.deepEqual(compiled.definitions, baseline);
-  assert.deepEqual(loadNativeDefinitions(agentsDirectory), baseline);
-  assert.deepEqual(loadNativeDefinitions(fileURLToPath(legacyAgents)), baseline);
-  for (const role of nativeRoles) {
-    const current = source(role), prior = legacySource(role);
-    const currentBody = /^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/.exec(current)?.[1]?.trim();
-    const legacyBody = /^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/.exec(prior)?.[1]?.trim();
-    assert.equal(currentBody, legacyBody, `${role} source instructions preserved`);
-  }
-  for (const role of nativeRoles) {
-    const actual: NativeDefinition = compiled.definitions![role];
-    assert.equal(actual.description, baseline[role].description);
-    assert.equal(actual.mode, role === 'lead' ? 'primary' : 'subagent');
-    assert.equal(actual.model, baseline[role].model);
-    assert.deepEqual(actual.permissions, baseline[role].permissions);
-    assert.equal(actual.system, baseline[role].system);
-    assert.notEqual(actual.permissions, baseline[role].permissions);
-  }
+  assert.deepEqual(loadNativeDefinitions(fileURLToPath(legacyAgents)), baseline, 'historical sources normalize to their independent historical snapshot');
+  const currentReviewer = readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8');
+  const expectedCurrent = structuredClone(baseline);
+  expectedCurrent.reviewer.system = currentReviewer.trim();
+  assert.deepEqual(compiled.definitions, expectedCurrent, 'current compiler output preserves historical definitions except the independently snapshotted reviewer body');
+  assert.deepEqual(loadNativeDefinitions(agentsDirectory), expectedCurrent, 'current native loader output matches the independent expected full definitions');
 });
 
 test('loader validates role-specific mode, model syntax, description, and instructions', () => {
@@ -112,6 +100,7 @@ test('capability normalization round-trips ordered OpenCode rules without changi
     const lowered = lowerOpenCodePolicy(role, policy);
     assert.deepEqual(lowered.diagnostics, [], role);
     const sourcePermissions = legacyNormalizedDefinitions()[role].permissions.filter(rule => !isOpenCodeGuardrailRule(rule as PermissionRule));
+    assert.notEqual(lowered.permissions, legacyNormalizedDefinitions()[role].permissions, `${role}: normalized permissions are independently allocated from the original snapshot`);
     assert.deepEqual(lowered.permissions, sourcePermissions, role);
     assert.deepEqual(legacyNormalizedDefinitions()[role].permissions, [...lowered.permissions!, ...openCodeGuardrailRules(lowered.permissions!)], role);
     assert.deepEqual(policy.rules.map(rule => rule.binding.action), sourcePermissions.map(rule => (rule as { action: string }).action));

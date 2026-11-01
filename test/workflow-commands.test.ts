@@ -39,6 +39,11 @@ test('BH-030: PR feedback workflow retrieves complete threads and gates scoped f
   assert.match(feedback, /assigned human and GitHub only; do not use Jira/i);
   assert.match(feedback, /Operator verifies local repository\/worktree and PR-head safety\. External owns every GitHub read and write/i);
   assert.match(feedback, /paginate both the thread collection and each thread's replies until complete/i);
+  assert.match(feedback, /complete raw source text for every incoming review\/comment\/reply/i);
+  assert.match(feedback, /stable ID, author, URL, resolution state, and relevant head\/commit metadata/i);
+  assert.match(feedback, /verbatim source text separately from Lead-authored analysis\/findings/i);
+  assert.match(feedback, /Mark unknown metadata unknown rather than inventing it/i);
+  assert.match(feedback, /actual resulting diff, never to raw comments as a whole/i);
   assert.match(feedback, /incomplete, inconsistent, or access fails, report it as blocked/i);
   assert.match(feedback, /accept or discard each finding individually or in an explicitly enumerated batch/i);
   assert.match(feedback, /waits for explicit human approval before Implementer changes code/i);
@@ -51,6 +56,67 @@ test('BH-030: PR feedback workflow retrieves complete threads and gates scoped f
   assert.match(feedback, /Never merge, force-push, delete branches, or clean up as an implied step/i);
   assert.match(feedback, /interactive TTY/i);
   assert.match(feedback, /Prompt safeguards guide behavior but are not a deterministic security boundary/i);
+});
+
+test('PR review templates keep untrusted-context safeguards without directing placeholder processing', async () => {
+  for (const name of ['review-pr', 'address-pr-feedback']) {
+    const canonical = await readFile(new URL(`../commands/${name}.md`, import.meta.url), 'utf8');
+    const generated = await readFile(new URL(`${name}.md`, root), 'utf8');
+    assert.doesNotMatch(canonical, /do not (?:tokenize|recursively substitute)/i, name);
+    assert.doesNotMatch(generated, /do not (?:tokenize|recursively substitute)/i, `${name} generated output`);
+    assert.match(canonical, /arguments?(?: and all review feedback)? as (?:opaque |untrusted )?context,? (?:not approval|never as authorization)/i, name);
+    assert.match(generated, /arguments?(?: and all review feedback)? as (?:opaque |untrusted )?context,? (?:not approval|never as authorization)/i, `${name} generated output`);
+  }
+});
+
+test('Reviewer role instructions are the single source of the risk-tiered review rubric', async () => {
+  const reviewer = await readFile(new URL('../agents/reviewer.md', import.meta.url), 'utf8');
+  assert.match(reviewer, /^## Risk-tiered review$/m);
+  assert.match(reviewer, /highest applicable tier/i);
+  assert.match(reviewer, /Low.*\n?.*zero specialized lenses/i);
+  assert.match(reviewer, /one or two justified specialized lenses/i);
+  assert.match(reviewer, /Apply all four\s+specialized lenses/i);
+  assert.match(reviewer, /none waives scope, acceptance-criteria,\s+consistency, or evidence checks/i);
+  assert.match(reviewer, /Tier the diff actually under\s+review/i);
+  assert.match(reviewer, /tier the fix\s+diff/i);
+  for (const lens of ['Risk', 'Resilience', 'Readability', 'Reliability']) assert.match(reviewer, new RegExp(`\\*\\*${lens}:\\*\\*`), `defines ${lens} lens`);
+  for (const domain of ['Compose', 'Roborazzi', 'Coroutines']) assert.match(reviewer, new RegExp(`\\*\\*${domain}:\\*\\*`), `defines ${domain} mapping`);
+  for (const field of ['stable ID', 'severity', 'location', 'observed issue', 'impact', 'evidence', 'proposed fix', 'verification status']) assert.ok(reviewer.includes(field), `finding includes ${field}`);
+  assert.match(reviewer, /target and head/);
+  assert.match(reviewer, /run\/failed\/blocked\/unrun\/waived/);
+});
+
+test('PR workflows apply the shared rubric with preflight, ordered gates, and no project-specific tiers', async () => {
+  const review = await readFile(new URL('review-pr.md', root), 'utf8');
+  const feedback = await readFile(new URL('address-pr-feedback.md', root), 'utf8');
+  const docs = await readFile(new URL('../docs/task-workflows.md', import.meta.url), 'utf8');
+  for (const source of [review, feedback]) {
+    assert.match(source, /risk-tiered review rubric in Reviewer's role instructions/);
+    assert.match(source, /preflights the (?:actual fix )?diff: report its size \(files and changed lines\)/);
+    assert.match(source, /never waive scope, acceptance-criteria, consistency, or evidence checks/);
+    assert.match(source, /a higher tier .*replaces the provisional one/i);
+    // Lens and domain criteria live only in agents/reviewer.md.
+    assert.doesNotMatch(source, /Compose|Roborazzi|coroutine/i);
+    // Shipped templates must not carry this repository's own issue references.
+    assert.doesNotMatch(source, /#\d+/);
+    assert.equal(source.match(/accept or discard each finding/g)?.length, 1, 'one accept/discard gate');
+  }
+  assert.match(review, /never silently truncate/);
+  assert.match(review, /counts must come from External's PR diff or Operator's local diff/i);
+  assert.ok(review.indexOf('preflights the diff') < review.indexOf('Reviewer examines the diff and existing PR checks first'), 'PR diff preflight precedes Reviewer inspection');
+  assert.ok(review.indexOf('Reviewer examines the diff and existing PR checks first') < review.indexOf('Propose further local checks to the human'), 'existing PR checks precede any proposal for local checks');
+  const order = ['accept or discard each finding', 'approve the concrete feedback text', 'choose exactly one disposition'].map(step => review.indexOf(step));
+  assert.ok(order.every(index => index >= 0), 'review-pr names each decision');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'review-pr asks for finding decisions, then feedback text, then disposition');
+  assert.match(review, /only accepted findings become proposed feedback, and discarded findings are not posted/);
+  assert.match(feedback, /Reviewer tiers that fix diff/);
+  assert.match(feedback, /Resolved threads are read-only context: never re-triage or reopen them/);
+  assert.match(feedback, /Only unresolved threads are presented for human decisions/);
+  assert.match(feedback, /counts from External's PR diff or Operator's local diff/);
+  assert.match(feedback, /rather than from the feedback wording/);
+  assert.ok(feedback.indexOf('accept or discard each finding') < feedback.indexOf('provisional risk tier'), 'feedback is triaged before the fix is tiered');
+  assert.match(docs, /\(\.\.\/agents\/reviewer\.md#risk-tiered-review\)/);
+  assert.doesNotMatch(docs, /#61/);
 });
 
 test('workflow commands preserve their expected handoff behavior', async () => {

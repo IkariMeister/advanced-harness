@@ -45,8 +45,27 @@ test('schema rejects unknown/missing fields, versions, malformed contracts, and 
 
 test('full arguments bind as one opaque string and inserted placeholders are not recursively substituted', () => {
   const command = loadWorkflowCommands(fileURLToPath(commandsDir))['start-issue'];
-  const userText = 'literal $ARGUMENTS and $1; do not expand';
+  const userText = 'literal #123, multi word text, $ARGUMENTS and $1; do not expand';
   assert.equal(bindWorkflowArguments(command, userText), command.body.replace('$ARGUMENTS', userText));
+});
+
+test('all five full-mode commands bind literal #61 multiword input once without placeholder recursion', () => {
+  const commands = loadWorkflowCommands(fileURLToPath(commandsDir));
+  const input = 'literal #61 multiword $ARGUMENTS and $1 stays opaque';
+  const intros = {
+    'start-issue': 'Start issue: ',
+    'review-pr': 'Review pull request: ',
+    'address-pr-feedback': 'Address pull request feedback: ',
+    'assess-debt': 'Assess technical debt: ',
+    'grill-me': 'Grill me about: ',
+  };
+  for (const [id, intro] of Object.entries(intros)) {
+    const command = commands[id as keyof typeof intros];
+    assert.equal(command.arguments.mode, 'full');
+    assert.ok(command.body.startsWith(intro), `${id} begins with its expected command intro`);
+    const unchangedSuffix = command.body.slice(intro.length + '$ARGUMENTS'.length);
+    assert.equal(bindWorkflowArguments(command, input), `${intro}${input}${unchangedSuffix}`, id);
+  }
 });
 
 test('report-defect binds parent and the complete description remainder without tokenizing it', () => {
