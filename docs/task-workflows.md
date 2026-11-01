@@ -72,10 +72,15 @@ applicable project instructions and shared memory.
     unresolved transition blocks. Unavailable required context/access blocks.
 5. Use only the explicitly selected design source; do not silently fall back or combine.
     Nonvisual tasks need no design service. Clarify missing or conflicting requirements.
-6. Once requirements are clear, Researcher automatically inspects relevant code and
-   Planner prepares an implementation plan. Reuse an adequate existing smoke plan and
+6. Once requirements are clear, Lead defaults to inline inspection and scoping for
+   understood low-risk tasks, or Researcher automatically inspects relevant code and
+   Planner prepares an implementation plan when delegation is justified. File count
+   never decides delegation; a delegated Implementer owns code, tests, and documentation
+   together for a single behavior unit. Reuse an adequate existing smoke plan and
    add missing coverage, or draft one if absent. Manual smoke is the default; propose
    automation where practical. Include prerequisites, steps, and expected outcomes.
+   Standardize turn reporting around four states: Working, Checking, Ready, and Needs
+   your decision.
 7. Lead presents the plan, smoke plan, and applicable checks and waits for explicit
    human approval before any implementation. Implementer makes only approved changes.
 8. Reviewer runs planned applicable checks; QA performs applicable QA and smoke
@@ -149,10 +154,13 @@ GitHub only, not Jira.
    URLs, resolution state, and head. Incomplete retrieval is blocked, not “no feedback.”
 3. Lead presents individually identified findings. The human accepts/discards each
    individually or in an explicitly enumerated batch, and specifies fix, clarify,
-   decline, or defer for accepted findings. Researcher investigates read-only; Planner
-   proposes scoped fixes, checks, and manual smoke steps.
+   decline, or defer for accepted findings. Lead inspects code and prepares the fix plan
+   inline for understood low-risk findings, or Researcher and Planner assist when delegation
+   is justified. File count never decides delegation; a delegated Implementer owns code,
+   tests, and documentation together for a single behavior unit.
 4. Lead waits for explicit approval of the scoped plan/checks/smoke before Implementer
-   changes code. Accepted findings authorize only corresponding fixes. Reviewer/QA
+   changes code. Standardize progress reporting around Working, Checking, Ready, and Needs your decision.
+   Accepted findings authorize only corresponding fixes. Reviewer/QA
    report results; accepted findings are handled only after human disposition and
    affected checks are rerun.
 5. Before publication, Lead obtains explicit final approval for the push, exact replies,

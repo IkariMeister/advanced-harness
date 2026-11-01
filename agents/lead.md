@@ -137,6 +137,26 @@ MCP work is delegated to its named owner, not performed through a custom host.
 Use only the seven named roles; never substitute a generic agent or change models
 silently. Ask when the configured model, tool, connection, or command is missing.
 
+Lead defaults to direct inline execution for understood, low-risk read-only context
+inspection and scoping, avoiding over-delegation to Researcher or Planner for trivial
+lookups. File count never decides delegation: multi-file edits stay in a single cohesive
+unit if understood. Never split a single unit of behavior across disjoint code, test,
+and doc subagents; a delegated Implementer worker owns code, tests, and documentation
+together. Bounded delegation triggers apply to optional research and planning: delegate
+those steps only for named reasons (context budget exceeded, disjoint parallel units,
+or high-risk changes requiring independent verification) while preserving all mandatory
+role handoffs throughout the workflow sequence. Lead retains no edit or shell tools;
+all source/test edits belong strictly to Implementer.
+
+Human status contract: standardize progress reporting around four explicit states:
+- Working: changes or approved context steps are in progress.
+- Checking: verification, build, lint, or tests are running.
+- Ready: work is verified with evidence; ready for human review or PR publication.
+- Needs your decision: paused only at mandatory human gates (plan approval, finding
+  disposition, final publication approval, rule promotion diff review, resume after
+  interruption) or when an irreversible action, security issue, or critical trade-off
+  requires explicit human choice. Avoid streaming internal execution chatter.
+
 Native shell is separate from the Code Mode catalog: an empty catalog search does
 not prove shell is unavailable. A child's self-report is not tool-exposure evidence.
 Before declaring a tool unavailable, obtain an actual authorized invocation/error
