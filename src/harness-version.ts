@@ -126,6 +126,112 @@ export function checkRemoteHead(repoRoot: string, run: Runner = defaultRun): Rem
   }
 }
 
+export type ReleaseVersion = {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease?: string;
+};
+
+const releaseVersionPattern = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
+
+export function parseReleaseVersion(text: string): ReleaseVersion | undefined {
+  const match = text.trim().match(releaseVersionPattern);
+  if (!match) return undefined;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    ...(match[4] ? { prerelease: match[4] } : {})
+  };
+}
+
+// Orders release versions; a prerelease (e.g. 0.3.0-dev) sorts before its release.
+export function compareReleaseVersions(a: ReleaseVersion, b: ReleaseVersion): number {
+  for (const key of ['major', 'minor', 'patch'] as const) {
+    if (a[key] !== b[key]) return a[key] < b[key] ? -1 : 1;
+  }
+  if (a.prerelease === b.prerelease) return 0;
+  if (a.prerelease === undefined) return 1;
+  if (b.prerelease === undefined) return -1;
+  return a.prerelease < b.prerelease ? -1 : 1;
+}
+
+// Returns the v* release tag (without prerelease) that HEAD sits on, if any.
+export function detectReleaseTag(repoRoot: string, run: Runner = defaultRun): string | undefined {
+  let output = '';
+  try {
+    output = run('git', ['tag', '--points-at', 'HEAD', '--list', 'v*'], { cwd: repoRoot });
+  } catch {
+    return undefined;
+  }
+  const releases = output
+    .split(/\r?\n/)
+    .map(tag => tag.trim())
+    .map(tag => ({ tag, version: parseReleaseVersion(tag) }))
+    .filter((entry): entry is { tag: string; version: ReleaseVersion } =>
+      entry.tag.startsWith('v') && entry.version !== undefined && entry.version.prerelease === undefined)
+    .sort((a, b) => compareReleaseVersions(b.version, a.version));
+  return releases[0]?.tag;
+}
+
+export type ReleaseTagComparison = {
+  currentTag: string;
+  latestTag?: string;
+  status: 'up-to-date' | 'release-available' | 'inconclusive';
+};
+
+// Compares a release-tag checkout with the newest remote v* release tag, never with main.
+export function checkRemoteReleaseTag(repoRoot: string, currentTag: string, run: Runner = defaultRun): ReleaseTagComparison {
+  const current = parseReleaseVersion(currentTag);
+  if (!current) return { currentTag, status: 'inconclusive' };
+  let output = '';
+  try {
+    output = run('git', ['ls-remote', '--tags', 'origin', 'v*'], { cwd: repoRoot, timeout: 15000 });
+  } catch {
+    return { currentTag, status: 'inconclusive' };
+  }
+  let latest: { tag: string; version: ReleaseVersion } | undefined;
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^[a-f0-9]{40}\s+refs\/tags\/(v[^\s^]+)(\^\{\})?$/);
+    if (!match || !match[1]) continue;
+    const version = parseReleaseVersion(match[1]);
+    if (!version || version.prerelease !== undefined) continue;
+    if (!latest || compareReleaseVersions(version, latest.version) > 0) latest = { tag: match[1], version };
+  }
+  if (!latest) return { currentTag, status: 'inconclusive' };
+  return compareReleaseVersions(latest.version, current) > 0
+    ? { currentTag, latestTag: latest.tag, status: 'release-available' }
+    : { currentTag, latestTag: latest.tag, status: 'up-to-date' };
+}
+
+// Describes the harness checkout without network access, for doctor output.
+export function describeHarnessCheckout(repoRoot: string, run: Runner = defaultRun): string {
+  const source = readSourceVersion(repoRoot, run);
+  const tag = detectReleaseTag(repoRoot, run);
+  return `${formatVersionStamp(toVersionStamp(source))}${tag ? ` [release tag ${tag}]` : ' [development checkout]'}`;
+}
+
+// Validates that a pushed release tag matches the package and lockfile versions.
+export function checkReleaseTagVersion(tag: string, packageVersion: string | undefined, lockVersion: string | undefined): string[] {
+  const errors: string[] = [];
+  const version = parseReleaseVersion(tag);
+  if (!tag.startsWith('v') || !version) {
+    return [`Tag "${tag}" is not a vX.Y.Z release tag.`];
+  }
+  if (version.prerelease?.split('.').includes('dev')) {
+    errors.push(`Tag "${tag}" uses a -dev version; -dev versions are for main between releases and are never tagged.`);
+  }
+  const expected = tag.slice(1);
+  if (packageVersion !== expected) {
+    errors.push(`package.json version "${packageVersion ?? '(missing)'}" does not match tag "${tag}" (expected "${expected}").`);
+  }
+  if (lockVersion !== expected) {
+    errors.push(`package-lock.json version "${lockVersion ?? '(missing)'}" does not match tag "${tag}" (expected "${expected}").`);
+  }
+  return errors;
+}
+
 function isAncestryNegative(error: unknown): boolean {
   // execFileSync reports git's normal --is-ancestor negative result as exit 1.
   // Missing objects and command failures have other exit codes and are inconclusive.

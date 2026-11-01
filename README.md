@@ -125,6 +125,8 @@ entries do not authorize implementation or replace current human approvals.
 
 This instruction-driven workflow does not provide an independent approval-enforcement layer.
 
+Projects that use the harness should run a checkout pinned to a release tag; development continues on `main`, which carries a `-dev` version between releases. See [releasing](docs/releasing.md) and the [changelog](CHANGELOG.md).
+
 ## Development and setup
 
 Prerequisites: Git, OpenCode V2, Node.js 24.x, and the required model connection. Service access is needed only for integrations selected for the task. GitHub CLI is needed when GitHub's `gh` backend is selected; Jira/design access is not a general setup prerequisite.
@@ -144,7 +146,7 @@ Check an installed harness without reinstalling:
 npm run harness:doctor -- --project "path/to/android-project"
 ```
 
-This verifies agent visibility/modes and model/variant catalog availability, not account entitlement. It may start OpenCode's service but never restarts it or sends model requests. See [installation troubleshooting](docs/installation.md#after-installation).
+It prints the harness checkout version and whether it is on a release tag (no network access). This verifies agent visibility/modes and model/variant catalog availability, not account entitlement. It may start OpenCode's service but never restarts it or sends model requests. See [installation troubleshooting](docs/installation.md#after-installation).
 
 Check for updates and preview changes to installed prompts and permissions:
 
@@ -152,7 +154,7 @@ Check for updates and preview changes to installed prompts and permissions:
 npm run harness:update -- --project "path/to/android-project"
 ```
 
-This compares the local checkout and installed version stamp, checks remote `origin/main` on approval, previews per-role prompt diffs, preserves customizations, and records recovery receipts. See [safe harness update workflow](docs/installation.md#safe-harness-update-workflow).
+This compares the local checkout and installed version stamp, checks for a newer release tag (release-tag checkouts) or remote `origin/main` (development checkouts) on approval, previews per-role prompt diffs, preserves customizations, and records recovery receipts. See [safe harness update workflow](docs/installation.md#safe-harness-update-workflow).
 
 Configure an Android project interactively:
 

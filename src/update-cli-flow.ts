@@ -29,7 +29,7 @@ import {
   revalidatePendingSuccessor,
   writePendingSuccessor
 } from './receipt-lineage.ts';
-import { checkRemoteHead, compareInstalledAndSource, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
+import { checkRemoteHead, checkRemoteReleaseTag, compareInstalledAndSource, detectReleaseTag, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 import { planUpdate } from './update-planner.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 import {
@@ -231,13 +231,29 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   }
   output(`  Local status: ${versionComparison}`);
 
+  const releaseTag = detectReleaseTag(harnessRoot, deps.runCommand);
+  if (releaseTag) output(`  Release tag: ${releaseTag}`);
+  const remoteTarget = releaseTag ? 'newer release tags (v*)' : 'newer versions on origin/main';
+
   let checkRemote = options.checkRemote;
   if (checkRemote === undefined) {
-    const answer = await ask('Check remote repository for newer versions on origin/main? (read-only git ls-remote)', 'no');
+    const answer = await ask(`Check remote repository for ${remoteTarget}? (read-only git ls-remote)`, 'no');
     checkRemote = /^(y|yes)$/i.test(answer.trim());
   }
 
-  if (checkRemote) {
+  if (checkRemote && releaseTag) {
+    // Release-tag checkouts are compared with release tags only, so unreleased main work is never offered.
+    output('Checking remote release tags...');
+    const release = checkRemoteReleaseTag(harnessRoot, releaseTag, deps.runCommand);
+    output(`  Remote status: ${release.status}${release.latestTag ? ` (newest release: ${release.latestTag})` : ''}`);
+    if (release.status === 'release-available' && release.latestTag) {
+      output(`\nNOTICE: ${release.latestTag} is available (this checkout is on ${releaseTag}).`);
+      output('The harness update workflow is report/preview-only and does not automatically modify your repository.');
+      output('To update your harness checkout, run:');
+      output(`  git fetch --tags origin && git checkout ${release.latestTag}`);
+      output('Then rerun npm run harness:update to preview and apply changes.\n');
+    }
+  } else if (checkRemote) {
     output('Checking remote origin/main...');
     const remote = checkRemoteHead(harnessRoot, deps.runCommand);
     output(`  Remote status: ${remote.status}${remote.remoteHead ? ` (origin/main: ${remote.remoteHead})` : ''}`);

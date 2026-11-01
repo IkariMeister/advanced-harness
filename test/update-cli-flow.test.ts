@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { nativeRoles, parseConfiguration } from '../src/native-installer.ts';
@@ -392,7 +393,7 @@ test('update flow applies prompt when explicitly selected and records harness ve
   assert.ok(chain.head);
   assert.equal(chain.head.receipt.version, 2);
   assert.deepEqual(chain.head.receipt.harnessVersion, {
-    version: '0.1.0',
+    version: (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version,
     commit: 'deadbeef1234'
   });
 });
@@ -432,6 +433,69 @@ test('update flow checkRemote reports newer remote version and prints pull guida
 
   assert.ok(output.some(line => line.includes('NOTICE: A newer version of the harness is available on origin/main.')));
   assert.ok(output.some(line => line.includes('git pull origin main')));
+});
+
+async function runReleaseTagRemoteCheck(t: { after: (fn: () => void) => void }, remoteTags: string) {
+  const root = makeTempRoot('harness-update-release-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project');
+  mkdirSync(project);
+  writeFileSync(join(project, 'opencode.json'), JSON.stringify(createDummyInstalledConfig(), null, 2));
+
+  const questions: string[] = [];
+  const answer = (question: string) => {
+    questions.push(question);
+    if (question.startsWith('Check remote')) return 'yes';
+    if (question.includes('system prompt to latest')) return 'no';
+    if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'cancel';
+    throw new Error(`Unexpected question: ${question}`);
+  };
+  const gitCalls: string[][] = [];
+  const output: string[] = [];
+  await runUpdateFlow(
+    { scope: 'project', project },
+    {
+      ask: async q => answer(q),
+      output: text => output.push(text),
+      error: text => output.push(text),
+      home: root,
+      recoveryDirectory: join(root, 'recovery'),
+      runCommand: (_cmd, args) => {
+        gitCalls.push(args);
+        if (args[0] === 'tag' && args[1] === '--points-at') return 'v0.2.0';
+        if (args[0] === 'ls-remote' && args[1] === '--tags') return remoteTags;
+        // main has unreleased work; a release-tag checkout must not be steered onto it.
+        if (args[0] === 'ls-remote') return 'ffffffffffffffffffffffffffffffffffffffff\trefs/heads/main';
+        if (args[0] === 'rev-parse') return 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+        if (args[0] === 'status') return '';
+        if (args[0] === 'merge-base') return '';
+        throw new Error('git error');
+      }
+    }
+  );
+  return { questions, gitCalls, output };
+}
+
+test('update flow on a release-tag checkout reports a newer release tag, not unreleased main commits', async t => {
+  const { questions, gitCalls, output } = await runReleaseTagRemoteCheck(t, [
+    `${'1'.repeat(40)}\trefs/tags/v0.2.0`,
+    `${'2'.repeat(40)}\trefs/tags/v0.2.1`,
+    `${'3'.repeat(40)}\trefs/tags/v0.3.0-rc.1`
+  ].join('\n'));
+
+  assert.ok(questions.some(q => q.startsWith('Check remote repository for newer release tags (v*)?')));
+  assert.ok(output.includes('  Release tag: v0.2.0'));
+  assert.ok(output.some(line => line.includes('NOTICE: v0.2.1 is available (this checkout is on v0.2.0).')));
+  assert.ok(output.some(line => line.includes('git fetch --tags origin && git checkout v0.2.1')));
+  assert.ok(!output.some(line => line.includes('origin/main') || line.includes('git pull origin main')));
+  assert.ok(!gitCalls.some(args => args.includes('refs/heads/main')));
+});
+
+test('update flow on the newest release tag reports up-to-date even when main has moved on', async t => {
+  const { output } = await runReleaseTagRemoteCheck(t, `${'1'.repeat(40)}\trefs/tags/v0.2.0\n${'0'.repeat(40)}\trefs/tags/v0.1.0`);
+
+  assert.ok(output.includes('  Remote status: up-to-date (newest release: v0.2.0)'));
+  assert.ok(!output.some(line => line.includes('NOTICE')));
 });
 
 test('update flow pending-write or finalization failure retains pending recovery evidence', async t => {
@@ -694,4 +758,41 @@ test('update flow partial command write failure retains pending recovery evidenc
   const receipt = JSON.parse(readFileSync(join(recovery, receipts[0]!), 'utf8'));
   assert.equal(receipt.status, 'pending');
   assert.ok(errors.some(e => e.includes('pending recovery evidence retained')));
+});
+
+test('update flow shows a -dev harness checkout version and compares by commit', async t => {
+  const root = makeTempRoot('harness-update-dev-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const harnessRoot = join(root, 'checkout');
+  mkdirSync(harnessRoot);
+  writeFileSync(join(harnessRoot, 'package.json'), JSON.stringify({ version: '0.3.0-dev' }));
+  const project = join(root, 'project');
+  mkdirSync(project);
+  writeFileSync(join(project, 'opencode.json'), JSON.stringify(createDummyInstalledConfig(), null, 2));
+
+  const questions: string[] = [];
+  const output: string[] = [];
+  const status = await runUpdateFlow({ scope: 'project', project }, {
+    ask: async question => {
+      questions.push(question);
+      if (question.startsWith('Check remote')) return '';
+      if (question.includes('system prompt to latest')) return 'no';
+      if (question.startsWith('Choose new models')) return 'no'; if (question.startsWith('Type update')) return 'cancel';
+      throw new Error(`Unexpected question: ${question}`);
+    },
+    output: text => output.push(text),
+    error: text => output.push(text),
+    home: root,
+    recoveryDirectory: join(root, 'recovery'),
+    harnessRoot,
+    workflowCommandsDirectory: fileURLToPath(new URL('../commands/', import.meta.url)),
+    runCommand: (_cmd, args) => args[0] === 'rev-parse' ? 'd'.repeat(40) : ''
+  });
+
+  assert.equal(status, 0);
+  assert.ok(output.includes(`  Harness checkout: 0.3.0-dev (${'d'.repeat(40)})`));
+  assert.ok(!output.some(line => line.startsWith('  Release tag:')));
+  // Enter keeps the default: no remote check on a development checkout either.
+  assert.ok(questions.some(q => q.startsWith('Check remote repository for newer versions on origin/main?')));
+  assert.ok(!output.some(line => line.startsWith('Checking remote')));
 });

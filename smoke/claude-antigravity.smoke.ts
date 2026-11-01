@@ -43,7 +43,7 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
   it('SMK-CC-02 install deploys CLAUDE.md, settings, eight agents, and six commands; AGENTS.md preserved', async () => {
     const result = await box.run('install-native-harness.ts', args(), { steps: claudeCodeInstall('yes') });
     assert.equal(result.code, 0, result.transcript);
-    assert.match(result.stdout, /Harness version: \d+\.\d+\.\d+ \([0-9a-f]{40}\)/);
+    assert.match(result.stdout, /Harness version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)? \([0-9a-f]{40}\)/);
     assert.ok(receiptsFor(box.recoveryDirectory, 'claude-code').some(r => r.harnessVersion?.commit === headCommit()), 'receipt stamped with the checkout commit');
     assert.match(readFileSync(join(box.project, 'CLAUDE.md'), 'utf8'), /advanced-harness:lead:start/);
     const settings = JSON.parse(readFileSync(join(box.project, '.claude', 'settings.json'), 'utf8'));
@@ -97,7 +97,7 @@ describe('SMK-AG Antigravity project lifecycle (non-TTY piped answers)', () => {
   it('SMK-AG-03 install deploys rules, skills, merge guard hook, and MCP config; preferences go to AGENTS.md', async () => {
     const result = await box.run('install-native-harness.ts', args(), { steps: antigravityInstall('yes') });
     assert.equal(result.code, 0, result.transcript);
-    assert.match(result.stdout, /Harness version: \d+\.\d+\.\d+ \([0-9a-f]{40}\)/);
+    assert.match(result.stdout, /Harness version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)? \([0-9a-f]{40}\)/);
     assert.ok(receiptsFor(box.recoveryDirectory, 'antigravity').some(r => r.harnessVersion?.commit === headCommit()), 'receipt stamped with the checkout commit');
     const agents = join(box.project, '.agents');
     assert.ok(existsSync(join(agents, 'rules', 'advanced-harness-lead.md')));

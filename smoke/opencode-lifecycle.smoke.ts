@@ -113,7 +113,7 @@ describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
       assert.equal(install.code, 0, install.transcript);
       const update = await fresh.run('update-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: [ask('Check remote repository', 'no'), ask('Choose new models'), ask('Type update to apply', '')] });
       assert.doesNotMatch(update.stdout, /Installed version: unknown/);
-      assert.match(update.stdout, /Installed version: \d+\.\d+\.\d+ \([0-9a-f]{40}\)/);
+      assert.match(update.stdout, /Installed version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)? \([0-9a-f]{40}\)/);
     } finally { fresh.dispose(); }
   });
 

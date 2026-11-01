@@ -6,13 +6,14 @@
 | --- | --- |
 | Latest `0.1.x` release | Best-effort security fixes |
 | Older `0.1.x` releases | Upgrade to the latest `0.1.x` release; no backports promised |
-| Other versions and development snapshots | No security maintenance commitment |
+| Other versions and development snapshots (`-dev` versions from `main`) | No security maintenance commitment |
 
 Advanced Harness is pre-1.0 software. Security fixes target the latest `0.1.x`
 release; a fix may require upgrading. There is no long-term support window,
 guaranteed patch deadline, or guarantee that every reported issue can be fixed.
 Reports affecting development snapshots are welcome; include the exact commit.
-Future supported release lines will be listed here when adopted.
+Each release updates this table as part of the
+[release checklist](docs/releasing.md#release-checklist).
 
 ## Report a vulnerability privately
 
