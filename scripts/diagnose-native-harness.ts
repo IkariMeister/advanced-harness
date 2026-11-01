@@ -1,9 +1,11 @@
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { discoverConfigurations } from '../src/native-installer.ts';
 import { DiagnosticError, expectedAgents, printReport, verifyRuntime, diagnoseHost, printHostDiagnosticReport } from '../src/native-diagnostics.ts';
 import { detectInstalledHosts, parseHostSelection, type HostId } from '../src/host-registry.ts';
+import { describeHarnessCheckout } from '../src/harness-version.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
@@ -25,6 +27,7 @@ if (args.includes('--help')) {
       ? parseHostSelection(options['--host'])
       : detectInstalledHosts(directory, homedir(), process.env.XDG_CONFIG_HOME);
 
+    console.log(`Harness checkout: ${describeHarnessCheckout(resolve(fileURLToPath(new URL('..', import.meta.url))))}`);
     console.log(`Checking location: ${directory}`);
     console.log(`Inspecting host(s): ${hosts.join(', ')}`);
 
