@@ -89,11 +89,18 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
 
   let scope = options.scope;
+  const scopeDefault = selectedHosts.length === 1 && selectedHosts[0] === 'codex' ? 'global' : 'project';
   while (!scope || !['project', 'global'].includes(scope)) {
-    scope = (await ask('Update scope: project or global', 'project')) || 'project';
+    scope = (await ask('Update scope: project or global', scopeDefault)) || scopeDefault;
   }
   if (scope === 'global' && options.project) {
     throw new Error('--project cannot be combined with global scope.');
+  }
+  // Codex role profiles live in ~/.codex, so Codex installs are global only (#45).
+  const codexOnly = selectedHosts.length === 1 && selectedHosts[0] === 'codex';
+  if (codexOnly && scope === 'project') {
+    errorOutput('Codex update is global only: role profiles live in ~/.codex. Rerun with --scope global. No files were changed.');
+    return 2;
   }
 
   const expand = (path: string) => path.replace(/^(?:~|\$HOME)(?=[/\\]|$)/, home);
@@ -159,6 +166,23 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     const result = await adapter.update({
       scope: scope as 'project' | 'global',
       project,
+      home,
+      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
+      agentsDirectory: deps.agentsDirectory,
+      commandsDirectory: deps.workflowCommandsDirectory,
+      harnessVersion: toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand)),
+      ask,
+      output,
+      error: errorOutput,
+    });
+    return typeof result === 'number' ? result : 0;
+  }
+
+  if (dispatch.host === 'codex') {
+    const adapter = (deps.getHostAdapter ?? getHostAdapter)('codex');
+    if (!adapter || !adapter.update) throw new Error('Codex host adapter update is not available.');
+    const result = await adapter.update({
+      scope: 'global',
       home,
       recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
       agentsDirectory: deps.agentsDirectory,

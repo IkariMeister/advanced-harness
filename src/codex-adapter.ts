@@ -10,7 +10,7 @@ import { loadRoleDefinitions } from './role-definitions.ts';
 import { codexDestructiveGitPrefixes, type CodexPrefixPattern } from './security-guardrails.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import { codexChildRoles, codexProfileName, codexRolePolicies, codexRoleLauncherSource, compileCodexLeadBlock, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from './codex-role-processes.ts';
-import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, type ManagedFileEvidence } from './receipt-lineage.ts';
+import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, type HarnessVersionStamp, type ManagedFileEvidence } from './receipt-lineage.ts';
 
 type PlannedFile = { path: string; content: string; before: string | undefined; kind: string };
 const quote = (text: string): string => JSON.stringify(text);
@@ -331,6 +331,104 @@ export function disableMultiAgent(text: string, output: (message: string) => voi
   return result;
 }
 
+/**
+ * What the harness changed in config.toml, kept in the state manifest so uninstall can undo exactly
+ * those edits. The receipt stores config.toml only as a digest (it can hold MCP credentials), so the
+ * prior file cannot be restored wholesale.
+ */
+export type CodexConfigEdits = {
+  addedRootKeys: string[];
+  multiAgentAdded: boolean;
+  /** config.toml did not exist before the first install, so uninstall may remove it once it is empty. */
+  configCreated: boolean;
+  featuresTableAdded: boolean;
+  mcp: Record<string, { enabledBefore: boolean | null; addedTools: string[]; toolsKeyAdded: boolean }>;
+};
+
+const findEntry = (document: CodexTomlDocument, table: string[], key: string) =>
+  document.entries.find(entry => entry.table.join('\u0000') === table.join('\u0000') && entry.key.length === 1 && entry.key[0] === key)
+  ?? (table.length ? document.entries.find(entry => entry.table.length === 0 && entry.key.join('\u0000') === [...table, key].join('\u0000')) : undefined);
+
+/** Diffs config.toml before and after an install, then folds in edits recorded by earlier installs. */
+export function codexConfigEdits(before: string, after: string, prior?: CodexConfigEdits, created = false): CodexConfigEdits {
+  const was = parseCodexToml(before, 'config.toml'), now = parseCodexToml(after, 'config.toml');
+  const edits: CodexConfigEdits = {
+    addedRootKeys: [...new Set([...(prior?.addedRootKeys ?? []), ...['sandbox_mode', 'approval_policy'].filter(key => !findEntry(was, [], key) && findEntry(now, [], key))])],
+    multiAgentAdded: (prior?.multiAgentAdded ?? false) || (!findEntry(was, ['features'], 'multi_agent') && Boolean(findEntry(now, ['features'], 'multi_agent'))),
+    configCreated: prior ? prior.configCreated : created,
+    featuresTableAdded: (prior?.featuresTableAdded ?? false) || (!was.tables.some(table => table.path === 'features') && now.tables.some(table => table.path === 'features')),
+    mcp: structuredClone(prior?.mcp ?? {}),
+  };
+  for (const table of now.tables.filter(item => item.parts.length === 2 && item.parts[0] === 'mcp_servers')) {
+    const id = table.parts[1]!, path = ['mcp_servers', id];
+    const enabledWas = findEntry(was, path, 'enabled')?.value, enabledNow = findEntry(now, path, 'enabled')?.value;
+    const toolsWas = findEntry(was, path, 'disabled_tools'), toolsNow = findEntry(now, path, 'disabled_tools');
+    const oldTools = Array.isArray(toolsWas?.value) ? toolsWas.value as string[] : [];
+    const added = Array.isArray(toolsNow?.value) ? (toolsNow.value as string[]).filter(name => !oldTools.includes(name)) : [];
+    if (enabledWas === enabledNow && !added.length) continue;
+    const previous = edits.mcp[id];
+    edits.mcp[id] = {
+      enabledBefore: previous ? previous.enabledBefore : typeof enabledWas === 'boolean' ? enabledWas : null,
+      addedTools: [...new Set([...(previous?.addedTools ?? []), ...added])],
+      toolsKeyAdded: previous ? previous.toolsKeyAdded : !toolsWas && Boolean(toolsNow),
+    };
+  }
+  return edits;
+}
+
+/**
+ * Undoes recorded harness edits on the current config.toml. A key whose value no longer matches what
+ * the harness wrote was changed by the user: it is left in place and listed in `kept`.
+ */
+export function reverseCodexConfigEdits(text: string, edits: CodexConfigEdits): { text: string; kept: string[] } {
+  const kept: string[] = [];
+  const document = parseCodexToml(text, 'config.toml');
+  const changes: Array<{ start: number; end: number; text: string }> = [];
+  const lineOf = (entry: CodexTomlEntry) => {
+    const start = text.lastIndexOf('\n', entry.valueStart - 1) + 1;
+    const newline = text.indexOf('\n', entry.valueEnd);
+    return { start, end: newline < 0 ? text.length : newline + 1 };
+  };
+  const removeIf = (entry: CodexTomlEntry | undefined, expected: unknown, label: string, withSeparator = false) => {
+    if (!entry) return;
+    if (entry.value !== expected) { kept.push(label); return; }
+    const line = lineOf(entry);
+    // The baseline keys are inserted as blocks each followed by one blank line; take that line too.
+    const blank = withSeparator ? /^\r?\n/.exec(text.slice(line.end))?.[0].length ?? 0 : 0;
+    changes.push({ start: line.start, end: line.end + blank, text: '' });
+  };
+  const harnessValues: Record<string, string> = { sandbox_mode: 'read-only', approval_policy: 'on-request' };
+  for (const key of edits.addedRootKeys) removeIf(findEntry(document, [], key), harnessValues[key], key, true);
+  if (edits.multiAgentAdded) removeIf(findEntry(document, ['features'], 'multi_agent'), false, 'features.multi_agent');
+  for (const [id, record] of Object.entries(edits.mcp)) {
+    const path = ['mcp_servers', id];
+    const enabled = findEntry(document, path, 'enabled');
+    if (enabled && enabled.value !== false) kept.push(`mcp_servers.${id}.enabled`);
+    else if (enabled && record.enabledBefore === null) changes.push({ ...lineOf(enabled), text: '' });
+    else if (enabled && record.enabledBefore !== false) changes.push({ start: enabled.valueStart, end: enabled.valueEnd, text: 'true' });
+    const tools = findEntry(document, path, 'disabled_tools');
+    if (tools && record.addedTools.length) {
+      if (!Array.isArray(tools.value)) { kept.push(`mcp_servers.${id}.disabled_tools`); continue; }
+      const remaining = (tools.value as string[]).filter(name => !record.addedTools.includes(name));
+      if (!remaining.length && record.toolsKeyAdded) changes.push({ ...lineOf(tools), text: '' });
+      else changes.push({ start: tools.valueStart, end: tools.valueEnd, text: `[${remaining.map(quote).join(', ')}]` });
+    }
+  }
+  let result = text;
+  for (const change of changes.sort((a, b) => b.start - a.start)) result = result.slice(0, change.start) + change.text + result.slice(change.end);
+  if (edits.featuresTableAdded) {
+    const after = parseCodexToml(result, 'config.toml');
+    const features = after.tables.find(table => table.path === 'features');
+    if (features && !after.entries.some(entry => entry.table.length === 1 && entry.table[0] === 'features')) {
+      const end = result.indexOf('\n', features.start);
+      const start = result.slice(0, features.start).replace(/(\r?\n)+$/, '').length;
+      result = result.slice(0, start) + (start ? result.slice(start, features.start).match(/\r?\n/)?.[0] ?? '' : '') + result.slice(end < 0 ? result.length : end + 1);
+    }
+  }
+  validateCodexToml(result, 'restored config.toml');
+  return { text: result, kept };
+}
+
 export function compileCodexAgent(role: NativeRole, model: string, reasoning: string, description: string, instructions: string): string {
   if (!roleId(role) || !model.trim() || !(CODEX_REASONING_EFFORTS as readonly string[]).includes(reasoning)) throw new Error(`Invalid Codex agent assignment: ${role}`);
   return `name = ${quote(role)}\ndescription = ${quote(description)}\ndeveloper_instructions = ${quote(instructions)}\nmodel = ${quote(model.trim())}\nmodel_reasoning_effort = ${quote(reasoning)}\n`;
@@ -505,6 +603,7 @@ export async function installCodex(options: {
   discoverModels?: CodexModelDiscovery | undefined;
   /** role-processes: one `codex exec` process per role with its own profile (#45); global scope only. */
   mode?: 'shared-agents' | 'role-processes' | undefined;
+  harnessVersion?: HarnessVersionStamp | undefined;
 }): Promise<number> {
   const { scope, project, home, ask, output } = options;
   const roleProcesses = options.mode === 'role-processes';
@@ -689,20 +788,23 @@ export async function installCodex(options: {
     if (latest !== file.before) throw new Error(`File changed while confirmation was open: ${file.path}. Rerun; no file was overwritten.`);
   }
   const changed = selectedFiles.filter(file => file.before !== file.content);
-  const nextEvidence: ManagedFileEvidence[] = changed.map(file => ({ path: file.path, kind: file.kind === 'skill' ? 'skills' as const : file.kind === 'role' ? 'instructions' as const : file.kind as 'config' | 'rules' | 'instructions', before: file.before === undefined ? { absent: true as const } : file.kind === 'config' ? { digest: digest(file.before) } : { content: file.before }, after: file.kind === 'config' ? { digest: digest(file.content) } : { content: file.content } }));
-  const combinedEvidence = structuredClone(priorFiles);
+  // Role-process mode tracks config.toml through its recorded edits instead (see CodexConfigEdits).
+  const nextEvidence: ManagedFileEvidence[] = changed.filter(file => !(roleProcesses && file.kind === 'config')).map(file => ({ path: file.path, kind: file.kind === 'skill' ? 'skills' as const : file.kind === 'role' ? 'instructions' as const : file.kind as 'config' | 'rules' | 'instructions', before: file.before === undefined ? { absent: true as const } : file.kind === 'config' ? { digest: digest(file.before) } : { content: file.before }, after: file.kind === 'config' ? { digest: digest(file.content) } : { content: file.content } }));
+  const combinedEvidence = structuredClone(priorFiles).filter(file => !(roleProcesses && file.kind === 'config' && canonicalPath(file.path) === canonicalPath(configPath)));
   for (const item of nextEvidence) {
     const old = combinedEvidence.find(evidence => canonicalPath(evidence.path) === canonicalPath(item.path));
     if (old) old.after = item.after; else combinedEvidence.push(item);
   }
-  const nextState = JSON.stringify({ ...stateValue, host: 'codex', ...(roleProcesses ? { mode: 'role-processes' } : {}), selectedMcpServers: selected, disabledTools: selectedTools, managed: combinedEvidence.map(item => ({ path: item.path, after: item.after })) }, null, 2) + '\n';
+  const priorEdits = stateValue.configEdits && typeof stateValue.configEdits === 'object' ? stateValue.configEdits as CodexConfigEdits : undefined;
+  const configEdits = roleProcesses ? { configEdits: codexConfigEdits(existing, configAfter, priorEdits, configBefore === undefined) } : {};
+  const nextState = JSON.stringify({ ...stateValue, host: 'codex', ...(roleProcesses ? { mode: 'role-processes' } : {}), ...configEdits, selectedMcpServers: selected, disabledTools: selectedTools, managed: combinedEvidence.map(item => ({ path: item.path, after: item.after })) }, null, 2) + '\n';
   if (changed.length === 0 && nextState === stateBefore) {
     output(omittedRoles.length
       ? 'Nothing was written: the selected files are already current, but the requested role assignments were not applied because existing role profiles were preserved.'
       : 'Codex configuration is already current; no files, backups, or receipts written.');
     return omittedRoles.length ? 1 : 0;
   }
-  const receipt = createSuccessorReceipt(snapshot, stateBefore, nextState, {}, undefined, { host: 'codex', managedFiles: combinedEvidence });
+  const receipt = createSuccessorReceipt(snapshot, stateBefore, nextState, {}, options.harnessVersion, { host: 'codex', managedFiles: combinedEvidence });
   const pending = writePendingSuccessor(snapshot, receipt);
   const backups: string[] = [];
   const backupSet = new Set<string>();
@@ -848,6 +950,58 @@ function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): st
   const leadText = existsSync(lead) ? readFileSync(lead, 'utf8') : '';
   if (!leadText.includes('<!-- BEGIN advanced-harness Codex Lead -->') || !leadText.includes('<!-- END advanced-harness Codex Lead -->')) issues.push(`Codex Lead block is missing from ${lead}.`);
   return issues;
+}
+
+/**
+ * The Codex part of uninstall that the receipt does not cover: config.toml (recorded as edits, since the
+ * file can hold MCP credentials) and the state manifest. Used as the generic flow's host step, so it is
+ * previewed before confirmation and applied only after every receipt-managed file was restored.
+ */
+export function planCodexUninstall(statePath: string, backupParent: string): { actions: string[]; kept: string[]; apply(): string[] } {
+  if (!existsSync(statePath)) throw new Error(`Codex state manifest is missing: ${statePath}; uninstall cannot identify the harness configuration edits.`);
+  const stateText = readFileSync(statePath, 'utf8');
+  let state: { mode?: unknown; configEdits?: CodexConfigEdits };
+  try { state = JSON.parse(stateText) as typeof state; } catch { throw new Error(`Malformed Codex state manifest: ${statePath}; no changes made.`); }
+  if (state.mode !== 'role-processes' || !state.configEdits) throw new Error('This Codex install has no recorded configuration edits (it predates role-process mode); uninstall is not supported for it. No changes made.');
+  const edits = state.configEdits;
+  const configPath = join(dirname(statePath), 'config.toml');
+  assertSafeFilesystemPath(configPath, 'file');
+  const configBefore = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
+  const reversed = configBefore === undefined ? undefined : reverseCodexConfigEdits(configBefore, edits);
+  const removeConfig = reversed !== undefined && edits.configCreated && !reversed.text.trim();
+  const actions = [
+    reversed === undefined ? `${configPath}: absent, nothing to reverse`
+      : removeConfig ? `remove ${configPath} (created by the harness, nothing else in it)`
+      : reversed.text === configBefore ? `${configPath}: no harness edits left to reverse`
+      : `reverse harness edits in ${configPath}${reversed.kept.length ? ` (keeping changed: ${reversed.kept.join(', ')})` : ''}`,
+    `remove ${statePath}`,
+  ];
+  return {
+    actions,
+    kept: reversed?.kept ?? [],
+    apply() {
+      const lines: string[] = [];
+      const latest = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
+      if (latest !== configBefore) throw new Error(`${configPath} changed after review; its harness edits were not reversed`);
+      if (readFileSync(statePath, 'utf8') !== stateText) throw new Error(`${statePath} changed after review`);
+      const backupDir = join(backupParent, `${new Date().toISOString().replaceAll(':', '-')}-codex-uninstall-${digest(statePath).slice(0, 8)}`);
+      const backup = (path: string, content: string) => {
+        mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+        const target = join(backupDir, basename(path));
+        writeFileSync(target, content, { flag: 'wx', mode: 0o600 });
+        lines.push(`Private backup: ${target}`);
+      };
+      if (configBefore !== undefined && reversed && reversed.text !== configBefore) {
+        backup(configPath, configBefore);
+        if (removeConfig) { unlinkSync(configPath); lines.push(`Removed ${configPath}`); }
+        else { writeFileSync(configPath, reversed.text, 'utf8'); lines.push(`Reversed harness edits in ${configPath}`); }
+      }
+      backup(statePath, stateText);
+      unlinkSync(statePath);
+      lines.push(`Removed ${statePath}`);
+      return lines;
+    },
+  };
 }
 
 export function codexConfigPath(scope: 'project' | 'global', project: string | undefined, home: string): string {

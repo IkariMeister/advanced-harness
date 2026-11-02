@@ -19,6 +19,8 @@ export async function runUninstallFlow(input: {
   pruneRoot?: string | undefined;
   /** Project root whose local Git exclude block this host releases; omitted for global targets. */
   excludeRoot?: string | undefined;
+  /** Host-owned work outside the receipt: listed with the planned actions, applied after the managed restore succeeds. */
+  hostStep?: { actions: string[]; apply(): string[] } | undefined;
 }): Promise<number> {
   const plan = planUninstall(input.receipt, input.current);
   if (plan.conflicts.length) {
@@ -32,8 +34,8 @@ export async function runUninstallFlow(input: {
       return 1;
     }
   }
-  input.output(`Planned actions (${plan.actions.length}):`);
-  for (const action of plan.actions) input.output(`  ${action}`);
+  input.output(`Planned actions (${plan.actions.length + (input.hostStep?.actions.length ?? 0)}):`);
+  for (const action of [...plan.actions, ...(input.hostStep?.actions ?? [])]) input.output(`  ${action}`);
   const excludeOwner = (['opencode', 'claude-code', 'antigravity'] as const).find(owner => owner === (input.host ?? 'opencode')) as GitExcludeOwner | undefined;
   const exclude = excludeOwner ? previewGitExclude(input.excludeRoot, excludeOwner, input.output, { remove: true }) : undefined;
   if ((await input.confirm('Type uninstall to continue: ')).trim() !== 'uninstall') {
@@ -76,6 +78,13 @@ export async function runUninstallFlow(input: {
       if (input.pruneRoot) for (const dir of pruneInstalledDirectories(input.receipt, input.pruneRoot)) input.output(`Removed empty installer directory: ${dir}`);
     } catch (err) {
       input.error(`Uninstall partially completed${saved ? '; configuration was restored' : ''}. ${String(err)}. Review completed work and backups before retrying.`);
+      return 1;
+    }
+  }
+  if (input.hostStep) {
+    try { for (const line of input.hostStep.apply()) input.output(line); }
+    catch (err) {
+      input.error(`Uninstall partially completed; managed files were restored but the host step failed. ${String(err)}. Review completed work and backups before retrying.`);
       return 1;
     }
   }

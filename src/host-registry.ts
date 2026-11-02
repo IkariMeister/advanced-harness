@@ -5,20 +5,18 @@ import { nativeRoles, type Ask, type NativeRole } from './native-installer.ts';
 import type { HarnessVersionStamp } from './receipt-lineage.ts';
 import { installAntigravity, diagnoseAntigravity } from './antigravity-adapter.ts';
 import { installClaudeCode, diagnoseClaudeCode } from './claude-code-adapter.ts';
-import { diagnoseCodex } from './codex-adapter.ts';
+import { diagnoseCodex, installCodex } from './codex-adapter.ts';
+import { discoverCodexModels } from './codex-model-catalog.ts';
 
 export const supportedHosts = ['opencode', 'claude-code', 'antigravity', 'codex', 'cursor'] as const;
 export type HostId = typeof supportedHosts[number];
-// Codex is deliberately absent: issue #45 requires strict per-role isolation, which Codex subagents
-// (shared sandbox/approval/MCP settings) do not provide. Its adapter serves doctor checks and tests only.
-export const supportedNativeHosts = ['opencode', 'antigravity', 'claude-code'] as const satisfies readonly HostId[];
+// Codex installs in role-process mode only (#45): each child role is its own codex exec process,
+// because Codex subagents share the parent's sandbox/approval/MCP settings.
+export const supportedNativeHosts = ['opencode', 'antigravity', 'claude-code', 'codex'] as const satisfies readonly HostId[];
 export type NativeHostId = typeof supportedNativeHosts[number];
-
-export const CODEX_INSTALL_GATE = 'native installation is gated: issue #45 requires strict per-role isolation, which Codex does not provide (subagents inherit shared sandbox/approval/MCP settings)';
 
 /** Why a host cannot be installed or updated natively, for blocked-selection messages. */
 export function describeBlockedHost(host: HostId): string {
-  if (host === 'codex') return CODEX_INSTALL_GATE;
   return `native deployment is not implemented${host === 'cursor' ? ' (issue #46)' : ''}`;
 }
 
@@ -227,25 +225,25 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
   codex: {
     host: 'codex',
     displayName: 'OpenAI Codex',
-    isolationModel: 'native-subagents',
+    isolationModel: 'cli-profile-exec',
     permissionModel: 'execpolicy-and-sandbox',
     configLocations: {
-      project: ['.codex/config.toml', '.codex/agents', '.codex/rules', '.agents/skills'],
-      global: ['~/.codex/config.toml', '~/.codex/agents', '~/.codex/rules', '~/.agents/skills'],
+      project: [],
+      global: ['~/.codex/.advanced-harness-state.json', '~/.codex/advanced-harness'],
     },
     ghPrMergeGuard: 'Codex rules forbid identifiable direct gh pr merge forms; indirect/API routes are not universally blocked.',
     modelSupport: {
       selection: 'per-role-explicit',
       discovery: 'live-catalog',
-      limitation: 'Each role requires an explicit model ID and reasoning effort. The adapter can list models via the experimental codex app-server model/list call; listing is not entitlement, and typed IDs are used unchecked when discovery is unavailable. Installation remains gated (issue #45), so discovery is exercised only by tests.',
+      limitation: 'Each child role requires an explicit model ID and reasoning effort; Lead runs on your Codex Desktop session model. The adapter can list models via the experimental codex app-server model/list call; listing is not entitlement, and typed IDs are used unchecked when discovery is unavailable.',
     },
     disclosures: [
-      'Installation and update are gated pending strict per-role isolation (issue #45); the Codex adapter currently serves doctor checks and tests only.',
-      'Workflow skills are installed as .agents/skills/<name>/SKILL.md; invocation binding remains caller-specific.',
-      'Lead and seven Codex subagent profiles use explicit user-selected models and reasoning settings; shared sandbox/approval/MCP configuration is inherited.',
-      'Codex role ownership is instructional, not permission isolation. Approval behavior and Desktop runtime remain unverified.',
-      'Codex agent reload semantics are unverified; use a deliberate fresh-session validation rather than assuming live reload.',
-      'Codex rules forbid direct git reset --hard, git clean, and force-push prefixes, including bundled short flags (-uf, -vuf) and force flags right after origin/upstream; force flags after other remotes or a refspec are not matched. Sensitive-path reads are instruction-level only; the read-only sandbox baseline requires approval for edits.',
+      "Global scope only: each child role runs as its own codex exec process from ~/.codex/harness-<role>.config.toml (issue #45); Codex subagents would share the parent session's sandbox, approval and MCP settings.",
+      'Lead is your Codex Desktop session (read-only baseline) and only launches roles through the harness launcher; you approve every launch, and the prompt shows the role and task.',
+      'Role sandboxes follow the role sources: Operator and Implementer workspace-write, External workspace-write with network and MCP, Researcher, Planner, Reviewer and QA read-only. features.multi_agent is set to false when unset.',
+      'Workflow skills are installed as ~/.agents/skills/<name>/SKILL.md; invocation binding remains caller-specific.',
+      'An approved codex exec launch through the launcher, and Codex agent reload semantics, are not yet runtime-verified by this harness.',
+      'Codex rules forbid direct git reset --hard, git clean, and force-push prefixes, including bundled short flags (-uf, -vuf) and force flags right after origin/upstream; force flags after other remotes or a refspec are not matched. Sensitive-path reads are instruction-level only.',
     ],
   },
   cursor: {
@@ -472,16 +470,28 @@ registerHostAdapter({
   },
 });
 
-// Install and update are gated at the registry as well as in the flows, so no caller can reach the
-// Codex writer through getHostAdapter(). Doctor stays available.
-async function codexGated(): Promise<never> {
-  throw new Error(`Codex ${CODEX_INSTALL_GATE}. No files were changed.`);
+// Install and update share one path: role-process mode, global scope, with live model discovery.
+async function installCodexFromOptions(options: HostAdapterInstallOptions): Promise<number> {
+  if (options.scope !== 'global') throw new Error('Codex installation is global only: role profiles live in ~/.codex. No files were changed.');
+  return await installCodex({
+    scope: 'global',
+    home: options.home ?? homedir(),
+    recoveryDirectory: options.recoveryDirectory,
+    agentsDirectory: options.agentsDirectory,
+    commandsDirectory: options.commandsDirectory,
+    harnessVersion: options.harnessVersion,
+    discoverModels: discoverCodexModels(),
+    mode: 'role-processes',
+    ask: options.ask ?? (async (_q, s) => s ?? ''),
+    output: options.output ?? (message => console.log(message)),
+    error: options.error ?? (message => console.error(message)),
+  });
 }
 
 registerHostAdapter({
   host: 'codex',
-  install: codexGated,
-  update: codexGated,
+  install: installCodexFromOptions,
+  update: installCodexFromOptions,
   async doctor(options) { return await diagnoseCodex({ project: options.project, home: options.home ?? homedir(), globalDirectory: options.globalDirectory }); },
 });
 
