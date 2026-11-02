@@ -6,6 +6,13 @@ version between releases.
 
 ## Unreleased
 
+### Fixed
+
+- Operator may run `git fetch` to refresh the base before creating a worktree,
+  so OpenCode bootstrap no longer stops on a denied fetch;
+  `git fetch --upload-pack` stays denied and pull/push/clone remain External's.
+  Run `harness:update` to apply (#144).
+
 ## v0.2.0 — 2026-11-01
 
 Milestone: Security Guardrails, Model Discovery & Core Role Contracts.
