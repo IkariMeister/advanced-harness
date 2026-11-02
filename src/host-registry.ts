@@ -199,7 +199,7 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
       'MCP aliases (jira, github, figma, stitch) and OpenCode Code Mode have no verified Claude identity; no .mcp.json is written and External has no MCP tools.',
       'Claude permission evaluation is deny > ask > allow; source ordered-last-match exceptions are downgraded to Claude prompts, never to allows.',
       'Project .claude/settings.json denies Read/Edit of sensitive paths (keystores, signing/local properties, google-services.json, private keys, ~/.ssh, ~/.aws, gh credentials) and Bash git reset --hard, git clean, and force pushes for every session and subagent.',
-      'Project scope only. Claude Code runtime discovery, agent selection, and model aliases are not verified by this harness.',
+      'Project scope or global ~/.claude scope (CLI and Desktop). Claude Code runtime discovery, agent selection, and model aliases are not verified by this harness.',
     ],
   },
   antigravity: {
@@ -410,7 +410,7 @@ async function installClaudeCodeFromOptions(options: HostAdapterInstallOptions):
   });
 }
 
-// Built-in registration for Claude Code host adapter (project scope only)
+// Built-in registration for Claude Code host adapter (project or global ~/.claude scope)
 registerHostAdapter({
   host: 'claude-code',
   install: installClaudeCodeFromOptions,
@@ -418,6 +418,7 @@ registerHostAdapter({
   async doctor(options) {
     return await diagnoseClaudeCode({
       project: options.project,
+      home: options.home ?? homedir(),
       agentsDirectory: undefined,
       commandsDirectory: undefined,
     });

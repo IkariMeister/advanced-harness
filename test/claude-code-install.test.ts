@@ -116,12 +116,58 @@ test('Enter on a customized-file overwrite prompt preserves the file (default no
   assert.equal(readFileSync(join(h.project, '.claude', 'agents', 'qa.md'), 'utf8'), 'custom qa\n');
 });
 
-test('global scope is refused before any write', async t => {
-  const h = harness(t, confirmOnly('yes'));
-  assert.equal(await runInstallerFlow({ scope: 'global', host: 'claude-code' }, h.deps), 2);
-  assert.ok(h.errors.some(line => /project-scoped/.test(line)));
+test('Enter at the global Claude confirmation cancels with no user-directory files, backups, or receipts (#146)', async t => {
+  const h = harness(t, confirmOnly(''));
+  assert.equal(await runInstallerFlow({ scope: 'global', host: 'claude-code' }, h.deps), 1);
+  assert.equal(existsSync(join(h.root, '.claude')), false);
   assert.equal(existsSync(h.recovery), false);
-  assert.equal(existsSync(join(h.project, 'CLAUDE.md')), false);
+  assert.ok(h.output.some(line => /Lead becomes the default agent in every/.test(line)), 'global effect is disclosed before confirmation');
+});
+
+test('global scope installs into ~/.claude, preserves user content, and leaves projects untouched (#146)', async t => {
+  const h = harness(t, confirmOnly('yes'));
+  const user = join(h.root, '.claude');
+  mkdirSync(user);
+  writeFileSync(join(user, 'CLAUDE.md'), '# My personal notes\n');
+  writeFileSync(join(user, 'settings.json'), JSON.stringify({ theme: 'dark', permissions: { allow: ['Bash(ls)'] } }, null, 2) + '\n');
+  assert.equal(await runInstallerFlow({ scope: 'global', host: 'claude-code' }, h.deps), 0, h.errors.join('\n'));
+
+  for (const role of nativeRoles) assert.ok(existsSync(join(user, 'agents', `${role}.md`)), role);
+  assert.ok(existsSync(join(user, 'commands', 'start-issue.md')));
+  const memory = readFileSync(join(user, 'CLAUDE.md'), 'utf8');
+  assert.ok(memory.startsWith('# My personal notes\n'), 'personal memory is preserved');
+  assert.match(memory, /Read the current project's `AGENTS.md`/);
+  assert.match(memory, /denied in `~\/\.claude\/settings\.json`/);
+  assert.ok(!memory.split('\n').some(line => line.trim() === '@AGENTS.md'), 'no import that would resolve under ~/.claude');
+  const settings = JSON.parse(readFileSync(join(user, 'settings.json'), 'utf8'));
+  assert.equal(settings.agent, 'lead');
+  assert.equal(settings.theme, 'dark');
+  assert.ok(settings.permissions.allow.includes('Bash(ls)'));
+  for (const rule of claudeSettingsDeny) assert.ok(settings.permissions.deny.includes(rule));
+  assert.deepEqual(readdirSync(h.project), [], 'no project files written');
+  assert.ok(discoverReceiptChain(h.recovery, join(user, 'settings.json'), 'claude-code').head, 'receipt keyed on ~/.claude/settings.json');
+
+  const doctor = await diagnoseClaudeCode({ project: h.project, home: h.root });
+  assert.equal(doctor.ok, true, doctor.issues.join('\n'));
+  assert.ok(doctor.notes.some(note => note.includes('global Claude Code install')));
+
+  const again = harness(t, confirmOnly('yes'));
+  again.deps.home = h.root; again.deps.recoveryDirectory = h.recovery;
+  assert.equal(await runInstallerFlow({ scope: 'global', host: 'claude-code' }, again.deps), 0);
+  assert.ok(again.output.some(line => /No selected file needs changes/.test(line)), 'repeated global install is a no-op');
+});
+
+test('doctor prefers a project install and ignores a plain ~/.claude/settings.json (#146)', async t => {
+  const h = harness(t, confirmOnly('yes'));
+  mkdirSync(join(h.root, '.claude'));
+  writeFileSync(join(h.root, '.claude', 'settings.json'), '{}\n');
+  const none = await diagnoseClaudeCode({ project: h.project, home: h.root });
+  assert.equal(none.ok, false);
+  assert.match(none.issues.join('\n'), /not installed in this project .* or in ~\/\.claude/);
+  assert.equal(await install(h), 0);
+  const project = await diagnoseClaudeCode({ project: h.project, home: h.root });
+  assert.equal(project.ok, true, project.issues.join('\n'));
+  assert.ok(!project.notes.some(note => note.includes('global Claude Code install')));
 });
 
 test('a conflicting default agent in settings blocks installation without writing any file', async t => {

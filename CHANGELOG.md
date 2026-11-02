@@ -6,6 +6,11 @@ version between releases.
 
 ## Unreleased
 
+### Added
+
+- Claude Code global-scope install, update, doctor and uninstall into
+  `~/.claude` (read by the CLI and Claude Code Desktop) (#146).
+
 ## v0.2.0 — 2026-11-01
 
 Milestone: Security Guardrails, Model Discovery & Core Role Contracts.

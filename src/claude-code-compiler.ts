@@ -176,18 +176,22 @@ export function compileClaudeCommandFile(command: WorkflowCommand): string {
   return `---\n${stringifyYaml({ description: command.description }, { lineWidth: 0 }).trimEnd()}\n---\n${command.body}`;
 }
 
-export function compileClaudeLeadBlock(mappings: Record<NativeRole, ClaudeRoleMapping>, models: Record<NativeRole, string> = claudePresetModels()): string {
+export function compileClaudeLeadBlock(mappings: Record<NativeRole, ClaudeRoleMapping>, models: Record<NativeRole, string> = claudePresetModels(), scope: 'project' | 'global' = 'project'): string {
+  const dir = scope === 'global' ? '~/.claude/' : '.claude/';
   const lines = [
     '## Advanced Harness Lead orchestration',
     '',
-    'This project session runs as Lead (`.claude/agents/lead.md`). Lead coordinates only these child subagents:',
+    scope === 'global'
+      ? 'Claude Code sessions run as Lead (`~/.claude/agents/lead.md`) unless a project selects another agent. Lead coordinates only these child subagents:'
+      : 'This project session runs as Lead (`.claude/agents/lead.md`). Lead coordinates only these child subagents:',
     '',
     '| Agent | Model | Scope |',
     '| :--- | :--- | :--- |',
     ...claudeChildRoles.map(role => `| \`${role}\` | \`${models[role]}\` | ${mappings[role].tools.join(', ') || 'no tools'} |`),
     '',
     '- Present the latest plan and wait for explicit human approval in this conversation before implementation or publishing delegation.',
-    '- Never merge pull requests. `gh pr merge` is denied in `.claude/settings.json`.',
+    ...(scope === 'global' ? ["- Read the current project's `AGENTS.md` and its referenced context before bootstrap or planning; this user-level file cannot import it."] : []),
+    `- Never merge pull requests. \`gh pr merge\` is denied in \`${dir}settings.json\`.`,
     '- Do not substitute agents or models silently. Ask the human when a required child capability is missing.',
     '- Not mapped to Claude Code (withheld, not verified): MCP service aliases (Jira, GitHub, Figma, Stitch), Code Mode, and per-role shell scoping. Operator, Implementer, Reviewer, and QA have no Bash tool.',
     '- Claude Code runtime behavior (agent discovery, `agent: lead`, `Agent(...)` delegation, model aliases) is not runtime-verified by this harness.',
@@ -195,10 +199,11 @@ export function compileClaudeLeadBlock(mappings: Record<NativeRole, ClaudeRoleMa
   return lines.join('\n');
 }
 
-export function mergeClaudeMemory(existing: string | undefined, block: string): string {
+/** includeReference adds the @AGENTS.md import; a global ~/.claude/CLAUDE.md omits it (it would resolve under ~/.claude). */
+export function mergeClaudeMemory(existing: string | undefined, block: string, includeReference = true): string {
   const { start, end, reference } = claudeMarkers;
   const fullBlock = `${start}\n${block.trimEnd()}\n${end}`;
-  if (existing === undefined || existing.trim() === '') return `${fullBlock}\n\n${reference}\n`;
+  if (existing === undefined || existing.trim() === '') return includeReference ? `${fullBlock}\n\n${reference}\n` : `${fullBlock}\n`;
   const starts = existing.split(start).length - 1;
   const ends = existing.split(end).length - 1;
   if (starts !== ends || starts > 1) throw new Error('CLAUDE.md has malformed or duplicate advanced-harness Lead markers; resolve them manually. No files were changed.');
@@ -210,7 +215,7 @@ export function mergeClaudeMemory(existing: string | undefined, block: string): 
   } else {
     text = `${existing.replace(/\s+$/, '')}\n\n${fullBlock}\n`;
   }
-  if (!text.split(/\r?\n/).some(line => line.trim() === reference)) text = `${text.replace(/\s+$/, '')}\n\n${reference}\n`;
+  if (includeReference && !text.split(/\r?\n/).some(line => line.trim() === reference)) text = `${text.replace(/\s+$/, '')}\n\n${reference}\n`;
   return text;
 }
 

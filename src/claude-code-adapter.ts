@@ -54,6 +54,7 @@ export interface ClaudeCodeInstallOptions {
 
 export interface ClaudeCodeDoctorOptions {
   project?: string | undefined;
+  home?: string | undefined;
   agentsDirectory?: string | undefined;
   commandsDirectory?: string | undefined;
 }
@@ -78,14 +79,38 @@ const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const canonical = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 const readIfExists = (path: string): string | undefined => existsSync(path) ? readFileSync(path, 'utf8') : undefined;
 
+/**
+ * Where the harness files live. Project scope uses <project>/CLAUDE.md and <project>/.claude;
+ * global scope uses the Claude Code user directory ~/.claude (read by the CLI and Desktop).
+ */
+export interface ClaudeTarget {
+  scope: 'project' | 'global';
+  /** Directory holding CLAUDE.md. */
+  memoryDirectory: string;
+  /** Directory holding agents/, commands/ and settings.json. */
+  claudeDirectory: string;
+  /** Display prefix for paths inside claudeDirectory. */
+  label: string;
+}
+
+export function claudeTarget(scope: 'project' | 'global', root: string): ClaudeTarget {
+  return scope === 'global'
+    ? { scope, memoryDirectory: join(root, '.claude'), claudeDirectory: join(root, '.claude'), label: '~/.claude/' }
+    : { scope, memoryDirectory: root, claudeDirectory: join(root, '.claude'), label: '.claude/' };
+}
+
+const asTarget = (target: string | ClaudeTarget) => typeof target === 'string' ? claudeTarget('project', target) : target;
+const memoryLabel = (target: ClaudeTarget) => target.scope === 'global' ? '~/.claude/CLAUDE.md' : 'CLAUDE.md';
+
 const defaultAgentsDirectory = () => fileURLToPath(new URL('../agents/', import.meta.url));
 const defaultCommandsDirectory = () => fileURLToPath(new URL('../commands/', import.meta.url));
 
 /** Valid models in installed role files; a missing or invalid value falls back to the preset. */
-export function installedClaudeModels(project: string): Record<NativeRole, string> {
+export function installedClaudeModels(target: string | ClaudeTarget): Record<NativeRole, string> {
+  const { claudeDirectory } = asTarget(target);
   const models = claudePresetModels();
   for (const role of nativeRoles) {
-    const text = readIfExists(join(project, '.claude', 'agents', `${role}.md`));
+    const text = readIfExists(join(claudeDirectory, 'agents', `${role}.md`));
     const model = text === undefined ? undefined : frontmatterOf(text)?.model;
     if (isClaudeModelValue(model)) models[role] = model;
   }
@@ -119,12 +144,14 @@ export async function askClaudeModels(defaults: Record<NativeRole, string>, ask:
 }
 
 export function planClaudeDeployment(
-  project: string,
+  targetOrProject: string | ClaudeTarget,
   agentsDirectory: string,
   commandsDirectory: string,
   priorManagedFiles: readonly ManagedFileEvidence[] = [],
-  models: Record<NativeRole, string> = installedClaudeModels(project)
+  models: Record<NativeRole, string> = installedClaudeModels(targetOrProject)
 ): { files: ClaudeCodeDeploymentItem[]; mappings: Record<NativeRole, ClaudeRoleMapping>; settingsPath: string; models: Record<NativeRole, string> } {
+  const target = asTarget(targetOrProject);
+  const { claudeDirectory, label } = target;
   const roles = loadRoleDefinitions(agentsDirectory);
   const mappings = mappingsFor(roles);
   const commands = loadWorkflowCommands(commandsDirectory);
@@ -133,18 +160,18 @@ export function planClaudeDeployment(
   for (const evidence of priorManagedFiles) priorByPath.set(canonical(evidence.path), evidence);
 
   const raw: Array<Omit<ClaudeCodeDeploymentItem, 'currentContent' | 'status'>> = [];
-  const memoryPath = join(project, 'CLAUDE.md');
+  const memoryPath = join(target.memoryDirectory, 'CLAUDE.md');
   raw.push({
-    relativePath: 'CLAUDE.md',
+    relativePath: memoryLabel(target),
     absolutePath: memoryPath,
-    content: mergeClaudeMemory(readIfExists(memoryPath), compileClaudeLeadBlock(mappings, models)),
+    content: mergeClaudeMemory(readIfExists(memoryPath), compileClaudeLeadBlock(mappings, models, target.scope), target.scope === 'project'),
     kind: 'instructions',
     merged: true,
   });
   for (const role of nativeRoles) {
     raw.push({
-      relativePath: `.claude/agents/${role}.md`,
-      absolutePath: join(project, '.claude', 'agents', `${role}.md`),
+      relativePath: `${label}agents/${role}.md`,
+      absolutePath: join(claudeDirectory, 'agents', `${role}.md`),
       content: compileClaudeSubagentFile(role, roles[role], mappings[role], models[role]),
       kind: 'rules',
       merged: false,
@@ -152,16 +179,16 @@ export function planClaudeDeployment(
   }
   for (const id of workflowCommandIds) {
     raw.push({
-      relativePath: `.claude/commands/${id}.md`,
-      absolutePath: join(project, '.claude', 'commands', `${id}.md`),
+      relativePath: `${label}commands/${id}.md`,
+      absolutePath: join(claudeDirectory, 'commands', `${id}.md`),
       content: compileClaudeCommandFile(commands[id]),
       kind: 'commands',
       merged: false,
     });
   }
-  const settingsPath = join(project, '.claude', 'settings.json');
+  const settingsPath = join(claudeDirectory, 'settings.json');
   raw.push({
-    relativePath: '.claude/settings.json',
+    relativePath: `${label}settings.json`,
     absolutePath: settingsPath,
     content: mergeClaudeSettings(readIfExists(settingsPath)),
     kind: 'config',
@@ -176,7 +203,7 @@ export function planClaudeDeployment(
       status = 'new';
     } else if (currentContent === item.content) {
       status = 'current';
-    } else if (item.relativePath === 'CLAUDE.md') {
+    } else if (item.kind === 'instructions') {
       // Only the managed block is compared. A hand-edited block that the harness did not write
       // (not equal to the prior receipt's block) requires explicit overwrite confirmation.
       const existingBlock = extractClaudeLeadBlock(currentContent);
@@ -205,18 +232,23 @@ export function planClaudeDeployment(
 
 export async function installClaudeCode(options: ClaudeCodeInstallOptions): Promise<number> {
   const { scope, project, ask, output, error } = options;
-  if (scope !== 'project' || !project) {
-    error('Claude Code harness installation is project-scoped; global scope is not implemented. No files were changed.');
+  const home = options.home ?? process.env.USERPROFILE ?? process.env.HOME ?? '';
+  if (scope === 'project' && !project) {
+    error('Select a project directory for a project-scoped Claude Code install. No files were changed.');
     return 2;
   }
-  const home = options.home ?? process.env.USERPROFILE ?? process.env.HOME ?? '';
+  if (scope === 'global' && !home) {
+    error('Cannot locate the home directory for a global Claude Code install. No files were changed.');
+    return 2;
+  }
+  const target = claudeTarget(scope, scope === 'global' ? home : project!);
   const agentsDir = options.agentsDirectory ?? defaultAgentsDirectory();
   const commandsDir = options.commandsDirectory ?? defaultCommandsDirectory();
   const backupParent = options.recoveryDirectory ?? process.env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups');
 
-  output(`\nTarget Host: Claude Code\nScope: ${scope}\nProject: ${project}`);
+  output(`\nTarget Host: Claude Code\nScope: ${scope}\n${scope === 'global' ? `User directory: ${target.claudeDirectory}` : `Project: ${project}`}`);
 
-  const snapshot = discoverReceiptChain(backupParent, join(project, '.claude', 'settings.json'), 'claude-code');
+  const snapshot = discoverReceiptChain(backupParent, join(target.claudeDirectory, 'settings.json'), 'claude-code');
   const priorManagedFiles = snapshot.head?.receipt.version === 2 && snapshot.head.receipt.managedFiles
     ? snapshot.head.receipt.managedFiles
     : [];
@@ -224,7 +256,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   let plan: ReturnType<typeof planClaudeDeployment>;
   try {
     // Plan once with the installed models so malformed targets stop before any model prompt.
-    plan = planClaudeDeployment(project, agentsDir, commandsDir, priorManagedFiles);
+    plan = planClaudeDeployment(target, agentsDir, commandsDir, priorManagedFiles);
   } catch (err) {
     error(err instanceof Error ? err.message : String(err));
     return 2;
@@ -239,7 +271,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   }
   if (nativeRoles.some(role => models[role] !== plan.models[role])) {
     try {
-      plan = planClaudeDeployment(project, agentsDir, commandsDir, priorManagedFiles, models);
+      plan = planClaudeDeployment(target, agentsDir, commandsDir, priorManagedFiles, models);
     } catch (err) {
       error(err instanceof Error ? err.message : String(err));
       return 2;
@@ -248,7 +280,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   output('\nModel assignments (availability unverified):');
   for (const role of nativeRoles) output(`  ${role}: ${models[role]}`);
 
-  if (!existsSync(join(project, 'AGENTS.md'))) {
+  if (scope === 'project' && !existsSync(join(project!, 'AGENTS.md'))) {
     output('Warning: AGENTS.md was not found in this project. The @AGENTS.md reference in CLAUDE.md will add nothing until it exists.');
   }
 
@@ -279,7 +311,8 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   const targetInitial = readIfExists(plan.settingsPath);
   const targetFinal = plan.files.find(f => f.absolutePath === plan.settingsPath)?.content ?? (targetInitial ?? '');
   const configChanged = targetFinal !== (targetInitial ?? '');
-  const exclude = previewGitExclude(project, 'claude-code', output);
+  // A user-level install has no project whose Git exclude could hold harness scratch state.
+  const exclude = scope === 'project' ? previewGitExclude(project, 'claude-code', output) : undefined;
   const filesChanged = selectedFilesToWrite.length > 0 || configChanged;
   if (!filesChanged && exclude?.status !== 'change') {
     output('No selected file needs changes; no files, backups, or receipts were modified.');
@@ -288,6 +321,11 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
 
   output('Settings and CLAUDE.md are merged: unrelated content is preserved. Unsupported mappings are withheld, not approximated:');
   for (const line of claudeDisclosures(plan.mappings)) output(`  - ${line}`);
+  if (scope === 'global') {
+    output('Global scope writes your Claude Code user settings (CLI and Desktop): Lead becomes the default agent in every');
+    output("session unless a project's .claude/settings.json selects another, and the deny/ask rules apply everywhere.");
+    output("~/.claude/CLAUDE.md cannot import a project AGENTS.md; Lead is told to read the current project's AGENTS.md instead.");
+  }
 
   if (options.harnessVersion) output(`Harness version: ${formatVersionStamp(options.harnessVersion)}`);
   // Enter does not apply a default here: only an explicit yes writes files.
@@ -362,13 +400,13 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   finishGitExclude(exclude, output, error);
 
   output('\nClaude Code harness deployment complete (runtime not verified).');
-  output('• CLAUDE.md Lead block and .claude/settings.json (agent: lead, gh pr merge denied) are configured.');
-  output(`• Subagents: ${claudeChildRoles.join(', ')} plus lead in .claude/agents.`);
-  output(`• Workflow commands: ${workflowCommandIds.join(', ')} in .claude/commands.`);
+  output(`• ${memoryLabel(target)} Lead block and ${target.label}settings.json (agent: lead, gh pr merge denied) are configured.`);
+  output(`• Subagents: ${claudeChildRoles.join(', ')} plus lead in ${target.label}agents.`);
+  output(`• Workflow commands: ${workflowCommandIds.join(', ')} in ${target.label}commands.`);
   output('• MCP configuration: none written; no MCP alias maps exactly to a Claude Code identity.');
   output('Withheld or unsupported on Claude Code:');
   for (const line of claudeDisclosures(plan.mappings)) output(`  - ${line}`);
-  output('Verify in a NEW Claude Code session with /agents and by running npm run harness:doctor -- --host claude-code.\n');
+  output(`Verify in a NEW Claude Code session with /agents and by running npm run harness:doctor -- --host claude-code${scope === 'global' ? ' from a directory without a project-level install' : ''}.\n`);
   return 0;
 }
 
@@ -388,19 +426,26 @@ function listOf(value: unknown): string[] {
 export async function diagnoseClaudeCode(options: ClaudeCodeDoctorOptions): Promise<ClaudeCodeDoctorResult> {
   const issues: string[] = [];
   const notes: string[] = [];
-  if (!options.project) {
-    return { ok: false, issues: ['Claude Code diagnostics require a project directory.'], notes };
-  }
-  const project = resolve(options.project);
+  const project = options.project ? resolve(options.project) : undefined;
   const markers = ['CLAUDE.md', join('.claude', 'settings.json'), join('.claude', 'agents', 'lead.md')];
-  if (!markers.some(rel => existsSync(join(project, rel)))) {
-    issues.push('Claude Code harness is not installed in this project (no CLAUDE.md, .claude/settings.json, or .claude/agents/lead.md).');
+  const projectInstalled = project !== undefined && markers.some(rel => existsSync(join(project, rel)));
+  // ~/.claude/settings.json exists for most Claude Code users, so only harness-owned markers count globally.
+  const global = options.home ? claudeTarget('global', resolve(options.home)) : undefined;
+  const globalInstalled = global !== undefined && (existsSync(join(global.claudeDirectory, 'agents', 'lead.md'))
+    || (readIfExists(join(global.memoryDirectory, 'CLAUDE.md'))?.includes(claudeMarkers.start) ?? false));
+  if (!projectInstalled && !globalInstalled) {
+    issues.push(project
+      ? 'Claude Code harness is not installed in this project (no CLAUDE.md, .claude/settings.json, or .claude/agents/lead.md) or in ~/.claude.'
+      : 'Claude Code harness is not installed in ~/.claude (no agents/lead.md or Lead block in CLAUDE.md).');
     return { ok: false, issues, notes };
   }
+  const target = projectInstalled ? claudeTarget('project', project!) : global!;
+  if (target.scope === 'global') notes.push(`Inspecting the global Claude Code install in ${target.claudeDirectory}.`);
+  const settingsLabel = `${target.label}settings.json`;
 
   let plan: ReturnType<typeof planClaudeDeployment>;
   try {
-    plan = planClaudeDeployment(project, options.agentsDirectory ?? defaultAgentsDirectory(), options.commandsDirectory ?? defaultCommandsDirectory());
+    plan = planClaudeDeployment(target, options.agentsDirectory ?? defaultAgentsDirectory(), options.commandsDirectory ?? defaultCommandsDirectory());
   } catch (err) {
     issues.push(`Cannot compile the expected Claude Code files: ${err instanceof Error ? err.message : String(err)}`);
     return { ok: false, issues, notes };
@@ -412,12 +457,15 @@ export async function diagnoseClaudeCode(options: ClaudeCodeDoctorOptions): Prom
     else if (f.status !== 'current') issues.push(`${f.relativePath} is ${f.status === 'customized' ? 'customized or unowned' : 'outdated'}; rerun the installer or review the customization.`);
   }
 
-  const memory = plan.files.find(f => f.relativePath === 'CLAUDE.md')!;
-  if (memory.status !== 'current') issues.push('CLAUDE.md Lead orchestration block or @AGENTS.md reference is missing or outdated.');
+  const memory = plan.files.find(f => f.kind === 'instructions')!;
+  if (target.scope === 'global') {
+    if (memory.status !== 'current') issues.push('~/.claude/CLAUDE.md Lead orchestration block is missing or outdated.');
+    else notes.push('~/.claude/CLAUDE.md contains the Lead orchestration block.');
+  } else if (memory.status !== 'current') issues.push('CLAUDE.md Lead orchestration block or @AGENTS.md reference is missing or outdated.');
   else notes.push('CLAUDE.md contains the Lead orchestration block and @AGENTS.md reference.');
 
   for (const role of nativeRoles) {
-    const path = join(project, '.claude', 'agents', `${role}.md`);
+    const path = join(target.claudeDirectory, 'agents', `${role}.md`);
     if (!existsSync(path)) continue;
     const meta = frontmatterOf(readFileSync(path, 'utf8'));
     if (!meta) { issues.push(`${role}.md has invalid YAML frontmatter.`); continue; }
@@ -437,26 +485,26 @@ export async function diagnoseClaudeCode(options: ClaudeCodeDoctorOptions): Prom
     if (role !== 'lead' && !disallowed.includes('Agent')) issues.push(`${role}.md must disallow Agent.`);
   }
 
-  const settingsPath = join(project, '.claude', 'settings.json');
+  const settingsPath = join(target.claudeDirectory, 'settings.json');
   if (existsSync(settingsPath)) {
     let settings: Record<string, unknown> | undefined;
     try {
       const parsed: unknown = JSON.parse(readFileSync(settingsPath, 'utf8'));
       settings = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
     } catch {
-      issues.push('.claude/settings.json is not valid JSON.');
+      issues.push(`${settingsLabel} is not valid JSON.`);
     }
     if (settings) {
-      if (settings.agent !== 'lead') issues.push('.claude/settings.json does not select lead as the default agent.');
+      if (settings.agent !== 'lead') issues.push(`${settingsLabel} does not select lead as the default agent.`);
       const permissions = settings.permissions && typeof settings.permissions === 'object' ? settings.permissions as Record<string, unknown> : {};
       const deny = Array.isArray(permissions.deny) ? permissions.deny.map(String) : [];
       const ask = Array.isArray(permissions.ask) ? permissions.ask.map(String) : [];
-      for (const rule of claudeSettingsDeny) if (!deny.includes(rule)) issues.push(`.claude/settings.json is missing deny rule ${rule}.`);
-      for (const rule of claudeSettingsAsk) if (!ask.includes(rule)) issues.push(`.claude/settings.json is missing ask rule ${rule}.`);
-      if (!issues.some(issue => issue.startsWith('.claude/settings.json'))) notes.push('.claude/settings.json selects lead, denies gh pr merge, sensitive-path Read/Edit, and destructive Git, and prompts for .env reads.');
+      for (const rule of claudeSettingsDeny) if (!deny.includes(rule)) issues.push(`${settingsLabel} is missing deny rule ${rule}.`);
+      for (const rule of claudeSettingsAsk) if (!ask.includes(rule)) issues.push(`${settingsLabel} is missing ask rule ${rule}.`);
+      if (!issues.some(issue => issue.startsWith(settingsLabel))) notes.push(`${settingsLabel} selects lead, denies gh pr merge, sensitive-path Read/Edit, and destructive Git, and prompts for .env reads.`);
     }
   } else {
-    issues.push('.claude/settings.json is missing.');
+    issues.push(`${settingsLabel} is missing.`);
   }
 
   notes.push(...claudeDisclosures(plan.mappings).map(line => `Withheld or unsupported: ${line}`));
