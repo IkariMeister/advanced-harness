@@ -6,6 +6,12 @@ version between releases.
 
 ## Unreleased
 
+### Fixed
+
+- OpenCode `harness:install` and `harness:update` no longer exit non-zero when
+  the post-save runtime verification is inconclusive; they warn and point to
+  `harness:doctor`. Definite readiness failures still exit 1 (#143).
+
 ## v0.2.0 — 2026-11-01
 
 Milestone: Security Guardrails, Model Discovery & Core Role Contracts.
