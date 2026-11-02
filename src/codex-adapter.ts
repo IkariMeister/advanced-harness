@@ -9,6 +9,7 @@ import { nativeRoles, type NativeRole } from './native-role-types.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import { codexDestructiveGitPrefixes, type CodexPrefixPattern } from './security-guardrails.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
+import { codexChildRoles, codexProfileName, codexRolePolicies, codexRoleLauncherSource, compileCodexLeadBlock, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from './codex-role-processes.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, type ManagedFileEvidence } from './receipt-lineage.ts';
 
 type PlannedFile = { path: string; content: string; before: string | undefined; kind: string };
@@ -306,6 +307,30 @@ function appendSettings(existing: string | undefined): string {
   return `${text}${separator(text)}${blocks.join(`${newline}${newline}`)}${newline}`;
 }
 
+/** Adds `[features] multi_agent = false` when unset; an explicit user `true` is kept and reported. */
+export function disableMultiAgent(text: string, output: (message: string) => void = () => {}): string {
+  const document = parseCodexToml(text, 'config.toml');
+  const entry = document.entries.find(item => (item.table.length === 1 && item.table[0] === 'features' && item.key.length === 1 && item.key[0] === 'multi_agent')
+    || (item.table.length === 0 && item.key.length === 2 && item.key[0] === 'features' && item.key[1] === 'multi_agent'));
+  if (entry) {
+    if (entry.value !== false) output('Warning: config.toml sets features.multi_agent explicitly; Lead could spawn in-process subagents that share its sandbox. Set it to false to keep roles isolated.');
+    return text;
+  }
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const table = document.tables.find(item => item.parts.length === 1 && item.parts[0] === 'features');
+  let result: string;
+  if (table) {
+    const section = text.slice(table.start, table.end);
+    const suffix = /(?:\r?\n[ \t]*)*$/.exec(section)?.[0] ?? '';
+    const bodyEnd = table.end - suffix.length;
+    result = `${text.slice(0, bodyEnd)}${newline}multi_agent = false${suffix || newline}${text.slice(table.end)}`;
+  } else {
+    result = `${text.replace(/\s*$/, '')}${text.trim() ? `${newline}${newline}` : ''}[features]${newline}multi_agent = false${newline}`;
+  }
+  validateCodexToml(result, 'updated config.toml');
+  return result;
+}
+
 export function compileCodexAgent(role: NativeRole, model: string, reasoning: string, description: string, instructions: string): string {
   if (!roleId(role) || !model.trim() || !(CODEX_REASONING_EFFORTS as readonly string[]).includes(reasoning)) throw new Error(`Invalid Codex agent assignment: ${role}`);
   return `name = ${quote(role)}\ndescription = ${quote(description)}\ndeveloper_instructions = ${quote(instructions)}\nmodel = ${quote(model.trim())}\nmodel_reasoning_effort = ${quote(reasoning)}\n`;
@@ -478,8 +503,12 @@ export async function installCodex(options: {
   save?: typeof saveInstallation;
   /** Live catalog for the role prompts; omitted means no discovery (wire discoverCodexModels() when the #45 gate lifts). */
   discoverModels?: CodexModelDiscovery | undefined;
+  /** role-processes: one `codex exec` process per role with its own profile (#45); global scope only. */
+  mode?: 'shared-agents' | 'role-processes' | undefined;
 }): Promise<number> {
   const { scope, project, home, ask, output } = options;
+  const roleProcesses = options.mode === 'role-processes';
+  if (roleProcesses && scope !== 'global') throw new Error('Codex role processes install at global scope only: role profiles live in ~/.codex. No changes made.');
   const save = options.save ?? saveInstallation;
   const base = scope === 'project' ? join(project ?? '', '.codex') : join(home, '.codex');
   const configPath = join(base, 'config.toml');
@@ -518,14 +547,19 @@ export async function installCodex(options: {
     catch { throw new Error('Codex installation cancelled because an interactive prompt was rejected or closed; no changes made.'); }
     selectedTools[id] = raw === '-' ? [] : raw ? raw.split(',').map(name => name.trim()).filter(Boolean) : defaults;
   }
-  const configAfter = tomlConfigText(existing, selected, selectedTools);
+  let configAfter = tomlConfigText(existing, selected, selectedTools);
+  // In-process subagents share Lead's sandbox, so role-process mode turns spawn_agent off for Lead.
+  if (roleProcesses) configAfter = disableMultiAgent(configAfter, output);
   let catalog: CodexCatalogModel[] | undefined;
   try { catalog = await chooseCodexCatalog(options.discoverModels, ask, output); }
   catch { throw new Error('Codex installation cancelled because an interactive prompt was rejected or closed; no changes made.'); }
   const definitions = loadRoleDefinitions(options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url)));
+  const policies = codexRolePolicies(definitions);
+  const roleTarget = (role: NativeRole) => roleProcesses ? join(base, `${codexProfileName(role as typeof codexChildRoles[number])}.config.toml`) : join(base, 'agents', `${role}.toml`);
+  const roles: readonly NativeRole[] = roleProcesses ? codexChildRoles : nativeRoles;
   const files: PlannedFile[] = [{ path: configPath, content: configAfter, before: configBefore, kind: 'config' }];
-  for (const role of nativeRoles) {
-    const roleFile = join(base, 'agents', `${role}.toml`);
+  for (const role of roles) {
+    const roleFile = roleTarget(role);
     const currentRole = existsSync(roleFile) ? readFileSync(roleFile, 'utf8') : '';
     let roleParsed: CodexTomlDocument;
     let malformedRoleBefore = false;
@@ -572,9 +606,11 @@ export async function installCodex(options: {
       }
       reasoning = candidate;
     }
-    const target = join(base, 'agents', `${role}.toml`);
+    const target = roleFile;
     assertSafeFilesystemPath(target, 'file');
-    const compiled = compileCodexAgent(role, model, reasoning, definitions[role].description, definitions[role].instructions);
+    const compiled = roleProcesses
+      ? compileCodexRoleProfile(role as typeof codexChildRoles[number], policies[role as typeof codexChildRoles[number]], model, reasoning, definitions[role].instructions)
+      : compileCodexAgent(role, model, reasoning, definitions[role].description, definitions[role].instructions);
     files.push({ path: target, content: compiled, before: existsSync(target) ? currentRole : undefined, kind: 'role' });
   }
   const rulesPath = join(base, 'rules', 'advanced-harness.rules');
@@ -582,6 +618,16 @@ export async function installCodex(options: {
   const rulesBefore = existsSync(rulesPath) ? readFileSync(rulesPath, 'utf8') : undefined;
   const rulesContent = mergeCodexRules(rulesBefore);
   files.push({ path: rulesPath, content: rulesContent, before: rulesBefore, kind: 'rules' });
+  if (roleProcesses) {
+    const launcherPath = join(base, 'advanced-harness', 'codex-role.mjs');
+    const schemaPath = join(base, 'advanced-harness', 'role-status.schema.json');
+    const leadPath = join(base, 'AGENTS.md');
+    for (const path of [launcherPath, schemaPath, leadPath]) assertSafeFilesystemPath(path, 'file');
+    const read = (path: string) => existsSync(path) ? readFileSync(path, 'utf8') : undefined;
+    files.push({ path: launcherPath, content: codexRoleLauncherSource(), before: read(launcherPath), kind: 'rules' });
+    files.push({ path: schemaPath, content: compileCodexRoleStatusSchema(), before: read(schemaPath), kind: 'rules' });
+    files.push({ path: leadPath, content: mergeCodexLeadBlock(read(leadPath), compileCodexLeadBlock(policies, launcherPath, definitions.lead.instructions)), before: read(leadPath), kind: 'instructions' });
+  }
   const commands = loadWorkflowCommands(options.commandsDirectory ?? fileURLToPath(new URL('../commands/', import.meta.url)));
   for (const id of workflowCommandIds) {
     const target = join(scope === 'project' ? (project ?? '') : home, '.agents', 'skills', id, 'SKILL.md');
@@ -616,21 +662,25 @@ export async function installCodex(options: {
     }
     selectedFiles.push(file);
   }
-  const omittedRoles = nativeRoles.filter(role => {
-    const path = join(base, 'agents', `${role}.toml`);
+  const omittedRoles = roles.filter(role => {
+    const path = roleTarget(role);
     if (selectedFiles.some(file => file.kind === 'role' && file.path === path)) return false;
     if (declinedRolePaths.has(path)) return true; // the requested assignment was not applied
     if (!existsSync(path)) return true;
     try {
       const document = parseCodexToml(readFileSync(path, 'utf8'), path);
       const value = (key: string) => document.entries.find(entry => entry.table.length === 0 && entry.key.length === 1 && entry.key[0] === key)?.value;
+      if (roleProcesses) return ['sandbox_mode', 'model', 'developer_instructions'].some(key => typeof value(key) !== 'string' || !value(key)) || !(CODEX_REASONING_EFFORTS as readonly unknown[]).includes(value('model_reasoning_effort'));
       return value('name') !== role || typeof value('description') !== 'string' || !value('description') || typeof value('developer_instructions') !== 'string' || !value('developer_instructions') || typeof value('model') !== 'string' || !value('model') || !(CODEX_REASONING_EFFORTS as readonly unknown[]).includes(value('model_reasoning_effort'));
     } catch { return true; }
   });
   if (omittedRoles.length) output(`Install will remain incomplete because existing role profiles were preserved: ${omittedRoles.join(', ')}.`);
   output(`Codex ${scope} deployment preview (${selectedFiles.length} files):`);
   for (const file of selectedFiles) output(`  ${file.path}: ${file.before === file.content ? 'current' : file.before === undefined ? 'new' : 'update'}`);
-  output('Shared baseline adds read-only sandbox and on-request approval only when absent. Codex runtime behavior and universal write gating are not verified. MCP selections remain disabled pending validation. Direct gh pr merge rules are not universal indirect/API protection.');
+  if (roleProcesses) {
+    output('Each child role runs as its own codex exec process with its own sandbox, network and MCP settings; Lead (your Codex Desktop session) only launches them, and you approve every launch.');
+    output("Lead's session keeps the read-only baseline; in-process subagents (multi_agent) are turned off when not set. Codex runtime and Desktop approval behavior are not verified by this harness.");
+  } else output('Shared baseline adds read-only sandbox and on-request approval only when absent. Codex runtime behavior and universal write gating are not verified. MCP selections remain disabled pending validation. Direct gh pr merge rules are not universal indirect/API protection.');
   if ((await ask('Type install to apply these changes', 'cancel')) !== 'install') { output('Cancelled. No files, backups, or receipts were written.'); return 0; }
   for (const file of selectedFiles) {
     if (file.before === file.content) continue;
@@ -639,13 +689,13 @@ export async function installCodex(options: {
     if (latest !== file.before) throw new Error(`File changed while confirmation was open: ${file.path}. Rerun; no file was overwritten.`);
   }
   const changed = selectedFiles.filter(file => file.before !== file.content);
-  const nextEvidence: ManagedFileEvidence[] = changed.map(file => ({ path: file.path, kind: file.kind === 'skill' ? 'skills' as const : file.kind === 'role' ? 'instructions' as const : file.kind as 'config' | 'rules', before: file.before === undefined ? { absent: true as const } : file.kind === 'config' ? { digest: digest(file.before) } : { content: file.before }, after: file.kind === 'config' ? { digest: digest(file.content) } : { content: file.content } }));
+  const nextEvidence: ManagedFileEvidence[] = changed.map(file => ({ path: file.path, kind: file.kind === 'skill' ? 'skills' as const : file.kind === 'role' ? 'instructions' as const : file.kind as 'config' | 'rules' | 'instructions', before: file.before === undefined ? { absent: true as const } : file.kind === 'config' ? { digest: digest(file.before) } : { content: file.before }, after: file.kind === 'config' ? { digest: digest(file.content) } : { content: file.content } }));
   const combinedEvidence = structuredClone(priorFiles);
   for (const item of nextEvidence) {
     const old = combinedEvidence.find(evidence => canonicalPath(evidence.path) === canonicalPath(item.path));
     if (old) old.after = item.after; else combinedEvidence.push(item);
   }
-  const nextState = JSON.stringify({ ...stateValue, host: 'codex', selectedMcpServers: selected, disabledTools: selectedTools, managed: combinedEvidence.map(item => ({ path: item.path, after: item.after })) }, null, 2) + '\n';
+  const nextState = JSON.stringify({ ...stateValue, host: 'codex', ...(roleProcesses ? { mode: 'role-processes' } : {}), selectedMcpServers: selected, disabledTools: selectedTools, managed: combinedEvidence.map(item => ({ path: item.path, after: item.after })) }, null, 2) + '\n';
   if (changed.length === 0 && nextState === stateBefore) {
     output(omittedRoles.length
       ? 'Nothing was written: the selected files are already current, but the requested role assignments were not applied because existing role profiles were preserved.'
@@ -764,6 +814,42 @@ export async function installCodex(options: {
   return omittedRoles.length ? 1 : 0;
 }
 
+function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): string[] {
+  const issues: string[] = [];
+  const multiAgent = config.entries.find(item => (item.table.length === 1 && item.table[0] === 'features' && item.key.length === 1 && item.key[0] === 'multi_agent')
+    || (item.table.length === 0 && item.key.length === 2 && item.key[0] === 'features' && item.key[1] === 'multi_agent'));
+  if (multiAgent?.value !== false) issues.push(`Codex features.multi_agent is not false in ${join(root, 'config.toml')}; Lead could spawn in-process subagents that share its sandbox.`);
+  const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
+  const policies = codexRolePolicies(definitions);
+  for (const role of codexChildRoles) {
+    const path = join(root, `${codexProfileName(role)}.config.toml`);
+    if (!existsSync(path)) { issues.push(`Missing Codex role profile: ${path}`); continue; }
+    try {
+      assertSafeFilesystemPath(path, 'file');
+      const text = readFileSync(path, 'utf8'); validateCodexToml(text, path);
+      const document = parseCodexToml(text, path);
+      const value = (table: string[], key: string) => document.entries.find(entry => entry.table.join('.') === table.join('.') && entry.key.length === 1 && entry.key[0] === key)?.value;
+      const policy = policies[role];
+      if (value([], 'sandbox_mode') !== policy.sandbox) issues.push(`Codex role ${role} sandbox_mode is not ${policy.sandbox}: ${path}`);
+      if (value([], 'approval_policy') !== 'never') issues.push(`Codex role ${role} approval_policy is not never (children cannot prompt): ${path}`);
+      if (value(['sandbox_workspace_write'], 'network_access') !== policy.network) issues.push(`Codex role ${role} network_access is not ${policy.network}: ${path}`);
+      if (/^# advanced-harness: mcp=allowed\r?$/m.test(text) !== policy.mcp) issues.push(`Codex role ${role} MCP marker does not match its source policy: ${path}`);
+      for (const key of ['model', 'developer_instructions']) if (typeof value([], key) !== 'string' || !value([], key)) issues.push(`Codex role ${role} lacks required explicit ${key}: ${path}`);
+      if (!(CODEX_REASONING_EFFORTS as readonly unknown[]).includes(value([], 'model_reasoning_effort'))) issues.push(`Codex role ${role} has unsupported model_reasoning_effort: ${path}`);
+    } catch (error) { issues.push(error instanceof Error ? error.message : String(error)); }
+  }
+  const launcher = join(root, 'advanced-harness', 'codex-role.mjs');
+  if (!existsSync(launcher)) issues.push(`Missing Codex role launcher: ${launcher}`);
+  else if (readFileSync(launcher, 'utf8') !== codexRoleLauncherSource()) issues.push(`Codex role launcher differs from this harness version; rerun update: ${launcher}`);
+  const schema = join(root, 'advanced-harness', 'role-status.schema.json');
+  if (!existsSync(schema)) issues.push(`Missing Codex role status schema: ${schema}`);
+  else if (readFileSync(schema, 'utf8') !== compileCodexRoleStatusSchema()) issues.push(`Codex role status schema differs from this harness version; rerun update: ${schema}`);
+  const lead = join(root, 'AGENTS.md');
+  const leadText = existsSync(lead) ? readFileSync(lead, 'utf8') : '';
+  if (!leadText.includes('<!-- BEGIN advanced-harness Codex Lead -->') || !leadText.includes('<!-- END advanced-harness Codex Lead -->')) issues.push(`Codex Lead block is missing from ${lead}.`);
+  return issues;
+}
+
 export function codexConfigPath(scope: 'project' | 'global', project: string | undefined, home: string): string {
   return resolve(scope === 'project' ? join(project ?? '', '.codex', 'config.toml') : join(home, '.codex', 'config.toml'));
 }
@@ -784,7 +870,14 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
     const sandbox = rootValue('sandbox_mode'); const approval = rootValue('approval_policy');
     if (!['read-only', 'workspace-write', 'danger-full-access'].includes(String(sandbox))) issues.push(`Codex shared sandbox_mode is missing or unsupported: ${config}`);
     if (!['on-request', 'never', 'granular'].includes(String(approval)) && !(approval && typeof approval === 'object')) issues.push(`Codex shared approval_policy is missing or unsupported: ${config}`);
-    for (const role of nativeRoles) {
+    const statePathForMode = join(root, '.advanced-harness-state.json');
+    let roleProcesses = false;
+    try { roleProcesses = existsSync(statePathForMode) && (JSON.parse(readFileSync(statePathForMode, 'utf8')) as { mode?: unknown }).mode === 'role-processes'; } catch { /* reported below */ }
+    if (roleProcesses) {
+      issues.push(...diagnoseCodexRoleProcesses(root, configDocument));
+      notes.push('Role-process mode: each child role runs as its own codex exec process; Lead launches them with your approval.');
+    }
+    for (const role of roleProcesses ? [] : nativeRoles) {
       const path = join(root, 'agents', `${role}.toml`);
       if (!existsSync(path)) { issues.push(`Missing Codex agent definition: ${path}`); continue; }
       try {
