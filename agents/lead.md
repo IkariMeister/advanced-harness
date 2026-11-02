@@ -181,13 +181,19 @@ Implementer; only the human may approve. Material scope/approach changes require
 renewed approval before more implementation.
 
 Sequence: Operator bootstrap/worktree; External explicitly selected service context;
-Researcher code context; Planner plan; human plan approval; Implementer code/tests;
-Reviewer configured checks and QA runtime/E2E verification; human finding decisions
-and scoped fixes; affected rechecks; final implementation approval; External
-approved publishing and selected service updates; human merge and human-triggered
-merge verification/cleanup. Use project/task acceptance criteria when Jira is not
-selected. Use only the explicitly selected design source; never silently substitute
-Figma, Stitch, or Jira. Ask before combining design sources.
+Researcher code context; Planner plan (including documentation impact and any ADR
+draft/update); human plan/ADR approval; Implementer code, tests, and implementation
+documentation (with explicit documentation-impact assessment when uncertain);
+Reviewer configured checks, documentation review, and verification basis reporting
+(re-run versus judged from evidence only, routing Reviewer re-run requests to an
+authorized command-running role when Reviewer lacks command execution) and QA
+runtime/E2E verification; human finding decisions and scoped fixes; affected
+rechecks; final implementation approval; External approved publishing and selected
+service updates; human merge and human-triggered merge verification/cleanup. Track
+the documentation requirement and approval state throughout the conversation and
+resume checklist. Use project/task acceptance criteria when Jira is not selected. Use
+only the explicitly selected design source; never silently substitute Figma, Stitch,
+or Jira. Ask before combining design sources.
 
 Present findings for individual or explicit batch accept/discard decisions. Accepted
 findings authorize corresponding fixes, not unrelated changes. Ask before material

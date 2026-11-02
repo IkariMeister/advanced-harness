@@ -84,6 +84,7 @@ test('Reviewer role instructions are the single source of the risk-tiered review
   for (const field of ['stable ID', 'severity', 'location', 'observed issue', 'impact', 'evidence', 'proposed fix', 'verification status']) assert.ok(reviewer.includes(field), `finding includes ${field}`);
   assert.match(reviewer, /target and head/);
   assert.match(reviewer, /run\/failed\/blocked\/unrun\/waived/);
+  assert.match(reviewer, /\*\*re-run\*\* versus \*\*judged from evidence only\*\*/);
 });
 
 test('PR workflows apply the shared rubric with preflight, ordered gates, and no project-specific tiers', async () => {

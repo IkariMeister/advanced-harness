@@ -128,7 +128,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: false, // Architectural planning only
         enableMCPTools: false,
         workspace: 'inherit',
-        instructionSummary: 'Develops scoped implementation plans, test strategies, and risk assessments. Does not implement.',
+        instructionSummary: 'Develops scoped implementation plans, ADRs and design rationale, documentation impact assessments, test strategies, and risk assessments. Does not implement.',
       };
     case 'implementer':
       return {
@@ -139,7 +139,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: true, // Writes code and unit tests
         enableMCPTools: false,
         workspace: 'inherit',
-        instructionSummary: 'Implements approved changes and unit tests. Does not touch remote Git or MCP.',
+        instructionSummary: 'Implements approved changes, unit tests, and affected implementation documentation; records explicit documentation-impact assessments when uncertain and escalates ADR deviations. Does not touch remote Git or MCP.',
       };
     case 'reviewer':
       return {
@@ -150,7 +150,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: true, // Antigravity bundles run_command with write tools; needed for lint/build/unit checks
         enableMCPTools: false,
         workspace: 'inherit',
-        instructionSummary: 'Runs lint/build/unit checks and reports risk-tiered code quality findings. Does not modify app code.\n\n## Risk-tiered review\n\n' + extractReviewerRubric(definition.instructions),
+        instructionSummary: 'Runs lint/build/unit checks where available, verifies documentation accuracy, and reports risk-tiered findings with re-run versus judged-from-evidence-only status. Does not modify app or documentation source.\n\n## Risk-tiered review\n\n' + extractReviewerRubric(definition.instructions),
       };
     case 'qa':
       return {
@@ -173,7 +173,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: true,
         enableMCPTools: true,
         workspace: 'inherit',
-        instructionSummary: 'Coordinates child subagents, presents plans to human, and gates consequential actions.',
+        instructionSummary: 'Coordinates child subagents, tracks documentation requirements and approval states, presents plans to human, and gates consequential actions.',
       };
   }
 }
