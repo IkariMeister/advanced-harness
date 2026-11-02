@@ -1,0 +1,76 @@
+# Glossary
+
+This is the single place where Advanced Harness terms are defined. Other documents, ADRs, agent contracts, and issues use these meanings and link here instead of redefining terms. When a term is ambiguous, qualify it as shown below (for example, "review tier" rather than "tier").
+
+To add or change a term, edit this file in the same change that first uses the new meaning. Meanings from other projects (for example Gentle-AI) are not this project's meanings unless this glossary says so.
+
+## Methodology (ADR-003)
+
+| Term | Meaning in this project | Not to be confused with |
+| --- | --- | --- |
+| **RDD** | Requirements-Driven Development: verifiable requirements and acceptance criteria are the controlling source of truth. See [ADR-003](adr/0003-multi-methodology-development-architecture.md#rdd--requirements-driven-development). | Receipt-Driven Development (a Gentle-AI concept). |
+| **SDD** | Specification-Driven Development: an approved specification (interfaces, invariants, states) is the controlling source of truth. | — |
+| **ODD** | Organic-Driven Development: the goal is fixed and the solution emerges through progressive refinement; each step is routed to direct execution or a bounded exploration spike, and ambiguity is resolved by interviewing the human. | Outcome-Driven Development. |
+| **HYBRID** | One explicitly selected mode that composes other modes with stated boundaries, source-of-truth precedence, and conflict handling. | Ad hoc mixing of methods. |
+| **methodology mode** | Which of RDD, SDD, ODD, or HYBRID governs a work unit. | Rigor. |
+| **rigor** | `minimal`, `standard`, or `strict`: how much planning, evidence, review, and approval a work unit needs. Chosen independently of the methodology mode; it sets a minimum review tier. | Review tier, model tier. |
+| **work unit** | The scope a methodology mode and rigor apply to: a project, a requirement group, or a task. | Install scope. |
+| **selection scope** | The level at which a mode or rigor is chosen (project, requirement group, task). The narrowest clearly bounded scope governs. | Install scope; review scope. |
+
+## Roles and agents
+
+| Term | Meaning in this project | Not to be confused with |
+| --- | --- | --- |
+| **role** | A logical responsibility with a contract in [`agents/`](../agents/README.md): Lead, Operator, External, Researcher, Planner, Implementer, Reviewer, QA. | An installed agent file on a given host. |
+| **agent** | A role compiled and installed for a specific host (for example `.claude/agents/reviewer.md`). | Role. |
+| **eight-role setup** | The current default set of the eight roles above. It stays the baseline during the ADR-002 evaluation. | — |
+| **Engineer** | ADR-002's consolidated role combining Researcher and Implementer. During the pilot it is installed alongside them, never instead of them. | Implementer. |
+| **Operations** | ADR-002's consolidated role combining Operator and External. Installed alongside them only where local/external isolation is enforced. | Operator. |
+| **role setup** | Which roles a host has installed: the eight-role setup, optionally plus pilot roles such as Engineer or Operations. | Codex profile; legacy profile. |
+
+## Skills and commands
+
+| Term | Meaning in this project | Not to be confused with |
+| --- | --- | --- |
+| **workflow command** | One of the human-invoked task workflows in [`commands/`](../commands/README.md) (`/start-issue`, `/review-pr`, `/address-pr-feedback`, `/report-defect`, `/assess-debt`, `/grill-me`). Some hosts emit them as `SKILL.md` files; they are still workflow commands. | Procedure skill. |
+| **procedure skill** | A reusable, host-neutral procedure (from canonical `skills/`, BH-045) that roles invoke, such as `documentation-impact` or a validation skill. It grants no permissions and makes no decisions. | Workflow command emitted as `SKILL.md`. |
+| **validation skill** | A procedure skill describing a reproducible check (tests, static analysis, builds) and where its evidence goes. It does not decide whether results are acceptable. | QA role. |
+
+## Review
+
+| Term | Meaning in this project | Not to be confused with |
+| --- | --- | --- |
+| **review tier** | Reviewer's risk tier for a diff: Low, Medium, or High (see [`agents/reviewer.md`](../agents/reviewer.md)). | Model tier; rigor. |
+| **lens** | One of Reviewer's four specialized review lenses: Risk, Resilience, Readability, Reliability (the "4R" lenses). | — |
+| **evidence** | Recorded commands, exit status, output, and artifacts that show what was actually run. A passing command is evidence about that command, not acceptance. | Author's explanation. |
+| **re-run / judged from evidence** | Whether Reviewer re-ran a check itself or assessed it from recorded evidence only. Review reports state which applies to each check. | — |
+
+## Hosts, installation and permissions
+
+| Term | Meaning in this project | Not to be confused with |
+| --- | --- | --- |
+| **host** | A supported agent environment: OpenCode, Claude Code, Antigravity, Codex, Cursor, and (planned) Pi. | Machine. |
+| **install scope** | Where an install writes: `project` or `global`. | Selection scope; review scope. |
+| **receipt** | The private installer record of what an install or update changed, used for update, uninstall, and recovery. | Gentle-AI "receipts". |
+| **project context** | Project-specific settings in the application's `AGENTS.md`, shared across hosts (see [configuration](configuration.md)). | Global connections; an agent's reasoning context. |
+| **global connections** | Reusable, machine-level connections and defaults (MCP servers, preferences) shared across projects. | Project context. |
+| **legacy profile** | A pre-context project configuration that may only be migrated with explicit consent. | Codex profile; role setup. |
+| **Codex profile** | A `[profiles.<role>]` entry in Codex configuration. | Role setup; legacy profile. |
+| **model tier** | The capability class assigned to a role (economical, mid-tier, strong, frontier). It is a tier, not a provider model ID. | Review tier; `reasoningTier`. |
+| **`reasoningTier`** | A host preset field for reasoning effort (for example `low`). | Model tier; review tier. |
+| **enforced** | The host itself prevents the action, verified by evidence. | Advisory. |
+| **advisory** | Expressed in prompt text or configuration the host does not enforce. Not a security boundary. | Enforced. |
+| **unsupported** | The host cannot express the boundary at all. | Unverified. |
+| **unverified** | Not yet shown either way. Never reported as enforced. | Unsupported. |
+| **fail closed** | When something is gated, unsupported, or ambiguous, stop before writing anything rather than proceeding with weaker behavior. | — |
+
+## Workflow and tracking
+
+| Term | Meaning in this project | Not to be confused with |
+| --- | --- | --- |
+| **Lead status states** | Working, Checking, Ready, Needs your decision (see [`agents/lead.md`](../agents/lead.md)). | GitHub issue state. |
+| **approval** | An explicit human decision in the conversation. A conversational workflow rule, not an enforced security gate. | Host permission. |
+| **ADR status** | Proposed, Accepted, Rejected, or Superseded. A Proposed ADR does not authorize implementation. | Issue status. |
+| **Backlog ID** | Stable `BH-NNN` identifier of a backlog item, kept across issue edits. | GitHub issue number. |
+| **milestone** | A GitHub milestone grouping planned work. Milestones are re-planned after each one closes, so issues reference work by Backlog ID or issue number, not milestone name. | Release. |
+| **release** | A tagged version (`vX.Y.Z`) published through the [release process](releasing.md). | Milestone. |

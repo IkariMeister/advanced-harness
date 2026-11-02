@@ -29,6 +29,13 @@ Preserve unrelated work in both repositories. Project settings belong only in th
 application's AGENTS.md or explicitly referenced context; reusable connections and
 defaults are global. Existing legacy profiles require explicit migration consent.
 
+## Terminology
+
+Use the meanings in `docs/glossary.md` in docs, ADRs, agent contracts, and issues.
+Qualify ambiguous terms as the glossary does (for example "review tier", not "tier").
+Add or change a term in the glossary in the same change that first uses it; meanings
+from other projects do not apply unless the glossary adopts them.
+
 ## Testing interactive CLI flows
 
 - Redirected stdin is not interactive CLI QA. If no usable TTY is available, report
