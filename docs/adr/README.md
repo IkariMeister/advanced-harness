@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This directory contains proposed and accepted architecture decisions for Advanced Harness. Each record states its status; a `Proposed` ADR documents a recommendation and does not by itself authorize implementation or change current behavior.
+This directory contains proposed and accepted architecture decisions for Advanced Harness. Each record states its status; a `Proposed` ADR documents a recommendation and does not by itself authorize implementation or change current behavior. ADRs use the terms defined in the [glossary](../glossary.md); define new terms there rather than inside an ADR.
 
 | ADR | Title | Status | Scope |
 | --- | --- | --- | --- |

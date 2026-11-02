@@ -2,7 +2,7 @@
 
 **Status:** Proposed\
 **Date:** 2026-10-31\
-**Version:** 1.1\
+**Version:** 1.2\
 **Project:** Advanced Harness\
 **Decision scope:** Methodology selection, task execution boundaries, workflow governance, and evaluation
 
@@ -10,7 +10,7 @@
 
 Advanced Harness needs to support work with different sources of truth and different levels of uncertainty. A single prescribed development method can impose unnecessary ceremony on small, well-understood tasks or provide too little structure for ambiguous, high-impact work. Allowing every task to blend methods informally makes expectations, artifacts, and review criteria hard to predict.
 
-The architecture must support requirements-driven development (RDD), specification-driven development (SDD), outcome-driven development (ODD), and a deliberate hybrid mode. Each is a complete, exclusive execution mode for a given work unit. Hybrid is a separately selected mode with explicit composition rules; it is not permission to mix methods ad hoc. A work unit is one project, a cohesive group of requirements, or a task. Different work units may use different modes, including within the same project, when their boundaries and dependencies are clear.
+The architecture must support requirements-driven development (RDD), specification-driven development (SDD), organic-driven development (ODD), and a deliberate hybrid mode. Each is a complete, exclusive execution mode for a given work unit. Hybrid is a separately selected mode with explicit composition rules; it is not permission to mix methods ad hoc. A work unit is one project, a cohesive group of requirements, or a task. Different work units may use different modes, including within the same project, when their boundaries and dependencies are clear.
 
 This ADR proposes a decision framework. It does not implement mode routing, change existing agent behavior, or imply that a mode provides technical or security enforcement. Human approvals and host permission limits remain governed by existing project rules.
 
@@ -26,7 +26,7 @@ This ADR proposes a decision framework. It does not implement mode routing, chan
 
 ## Methodology Modes
 
-The terms below define Advanced Harness execution modes. They do not claim that every external use of these acronyms has the same meaning.
+The terms below define Advanced Harness execution modes. They do not claim that every external use of these acronyms has the same meaning. In this project, RDD always means Requirements-Driven Development (not, for example, Receipt-Driven Development), and ODD always means Organic-Driven Development (progressive refinement), not Outcome-Driven Development.
 
 ### RDD — Requirements-Driven Development
 
@@ -40,11 +40,11 @@ Use when correctness depends on a detailed, stable contract or coordinated behav
 
 Typical artifacts: approved technical or behavioral specification, interface/state definitions, examples or models where useful, conformance criteria, and verification evidence.
 
-### ODD — Outcome-Driven Development
+### ODD — Organic-Driven Development
 
-Use when the goal and intended user or business outcome are clear, but the solution and detailed requirements should be discovered through bounded iteration. The outcome, guardrails, measures, and decision checkpoints are the controlling source of truth. Each iteration produces evidence and may refine the approach; it may not silently change the agreed outcome or constraints.
+Use when the goal is clear but the solution and detailed requirements should emerge through progressive refinement, not from an up-front plan or specification. Work advances in small, scoped steps. Before each step, it is routed either to direct execution (well-understood work with existing patterns) or to bounded exploration (a spike for unknown APIs, uncertain UX flows, or architectural debt). Ambiguous edge cases are resolved by interviewing the human (for example `/grill-me`) before acting. The agreed goal, guardrails, and decision checkpoints are the controlling source of truth. Each step produces evidence and may refine the approach; it may not silently change the agreed goal or constraints. ODD needs no separate planning artifact beyond what each step requires.
 
-Typical artifacts: outcome statement, success measures, guardrails, hypotheses or unknowns, time or scope bounds, decision checkpoints, and evidence from each iteration.
+Typical artifacts: goal statement, guardrails, a routing decision for each step (direct or exploration) with rationale, interview notes for resolved ambiguities, spike findings, decision checkpoints, and evidence from each step.
 
 ### HYBRID — Explicitly Composed Development
 
@@ -72,7 +72,7 @@ Score each candidate mode from **1 (poor fit) to 5 (strong fit)** against the ta
 | --- | ---: | --- | --- | --- | --- |
 | Requirements and acceptance criteria are known and testable | 5 | Strong | Medium | Weak | Depends on boundaries |
 | Contract, interface, or invariant precision is critical | 5 | Medium | Strong | Weak | Strong for specified parts |
-| Outcome is clear while solution details are uncertain | 5 | Weak | Medium | Strong | Strong if discovery is bounded |
+| Goal is clear while solution details are uncertain | 5 | Weak | Medium | Strong | Strong if discovery is bounded |
 | Uncertainty requires learning through iteration | 4 | Weak | Medium | Strong | Strong if learning and delivery scopes separate |
 | Failure impact, regulatory exposure, or rollback cost | 5 | Strong with traceability | Strong with conformance controls | Medium with tight guardrails | Strong only with explicit controls |
 | Components or teams require coordinated, stable contracts | 4 | Medium | Strong | Weak | Strong when only some boundaries are stable |
@@ -88,7 +88,7 @@ For each mode, calculate the weighted mean: `sum(weight × fit score) / sum(appl
 | --- | --- | --- | --- |
 | RDD | Direct traceability; clear acceptance; efficient when scope is known | Weak requirements can encode assumptions; may discourage useful discovery | The desired behavior is known and testable |
 | SDD | Precise coordination; stable interfaces and invariants; strong conformance review | Specification work can be expensive or stale; can slow learning when details are unsettled | Contract precision and cross-component consistency dominate |
-| ODD | Supports discovery; ties iteration to measurable value; avoids premature solution detail | Outcomes can be vague or gamed; scope can drift without guardrails and checkpoints | The goal is stable while the path is uncertain and feedback is available |
+| ODD | Supports discovery; refines progressively from evidence; avoids premature solution detail and planning ceremony | Goals can stay vague; scope can drift without guardrails and checkpoints; leaves little up-front design record | The goal is stable while the path is uncertain and feedback is available |
 | HYBRID | Fits heterogeneous work; allows discovery alongside stable contracts | Adds boundary and precedence overhead; conflicts can be obscured by the label | Distinct parts demonstrably need different modes and can be governed separately |
 
 ## Rigor and Tailoring
@@ -97,7 +97,7 @@ Rigor is selected independently of methodology for each selected scope. Each wor
 
 | Rigor | Use when | Expected discipline |
 | --- | --- | --- |
-| `minimal` | Work is bounded, low impact, readily reversible, and has few unknowns | State the controlling requirements, specification, or outcome concisely; define proportionate acceptance evidence; run focused checks and record results. |
+| `minimal` | Work is bounded, low impact, readily reversible, and has few unknowns | State the controlling requirements, specification, or goal concisely; define proportionate acceptance evidence; run focused checks and record results. |
 | `standard` | Work has ordinary product or engineering impact, dependencies, or moderate uncertainty | Record a scoped plan, relevant traceability or measures, material risks, applicable verification, and independent review where required by project policy. |
 | `strict` | Failure is high impact, hard to reverse, security- or safety-sensitive, regulated, or materially uncertain | Use explicit assumptions and risk controls, detailed traceability or conformance criteria, comprehensive applicable verification, independent review, and required human decision gates. |
 
@@ -109,7 +109,7 @@ The plan states required artifacts and checks. Lightweight work may use concise 
 
 ## Consequences
 
-**Positive:** Method selection is explainable and can vary at bounded scopes; requirements, specifications, and outcomes each have a clear role; hybrid composition is reviewable; rigor and method are not conflated; future evaluation can use recorded rationale and evidence.
+**Positive:** Method selection is explainable and can vary at bounded scopes; requirements, specifications, and progressively refined goals each have a clear role; hybrid composition is reviewable; rigor and method are not conflated; future evaluation can use recorded rationale and evidence.
 
 **Negative:** Teams must maintain selection guidance and agree scope inheritance; scoring introduces judgment and may create false precision; hybrid mode costs extra planning and conflict resolution; project defaults can become stale if not reviewed.
 
@@ -121,7 +121,7 @@ Review this decision after an initial pilot spanning known requirements, contrac
 
 - requirement coverage, escaped defects, rework, and changes caused by misunderstood scope;
 - time to useful feedback, delivery time, and workflow overhead;
-- quality and freshness of requirements/specifications/outcome measures;
+- quality and freshness of requirements, specifications, and ODD goals and guardrails;
 - hybrid boundary or precedence conflicts and duplicated artifacts;
 - whether chosen rigor matched impact and reversibility;
 - human interventions, approval ambiguity, and consistency across teams/projects.
