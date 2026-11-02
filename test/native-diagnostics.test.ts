@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assessRuntime, cliQuery, decodeRows, expectedAgents, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
+import { assessRuntime, cliQuery, decodeRows, diagnoseHost, expectedAgents, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
 import { nativeRoles } from '../src/native-installer.ts';
 
 function fixture() {
@@ -171,7 +171,64 @@ test('doctor help is noninteractive; invalid project fails safely before queryin
   assert.throws(() => execFileSync(process.execPath, [script, '--project', 'definitely-not-an-existing-project'], { stdio: 'pipe' }), error => {
     const result = error as { status: number; stderr: Buffer };
     assert.equal(result.status, 2);
-    assert.match(result.stderr.toString(), /inconclusive/);
+    assert.match(result.stderr.toString(), /Select an existing project directory/);
     return true;
   });
+});
+
+function sandboxedDoctor(t: { after: (fn: () => void) => void }) {
+  const root = mkdtempSync(join(tmpdir(), 'harness-doctor-cli-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = join(root, 'home'); const xdg = join(root, 'xdg'); const project = join(root, 'project');
+  for (const dir of [home, join(xdg, 'opencode'), project]) mkdirSync(dir, { recursive: true });
+  const script = fileURLToPath(new URL('../scripts/diagnose-native-harness.ts', import.meta.url));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: xdg };
+  const run = (args: string[]) => {
+    try { return { status: 0, stdout: execFileSync(process.execPath, [script, ...args], { env, encoding: 'utf8', stdio: 'pipe' }), stderr: '' }; }
+    catch (error) { const result = error as { status: number; stdout: string; stderr: string }; return { status: result.status, stdout: result.stdout, stderr: result.stderr }; }
+  };
+  return { xdg, project, run };
+}
+
+test('doctor surfaces CLI option errors instead of a generic inconclusive message (#145)', t => {
+  const { project, run } = sandboxedDoctor(t);
+  for (const [args, message] of [
+    [['--bogus', 'x'], /Unknown option: --bogus/],
+    [['--scope', 'everywhere'], /Invalid --scope; use global or project/],
+    [['--project', project, '--project', project], /Duplicate option: --project/],
+    [['--scope'], /Missing value for --scope/],
+    [['--host', 'not-a-host'], /not-a-host/],
+  ] as const) {
+    const result = run([...args]);
+    assert.equal(result.status, 2, args.join(' '));
+    assert.match(result.stderr, message);
+    assert.doesNotMatch(result.stderr, /Verification inconclusive/);
+    assert.equal(result.stdout, '', 'nothing inspected before option validation');
+  }
+});
+
+test('diagnoseHost at project scope does not count a global footprint as installed (#145)', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-doctor-scope-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = join(root, 'home'); const project = join(root, 'project');
+  mkdirSync(join(home, '.claude'), { recursive: true }); mkdirSync(project);
+  writeFileSync(join(home, '.claude', 'settings.json'), '{}');
+  assert.equal((await diagnoseHost('claude-code', { project, home })).installed, true);
+  assert.equal((await diagnoseHost('claude-code', { project, home, scope: 'project' })).installed, false);
+});
+
+test('doctor --scope limits OpenCode configuration sources to the requested scope (#145)', t => {
+  const { xdg, project, run } = sandboxedDoctor(t);
+  writeFileSync(join(xdg, 'opencode', 'opencode.json'), '{}');
+  // A missing CLI keeps the test away from any real OpenCode service.
+  const global = run(['--scope', 'global', '--host', 'opencode', '--project', project, '--opencode', join(project, 'missing-opencode-cli')]);
+  assert.equal(global.status, 1);
+  assert.match(global.stderr, /OpenCode runtime check inconclusive/);
+  assert.match(global.stdout, /Checking scope: global/);
+  assert.ok(global.stdout.includes(join(xdg, 'opencode', 'opencode.json')));
+  const scoped = run(['--scope', 'project', '--host', 'opencode', '--project', project]);
+  assert.equal(scoped.status, 0, scoped.stderr);
+  assert.match(scoped.stdout, /Checking scope: project/);
+  assert.match(scoped.stdout, /None at project scope\./);
+  assert.ok(!scoped.stdout.includes(join(xdg, 'opencode')), 'global source is excluded at project scope');
 });

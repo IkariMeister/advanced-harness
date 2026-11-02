@@ -6,6 +6,12 @@ version between releases.
 
 ## Unreleased
 
+### Fixed
+
+- `harness:doctor` accepts `--scope <global|project>` and reports invalid,
+  duplicate or incomplete options instead of a generic "Verification
+  inconclusive" message (#145).
+
 ## v0.2.0 — 2026-11-01
 
 Milestone: Security Guardrails, Model Discovery & Core Role Contracts.

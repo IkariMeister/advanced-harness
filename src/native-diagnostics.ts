@@ -148,7 +148,7 @@ export interface HostDiagnosticReport {
 
 export async function diagnoseHost(
   host: HostId,
-  options: { project?: string; executable?: string; server?: string; globalDirectory?: string; agentsDirectory?: string; home?: string }
+  options: { project?: string; executable?: string; server?: string; globalDirectory?: string; agentsDirectory?: string; home?: string; scope?: 'global' | 'project' }
 ): Promise<HostDiagnosticReport> {
   const cap = HOST_CAPABILITIES[host];
   const presets = HOST_MODEL_PRESETS[host];
@@ -193,7 +193,7 @@ export async function diagnoseHost(
   if (project) {
     installed = cap.configLocations.project.some(rel => existsSync(join(project, rel)));
   }
-  if (!installed) {
+  if (!installed && options.scope !== 'project') {
     installed = cap.configLocations.global.some(rel => existsSync(rel.replace(/^(?:~|\$HOME)(?=[/\\]|$)/, home)));
   }
 
