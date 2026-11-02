@@ -1,7 +1,8 @@
 # ADR: Consolidate Agent Responsibilities While Preserving Specialized Reasoning and Independent Review
 
-**Status:** Proposed\
+**Status:** Accepted\
 **Date:** 2026-10-30\
+**Decided:** 2026-11-02\
 **Project:** Advanced Harness\
 **Decision scope:** Agent architecture, responsibility boundaries, model allocation, and workflow orchestration
 
