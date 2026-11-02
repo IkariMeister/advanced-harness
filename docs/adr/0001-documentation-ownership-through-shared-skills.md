@@ -3,6 +3,7 @@
 **Status:** Accepted\
 **Date:** 2026-10-30\
 **Decided:** 2026-11-02\
+**Decision record:** [#141](https://github.com/IkariMeister/advanced-harness/pull/141)\
 **Project:** Advanced Harness\
 **Decision scope:** Documentation ownership, documentation workflows, and quality assurance
 
