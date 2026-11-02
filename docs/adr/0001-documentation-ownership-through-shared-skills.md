@@ -1,7 +1,9 @@
 # ADR: Documentation Ownership Through Shared Skills
 
-**Status:** Proposed\
+**Status:** Accepted\
 **Date:** 2026-10-30\
+**Decided:** 2026-11-02\
+**Decision record:** [#141](https://github.com/IkariMeister/advanced-harness/pull/141)\
 **Project:** Advanced Harness\
 **Decision scope:** Documentation ownership, documentation workflows, and quality assurance
 
@@ -91,7 +93,7 @@ A task-scoped specialist or temporary execution context may be justified for lar
 
 ## Adoption and Reconsideration
 
-This Proposed ADR does not change installed roles or workflows. Implementation requires a separate approved plan and validation. Reconsider if distributed authorship repeatedly causes material inaccuracies or inconsistency, independent review misses defects, or a persistent specialist measurably reduces total cost without weakening source ownership or review. Evaluate quality, latency, cost, and handoffs.
+Accepting this ADR does not change installed roles or workflows. Implementation requires a separate approved plan and validation. Reconsider if distributed authorship repeatedly causes material inaccuracies or inconsistency, independent review misses defects, or a persistent specialist measurably reduces total cost without weakening source ownership or review. Evaluate quality, latency, cost, and handoffs.
 
 ## References
 
