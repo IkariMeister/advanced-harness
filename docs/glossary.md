@@ -70,7 +70,8 @@ To add or change a term, edit this file in the same change that first uses the n
 | --- | --- | --- |
 | **Lead status states** | Working, Checking, Ready, Needs your decision (see [`agents/lead.md`](../agents/lead.md)). | GitHub issue state. |
 | **approval** | An explicit human decision in the conversation. A conversational workflow rule, not an enforced security gate. | Host permission. |
-| **ADR status** | Proposed, Accepted, Rejected, or Superseded. A Proposed ADR does not authorize implementation. | Issue status. |
+| **ADR status** | Proposed, Accepted, Rejected, or Superseded by ADR-NNN (see the [ADR lifecycle](adr/README.md#status-lifecycle)). A Proposed ADR does not authorize implementation. | Issue status. |
+| **ADR acceptance** | The human's approval that makes an ADR's decision the project's direction, recorded in the ADR header and index. It changes no tooling, roles, or defaults and authorizes no implementation. | Plan approval. |
 | **Backlog ID** | Stable `BH-NNN` identifier of a backlog item, kept across issue edits. | GitHub issue number. |
 | **milestone** | A GitHub milestone grouping planned work. Milestones are re-planned after each one closes, so issues reference work by Backlog ID or issue number, not milestone name. | Release. |
 | **release** | A tagged version (`vX.Y.Z`) published through the [release process](releasing.md). | Milestone. |

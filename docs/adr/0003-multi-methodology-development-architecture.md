@@ -2,6 +2,7 @@
 
 **Status:** Proposed\
 **Date:** 2026-10-31\
+**Pending:** Reviewed 2026-11-02 and left Proposed until the methodology pilot (BH-060, #135) produces the evidence its review criteria call for.\
 **Version:** 1.2\
 **Project:** Advanced Harness\
 **Decision scope:** Methodology selection, task execution boundaries, workflow governance, and evaluation
