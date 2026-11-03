@@ -12,7 +12,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** Comment line marking the one role (External) that keeps the configured MCP servers. Codex ignores comments. */
+/** Comment line marking the one role (External) that may use the MCP servers selected at install. Codex ignores comments. */
 export const mcpMarker = /^# advanced-harness: mcp=allowed\r?$/m;
 
 /** Keys re-applied on every invocation. developer_instructions stays in the thread history on resume. */
@@ -40,7 +40,7 @@ export function parseProfile(text) {
 const tomlKey = name => /^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(name);
 
 /** Builds the codex argument list for one role launch or resume. Pure, for tests. */
-export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed, resumeId, task, schemaPath, resultPath }) {
+export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed, mcpSelected = [], resumeId, task, schemaPath, resultPath }) {
   if (!/^[a-z][a-z0-9_-]{0,63}$/.test(role) || role === 'lead') throw new Error(`Not a launchable role: ${role}`);
   if (!task || !task.trim()) throw new Error('A task is required.');
   // Codex reads a lone "-" prompt from stdin, which the launcher closes: it would run with no task.
@@ -51,13 +51,25 @@ export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed,
     if (!profile.has(key)) throw new Error(`Role profile for ${role} lacks ${key}; reinstall the harness.`);
     overrides.push('-c', `${key}=${profile.get(key)}`);
   }
-  // Fail closed: every MCP server the effective config knows about is switched off unless the role owns MCP.
-  if (!mcpAllowed) for (const name of mcpServers) overrides.push('-c', `mcp_servers.${tomlKey(name)}.enabled=false`);
+  // Fail closed: every MCP server the effective config knows about is switched off, except the servers
+  // selected at install for the role that owns MCP. Selected servers stay disabled in the base config, so
+  // this is the only place they are turned on; their disabled_tools still apply.
+  for (const name of mcpServers) overrides.push('-c', `mcp_servers.${tomlKey(name)}.enabled=${mcpAllowed && mcpSelected.includes(name)}`);
   const output = ['--json', '--output-schema', schemaPath, '-o', resultPath];
   // "--" ends the options: a task starting with "-" is text, never a Codex flag that could widen the sandbox.
   return resumeId
     ? ['exec', 'resume', ...overrides, ...output, '--', resumeId, task]
     : ['-p', `harness-${role}`, 'exec', ...overrides, ...output, '--', task];
+}
+
+/** The MCP servers selected at install. Throws when unreadable, so External never starts with a guessed set. */
+export function readSelectedMcpServers(home) {
+  const path = join(home, '.advanced-harness-state.json');
+  let selected;
+  try { selected = JSON.parse(readFileSync(path, 'utf8')).selectedMcpServers; }
+  catch { throw new Error(`Cannot read the selected MCP servers from ${path}. No role was launched; rerun harness:update.`); }
+  if (!Array.isArray(selected) || selected.some(name => typeof name !== 'string')) throw new Error(`Malformed selectedMcpServers in ${path}. No role was launched; rerun harness:update.`);
+  return selected;
 }
 
 const threadIdPattern = /^[A-Za-z0-9-]{1,128}$/;
@@ -176,17 +188,15 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   const mcpAllowed = mcpMarker.test(profileText);
   const codex = findCodexBinary(env);
   const cwd = options['--cd'] ?? process.cwd();
-  let mcpServers = [];
-  if (!mcpAllowed) {
-    // A failed listing aborts the launch rather than starting a role with unknown MCP servers enabled.
-    const listed = JSON.parse(execFileSync(codex, ['-p', `harness-${options.role}`, 'mcp', 'list', '--json'], { cwd, env, encoding: 'utf8', windowsHide: true }));
-    mcpServers = listed.map(server => String(server.name));
-  }
+  const mcpSelected = mcpAllowed ? readSelectedMcpServers(home) : [];
+  // A failed listing aborts the launch rather than starting a role with unknown MCP servers enabled.
+  const listed = JSON.parse(execFileSync(codex, ['-p', `harness-${options.role}`, 'mcp', 'list', '--json'], { cwd, env, encoding: 'utf8', windowsHide: true }));
+  const mcpServers = listed.map(server => String(server.name));
   const outputDir = join(tmpdir(), 'advanced-harness-codex');
   mkdirSync(outputDir, { recursive: true });
   const resultPath = join(outputDir, `${options.role}-${Date.now()}.json`);
   const args = buildRoleInvocation({
-    role: options.role, profileText, mcpServers, mcpAllowed, resumeId: options['--resume'], task: options['--task'],
+    role: options.role, profileText, mcpServers, mcpAllowed, mcpSelected, resumeId: options['--resume'], task: options['--task'],
     schemaPath: join(home, 'advanced-harness', 'role-status.schema.json'), resultPath,
   });
   const run = spawnSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });

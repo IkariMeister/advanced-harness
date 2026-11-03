@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { diagnoseCodex, disableMultiAgent, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
 import { codexChildRoles, codexRoleLauncherSource, codexRolePolicies, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from '../src/codex-role-processes.ts';
-import { assertResumable, buildRoleInvocation, isEntryPoint, main as launcherMain, parseProfile, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
+import { assertResumable, buildRoleInvocation, isEntryPoint, main as launcherMain, parseProfile, readSelectedMcpServers, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 
 const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -67,7 +67,15 @@ test('launcher re-applies role settings on launch and resume and switches MCP of
   assert.deepEqual(resume.slice(-2), ['thread-1', 'Continue']);
 
   const external = buildRoleInvocation({ ...base, role: 'external', profileText: compileCodexRoleProfile('external', policies.external, 'm', 'low', 'x'), mcpAllowed: true });
-  assert.ok(!external.some(arg => arg.startsWith('mcp_servers.')), 'External keeps the configured MCP servers');
+  assert.ok(external.includes('mcp_servers.github.enabled=false') && external.includes('mcp_servers."my server".enabled=false'), 'with nothing selected, External has no MCP server');
+
+  const selected = buildRoleInvocation({ ...base, role: 'external', profileText: compileCodexRoleProfile('external', policies.external, 'm', 'low', 'x'), mcpAllowed: true, mcpSelected: ['my server'] });
+  assert.ok(selected.includes('mcp_servers."my server".enabled=true'), 'a selected server is turned on for External');
+  assert.ok(selected.includes('mcp_servers.github.enabled=false'), 'an unselected server is turned off, even if the base config enables it');
+  const resumed = buildRoleInvocation({ ...base, role: 'external', profileText: compileCodexRoleProfile('external', policies.external, 'm', 'low', 'x'), mcpAllowed: true, mcpSelected: ['my server'], resumeId: 'thread-1', task: 'Continue' });
+  assert.ok(resumed.includes('mcp_servers."my server".enabled=true') && resumed.includes('mcp_servers.github.enabled=false'), 'a resume keeps the same MCP set');
+  const other = buildRoleInvocation({ ...base, mcpSelected: ['my server'] });
+  assert.ok(other.includes('mcp_servers."my server".enabled=false'), 'a selection never reaches a role without MCP');
 });
 
 test('launcher refuses Lead, empty tasks, incomplete profiles and unknown roles', () => {
@@ -397,4 +405,32 @@ test('the launcher runs when started through a linked directory, instead of exit
   assert.equal(isEntryPoint(join(linked, 'codex-role.mjs'), moduleUrl), true);
   assert.equal(isEntryPoint(join(root, 'other.mjs'), moduleUrl), false);
   assert.equal(isEntryPoint(undefined, moduleUrl), false);
+});
+
+test('External launches only with a readable MCP selection from the install (#45)', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  writeFileSync(join(box.codex, 'config.toml'), '[mcp_servers.gh]\ncommand = "gh-mcp"\nenabled = true\n\n[mcp_servers.other]\ncommand = "other-mcp"\nenabled = true\n');
+  const output: string[] = [];
+  assert.equal(await installCodex({ scope: 'global', home: box.home, mode: 'role-processes', output: line => output.push(line), error() {}, ask: async question =>
+    question.startsWith('Existing Codex MCP server') ? 'gh' : /model ID/.test(question) ? 'gpt-example' : /reasoning effort/.test(question) ? 'medium' : question.startsWith('Type install') ? 'install' : '' }), 0);
+  assert.deepEqual(readSelectedMcpServers(box.codex), ['gh']);
+  assert.match(output.join('\n'), /External may use only these MCP servers: gh\./);
+  const config = readFileSync(join(box.codex, 'config.toml'), 'utf8');
+  assert.match(config, /\[mcp_servers\.gh\]\ncommand = "gh-mcp"\nenabled = false/, 'stays off for Lead and the other roles');
+  assert.match(config, /\[mcp_servers\.other\]\ncommand = "other-mcp"\nenabled = true/, 'an unselected server is not edited');
+  assert.match(readFileSync(join(box.codex, 'AGENTS.md'), 'utf8'), /\| `external` \| workspace-write \| yes \| selected servers \|/);
+
+  // Refused before any Codex process: no binary exists at CODEX_BIN, so reaching the listing would fail differently.
+  const env = { CODEX_HOME: box.codex, CODEX_BIN: join(box.root, 'no-codex') };
+  const state = join(box.codex, '.advanced-harness-state.json');
+  const valid = readFileSync(state, 'utf8');
+  for (const [text, expected] of [['not json', /Cannot read the selected MCP servers/], ['{}', /Malformed selectedMcpServers/], ['{"selectedMcpServers":[1]}', /Malformed selectedMcpServers/]] as const) {
+    writeFileSync(state, text);
+    assert.throws(() => launcherMain(['external', '--task', 't'], env), expected);
+  }
+  writeFileSync(state, valid);
+  assert.throws(() => launcherMain(['external', '--task', 't'], env), /ENOENT/, 'a valid selection moves on to the listing, whose failure also stops the launch');
+  rmSync(state);
+  assert.throws(() => launcherMain(['reviewer', '--task', 't'], env), /ENOENT/, 'roles without MCP never read the selection');
 });
