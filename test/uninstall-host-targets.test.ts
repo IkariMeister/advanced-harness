@@ -186,7 +186,9 @@ test('an absent settings.json that held user content before install is blocked w
 test('target selection rejects unsupported combinations before any file is touched', t => {
   const f = fixture(t);
   const base = { home: f.home, cwd: f.root };
-  assert.throws(() => selectUninstallTarget({ ...base, host: 'claude-code', scope: 'global' }), /Claude Code harness is project-scoped/);
+  assert.throws(() => selectUninstallTarget({ ...base, host: 'claude-code', scope: 'global', project: f.project }), /--project cannot be combined with --scope global/);
+  assert.throws(() => selectUninstallTarget({ ...base, host: 'claude-code', scope: 'everywhere' }), /--scope must be global or project/);
+  assert.equal(selectUninstallTarget({ ...base, host: 'claude-code', scope: 'global' }), join(f.home, '.claude', 'settings.json'));
   assert.throws(() => selectUninstallTarget({ ...base, host: 'claude-code', scope: 'project' }), /--project is required/);
   assert.throws(() => selectUninstallTarget({ ...base, host: 'claude-code', scope: 'project', project: f.project, config: 'opencode.json' }), /--config is supported only with --host opencode/);
   assert.throws(() => selectUninstallTarget({ ...base, host: 'antigravity', scope: 'global', project: f.project }), /--project cannot be combined with --scope global/);
@@ -194,6 +196,19 @@ test('target selection rejects unsupported combinations before any file is touch
   assert.equal(selectUninstallTarget({ ...base, host: 'claude-code', scope: 'project', project: f.project }), join(f.project, '.claude', 'settings.json'));
   assert.equal(selectUninstallTarget({ ...base, host: 'antigravity', scope: 'project', project: f.project }), join(f.project, '.agents', 'hooks.json'));
   assert.equal(selectUninstallTarget({ ...base, host: 'antigravity', scope: 'global' }), join(f.home, '.gemini', 'config', 'hooks.json'));
+});
+
+test('a global Claude Code install uninstalls back to the prior user directory (#146)', async t => {
+  const f = fixture(t);
+  mkdirSync(join(f.home, '.claude'));
+  writeFileSync(join(f.home, '.claude', 'settings.json'), '{\n  "theme": "dark"\n}\n');
+  await install(f, 'claude-code', 'global');
+  assert.ok(existsSync(join(f.home, '.claude', 'agents', 'lead.md')));
+  assert.equal(await uninstall(f, 'claude-code', { scope: 'global' }, 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(join(f.home, '.claude', 'settings.json'), 'utf8'), '{\n  "theme": "dark"\n}\n');
+  assert.equal(existsSync(join(f.home, '.claude', 'CLAUDE.md')), false);
+  assert.equal(existsSync(join(f.home, '.claude', 'agents')), false, 'installer-created agents directory is pruned');
+  assert.ok(existsSync(join(f.home, '.claude')), 'the pre-existing ~/.claude container is kept');
 });
 
 test('a Claude Code receipt is not discovered for an Antigravity uninstall of the same project', async t => {

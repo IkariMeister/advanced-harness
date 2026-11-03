@@ -98,7 +98,7 @@ test('Claude doctor separates source-policy blockers from installed footprint an
   assert.equal(report.sourcePolicy?.runtimeVerified, false);
   assert.ok(report.notes.some(note => /separate from the installed configuration footprint/i.test(note)));
   assert.match(HOST_CAPABILITIES['claude-code'].ghPrMergeGuard, /Bash\(gh pr merge\)/);
-  assert.ok(report.disclosures.some(note => /Project scope only/i.test(note)));
+  assert.ok(report.disclosures.some(note => /Project scope or global ~\/\.claude scope/i.test(note)));
 });
 
 test('Claude doctor detects an explicitly supplied global configuration footprint', async t => {

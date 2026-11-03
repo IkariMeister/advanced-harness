@@ -6,6 +6,11 @@ version between releases.
 
 ## Unreleased
 
+### Added
+
+- Claude Code global-scope install, update, doctor and uninstall into
+  `~/.claude` (read by the CLI and Claude Code Desktop) (#146).
+
 ### Fixed
 
 - `/review-pr` and `/address-pr-feedback` now include Reviewer's risk-tiered
