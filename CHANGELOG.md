@@ -6,6 +6,14 @@ version between releases.
 
 ## Unreleased
 
+### Fixed
+
+- `/review-pr` and `/address-pr-feedback` now include Reviewer's risk-tiered
+  review rubric (tiers, lenses, summary and finding formats), copied from
+  `agents/reviewer.md` when commands are installed. Lead previously could not
+  see the rubric and stopped before assigning a provisional review tier.
+  Run `harness:update` to apply (#156).
+
 ## v0.2.0 — 2026-11-01
 
 Milestone: Security Guardrails, Model Discovery & Core Role Contracts.

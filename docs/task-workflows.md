@@ -119,9 +119,11 @@ and manual smoke steps. No implementation starts until the human approves that p
 risk tier and four specialized lenses: Risk, Resilience, Readability, and Reliability. The
 tier criteria, lens criteria, Compose/Roborazzi/coroutine mappings, and the review
 summary and finding formats are defined once, in the
-[Reviewer role instructions](../agents/reviewer.md#risk-tiered-review). The workflows refer
-to that rubric rather than restating it, so update it there. Antigravity's Lead rule
-carries the same section for its Reviewer subagent.
+[Reviewer role instructions](../agents/reviewer.md#risk-tiered-review); update it there.
+Lead never receives Reviewer's instructions, so the installer copies that section verbatim
+to the end of the installed `/review-pr` and `/address-pr-feedback` commands on every host,
+and installation fails if the section is missing. Run `harness:update` after changing it.
+Antigravity's Lead rule also carries the same section for its Reviewer subagent.
 
 How the workflows apply it:
 
