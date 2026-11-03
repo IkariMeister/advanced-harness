@@ -8,6 +8,12 @@ version between releases.
 
 ### Fixed
 
+- Operator may run `git fetch` to refresh the base before creating a worktree,
+  so OpenCode bootstrap no longer stops on a denied fetch;
+  `--upload-pack` (including any `--upl…` abbreviation) and, defensively,
+  `-u` (`--update-head-ok` for fetch) stay denied, and
+  pull/push/clone remain External's.
+  Run `harness:update` to apply (#144).
 - `harness:doctor` accepts `--scope <global|project>` and reports invalid,
   duplicate or incomplete options instead of a generic "Verification
   inconclusive" message (#145).
