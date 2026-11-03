@@ -95,6 +95,17 @@ export function compileCodexLeadBlock(policies: Record<CodexChildRole, CodexRole
   return lines.join('\n');
 }
 
+/** The managed Lead block body, or why it cannot be read: markers missing, duplicated, or out of order. */
+export function extractCodexLeadBlock(text: string): { block: string } | { problem: string } {
+  const { start, end } = codexLeadMarkers;
+  const starts = text.split(start).length - 1, ends = text.split(end).length - 1;
+  if (!starts && !ends) return { problem: 'is missing' };
+  if (starts !== 1 || ends !== 1) return { problem: `has ${starts} start and ${ends} end markers (expected one of each)` };
+  const from = text.indexOf(start), to = text.indexOf(end);
+  if (to < from) return { problem: 'has its end marker before its start marker' };
+  return { block: text.slice(from + start.length, to).replace(/\r\n/g, '\n').trim() };
+}
+
 /** Replaces or appends the managed Lead block in ~/.codex/AGENTS.md; other content is preserved. */
 export function mergeCodexLeadBlock(existing: string | undefined, block: string): string {
   const { start, end } = codexLeadMarkers;

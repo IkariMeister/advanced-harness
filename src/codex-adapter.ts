@@ -9,7 +9,7 @@ import { nativeRoles, type NativeRole } from './native-role-types.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import { codexDestructiveGitPrefixes, type CodexPrefixPattern } from './security-guardrails.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
-import { codexChildRoles, codexProfileName, codexRolePolicies, codexRoleLauncherSource, compileCodexLeadBlock, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from './codex-role-processes.ts';
+import { codexChildRoles, codexProfileName, codexRolePolicies, codexRoleLauncherSource, compileCodexLeadBlock, compileCodexRoleProfile, compileCodexRoleStatusSchema, extractCodexLeadBlock, mergeCodexLeadBlock } from './codex-role-processes.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, type ManagedFileEvidence } from './receipt-lineage.ts';
 
 type PlannedFile = { path: string; content: string; before: string | undefined; kind: string };
@@ -844,9 +844,11 @@ function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): st
   const schema = join(root, 'advanced-harness', 'role-status.schema.json');
   if (!existsSync(schema)) issues.push(`Missing Codex role status schema: ${schema}`);
   else if (readFileSync(schema, 'utf8') !== compileCodexRoleStatusSchema()) issues.push(`Codex role status schema differs from this harness version; rerun update: ${schema}`);
+  // Report drift only: AGENTS.md also holds user content, so doctor never rewrites it.
   const lead = join(root, 'AGENTS.md');
-  const leadText = existsSync(lead) ? readFileSync(lead, 'utf8') : '';
-  if (!leadText.includes('<!-- BEGIN advanced-harness Codex Lead -->') || !leadText.includes('<!-- END advanced-harness Codex Lead -->')) issues.push(`Codex Lead block is missing from ${lead}.`);
+  const extracted = extractCodexLeadBlock(existsSync(lead) ? readFileSync(lead, 'utf8') : '');
+  if ('problem' in extracted) issues.push(`Codex Lead block in ${lead} ${extracted.problem}; rerun update.`);
+  else if (extracted.block !== compileCodexLeadBlock(policies, launcher, definitions.lead.instructions).trim()) issues.push(`Codex Lead block in ${lead} is empty, edited, or from another harness version; rerun update.`);
   return issues;
 }
 

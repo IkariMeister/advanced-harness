@@ -7,9 +7,9 @@
 // no -p/-s, and a resumed thread otherwise falls back to the base config (#45 spike, 2026-11-02).
 // Self-contained on purpose: the installed copy must not depend on the harness checkout.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /** Comment line marking the one role (External) that keeps the configured MCP servers. Codex ignores comments. */
@@ -57,6 +57,36 @@ export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed,
     : ['-p', `harness-${role}`, 'exec', ...overrides, ...output, task];
 }
 
+/** Thread-to-role bindings this launcher records; a resume must name a thread the same role started. */
+export const threadRegistryPath = home => join(home, 'advanced-harness', 'role-threads.json');
+
+export function readThreadRegistry(path) {
+  if (!existsSync(path)) return {};
+  let registry;
+  try { registry = JSON.parse(readFileSync(path, 'utf8')); } catch { throw new Error(`Malformed role thread registry: ${path}; refusing to resume.`); }
+  if (!registry || typeof registry !== 'object' || Array.isArray(registry) || Object.values(registry).some(role => typeof role !== 'string')) {
+    throw new Error(`Malformed role thread registry: ${path}; refusing to resume.`);
+  }
+  return registry;
+}
+
+/** Resuming runs with the selected role's permissions while keeping the thread's history, so the thread must be that role's. */
+export function assertResumable(registry, threadId, role) {
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(threadId)) throw new Error(`Invalid thread ID "${threadId}".`);
+  const owner = Object.prototype.hasOwnProperty.call(registry, threadId) ? registry[threadId] : undefined;
+  if (owner === undefined) throw new Error(`Unknown thread ${threadId}: only threads started by the role launcher can be resumed.`);
+  if (owner !== role) throw new Error(`Thread ${threadId} belongs to ${owner}; it cannot be resumed as ${role}.`);
+}
+
+export function recordThread(path, threadId, role) {
+  const registry = readThreadRegistry(path);
+  registry[threadId] = role;
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporary, path);
+}
+
 /** CODEX_BIN, else the newest Codex Desktop bundled CLI on Windows, else `codex` on PATH. */
 export function findCodexBinary(env = process.env) {
   if (env.CODEX_BIN) return env.CODEX_BIN;
@@ -89,6 +119,9 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   if (!/^[a-z][a-z0-9_-]{0,63}$/.test(options.role ?? '') || options.role === 'lead' || !existsSync(profilePath)) {
     throw new Error(`Unknown role "${options.role}". Expected an installed harness role profile in ${home}.`);
   }
+  const registryPath = threadRegistryPath(home);
+  // Checked before anything runs: an unknown or other-role thread never starts.
+  if (options['--resume'] !== undefined) assertResumable(readThreadRegistry(registryPath), options['--resume'], options.role);
   const profileText = readFileSync(profilePath, 'utf8');
   const mcpAllowed = mcpMarker.test(profileText);
   const codex = findCodexBinary(env);
@@ -107,8 +140,10 @@ export function main(argv = process.argv.slice(2), env = process.env) {
     schemaPath: join(home, 'advanced-harness', 'role-status.schema.json'), resultPath,
   });
   const run = spawnSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
-  const threadId = run.stdout?.split(/\r?\n/).map(line => { try { return JSON.parse(line); } catch { return undefined; } })
-    .find(event => event?.type === 'thread.started')?.thread_id ?? options['--resume'];
+  const startedId = run.stdout?.split(/\r?\n/).map(line => { try { return JSON.parse(line); } catch { return undefined; } })
+    .find(event => event?.type === 'thread.started')?.thread_id;
+  if (options['--resume'] === undefined && typeof startedId === 'string' && /^[A-Za-z0-9-]{1,128}$/.test(startedId)) recordThread(registryPath, startedId, options.role);
+  const threadId = startedId ?? options['--resume'];
   let result;
   try { result = JSON.parse(readFileSync(resultPath, 'utf8')); }
   catch { result = { status: 'Needs your decision', summary: 'The role ended without a parseable status report.', details: '' }; }
