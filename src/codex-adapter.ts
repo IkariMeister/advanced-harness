@@ -353,6 +353,16 @@ const findEntry = (document: CodexTomlDocument, table: string[], key: string) =>
 const sameTools = (a: readonly unknown[] | null | undefined, b: readonly unknown[] | null | undefined) =>
   a === b || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((name, index) => name === b[index]));
 
+/**
+ * MCP records keyed by server ID in a null-prototype object: IDs such as `constructor` or
+ * `__proto__` are valid TOML keys and must be ordinary own entries, never inherited or a prototype.
+ */
+function ownRecords(records: CodexConfigEdits['mcp'] | undefined): CodexConfigEdits['mcp'] {
+  const result = Object.create(null) as CodexConfigEdits['mcp'];
+  for (const [id, record] of Object.entries(records ?? {})) result[id] = structuredClone(record);
+  return result;
+}
+
 /** Diffs config.toml before and after an install, then folds in edits recorded by earlier installs. */
 export function codexConfigEdits(before: string, after: string, prior?: CodexConfigEdits, created = false): CodexConfigEdits {
   const was = parseCodexToml(before, 'config.toml'), now = parseCodexToml(after, 'config.toml');
@@ -361,7 +371,7 @@ export function codexConfigEdits(before: string, after: string, prior?: CodexCon
     multiAgentAdded: (prior?.multiAgentAdded ?? false) || (!findEntry(was, ['features'], 'multi_agent') && Boolean(findEntry(now, ['features'], 'multi_agent'))),
     configCreated: prior ? prior.configCreated : created,
     featuresTableAdded: (prior?.featuresTableAdded ?? false) || (!was.tables.some(table => table.path === 'features') && now.tables.some(table => table.path === 'features')),
-    mcp: structuredClone(prior?.mcp ?? {}),
+    mcp: ownRecords(prior?.mcp),
   };
   for (const table of now.tables.filter(item => item.parts.length === 2 && item.parts[0] === 'mcp_servers')) {
     const id = table.parts[1]!, path = ['mcp_servers', id];
@@ -369,7 +379,7 @@ export function codexConfigEdits(before: string, after: string, prior?: CodexCon
     const toolsWas = findEntry(was, path, 'disabled_tools'), toolsNow = findEntry(now, path, 'disabled_tools');
     const oldTools = Array.isArray(toolsWas?.value) ? toolsWas.value as string[] : [];
     const added = Array.isArray(toolsNow?.value) ? (toolsNow.value as string[]).filter(name => !oldTools.includes(name)) : [];
-    const previous = edits.mcp[id];
+    const previous = Object.hasOwn(edits.mcp, id) ? edits.mcp[id] : undefined;
     // A server recorded by an earlier install keeps its record current even when this run adds nothing.
     if (enabledWas === enabledNow && !added.length && !previous) continue;
     // A list the user changed since the last install stays marked as changed: adopting it as the

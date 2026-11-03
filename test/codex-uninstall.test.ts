@@ -73,6 +73,24 @@ test('Codex uninstall restores a pre-existing config.toml and AGENTS.md byte for
   assert.equal(existsSync(join(box.home, '.agents', 'skills')), false, 'installer-created skill directories are pruned');
 });
 
+test('MCP servers named like Object.prototype members keep their own records through update and uninstall', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  // Both servers start disabled; uninstall must leave them disabled, not re-enable them.
+  const original = '[mcp_servers.constructor]\ncommand = "c-mcp"\nenabled = false\n\n[mcp_servers.__proto__]\ncommand = "p-mcp"\nenabled = false\n';
+  const config = join(box.codex, 'config.toml');
+  writeFileSync(config, original);
+  await install(box, 'constructor, __proto__', 'merge_pr');
+  const state = JSON.parse(readFileSync(join(box.codex, '.advanced-harness-state.json'), 'utf8')) as { configEdits: { mcp: Record<string, { enabledBefore: unknown }> } };
+  for (const id of ['constructor', '__proto__']) {
+    assert.ok(Object.hasOwn(state.configEdits.mcp, id), `${id} is recorded as its own entry`);
+    assert.equal(state.configEdits.mcp[id]!.enabledBefore, false, `${id} was recorded as originally disabled`);
+  }
+  await install(box, 'constructor, __proto__', 'merge_pr');
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  assert.equal(readFileSync(config, 'utf8'), original, 'both servers stay disabled and the restriction is removed');
+});
+
 test('Codex uninstall removes a config.toml the harness created', async t => {
   const box = sandbox(t);
   await install(box);
