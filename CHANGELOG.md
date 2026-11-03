@@ -8,6 +8,11 @@ version between releases.
 
 ### Fixed
 
+- `/review-pr` and `/address-pr-feedback` now include Reviewer's risk-tiered
+  review rubric (tiers, lenses, summary and finding formats), copied from
+  `agents/reviewer.md` when commands are installed. Lead previously could not
+  see the rubric and stopped before assigning a provisional review tier.
+  Run `harness:update` to apply (#156).
 - Operator may run `git fetch` to refresh the base before creating a worktree,
   so OpenCode bootstrap no longer stops on a denied fetch;
   `--upload-pack` (including any `--upl…` abbreviation) and, defensively,
