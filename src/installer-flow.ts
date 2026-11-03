@@ -294,9 +294,10 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     (deps.printReport ?? printReport)(report);
     if (!report.ok) return 1;
   } catch (err) {
+    // The install is already committed, so an inconclusive post-save check warns
+    // rather than failing the command (#143); harness:doctor still exits 2.
     if (err instanceof DiagnosticError) errorOutput(err.message);
     errorOutput('Configuration saved, but runtime verification is inconclusive. Run npm run harness:doctor; check CLI path/service. No rollback or model substitution was performed.');
-    return 2;
   }
   output('Existing session models are unchanged; explicitly verify the assigned Lead model/variant in the new session.');
   output('Model access, MCP authentication, project commands, and approval behavior have NOT been runtime-validated.');

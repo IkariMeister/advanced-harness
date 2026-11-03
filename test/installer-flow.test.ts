@@ -156,8 +156,12 @@ test('installer verification returns failure and inconclusive statuses instead o
   assert.equal(await runInstallerFlow(base, { ...deps, verify: async () => ({ ok: false } as never) }), 1);
   const secondProject = join(root, 'second'); mkdirSync(secondProject);
   await assert.doesNotReject(async () => {
-    const result = await runInstallerFlow({ scope: 'project', project: secondProject }, { ...deps, recoveryDirectory: join(root, 'recovery-2'), verify: async () => { throw new Error('diagnostic unavailable'); } });
-    assert.equal(result, 2);
+    const errors: string[] = [];
+    const result = await runInstallerFlow({ scope: 'project', project: secondProject }, { ...deps, error: text => errors.push(text), recoveryDirectory: join(root, 'recovery-2'), verify: async () => { throw new Error('diagnostic unavailable'); } });
+    // Saved install with inconclusive verification warns but succeeds (#143).
+    assert.equal(result, 0);
+    assert.ok(existsSync(join(secondProject, 'opencode.jsonc')));
+    assert.ok(errors.some(line => line.includes('runtime verification is inconclusive')));
   });
 });
 
