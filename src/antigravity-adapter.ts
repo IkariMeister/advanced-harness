@@ -575,7 +575,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   return 0;
 }
 
-export async function diagnoseAntigravity(options: { project?: string | undefined; globalDirectory?: string | undefined; home?: string | undefined; platform?: NodeJS.Platform | undefined }): Promise<AntigravityDoctorResult> {
+export async function diagnoseAntigravity(options: { project?: string | undefined; globalDirectory?: string | undefined; home?: string | undefined; platform?: NodeJS.Platform | undefined; scope?: 'global' | 'project' | undefined }): Promise<AntigravityDoctorResult> {
   const issues: string[] = [];
   const notes: string[] = [];
   const platform = options.platform ?? process.platform;
@@ -714,8 +714,8 @@ export async function diagnoseAntigravity(options: { project?: string | undefine
     }
   };
 
-  // Determine footprints
-  if (project) {
+  // Determine footprints; doctor --scope never inspects the excluded scope's artifacts.
+  if (project && options.scope !== 'global') {
     if (
       existsSync(join(project, '.agents')) ||
       existsSync(join(project, '.agents', 'hooks.json')) ||
@@ -725,11 +725,11 @@ export async function diagnoseAntigravity(options: { project?: string | undefine
     }
   }
 
-  if (
+  if (options.scope !== 'project' && (
     existsSync(join(globalDir, 'hooks.json')) ||
     existsSync(join(globalDir, 'mcp_config.json')) ||
     existsSync(join(globalDir, 'rules', 'advanced-harness-lead.md'))
-  ) {
+  )) {
     globalInstalled = true;
   }
 

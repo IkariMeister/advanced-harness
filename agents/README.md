@@ -24,7 +24,7 @@ OpenCode configuration, receipts, backups, or permission ownership records.
 - Lead delegates to the seven named roles and waits for your chat approval of the latest plan.
 - Each role starts with deny-by-default, then enables its own capabilities. Broad shell/operational edits use OpenCode's normal `ask` permission until project-specific allowlists are agreed.
 - Only External has MCP/web/Code Mode permissions. MCP action patterns use the example server aliases `jira`, `github`, `figma`, and `stitch`; customize these to the actual normalized server/tool IDs. They do not create connections.
-- Operator owns local Git/worktrees/memory; External owns remote Git/services. Shell deny rules for common remote commands support that convention, but are not a security sandbox against scripts or aliases.
+- Operator owns local Git/worktrees/memory and may run `git fetch` to refresh the base before bootstrap (`--upload-pack`, including abbreviations, and `-u` are denied); External owns all other remote Git and services. Shell deny rules for common remote commands support that convention, but are not a security sandbox against scripts or aliases.
 - The installer appends the [security guardrails](../SECURITY.md#security-guardrails) last to every compiled role (they are not in these sources): read/edit deny for sensitive paths, and shell deny for destructive Git on roles that have shell. `.env` reads stay `ask`.
 - Implementer writes approved source/test changes. Reviewer/QA may run configured commands, but do not silently fix source. Required verification is independent of optional evidence capture.
 - Explicit models are unchanged. Validate every model/variant before delegation. Spark failed on the tested ChatGPT connection; Operator/External require an explicitly approved mapping or supported connection before a full pilot. No automatic model substitution.
@@ -50,7 +50,7 @@ and [troubleshooting guide](../docs/tool-troubleshooting.md).
 | Role | Intended capability | Owner / escalation |
 | --- | --- | --- |
 | Lead | Read/search, questions, named-role delegation; no implementation or publishing tools | Human decisions and sequencing; delegate to named capability owner |
-| Operator | Read/search, ASK shell/edit for local operations | Local Git, worktrees, memory, cleanup; remote/service work goes to External |
+| Operator | Read/search, ASK shell/edit for local operations; `git fetch` allowed | Local Git, worktrees, memory, cleanup; base refresh via `git fetch`; other remote/service work goes to External |
 | External | Read/search, ASK shell/web/Code Mode/MCP | Services, MCP, remote Git and approved publishing; escalate access gaps to Lead |
 | Researcher | Read/search only | Local research; request Git from Operator and service context from External |
 | Planner | Read/search only | Planning only; request missing context through Lead |

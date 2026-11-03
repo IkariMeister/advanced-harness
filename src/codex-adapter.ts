@@ -856,8 +856,11 @@ export function codexConfigPath(scope: 'project' | 'global', project: string | u
   return resolve(scope === 'project' ? join(project ?? '', '.codex', 'config.toml') : join(home, '.codex', 'config.toml'));
 }
 
-export async function diagnoseCodex(options: { project?: string | undefined; home: string; globalDirectory?: string | undefined }): Promise<{ ok: boolean; issues: string[]; notes: string[] }> {
-  const roots = [ ...(options.project ? [join(options.project, '.codex')] : []), options.globalDirectory ?? join(options.home, '.codex') ];
+export async function diagnoseCodex(options: { project?: string | undefined; home: string; globalDirectory?: string | undefined; scope?: 'global' | 'project' | undefined }): Promise<{ ok: boolean; issues: string[]; notes: string[] }> {
+  const roots = [
+    ...(options.project && options.scope !== 'global' ? [join(options.project, '.codex')] : []),
+    ...(options.scope !== 'project' ? [options.globalDirectory ?? join(options.home, '.codex')] : []),
+  ];
   const issues: string[] = [], notes: string[] = [];
   let found = false;
   for (const root of [...new Set(roots.map(path => resolve(path)))]) {
