@@ -94,6 +94,32 @@ test('Codex uninstall keeps a config key changed since install and reports it', 
   assert.ok(box.output.some(line => line === 'Kept in config.toml (changed since install, review by hand): sandbox_mode'));
 });
 
+test('Codex uninstall keeps a disabled_tools list customized since install and reports it', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  writeFileSync(join(box.codex, 'config.toml'), userConfig);
+  await install(box, 'gh', 'merge_pr');
+  const config = join(box.codex, 'config.toml');
+  writeFileSync(config, readFileSync(config, 'utf8').replace('disabled_tools = ["merge_pr"]', 'disabled_tools = ["merge_pr", "delete_repo"]'));
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  const restored = readFileSync(config, 'utf8');
+  assert.match(restored, /disabled_tools = \["merge_pr", "delete_repo"\]/, 'customized restriction list is preserved whole');
+  assert.match(restored, /\[mcp_servers\.gh\]\ncommand = "gh-mcp"\nenabled = true\n/, 'the unchanged enabled key is still reversed');
+  assert.doesNotMatch(restored, /approval_policy|multi_agent/);
+  assert.ok(box.output.some(line => line === 'Kept in config.toml (changed since install, review by hand): mcp_servers.gh.disabled_tools'), box.output.join('\n'));
+});
+
+test('a reinstall refreshes the recorded disabled_tools list so uninstall still narrows it', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  writeFileSync(join(box.codex, 'config.toml'), userConfig);
+  await install(box, 'gh', 'merge_pr');
+  await install(box, 'gh', 'merge_pr, close_issue');
+  assert.match(readFileSync(join(box.codex, 'config.toml'), 'utf8'), /disabled_tools = \["merge_pr", "close_issue"\]/);
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), userConfig);
+});
+
 test('an edited role profile blocks Codex uninstall with no writes', async t => {
   const box = sandbox(t);
   await install(box);

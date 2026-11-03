@@ -342,7 +342,8 @@ export type CodexConfigEdits = {
   /** config.toml did not exist before the first install, so uninstall may remove it once it is empty. */
   configCreated: boolean;
   featuresTableAdded: boolean;
-  mcp: Record<string, { enabledBefore: boolean | null; addedTools: string[]; toolsKeyAdded: boolean }>;
+  /** toolsAfter is the exact disabled_tools array the harness left; a different current array was customized. */
+  mcp: Record<string, { enabledBefore: boolean | null; addedTools: string[]; toolsKeyAdded: boolean; toolsAfter?: string[] | null }>;
 };
 
 const findEntry = (document: CodexTomlDocument, table: string[], key: string) =>
@@ -365,12 +366,14 @@ export function codexConfigEdits(before: string, after: string, prior?: CodexCon
     const toolsWas = findEntry(was, path, 'disabled_tools'), toolsNow = findEntry(now, path, 'disabled_tools');
     const oldTools = Array.isArray(toolsWas?.value) ? toolsWas.value as string[] : [];
     const added = Array.isArray(toolsNow?.value) ? (toolsNow.value as string[]).filter(name => !oldTools.includes(name)) : [];
-    if (enabledWas === enabledNow && !added.length) continue;
     const previous = edits.mcp[id];
+    // A server recorded by an earlier install keeps its record current even when this run adds nothing.
+    if (enabledWas === enabledNow && !added.length && !previous) continue;
     edits.mcp[id] = {
       enabledBefore: previous ? previous.enabledBefore : typeof enabledWas === 'boolean' ? enabledWas : null,
       addedTools: [...new Set([...(previous?.addedTools ?? []), ...added])],
       toolsKeyAdded: previous ? previous.toolsKeyAdded : !toolsWas && Boolean(toolsNow),
+      toolsAfter: Array.isArray(toolsNow?.value) ? [...toolsNow.value as string[]] : null,
     };
   }
   return edits;
@@ -408,7 +411,10 @@ export function reverseCodexConfigEdits(text: string, edits: CodexConfigEdits): 
     else if (enabled && record.enabledBefore !== false) changes.push({ start: enabled.valueStart, end: enabled.valueEnd, text: 'true' });
     const tools = findEntry(document, path, 'disabled_tools');
     if (tools && record.addedTools.length) {
-      if (!Array.isArray(tools.value)) { kept.push(`mcp_servers.${id}.disabled_tools`); continue; }
+      // Only an unchanged list is narrowed: removing entries from a customized list would drop a user restriction.
+      const unchanged = Array.isArray(tools.value) && Array.isArray(record.toolsAfter)
+        && tools.value.length === record.toolsAfter.length && (tools.value as unknown[]).every((name, index) => name === record.toolsAfter![index]);
+      if (!unchanged) { kept.push(`mcp_servers.${id}.disabled_tools`); continue; }
       const remaining = (tools.value as string[]).filter(name => !record.addedTools.includes(name));
       if (!remaining.length && record.toolsKeyAdded) changes.push({ ...lineOf(tools), text: '' });
       else changes.push({ start: tools.valueStart, end: tools.valueEnd, text: `[${remaining.map(quote).join(', ')}]` });
