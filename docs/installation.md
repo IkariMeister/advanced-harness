@@ -292,6 +292,23 @@ without native-rule provenance may therefore conflict when setup would override 
 unattributed deny. A receipt is local recovery evidence, not a cryptographic trust or
 authorization boundary against a same-user process rewriting the entire history.
 
+**Legacy permission migration (#160).** OpenCode `harness:update` offers a
+[legacy permission migration](glossary.md#hosts-installation-and-permissions) when
+legacy permission evidence no longer matches the configuration (for example after a
+duplicated rule was removed by hand, which blocks uninstall with
+`… (opaque legacy array)`) or when a legacy-installer rule conflicts with the current
+policy (for example the older Operator `git fetch *` deny). The preview lists, per
+role, each legacy rule to replace, each rule adopted into the recorded legacy state,
+and each recorded rule no longer present. Only typing `migrate` accepts it; any other
+answer leaves the evidence unchanged, and update stays blocked if conflicts remain.
+Nothing is written until the final `update` confirmation.
+
+After migration the current legacy rules count as harness-installed: uninstall
+removes them together with the harness rules and restores the field from before the
+first install. Rules that were present before that first install are never replaced.
+The successor receipt records what was migrated; receipt discovery rejects a change
+to legacy evidence without that record.
+
 Automated lifecycle tests cover native install → integration → upgrade → restore.
 Independent review and isolated interactive CLI QA remain required before live use.
 

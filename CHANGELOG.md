@@ -13,6 +13,15 @@ version between releases.
   a launcher that re-applies the role settings on every launch and resume (#45).
   Installation stays gated.
 
+### Fixed
+
+- OpenCode installs that started from a legacy (v1) receipt can update and
+  uninstall again. `harness:update` offers a legacy permission migration
+  (type `migrate`) that replaces older legacy rules the current policy changes,
+  such as the Operator `git fetch *` deny, and records hand edits to legacy
+  permission arrays so uninstall no longer reports them as concurrent edits.
+  Uninstall points to the migration when it finds stale legacy evidence (#160).
+
 ## v0.2.1 — 2026-11-03
 
 Patch release on the 0.2 line (#149).
