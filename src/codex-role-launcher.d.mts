@@ -25,4 +25,5 @@ export function reportRun(options: {
   resultText?: string | undefined;
 }): { code: number; report: Record<string, unknown> };
 export function findCodexBinary(env?: NodeJS.ProcessEnv): string;
+export function isEntryPoint(scriptPath: string | undefined, moduleUrl?: string): boolean;
 export function main(argv?: string[], env?: NodeJS.ProcessEnv): number;
