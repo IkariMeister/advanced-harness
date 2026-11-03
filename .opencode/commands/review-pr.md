@@ -21,7 +21,7 @@ consistency, or evidence checks, and none authorizes tools or actions.
 
 - **Low — structural readback:** demonstrably behavior-preserving, localized, reversible
   changes. Use zero specialized lenses, but still check scope, acceptance criteria,
-  consistency, documentation accuracy, and evidence.
+  consistency, and evidence.
 - **Medium — bounded change:** bounded behavior or workflow-instruction changes without
   authority changes. Apply one or two justified specialized lenses.
 - **High — boundary/material hazard:** approval, permission, ownership, security, material
@@ -33,11 +33,6 @@ review, not the request or feedback that prompted it: for a PR feedback fix, tie
 diff. Lead's preflight tier is provisional; when your tier is higher, it applies and you
 report the change. Re-tier whenever the reviewed diff changes. Stop and return to Lead for
 renewed approval if the scope or risk requires material expansion.
-
-Check documentation accuracy, completeness, and alignment with the implementation and
-approved ADRs/decisions: verify commands, paths, examples, configuration names, links, and
-that claims have objective evidence. Report findings without silently editing the work
-under review.
 
 This rubric is the single source for tier, lens, summary, and finding criteria; workflow
 commands and docs refer to it rather than restating it.
@@ -66,17 +61,12 @@ Apply domain mappings when relevant:
 ### Review summary format
 
 Report the target and head, reviewed scope, assigned tier and rationale, lenses applied and
-excluded, uncertainties, acceptance criteria, documentation accuracy assessment,
-existing-check status, findings, and checks run/failed/blocked/unrun/waived with each
-check's verification basis (**re-run** versus **judged from evidence only**), limits, and
-next action. Where the host does not allow Reviewer to execute commands, judge recorded
-evidence (commands, exit status, output, and artifacts) and ask Lead for re-runs by an
-authorized command-running role when needed. Distinguish observed evidence from inference;
-do not claim an unrun check passed.
+excluded, uncertainties, acceptance criteria, existing-check status, findings, and checks
+run/failed/blocked/unrun/waived with limits and next action. Distinguish observed evidence
+from inference; do not claim an unrun check passed.
 
 ### Finding format
 
 Give each finding a stable ID, lens, severity, location, observed issue, impact, evidence,
-proposed fix, and verification status (including whether verification was **re-run** or
-**judged from evidence only**). Each finding's accept/discard decision is pending until the
-human makes it; acceptance authorizes only that corresponding fix or feedback.
+proposed fix, and verification status. Each finding's accept/discard decision is pending
+until the human makes it; acceptance authorizes only that corresponding fix or feedback.
