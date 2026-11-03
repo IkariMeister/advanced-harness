@@ -85,7 +85,7 @@ export function compileCodexLeadBlock(policies: Record<CodexChildRole, CodexRole
     '',
     '| Role | Sandbox | Network | MCP |',
     '| :--- | :--- | :--- | :--- |',
-    ...codexChildRoles.map(role => `| \`${role}\` | ${policies[role].sandbox} | ${policies[role].network ? 'yes' : 'no'} | ${policies[role].mcp ? 'configured servers' : 'off'} |`),
+    ...codexChildRoles.map(role => `| \`${role}\` | ${policies[role].sandbox} | ${policies[role].network ? 'yes' : 'no'} | ${policies[role].mcp ? 'selected servers' : 'off'} |`),
     '',
     'Role settings come from `~/.codex/harness-<role>.config.toml` and are re-applied on every launch and resume. Do not pass your own `-c`, `-s` or `-p` flags and do not call `codex exec` directly.',
     '',

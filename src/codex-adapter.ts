@@ -703,7 +703,7 @@ export async function installCodex(options: {
     const priorFiles = snapshot.head?.receipt.version === 2 ? snapshot.head.receipt.managedFiles ?? [] : [];
   const previousSelected = Array.isArray(stateValue.selectedMcpServers) ? stateValue.selectedMcpServers.filter((id): id is string => typeof id === 'string') : [];
     let selectedAnswer: string;
-    try { selectedAnswer = (await ask('Existing Codex MCP server ID(s) to mark disabled pending route validation (comma-separated; - clears tracking)', previousSelected.join(', '))).trim(); }
+    try { selectedAnswer = (await ask(roleProcesses ? 'Existing Codex MCP server ID(s) External may use; each stays disabled for Lead and every other role (comma-separated; - clears tracking)' : 'Existing Codex MCP server ID(s) to mark disabled pending route validation (comma-separated; - clears tracking)', previousSelected.join(', '))).trim(); }
     catch { throw new Error('Codex installation cancelled because an interactive prompt was rejected or closed; no changes made.'); }
   const selected = selectedAnswer === '-' ? [] : selectedAnswer ? selectedAnswer.split(',').map(x => x.trim()).filter(Boolean) : previousSelected;
   const selectedTools: Record<string, string[]> = {};
@@ -851,6 +851,7 @@ export async function installCodex(options: {
     output('Each child role runs as its own codex exec process with its own sandbox, network and MCP settings; Lead (your Codex Desktop session) only launches them.');
     if (approvalProblems.length) output(`Warning: your existing config.toml settings are kept, so you may not be asked to approve role launches: ${approvalProblems.join('; ')}. Set them in config.toml to restore the approval point; harness:doctor reports this until you do.`);
     else output("You approve every launch: Lead's session keeps the read-only sandbox with on-request approvals.");
+    output(selected.length ? `External may use only these MCP servers: ${selected.join(', ')}. They stay disabled in config.toml for Lead and the other roles. Other servers are off for every child role.` : 'No MCP server is selected, so no child role can use MCP.');
     output('In-process subagents (multi_agent) are turned off when not set. Codex runtime and Desktop approval behavior are not verified by this harness.');
   } else output('Shared baseline adds read-only sandbox and on-request approval only when absent. Codex runtime behavior and universal write gating are not verified. MCP selections remain disabled pending validation. Direct gh pr merge rules are not universal indirect/API protection.');
   if ((await ask('Type install to apply these changes', 'cancel')) !== 'install') { output('Cancelled. No files, backups, or receipts were written.'); return 0; }

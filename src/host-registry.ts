@@ -240,7 +240,7 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
     disclosures: [
       "Global scope only: each child role runs as its own codex exec process from ~/.codex/harness-<role>.config.toml (issue #45); Codex subagents would share the parent session's sandbox, approval and MCP settings.",
       'Lead is your Codex Desktop session (read-only baseline) and only launches roles through the harness launcher; you approve every launch, and the prompt shows the role and task.',
-      'Role sandboxes follow the role sources: Operator and Implementer workspace-write, External workspace-write with network and MCP, Researcher, Planner, Reviewer and QA read-only. features.multi_agent is set to false when unset.',
+      'Role sandboxes follow the role sources: Operator and Implementer workspace-write, External workspace-write with network and only the MCP servers you select, Researcher, Planner, Reviewer and QA read-only. features.multi_agent is set to false when unset.',
       'Workflow skills are installed as ~/.agents/skills/<name>/SKILL.md; invocation binding remains caller-specific.',
       'An approved codex exec launch through the launcher, and Codex agent reload semantics, are not yet runtime-verified by this harness.',
       'Codex rules forbid direct git reset --hard, git clean, and force-push prefixes, including bundled short flags (-uf, -vuf) and force flags right after origin/upstream; force flags after other remotes or a refspec are not matched. Sensitive-path reads are instruction-level only.',

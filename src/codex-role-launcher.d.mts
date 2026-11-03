@@ -7,11 +7,13 @@ export function buildRoleInvocation(options: {
   profileText: string;
   mcpServers: readonly string[];
   mcpAllowed: boolean;
+  mcpSelected?: readonly string[] | undefined;
   resumeId?: string | undefined;
   task: string;
   schemaPath: string;
   resultPath: string;
 }): string[];
+export function readSelectedMcpServers(home: string): string[];
 export function threadBindingsPath(home: string): string;
 export function readThreadBindings(dir: string): Record<string, string>;
 export function assertResumable(bindings: Record<string, string>, threadId: string, role: string): void;
