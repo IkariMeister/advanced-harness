@@ -350,6 +350,9 @@ const findEntry = (document: CodexTomlDocument, table: string[], key: string) =>
   document.entries.find(entry => entry.table.join('\u0000') === table.join('\u0000') && entry.key.length === 1 && entry.key[0] === key)
   ?? (table.length ? document.entries.find(entry => entry.table.length === 0 && entry.key.join('\u0000') === [...table, key].join('\u0000')) : undefined);
 
+const sameTools = (a: readonly unknown[] | null | undefined, b: readonly unknown[] | null | undefined) =>
+  a === b || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((name, index) => name === b[index]));
+
 /** Diffs config.toml before and after an install, then folds in edits recorded by earlier installs. */
 export function codexConfigEdits(before: string, after: string, prior?: CodexConfigEdits, created = false): CodexConfigEdits {
   const was = parseCodexToml(before, 'config.toml'), now = parseCodexToml(after, 'config.toml');
@@ -369,11 +372,15 @@ export function codexConfigEdits(before: string, after: string, prior?: CodexCon
     const previous = edits.mcp[id];
     // A server recorded by an earlier install keeps its record current even when this run adds nothing.
     if (enabledWas === enabledNow && !added.length && !previous) continue;
+    // A list the user changed since the last install stays marked as changed: adopting it as the
+    // harness baseline would let uninstall narrow a user-customized list without a kept warning.
+    const toolsBefore = Array.isArray(toolsWas?.value) ? toolsWas.value as string[] : null;
+    const customized = previous !== undefined && previous.toolsAfter !== undefined && !sameTools(toolsBefore, previous.toolsAfter);
     edits.mcp[id] = {
       enabledBefore: previous ? previous.enabledBefore : typeof enabledWas === 'boolean' ? enabledWas : null,
       addedTools: [...new Set([...(previous?.addedTools ?? []), ...added])],
       toolsKeyAdded: previous ? previous.toolsKeyAdded : !toolsWas && Boolean(toolsNow),
-      toolsAfter: Array.isArray(toolsNow?.value) ? [...toolsNow.value as string[]] : null,
+      toolsAfter: customized ? previous.toolsAfter as string[] | null : Array.isArray(toolsNow?.value) ? [...toolsNow.value as string[]] : null,
     };
   }
   return edits;
@@ -965,7 +972,15 @@ function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): st
  * file can hold MCP credentials) and the state manifest. Used as the generic flow's host step, so it is
  * previewed before confirmation and applied only after every receipt-managed file was restored.
  */
-export function planCodexUninstall(statePath: string, backupParent: string): { actions: string[]; kept: string[]; apply(): string[] } {
+/** A role thread binding the launcher writes: a file named by a thread ID that holds one child role's name. */
+const codexThreadIdPattern = /^[A-Za-z0-9-]{1,128}$/;
+
+/**
+ * Plans the Codex host step of uninstall. `remove` deletes one file; tests replace it to inject failures.
+ * Writes run in retry-safe order: thread bindings, then config.toml, and the state manifest last, so a
+ * failure leaves the manifest in place and uninstall can be run again.
+ */
+export function planCodexUninstall(statePath: string, backupParent: string, remove: (path: string) => void = unlinkSync): { actions: string[]; kept: string[]; apply(): string[] } {
   if (!existsSync(statePath)) throw new Error(`Codex state manifest is missing: ${statePath}; uninstall cannot identify the harness configuration edits.`);
   const stateText = readFileSync(statePath, 'utf8');
   let state: { mode?: unknown; configEdits?: CodexConfigEdits };
@@ -977,55 +992,81 @@ export function planCodexUninstall(statePath: string, backupParent: string): { a
   const configBefore = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
   const reversed = configBefore === undefined ? undefined : reverseCodexConfigEdits(configBefore, edits);
   const removeConfig = reversed !== undefined && edits.configCreated && !reversed.text.trim();
+  // The launcher's thread-to-role bindings are runtime state outside the receipt. Only entries that are
+  // bindings by name and content are removed; anything else is kept and reported, never assumed ours.
+  const threadsPath = join(dirname(statePath), 'advanced-harness', 'role-threads');
+  const bindings: Array<{ path: string; content: string }> = [], unexpected: string[] = [];
+  if (existsSync(threadsPath)) {
+    if (!lstatSync(threadsPath).isDirectory()) unexpected.push(threadsPath);
+    else for (const name of readdirSync(threadsPath)) {
+      const path = join(threadsPath, name);
+      const content = lstatSync(path).isFile() ? readFileSync(path, 'utf8') : undefined;
+      if (content !== undefined && codexThreadIdPattern.test(name) && (codexChildRoles as readonly string[]).includes(content.trim())) bindings.push({ path, content });
+      else unexpected.push(path);
+    }
+  }
   const actions = [
+    ...(bindings.length ? [`remove ${bindings.length} role thread binding file(s) in ${threadsPath}`] : []),
+    ...unexpected.map(path => `keep ${path} (not a role thread binding; review by hand)`),
     reversed === undefined ? `${configPath}: absent, nothing to reverse`
       : removeConfig ? `remove ${configPath} (created by the harness, nothing else in it)`
       : reversed.text === configBefore ? `${configPath}: no harness edits left to reverse`
       : `reverse harness edits in ${configPath}${reversed.kept.length ? ` (keeping changed: ${reversed.kept.join(', ')})` : ''}`,
     `remove ${statePath}`,
   ];
-  // The launcher's thread-to-role bindings (one file per thread) are runtime state outside the receipt.
-  // Only the plain files seen now are removed; anything else in the directory is left in place.
-  const threadsPath = join(dirname(statePath), 'advanced-harness', 'role-threads');
-  const threadFiles = existsSync(threadsPath) && lstatSync(threadsPath).isDirectory()
-    ? readdirSync(threadsPath).filter(name => lstatSync(join(threadsPath, name)).isFile()) : [];
-  if (threadFiles.length) actions.push(`remove ${threadFiles.length} role thread binding file(s) in ${threadsPath}`);
   return {
     actions,
     kept: reversed?.kept ?? [],
     apply() {
-      const lines: string[] = [];
+      // Everything reviewed is re-checked before the first write.
       const latest = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
-      if (latest !== configBefore) throw new Error(`${configPath} changed after review; its harness edits were not reversed`);
-      if (readFileSync(statePath, 'utf8') !== stateText) throw new Error(`${statePath} changed after review`);
-      const backupDir = join(backupParent, `${new Date().toISOString().replaceAll(':', '-')}-codex-uninstall-${digest(statePath).slice(0, 8)}`);
-      const backup = (path: string, content: string) => {
-        mkdirSync(backupDir, { recursive: true, mode: 0o700 });
-        const target = join(backupDir, basename(path));
-        writeFileSync(target, content, { flag: 'wx', mode: 0o600 });
-        lines.push(`Private backup: ${target}`);
-      };
-      if (configBefore !== undefined && reversed && reversed.text !== configBefore) {
-        backup(configPath, configBefore);
-        if (removeConfig) { unlinkSync(configPath); lines.push(`Removed ${configPath}`); }
-        else { writeFileSync(configPath, reversed.text, 'utf8'); lines.push(`Reversed harness edits in ${configPath}`); }
-      }
-      backup(statePath, stateText);
-      unlinkSync(statePath);
-      lines.push(`Removed ${statePath}`);
-      if (threadFiles.length) {
-        const threadBackup = join(backupDir, 'role-threads');
-        mkdirSync(threadBackup, { recursive: true, mode: 0o700 });
-        let removed = 0;
-        for (const name of threadFiles) {
-          const file = join(threadsPath, name);
-          if (!existsSync(file)) continue;
-          writeFileSync(join(threadBackup, name), readFileSync(file), { flag: 'wx', mode: 0o600 });
-          unlinkSync(file);
-          removed++;
+      if (latest !== configBefore) throw new Error(`${configPath} changed after review; nothing was changed by the Codex step`);
+      if (readFileSync(statePath, 'utf8') !== stateText) throw new Error(`${statePath} changed after review; nothing was changed by the Codex step`);
+      for (const binding of bindings) {
+        if (existsSync(binding.path) && (!lstatSync(binding.path).isFile() || readFileSync(binding.path, 'utf8') !== binding.content)) {
+          throw new Error(`${binding.path} changed after review; nothing was changed by the Codex step`);
         }
-        lines.push(`Removed ${removed} role thread binding file(s) from ${threadsPath}; private backup: ${threadBackup}`);
-        // Managed-file pruning ran first and kept these directories because the bindings were still in them.
+      }
+      const lines: string[] = [];
+      const backupDir = join(backupParent, `${new Date().toISOString().replaceAll(':', '-')}-codex-uninstall-${digest(statePath).slice(0, 8)}`);
+      const backup = (path: string, content: string, folder = backupDir) => {
+        mkdirSync(folder, { recursive: true, mode: 0o700 });
+        const target = join(folder, basename(path));
+        writeFileSync(target, content, { flag: 'wx', mode: 0o600 });
+        return target;
+      };
+      let removed = 0;
+      try {
+        if (bindings.length) {
+          const threadBackup = join(backupDir, 'role-threads');
+          lines.push(`Private backup of role thread bindings: ${threadBackup}`);
+          for (const binding of bindings) {
+            if (!existsSync(binding.path)) continue;
+            backup(binding.path, binding.content, threadBackup);
+            remove(binding.path);
+            removed++;
+          }
+          lines.push(`Removed ${removed} role thread binding file(s) from ${threadsPath}`);
+        }
+        if (configBefore !== undefined && reversed && reversed.text !== configBefore) {
+          lines.push(`Private backup: ${backup(configPath, configBefore)}`);
+          if (removeConfig) { remove(configPath); lines.push(`Removed ${configPath}`); }
+          else { writeFileSync(configPath, reversed.text, 'utf8'); lines.push(`Reversed harness edits in ${configPath}`); }
+        }
+        // Last: while the manifest exists, a failed run can simply be retried.
+        lines.push(`Private backup: ${backup(statePath, stateText)}`);
+        remove(statePath);
+        lines.push(`Removed ${statePath}`);
+      } catch (error) {
+        if (bindings.length && !lines.some(line => line.startsWith('Removed ') && line.includes('role thread binding'))) {
+          lines.push(`Removed ${removed} of ${bindings.length} role thread binding file(s) from ${threadsPath}`);
+        }
+        const kept = existsSync(statePath) ? `${statePath} is kept, so uninstall can be run again` : `${statePath} was already removed`;
+        throw new Error(`Codex step failed: ${error instanceof Error ? error.message : String(error)}. Completed before the failure: ${lines.join('; ') || 'nothing'}. ${kept}.`);
+      }
+      for (const path of unexpected) lines.push(`Kept ${path}: not a role thread binding; review by hand`);
+      // Managed-file pruning ran first and kept these directories because the bindings were still in them.
+      if (!unexpected.length && bindings.length) {
         for (const dir of [threadsPath, dirname(threadsPath)]) {
           try { rmdirSync(dir); lines.push(`Removed empty installer directory: ${dir}`); } catch { break; /* not empty: left in place */ }
         }

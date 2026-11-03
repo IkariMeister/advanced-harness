@@ -142,6 +142,81 @@ test('Codex uninstall also removes the launcher thread bindings and their empty 
   assert.equal(existsSync(bindings), false);
   assert.equal(existsSync(join(box.codex, 'advanced-harness')), false);
   assert.ok(box.output.some(line => line.includes('remove 2 role thread binding file(s)')), 'listed in the planned actions before confirmation');
-  const backup = box.output.find(line => line.startsWith('Removed 2 role thread binding file(s)'))?.split('private backup: ')[1];
+  assert.ok(box.output.includes(`Removed 2 role thread binding file(s) from ${bindings}`), box.output.join('\n'));
+  const backup = box.output.find(line => line.startsWith('Private backup of role thread bindings: '))?.split(': ')[1];
   assert.ok(backup && existsSync(join(backup, 'thread-1')) && existsSync(join(backup, 'thread-2')), 'bindings are backed up privately');
+});
+
+test('an update that leaves a customized disabled_tools list untouched keeps it marked as customized', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  writeFileSync(join(box.codex, 'config.toml'), userConfig);
+  await install(box, 'gh', 'merge_pr');
+  const config = join(box.codex, 'config.toml');
+  writeFileSync(config, readFileSync(config, 'utf8').replace('disabled_tools = ["merge_pr"]', 'disabled_tools = ["merge_pr", "delete_repo"]'));
+  // The update selects no MCP server, so it never touches the customized list.
+  await install(box);
+  assert.match(readFileSync(config, 'utf8'), /disabled_tools = \["merge_pr", "delete_repo"\]/);
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  assert.match(readFileSync(config, 'utf8'), /disabled_tools = \["merge_pr", "delete_repo"\]/, 'the user list is not narrowed');
+  assert.ok(box.output.some(line => line === 'Kept in config.toml (changed since install, review by hand): mcp_servers.gh.disabled_tools'), box.output.join('\n'));
+});
+
+test('Codex uninstall keeps and reports files in the bindings directory that are not bindings', async t => {
+  const box = sandbox(t);
+  await install(box);
+  const bindings = join(box.codex, 'advanced-harness', 'role-threads');
+  recordThread(bindings, 'thread-1', 'implementer');
+  writeFileSync(join(bindings, 'notes.txt'), 'mine\n');
+  writeFileSync(join(bindings, 'thread-2'), 'not-a-role\n');
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  assert.equal(existsSync(join(bindings, 'thread-1')), false);
+  assert.equal(readFileSync(join(bindings, 'notes.txt'), 'utf8'), 'mine\n');
+  assert.equal(readFileSync(join(bindings, 'thread-2'), 'utf8'), 'not-a-role\n');
+  for (const name of ['notes.txt', 'thread-2']) {
+    assert.ok(box.output.some(line => line.includes(`keep ${join(bindings, name)} (not a role thread binding`)), `${name} listed as kept before confirmation`);
+    assert.ok(box.output.some(line => line.startsWith(`Kept ${join(bindings, name)}`)), `${name} reported as kept`);
+  }
+});
+
+test('a binding changed after review stops the Codex step before any write', async t => {
+  const box = sandbox(t);
+  await install(box);
+  const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
+  const bindings = join(box.codex, 'advanced-harness', 'role-threads');
+  recordThread(bindings, 'thread-1', 'implementer');
+  const step = planCodexUninstall(target, box.recovery);
+  writeFileSync(join(bindings, 'thread-1'), 'reviewer\n');
+  const config = readFileSync(join(box.codex, 'config.toml'), 'utf8');
+  assert.throws(() => step.apply(), /thread-1 changed after review; nothing was changed/);
+  assert.equal(readFileSync(join(bindings, 'thread-1'), 'utf8'), 'reviewer\n');
+  assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), config);
+  assert.ok(existsSync(target), 'state manifest kept');
+});
+
+test('a failed Codex step keeps the state manifest, reports completed work and backups, and can be retried', async t => {
+  const box = sandbox(t);
+  await install(box);
+  const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
+  const bindings = join(box.codex, 'advanced-harness', 'role-threads');
+  recordThread(bindings, 'thread-1', 'implementer');
+  recordThread(bindings, 'thread-2', 'reviewer');
+  const config = readFileSync(join(box.codex, 'config.toml'), 'utf8');
+  let calls = 0;
+  const failing = planCodexUninstall(target, box.recovery, path => { if (++calls === 2) throw new Error('simulated delete failure'); rmSync(path); });
+  let message = '';
+  assert.throws(() => failing.apply(), error => { message = (error as Error).message; return true; });
+  assert.match(message, /Codex step failed: simulated delete failure/);
+  assert.match(message, /Private backup of role thread bindings: /);
+  assert.match(message, /Removed 1 of 2 role thread binding file\(s\)/);
+  assert.match(message, /is kept, so uninstall can be run again/);
+  assert.ok(existsSync(target), 'state manifest kept for the retry');
+  assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), config, 'config.toml untouched: it is reversed after the bindings');
+
+  const retry = planCodexUninstall(target, box.recovery);
+  assert.ok(retry.actions.includes(`remove 1 role thread binding file(s) in ${bindings}`), retry.actions.join('\n'));
+  const lines = retry.apply();
+  assert.ok(lines.includes(`Removed ${target}`), lines.join('\n'));
+  assert.equal(existsSync(target), false);
+  assert.equal(existsSync(bindings), false);
 });
