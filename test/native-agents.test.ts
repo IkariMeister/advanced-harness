@@ -288,3 +288,37 @@ test('BH-035: Lead instructs bounded delegation trigger rules and 4-state human 
   assert.match(lead, /- Ready: work is verified with evidence; ready for human review or PR publication\./);
   assert.match(lead, /- Needs your decision: paused only at mandatory human gates/);
 });
+
+test('BH-047: role contracts define ADR-001 documentation ownership and ADR-002 Reviewer evidence-only reporting without role/tool changes', () => {
+  const planner = template('planner').replace(/\s+/g, ' ');
+  const implementer = template('implementer').replace(/\s+/g, ' ');
+  const reviewer = template('reviewer').replace(/\s+/g, ' ');
+  const lead = template('lead').replace(/\s+/g, ' ');
+
+  // Planner: authors/maintains ADRs and design rationale, identifies documentation impact and whether an ADR is needed
+  assert.match(planner, /documentation impact \(affected documentation artifacts and whether an architectural change requires a new or updated ADR\)/);
+  assert.match(planner, /Author and maintain architectural decision records \(ADRs\) and design rationale/);
+  assert.match(planner, /an ADR remains Proposed until accepted/);
+
+  // Implementer: updates implementation docs/examples/developer instructions, records assessment when uncertain, escalates ADR deviations
+  assert.match(implementer, /affected implementation documentation \(examples, integration notes, and developer instructions\)/);
+  assert.match(implementer, /Record an explicit documentation-impact assessment when impact is uncertain or when no documentation changes are needed/);
+  assert.match(implementer, /Material approach\/scope changes or deviations from an approved ADR return to Lead for renewed approval before proceeding; never silently rewrite an approved ADR or decision/);
+
+  // Reviewer: checks documentation accuracy, reports re-run vs judged from evidence only, asks Lead for re-runs when command execution is withheld, does not silently edit
+  assert.match(reviewer, /Check documentation accuracy, completeness, and alignment with the implementation and approved ADRs\/decisions: verify commands, paths, examples, configuration names, links, and that claims have objective evidence/);
+  assert.match(reviewer, /Report findings without silently editing the work under review/);
+  assert.match(reviewer, /verification basis \(\*\*re-run\*\* versus \*\*judged from evidence only\*\*\)/);
+  assert.match(reviewer, /verification status \(including whether verification was \*\*re-run\*\* or \*\*judged from evidence only\*\*\)/);
+  assert.match(reviewer, /Where the host does not allow Reviewer to execute commands, judge recorded evidence \(commands, exit status, output, and artifacts\) and ask Lead for re-runs by an authorized command-running role/);
+  assert.match(reviewer, /State for every check whether it was \*\*re-run\*\* by Reviewer or \*\*judged from evidence only\*\*/);
+
+  // Lead: tracks documentation requirement, approval state, and Reviewer re-run/evidence-only reporting
+  assert.match(lead, /Planner plan \(including documentation impact and any ADR draft\/update\)/);
+  assert.match(lead, /Implementer code, tests, and implementation documentation \(with explicit documentation-impact assessment when uncertain\)/);
+  assert.match(lead, /Reviewer configured checks, documentation review, and verification basis reporting \(re-run versus judged from evidence only, routing Reviewer re-run requests to an authorized command-running role when Reviewer lacks command execution\)/);
+  assert.match(lead, /Track the documentation requirement and approval state throughout the conversation and resume checklist/);
+
+  // No role added or removed; no tool or permission changes
+  assert.deepEqual(Object.keys(definitions).sort(), [...roles].sort());
+});

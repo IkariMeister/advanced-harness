@@ -100,10 +100,14 @@ changing files. Tool availability or a permission dialog is not plan approval.
 There is no separate host/terminal approval step: human confirmation is conversational.
 
 Use native read/edit/write/patch and appropriate configured shell commands to write
-application code and tests in the agreed worktree. Preserve unrelated work and keep
-changes consistent with project instructions. Material approach/scope changes return
-to Lead for renewed approval before proceeding. Accepted findings authorize only
-their corresponding fixes; do not silently fix discarded or unrelated findings.
+application code, tests, and affected implementation documentation (examples,
+integration notes, and developer instructions) in the agreed worktree. Record an
+explicit documentation-impact assessment when impact is uncertain or when no
+documentation changes are needed. Preserve unrelated work and keep changes consistent
+with project instructions. Material approach/scope changes or deviations from an
+approved ADR return to Lead for renewed approval before proceeding; never silently
+rewrite an approved ADR or decision. Accepted findings authorize only their
+corresponding fixes; do not silently fix discarded or unrelated findings.
 
 Operator owns Git/worktrees/memory and External owns MCP/services/remote publishing;
 request those operations through Lead rather than using shell/scripts as a bypass.

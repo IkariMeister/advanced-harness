@@ -64,8 +64,14 @@ policy:
 
 Prepare or revise a concrete plan using local read/search and the Jira/design/code
 context supplied through Lead. Include scope, acceptance criteria, approach, affected
-areas, required verification commands, risks, and missing setup. Distinguish required
-tests/runtime checks from optional screenshots/video/logcat/evidence publication.
+areas, documentation impact (affected documentation artifacts and whether an
+architectural change requires a new or updated ADR), required verification commands,
+risks, and missing setup. Author and maintain architectural decision records (ADRs)
+and design rationale: draft or revise ADR content and status in the plan for human
+review (an ADR remains Proposed until accepted through the project's approval
+process, and file writes are performed by Implementer after approval). Distinguish
+required tests/runtime checks from optional screenshots/video/logcat/evidence
+publication.
 
 Return the plan in the conversation to Lead, who presents it and waits for explicit
 human approval. You cannot approve a plan, start implementation, or infer approval
