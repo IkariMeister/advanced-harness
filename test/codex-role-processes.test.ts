@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { diagnoseCodex, disableMultiAgent, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
 import { codexChildRoles, codexRoleLauncherSource, codexRolePolicies, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from '../src/codex-role-processes.ts';
-import { assertResumable, buildRoleInvocation, main as launcherMain, parseProfile, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
+import { assertResumable, buildRoleInvocation, isEntryPoint, main as launcherMain, parseProfile, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 
 const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -358,4 +358,43 @@ test('install warns and doctor fails when Lead settings remove the approval poin
 
   writeFileSync(join(clean.codex, 'config.toml'), readFileSync(join(clean.codex, 'config.toml'), 'utf8').replace('approval_policy = "on-request"', 'approval_policy = "never"'));
   assert.match((await diagnoseCodex({ home: clean.home })).issues.join('\n'), /Lead approval_policy is "never"/, 'drift after install is caught too');
+});
+
+test('a task starting with a dash reaches Codex as text, never as a flag (#45)', () => {
+  const profileText = compileCodexRoleProfile('reviewer', policies.reviewer, 'gpt-example', 'medium', 'Review.');
+  const base = { role: 'reviewer', profileText, mcpServers: [], mcpAllowed: false, schemaPath: 's.json', resultPath: 'r.json' };
+  for (const task of ['--dangerously-bypass-approvals-and-sandbox', '-csandbox_mode="danger-full-access"', '--help']) {
+    const launch = buildRoleInvocation({ ...base, task });
+    assert.deepEqual(launch.slice(-2), ['--', task]);
+    assert.equal(launch.indexOf(task), launch.length - 1, 'nothing but the task follows the separator');
+    const resume = buildRoleInvocation({ ...base, task, resumeId: 'thread-1' });
+    assert.deepEqual(resume.slice(-3), ['--', 'thread-1', task]);
+    assert.equal(resume.indexOf('--'), resume.length - 3);
+  }
+  assert.throws(() => buildRoleInvocation({ ...base, task: ' - ' }), /cannot be "-"/);
+});
+
+test('the launcher runs when started through a linked directory, instead of exiting silently (#45)', async t => {
+  const { root } = sandbox(t);
+  const real = join(root, 'real'), linked = join(root, 'linked');
+  mkdirSync(real);
+  writeFileSync(join(real, 'codex-role.mjs'), codexRoleLauncherSource());
+  symlinkSync(real, linked, 'junction');
+  const start = (script: string) => new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
+    const child = spawn(process.execPath, [script, 'no-such-role', '--task', 't'], { env: { ...process.env, CODEX_HOME: join(root, 'no-home') }, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += String(chunk); });
+    child.on('error', reject);
+    child.on('close', code => resolve({ code, stderr }));
+  });
+  // An unknown role proves main() ran: it fails with exit 2 before any Codex process could start.
+  for (const script of [join(real, 'codex-role.mjs'), join(linked, 'codex-role.mjs')]) {
+    const result = await start(script);
+    assert.equal(result.code, 2, script);
+    assert.match(result.stderr, /Unknown role "no-such-role"/, script);
+  }
+  const moduleUrl = pathToFileURL(join(real, 'codex-role.mjs')).href;
+  assert.equal(isEntryPoint(join(linked, 'codex-role.mjs'), moduleUrl), true);
+  assert.equal(isEntryPoint(join(root, 'other.mjs'), moduleUrl), false);
+  assert.equal(isEntryPoint(undefined, moduleUrl), false);
 });

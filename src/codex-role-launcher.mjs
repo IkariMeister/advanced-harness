@@ -7,7 +7,7 @@
 // no -p/-s, and a resumed thread otherwise falls back to the base config (#45 spike, 2026-11-02).
 // Self-contained on purpose: the installed copy must not depend on the harness checkout.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -43,6 +43,8 @@ const tomlKey = name => /^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(na
 export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed, resumeId, task, schemaPath, resultPath }) {
   if (!/^[a-z][a-z0-9_-]{0,63}$/.test(role) || role === 'lead') throw new Error(`Not a launchable role: ${role}`);
   if (!task || !task.trim()) throw new Error('A task is required.');
+  // Codex reads a lone "-" prompt from stdin, which the launcher closes: it would run with no task.
+  if (task.trim() === '-') throw new Error('The task cannot be "-".');
   const profile = parseProfile(profileText);
   const overrides = [];
   for (const key of securityKeys) {
@@ -52,9 +54,10 @@ export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed,
   // Fail closed: every MCP server the effective config knows about is switched off unless the role owns MCP.
   if (!mcpAllowed) for (const name of mcpServers) overrides.push('-c', `mcp_servers.${tomlKey(name)}.enabled=false`);
   const output = ['--json', '--output-schema', schemaPath, '-o', resultPath];
+  // "--" ends the options: a task starting with "-" is text, never a Codex flag that could widen the sandbox.
   return resumeId
-    ? ['exec', 'resume', ...overrides, ...output, resumeId, task]
-    : ['-p', `harness-${role}`, 'exec', ...overrides, ...output, task];
+    ? ['exec', 'resume', ...overrides, ...output, '--', resumeId, task]
+    : ['-p', `harness-${role}`, 'exec', ...overrides, ...output, '--', task];
 }
 
 const threadIdPattern = /^[A-Za-z0-9-]{1,128}$/;
@@ -194,7 +197,18 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   return code;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+/**
+ * Whether this module is the script Node was asked to run. import.meta.url has symlinks resolved and argv[1]
+ * does not, so comparing them directly makes a launcher under a linked ~/.codex do nothing and exit 0.
+ */
+export function isEntryPoint(scriptPath, moduleUrl = import.meta.url) {
+  if (!scriptPath) return false;
+  let resolved = scriptPath;
+  try { resolved = realpathSync(scriptPath); } catch { /* compared as given */ }
+  return moduleUrl === pathToFileURL(resolved).href;
+}
+
+if (isEntryPoint(process.argv[1])) {
   try { process.exitCode = main(); }
   catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 2; }
 }
