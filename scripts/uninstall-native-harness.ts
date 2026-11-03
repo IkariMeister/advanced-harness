@@ -13,7 +13,7 @@ import { planCodexUninstall } from '../src/codex-adapter.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:uninstall -- [--host opencode|claude-code|antigravity|codex] [--scope global|project] [--project <directory>] [--config <opencode.json|opencode.jsonc>] [--receipt <receipt>] | --adopt-existing [--before-config <known-before-config>]\n  --host claude-code: project scope only (<project>/.claude/settings.json); --scope global is rejected.\n  --host antigravity: project scope (<project>/.agents/hooks.json) or global (~/.gemini/config/hooks.json).\n  --host codex: global only (~/.codex/.advanced-harness-state.json); harness edits to config.toml are reversed, keys you changed since install are kept.\n  --config is OpenCode-only.');
+  console.log('Usage: npm run harness:uninstall -- [--host opencode|claude-code|antigravity|codex] [--scope global|project] [--project <directory>] [--config <opencode.json|opencode.jsonc>] [--receipt <receipt>] | --adopt-existing [--before-config <known-before-config>]\n  --host claude-code: project scope (<project>/.claude/settings.json) or global (~/.claude/settings.json).\n  --host antigravity: project scope (<project>/.agents/hooks.json) or global (~/.gemini/config/hooks.json).\n  --host codex: global only (~/.codex/.advanced-harness-state.json); harness edits to config.toml are reversed, keys you changed since install are kept.\n  --config is OpenCode-only.');
 } else {
   const options: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {

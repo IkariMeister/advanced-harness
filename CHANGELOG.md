@@ -14,6 +14,49 @@ version between releases.
   resume, with your approval for each launch. Uninstall reverses only the
   harness's own `config.toml` edits (#45).
 
+## v0.2.2 — 2026-11-03
+
+Patch release on the 0.2 line (#161).
+
+### Fixed
+
+- OpenCode installs that started from a legacy (v1) receipt can update and
+  uninstall again. `harness:update` offers a legacy permission migration
+  (type `migrate`) that replaces older legacy rules the current policy changes,
+  such as the Operator `git fetch *` deny, and records hand edits to legacy
+  permission arrays so uninstall no longer reports them as concurrent edits.
+  Uninstall points to the migration when it finds stale legacy evidence.
+  Run `harness:update` and type `migrate` to apply (#160, #162).
+
+## v0.2.1 — 2026-11-03
+
+Patch release on the 0.2 line (#149).
+
+### Added
+
+- Claude Code global-scope install, update, doctor and uninstall into
+  `~/.claude` (read by the CLI and Claude Code Desktop) (#146, #152).
+
+### Fixed
+
+- `/review-pr` and `/address-pr-feedback` now include Reviewer's risk-tiered
+  review rubric (tiers, lenses, summary and finding formats), copied from
+  `agents/reviewer.md` when commands are installed. Lead previously could not
+  see the rubric and stopped before assigning a provisional review tier.
+  Run `harness:update` to apply (#156, #157).
+- Operator may run `git fetch` to refresh the base before creating a worktree,
+  so OpenCode bootstrap no longer stops on a denied fetch;
+  `--upload-pack` (including any `--upl…` abbreviation) and, defensively,
+  `-u` (`--update-head-ok` for fetch) stay denied, and
+  pull/push/clone remain External's.
+  Run `harness:update` to apply (#144, #151).
+- `harness:doctor` accepts `--scope <global|project>` and reports invalid,
+  duplicate or incomplete options instead of a generic "Verification
+  inconclusive" message (#145, #150).
+- OpenCode `harness:install` and `harness:update` no longer exit non-zero when
+  the post-save runtime verification is inconclusive; they warn and point to
+  `harness:doctor`. Definite readiness failures still exit 1 (#143, #148).
+
 ## v0.2.0 — 2026-11-01
 
 Milestone: Security Guardrails, Model Discovery & Core Role Contracts.

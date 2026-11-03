@@ -16,7 +16,7 @@ npm run harness:uninstall -- --host antigravity --scope project --project <direc
 npm run harness:uninstall -- --host antigravity --scope global
 ```
 
-Without `--host`, uninstall targets OpenCode. `--host claude-code` restores the project footprint recorded at `<project>/.claude/settings.json`; `--scope global` is rejected because Claude Code installs are project-scoped. `--host antigravity` targets `<project>/.agents/hooks.json` (project scope) or `~/.gemini/config/hooks.json` (global scope). Each host reads only its own receipts; a receipt for one host is never restored by another. After managed files are removed, only directories the install created and that are now empty are pruned, bounded by the project root (or the Antigravity global config directory); the top-level `.claude` and `.agents` folders are left in place. Files you edited after install, including the `CLAUDE.md` or `AGENTS.md` harness block, block uninstall with a conflict and no writes; block-level removal is not performed. A missing target is never recreated during uninstall. With `--project`, uninstall also releases the host's owner from the [local Git exclude block](#local-git-exclude-for-harness-scratch-state-bh-038). The block itself is removed only after its last owner releases it.
+Without `--host`, uninstall targets OpenCode. `--host claude-code` restores the footprint recorded at `<project>/.claude/settings.json` (project scope) or `~/.claude/settings.json` (global scope). `--host antigravity` targets `<project>/.agents/hooks.json` (project scope) or `~/.gemini/config/hooks.json` (global scope). Each host reads only its own receipts; a receipt for one host is never restored by another. After managed files are removed, only directories the install created and that are now empty are pruned, bounded by the project root (or your home directory for a global Claude Code install, or the Antigravity global config directory); the top-level `.claude` and `.agents` folders are left in place. Files you edited after install, including the `CLAUDE.md` or `AGENTS.md` harness block, block uninstall with a conflict and no writes; block-level removal is not performed. A missing target is never recreated during uninstall. With `--project`, uninstall also releases the host's owner from the [local Git exclude block](#local-git-exclude-for-harness-scratch-state-bh-038). The block itself is removed only after its last owner releases it.
 
 `--config <opencode.json|opencode.jsonc>` is OpenCode-only and is rejected with other hosts. Use it to select a specific config within that scope, or `--receipt <receipt>` to select a specific receipt. Ambiguous or invalid receipt history stops the operation; review the chain before retrying. For an existing installation, `--adopt-existing` is a separate provenance-only mode; optional `--before-config <known-before-config>` supplies same-path historical evidence. First answer **“Adopt all detected agent fields for removal?”** (default No). Yes selects only present supported fields on the eight known roles for unknown-history removal; one grouped acknowledgment is required. Root `default_agent` and `model` are always prompted separately and default to keep. No asks once per detected agent; keep is the default, and restore requires supplied same-path evidence. Per-agent removal also requires an acknowledgment. Custom agents, other fields, absent fields, and unrelated settings are excluded. An ownership/history warning precedes the grouped choice. A final `adopt` confirmation records provenance only; it changes no config and does not uninstall. A later, separate uninstall preview and `uninstall` confirmation are required. Automated prompt-flow tests compose decisions with adoption/uninstall planning; manual interactive CLI QA remains pending. Do not apply this workflow to a live installation.
 
@@ -70,7 +70,7 @@ npm run harness:install -- --host all --scope project --project "$HOME/Projects/
 npm run harness:install -- --help
 ```
 
-`--host <opencode|claude-code|antigravity|codex|cursor|all>` accepts host selections. OpenCode, Google Antigravity (#44), and Claude Code (#43, project scope only) are implemented as single-host installs. Codex (#45) installs at global scope only, one process per role; Cursor (#46) is not implemented. Any selection containing an unimplemented host, and any mixed or `all` selection, is rejected before adapters or filesystem mutations. Without `--host`, `harness:install` and `harness:update` prompt for a single host (Enter keeps `opencode`); a comma-separated, `all`, or unknown answer is re-asked rather than rejected, so run the command once per host. Workflow artifact compilation is a pure library operation, not installation; caller-bound invocation artifacts are never automatically written as reusable commands.
+`--host <opencode|claude-code|antigravity|codex|cursor|all>` accepts host selections. OpenCode, Google Antigravity (#44), and Claude Code (#43; project or global scope, #146) are implemented as single-host installs. Codex (#45) installs at global scope only, one process per role; Cursor (#46) is not implemented. Any selection containing an unimplemented host, and any mixed or `all` selection, is rejected before adapters or filesystem mutations. Without `--host`, `harness:install` and `harness:update` prompt for a single host (Enter keeps `opencode`); a comma-separated, `all`, or unknown answer is re-asked rather than rejected, so run the command once per host. Workflow artifact compilation is a pure library operation, not installation; caller-bound invocation artifacts are never automatically written as reusable commands.
 
 Antigravity install likewise requires a typed `yes`; Enter, `no`, or any other answer cancels with no file, backup, or receipt written.
 
@@ -89,7 +89,9 @@ It then shows the planned files and the fail-closed mapping, and requires a type
 
 Per-role tools use `tools` allowlists plus `disallowedTools`. Lead can read, search, ask the human, and delegate only to the seven children. Operator and Implementer can edit (prompted). External can use Bash, WebFetch, and WebSearch (prompted, with the source's allow exceptions downgraded to prompts). Operator, Implementer, Reviewer, and QA have **no Bash tool** because the source's per-role `git`/`gh` deny patterns cannot be scoped exactly in Claude Code. No MCP or Code Mode identity is mapped, so no `.mcp.json` is written. Customized files prompt with default `no`; overwrites are backed up.
 
-Global scope is refused. The same adapter handles `harness:update --host claude-code`, including the model prompts; pressing Enter for every role keeps the installed models, and the run is a no-op when everything matches. `harness:doctor --host claude-code --project <dir>` checks the files, subagent frontmatter (any syntactically valid `model` is accepted as an explicit choice; a missing or invalid one is reported), the Lead block, and the settings rules. It does not invoke Claude Code.
+**Global scope** (`--scope global`, #146) writes the same files to the Claude Code user directory, which both the CLI and Claude Code Desktop read: `~/.claude/CLAUDE.md`, `~/.claude/agents/`, `~/.claude/commands/`, and `~/.claude/settings.json`. Lead becomes the default agent in every session unless a project's `.claude/settings.json` selects another, and the deny/ask rules apply to every project; the installer says so before confirmation. `~/.claude/CLAUDE.md` gets no `@AGENTS.md` import (it would resolve under `~/.claude`); the Lead block tells Lead to read the current project's `AGENTS.md` instead. No project file or local Git exclude is touched. A project-level install takes precedence over a global one.
+
+The same adapter handles `harness:update --host claude-code`, including the model prompts; pressing Enter for every role keeps the installed models, and the run is a no-op when everything matches. `harness:doctor --host claude-code --project <dir>` inspects the project install, or the global one in `~/.claude` when the project has none. Only harness-owned markers (`.claude/agents/lead.md` or the Lead block in `CLAUDE.md`) count as an install, so an unrelated project `CLAUDE.md` or `settings.json`, or a plain `~/.claude/settings.json`, does not hide or fake one, and checks the files, subagent frontmatter (any syntactically valid `model` is accepted as an explicit choice; a missing or invalid one is reported), the Lead block, and the settings rules. It does not invoke Claude Code.
 
 Not verified here: Claude Code discovery of subagents, `agent: lead`, `Agent(...)` delegation, `tools`/`disallowedTools` semantics, Bash deny matching, or command placeholders. Run the documented human smoke before relying on these behaviors.
 
@@ -290,6 +292,23 @@ without native-rule provenance may therefore conflict when setup would override 
 unattributed deny. A receipt is local recovery evidence, not a cryptographic trust or
 authorization boundary against a same-user process rewriting the entire history.
 
+**Legacy permission migration (#160).** OpenCode `harness:update` offers a
+[legacy permission migration](glossary.md#hosts-installation-and-permissions) when
+legacy permission evidence no longer matches the configuration (for example after a
+duplicated rule was removed by hand, which blocks uninstall with
+`… (opaque legacy array)`) or when a legacy-installer rule conflicts with the current
+policy (for example the older Operator `git fetch *` deny). The preview lists, per
+role, each legacy rule to replace, each rule adopted into the recorded legacy state,
+and each recorded rule no longer present. Only typing `migrate` accepts it; any other
+answer leaves the evidence unchanged, and update stays blocked if conflicts remain.
+Nothing is written until the final `update` confirmation.
+
+After migration the current legacy rules count as harness-installed: uninstall
+removes them together with the harness rules and restores the field from before the
+first install. Rules that were present before that first install are never replaced.
+The successor receipt records what was migrated; receipt discovery rejects a change
+to legacy evidence without that record.
+
 Automated lifecycle tests cover native install → integration → upgrade → restore.
 Independent review and isolated interactive CLI QA remain required before live use.
 
@@ -308,11 +327,12 @@ npm run harness:doctor
 npm run harness:doctor -- --project "C:/Users/you/Projects/android-app"
 npm run harness:doctor -- --opencode "C:/path/to/opencode-cli.exe"
 npm run harness:doctor -- --server "http://localhost:49374"
+npm run harness:doctor -- --scope global
 ```
 
-Use the same project and server as your OpenCode UI. Global installations are checked in the current directory, including project overrides. The diagnostic lists inspected config paths, not contents or credentials. It uses OpenCode's CLI connection/authentication flow, may start the service, and never reloads/restarts it, edits configuration, substitutes models, or sends inference requests. `OPENCODE_BIN` or `--opencode` selects a CLI; Windows automatically discovers the standard desktop-bundled CLI, otherwise `opencode` on PATH is used. The installer also accepts `--opencode`.
+Use the same project and server as your OpenCode UI. Global installations are checked in the current directory, including project overrides. `--scope global` inspects only global configuration and `--scope project` only the project (no global fallback); without `--scope`, both are inspected. Invalid, duplicate or incomplete options are reported as such and exit 2 before anything is inspected. The diagnostic lists inspected config paths, not contents or credentials. It uses OpenCode's CLI connection/authentication flow, may start the service, and never reloads/restarts it, edits configuration, substitutes models, or sends inference requests. `OPENCODE_BIN` or `--opencode` selects a CLI; Windows automatically discovers the standard desktop-bundled CLI, otherwise `opencode` on PATH is used. The installer also accepts `--opencode`.
 
-Exit codes: **0** means discovery/catalog checks passed; **1** means definite readiness failures; **2** means verification is inconclusive (CLI, API, timeout, unsupported response, or config/project errors). If verification fails after installation, the saved config and backup remain in place; no automatic rollback or repeated installation is needed.
+Exit codes: **0** means discovery/catalog checks passed; **1** means definite readiness failures; **2** means verification is inconclusive (CLI, API, timeout, unsupported response, or config/project errors). If verification fails after installation, the saved config and backup remain in place; no automatic rollback or repeated installation is needed. The post-save check that `harness:install` and `harness:update` run for OpenCode exits **1** for definite readiness failures, but an inconclusive result there only prints a warning and exits **0**, because all approved writes, backups, and the receipt are already complete; run `harness:doctor` to resolve it.
 
 **Catalog availability does not prove account entitlement.** A listed Spark model can still be rejected by the active ChatGPT account. A real, explicitly approved model run remains necessary before claiming all roles are runnable. MCP, Android tools, and workflow approval behavior are not checked here.
 

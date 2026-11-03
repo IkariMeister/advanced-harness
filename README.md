@@ -88,7 +88,7 @@ Ordinary OpenCode tool-permission prompts may still appear for shell, filesystem
 
 ## Tool and integration ownership
 
-- Only External owns MCP, web/service API access, remote Git, GitHub/Jira, and design services.
+- Only External owns MCP, web/service API access, remote Git, GitHub/Jira, and design services. The one exception is Operator's read-only `git fetch` to refresh the base before creating a worktree.
 - Operator owns local Git/worktree operations and shared memory writes. Other agents request Git information from Operator instead of taking over the Git lifecycle.
 - Implementer owns source/test changes; Reviewer and QA report findings rather than silently fixing application code.
 - Reviewer/QA use project-specific shell/test/device commands. Build/test dependency resolution is allowed runtime infrastructure, not authorization for unrelated external-service operations.

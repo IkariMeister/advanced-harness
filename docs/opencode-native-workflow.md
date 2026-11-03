@@ -51,7 +51,7 @@ does not establish all four. Record missing evidence as unverified.
 | Role | Intended native capabilities (not availability proof) | Workflow responsibility / escalation |
 | --- | --- | --- |
 | Lead | Local read/search, questions, named subagent delegation; no shell/edit/MCP configured in the source template | Human decisions, sequencing, checklist. Delegate local Git to Operator, services to External, code to Implementer, verification to Reviewer/QA. Escalate unavailable capability to its owner/human. |
-| Operator | Local read/search; shell and edit are ASK in source template | Bootstrap/worktrees/local Git/memory/cleanup. No remote publishing or service access; report missing local tooling to Lead. |
+| Operator | Local read/search; shell and edit are ASK in source template; `git fetch` ALLOW with `--upload-pack` (and abbreviations) and `-u` DENY | Bootstrap/worktrees/local Git/memory/cleanup, including the `git fetch` base refresh. No other remote Git, publishing or service access; report missing local tooling to Lead. |
 | External | Local read/search; shell generally ASK, `git push` and named `gh`/`gh.exe` operations narrowly ALLOW with merge DENY; execute ALLOW; web and named MCP patterns ASK | MCP/services/remote Git/gh and authorized publishing. Ask Lead about absent tools, auth, selection, or access; do not substitute another owner. |
 | Researcher | Local read/search; no shell/edit/MCP configured in source template | Inspect code/context; request local Git information from Operator and services from External through Lead. |
 | Planner | Local read/search; no shell/edit/MCP configured in source template | Propose plans only; request missing context through Lead, never approve or implement. |
@@ -71,7 +71,7 @@ Default-deny tool policies are followed by explicit role exceptions. Native temp
 
 Native tools such as `shell` are separate from Code Mode's `execute` catalog. `execute.search` discovers only that catalog; an empty result does not enumerate or disprove native tools. Direct MCP actions and nested Code Mode actions are also distinct routes: confirm which actual action/tool is exposed and configured rather than inferring one from the other. A configured MCP alias does not prove enabled/authenticated service access or a usable tool.
 
-If access is missing or denied, report the exact observed outcome without relabeling it as a tool-absence diagnosis. Escalate local Git/worktree/memory to Operator, MCP/services/remote Git to External, code changes to Implementer, verification prerequisites to Lead via Reviewer/QA, and plan/approval decisions to the human through Lead. Do not grant permissions, substitute roles/models, retry, restart, or invent a tool route to work around a gap. Permission dialogs authorize tool operations, not human plan approval.
+If access is missing or denied, report the exact observed outcome without relabeling it as a tool-absence diagnosis. Escalate local Git/worktree/memory and the `git fetch` base refresh to Operator, MCP/services/other remote Git to External, code changes to Implementer, verification prerequisites to Lead via Reviewer/QA, and plan/approval decisions to the human through Lead. Do not grant permissions, substitute roles/models, retry, restart, or invent a tool route to work around a gap. Permission dialogs authorize tool operations, not human plan approval.
 
 External's source policy allows native `git push` and only these `gh`/`gh.exe`
 commands: `pr create/edit/comment/review`, `issue create/edit/comment`, `workflow

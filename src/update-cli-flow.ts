@@ -31,7 +31,8 @@ import {
 } from './receipt-lineage.ts';
 import { checkRemoteHead, checkRemoteReleaseTag, compareInstalledAndSource, detectReleaseTag, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 import { planUpdate } from './update-planner.ts';
-import type { ReconciliationResult } from './permission-reconciliation.ts';
+import type { PermissionRule, ReconciliationResult } from './permission-reconciliation.ts';
+import { applyLegacyPermissionMigration, planLegacyPermissionMigration } from './legacy-permission-migration.ts';
 import {
   applyOpenCodeCommandDeployment,
   buildOpenCodeCommandManagedEvidence,
@@ -294,8 +295,34 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     deps.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url))
   );
 
-  const existingConfig = parseConfiguration(original, target);
-  const plan = planUpdate(existingConfig, definitions, history);
+  let planningText = original;
+  let existingConfig = parseConfiguration(original, target);
+  let plan = planUpdate(existingConfig, definitions, history);
+
+  // Legacy arrays are opaque evidence; refreshing them always needs the user's consent.
+  const legacyMigrations = planLegacyPermissionMigration(history, existingConfig, definitions);
+  let migrated: Partial<Record<typeof nativeRoles[number], PermissionRule[]>> | undefined;
+  if (legacyMigrations.length) {
+    output('\nLegacy permission migration available:');
+    output('  These roles still use opaque legacy permission evidence from a pre-receipt install.');
+    for (const m of legacyMigrations) {
+      output(`  [${m.role}]`);
+      for (const rule of m.replaced) output(`    replace legacy ${JSON.stringify(rule)} with the current harness rule`);
+      for (const rule of m.adopted) output(`    adopt into legacy state ${JSON.stringify(rule)}`);
+      for (const rule of m.dropped) output(`    no longer present ${JSON.stringify(rule)}`);
+    }
+    output('  Migrating records the current legacy rules as harness-installed: a later uninstall removes them');
+    output('  together with the harness rules. Rules from before the first install are never replaced.');
+    const answer = await ask('Type migrate to apply this legacy permission migration with the update (Enter skips)', 'skip');
+    if (answer.trim() === 'migrate') {
+      planningText = applyLegacyPermissionMigration(original, existingConfig, legacyMigrations);
+      existingConfig = parseConfiguration(planningText, target);
+      plan = planUpdate(existingConfig, definitions, history);
+      migrated = Object.fromEntries(legacyMigrations.map(m => [m.role, m.replaced]));
+    } else {
+      output('  Legacy permission migration skipped; legacy evidence is unchanged.');
+    }
+  }
 
   if (plan.permissionConflicts.length) {
     errorOutput(`Update blocked: permission conflicts in ${target}. No configuration, command, backup, or recovery files were changed.`);
@@ -413,7 +440,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
 
   const update = deps.updateConfiguration ?? updateNativeConfiguration;
   const updated = update(
-    original,
+    planningText,
     definitions,
     assignments,
     false,
@@ -477,7 +504,8 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     harnessVersionStamp,
     {
       host: 'opencode',
-      ...(combinedManagedFiles.length ? { managedFiles: combinedManagedFiles } : {})
+      ...(combinedManagedFiles.length ? { managedFiles: combinedManagedFiles } : {}),
+      ...(migrated ? { legacyMigrations: migrated } : {})
     }
   );
 
@@ -558,9 +586,11 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     (deps.printReport ?? printReport)(report);
     if (!report.ok) return 1;
   } catch (err) {
+    // All approved writes, backups, and the receipt are already committed, so an
+    // inconclusive post-save check warns rather than failing the command (#143).
     if (err instanceof DiagnosticError) errorOutput(err.message);
     errorOutput('Configuration saved, but runtime verification was inconclusive. Run npm run harness:doctor.');
-    return 2;
+    return 0;
   }
 
   output('Harness update complete.');

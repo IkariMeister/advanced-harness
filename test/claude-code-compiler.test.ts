@@ -93,6 +93,12 @@ test('compiled subagent frontmatter is valid and uses the README model presets',
     if (mappings[role].disallowedTools.length) assert.equal(meta.disallowedTools, mappings[role].disallowedTools.join(', '));
     assert.ok(text.includes(definitions[role].instructions.trim()));
   }
+  const reviewerFile = compileClaudeSubagentFile('reviewer', definitions.reviewer, mappings.reviewer);
+  assert.match(reviewerFile, /\*\*re-run\*\* versus \*\*judged from evidence only\*\*/);
+  assert.match(reviewerFile, /Where the host withholds command execution from Reviewer \(for example Claude\s+Code\)/);
+  assert.match(compileClaudeSubagentFile('planner', definitions.planner, mappings.planner), /Author and maintain architectural decision records \(ADRs\)/);
+  assert.match(compileClaudeSubagentFile('implementer', definitions.implementer, mappings.implementer), /affected implementation documentation/);
+  assert.match(compileClaudeSubagentFile('lead', definitions.lead, mappings.lead), /Track\s+the documentation requirement and approval state/);
 });
 
 test('settings merge adds lead, gh pr merge denies, and .env ask rules while preserving unrelated content', () => {

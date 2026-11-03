@@ -12,14 +12,18 @@ export type UninstallTargetOptions = {
   xdgConfigHome?: string;
 };
 
-// Receipt-keyed file per host: Claude Code keys on <project>/.claude/settings.json (project only);
-// Antigravity keys on <project>/.agents/hooks.json or <home>/.gemini/config/hooks.json (global);
-// Codex keys on <home>/.codex/.advanced-harness-state.json (global).
+// Receipt-keyed file per host: Claude Code keys on <project>/.claude/settings.json or
+// <home>/.claude/settings.json (global); Antigravity keys on <project>/.agents/hooks.json or
+// <home>/.gemini/config/hooks.json (global); Codex keys on <home>/.codex/.advanced-harness-state.json (global).
 function selectHostTarget(host: Exclude<HostId, 'opencode'>, options: UninstallTargetOptions): string {
   if (options.config) throw new Error(`--config is supported only with --host opencode; ${host} uninstall targets its own receipt file.`);
   if (host === 'claude-code') {
     const scope = options.scope ?? 'project';
-    if (scope !== 'project') throw new Error('Claude Code harness is project-scoped; --scope global is not supported.');
+    if (!['global', 'project'].includes(scope)) throw new Error('--scope must be global or project.');
+    if (scope === 'global') {
+      if (options.project) throw new Error('--project cannot be combined with --scope global.');
+      return join(options.home, '.claude', 'settings.json');
+    }
     if (!options.project) throw new Error('--project is required with --scope project.');
     return join(resolve(options.cwd, options.project), '.claude', 'settings.json');
   }
