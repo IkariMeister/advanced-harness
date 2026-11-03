@@ -105,7 +105,25 @@ policy:
       resource:
         kind: native-pattern
         host: opencode
-        value: git fetch *--upload-pack*
+        value: git fetch *--upl*
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git fetch -u*
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git fetch * -u*
       effect: deny
       binding:
         host: opencode
@@ -193,6 +211,6 @@ optional unless explicitly required.
 Capability reporting: a configured permission is not proof a tool was offered or
 invoked. Report actual local shell/Git outcomes; do not claim access based on a
 catalog or another session. Native shell is separate from Code Mode search. Own
-local Git/worktrees/memory/cleanup; escalate services and remote Git to External
-through Lead. On missing or denied local access, report the exact outcome and ask
+local Git/worktrees/memory/cleanup, including the read-only `git fetch` base refresh;
+escalate services and all other remote Git to External through Lead. On missing or denied local access, report the exact outcome and ask
 Lead; do not broaden permissions, substitute roles/models, or retry automatically.

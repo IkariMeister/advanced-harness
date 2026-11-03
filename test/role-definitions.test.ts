@@ -38,10 +38,15 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
   permissions.splice(index, 1,
     { action: 'shell', resource: 'git fetch', effect: 'allow' },
     { action: 'shell', resource: 'git fetch *', effect: 'allow' },
-    { action: 'shell', resource: 'git fetch *--upload-pack*', effect: 'deny' });
+    { action: 'shell', resource: 'git fetch *--upl*', effect: 'deny' },
+    { action: 'shell', resource: 'git fetch -u*', effect: 'deny' },
+    { action: 'shell', resource: 'git fetch * -u*', effect: 'deny' });
   const previous = 'creation fails. Never discard unrelated changes or perform remote Git/API/MCP\noperations; External owns those. Command patterns are workflow aids, not a sandbox;\ndo not use scripts/aliases to bypass role ownership.';
   assert.ok(operator.system.includes(previous));
   operator.system = operator.system.replace(previous, 'creation fails. Before branching you may refresh the base with `git fetch` (never pull,\npush, or clone); if the fetch fails, report it and branch from the local base. Never\ndiscard unrelated changes or perform other remote Git/API/MCP operations; External\nowns those. Command patterns are workflow aids, not a sandbox; do not use\nscripts/aliases to bypass role ownership.');
+  const closing = 'local Git/worktrees/memory/cleanup; escalate services and remote Git to External\nthrough Lead.';
+  assert.ok(operator.system.includes(closing));
+  operator.system = operator.system.replace(closing, 'local Git/worktrees/memory/cleanup, including the read-only `git fetch` base refresh;\nescalate services and all other remote Git to External through Lead.');
   return definitions;
 }
 const currentNormalizedDefinitions = () => withOperatorFetch(structuredClone(legacyNormalizedDefinitions()));
@@ -117,8 +122,13 @@ test('Operator may git fetch but not run upload-pack or other remote Git (#144)'
   const effect = (command: string) => rules.filter(rule => (rule.action === 'shell' || rule.action === '*') && (rule.resource === undefined || wildcard(rule.resource).test(command))).at(-1)?.effect;
   assert.equal(effect('git fetch'), 'allow');
   assert.equal(effect('git fetch origin main'), 'allow');
-  assert.equal(effect('git fetch --upload-pack=evil origin'), 'deny');
-  assert.equal(effect('git fetch origin --upload-pack evil'), 'deny');
+  assert.equal(effect('git fetch --prune origin'), 'allow');
+  assert.equal(effect('git fetch origin feature-ui'), 'allow', 'a -u inside a ref name is not an option');
+  // --upload-pack runs a command; Git also accepts any unambiguous prefix (--upl is the shortest).
+  for (const command of ['git fetch --upload-pack=evil origin', 'git fetch origin --upload-pack evil', 'git fetch --upl=evil origin', 'git fetch origin --uplo evil']) assert.equal(effect(command), 'deny', command);
+  assert.equal(effect('git fetch --no-upload-pack origin'), 'allow', 'the negated option runs nothing');
+  // -u is --update-head-ok for fetch in Git 2.55, but is upload-pack for clone/fetch-pack: denied defensively.
+  for (const command of ['git fetch -u evil origin', 'git fetch -uevil origin', 'git fetch origin -u evil', 'git fetch origin -uevil']) assert.equal(effect(command), 'deny', command);
   assert.equal(effect('git pull origin main'), 'deny');
   assert.equal(effect('git push origin main'), 'deny');
   assert.equal(effect('git status'), 'ask');
