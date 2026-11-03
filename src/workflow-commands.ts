@@ -24,7 +24,41 @@ const placeholders: Record<WorkflowCommandId, readonly string[]> = {
 
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
 
-export function loadWorkflowCommand(text: string, id: WorkflowCommandId, source = `${id}.md`): WorkflowCommand {
+/**
+ * Commands where Lead tiers diffs and presents Reviewer's output. Lead never receives Reviewer's role
+ * instructions, so these commands carry the rubric itself, copied from the Reviewer source at compile
+ * time (#156). The Reviewer source stays the only hand-written copy.
+ */
+export const reviewRubricCommandIds: readonly WorkflowCommandId[] = ['review-pr', 'address-pr-feedback'];
+export const reviewRubricHeading = '## Risk-tiered review';
+const defaultReviewerSource = new URL('../agents/reviewer.md', import.meta.url);
+
+/** The "Risk-tiered review" section of the Reviewer source, up to the next level-two heading. */
+export function extractReviewRubric(reviewerSource: string, source = 'agents/reviewer.md'): string {
+  const text = reviewerSource.replace(/\r\n/g, '\n');
+  const start = text.indexOf(`\n${reviewRubricHeading}\n`);
+  if (start < 0) throw new Error(`Review rubric section "${reviewRubricHeading}" not found in ${source}; workflow commands were not compiled.`);
+  const next = text.indexOf('\n## ', start + 1);
+  const section = text.slice(start + 1, next < 0 ? text.length : next).trim();
+  if (/\$ARGUMENTS|\$[1-9]/.test(section)) throw new Error(`Review rubric in ${source} contains a command placeholder; workflow commands were not compiled.`);
+  return section;
+}
+
+/** Appends the rubric to a review command body; `you` in the rubric is Reviewer. */
+export function appendReviewRubric(body: string, rubric: string): string {
+  const newline = body.includes('\r\n') ? '\r\n' : '\n';
+  const appendix = [
+    'The rubric below is copied from Reviewer\'s role instructions so Lead can apply it; "you" in it means Reviewer.',
+    '',
+    rubric,
+  ].join('\n').replace(/\n/g, newline);
+  return `${body.replace(/\s+$/, '')}${newline}${newline}${appendix}${newline}`;
+}
+
+let cachedReviewRubric: string | undefined;
+const harnessReviewRubric = () => cachedReviewRubric ??= extractReviewRubric(readFileSync(defaultReviewerSource, 'utf8'));
+
+export function loadWorkflowCommand(text: string, id: WorkflowCommandId, source = `${id}.md`, reviewRubric: () => string = harnessReviewRubric): WorkflowCommand {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(text);
   if (!match) throw new Error(`Malformed workflow command frontmatter: ${source}`);
   const doc = parseDocument(match[1]!);
@@ -43,7 +77,7 @@ export function loadWorkflowCommand(text: string, id: WorkflowCommandId, source 
   const found = [...body.matchAll(/\$ARGUMENTS|\$[1-9]\d*/g)].map(item => item[0]);
   const expected = placeholders[id];
   if (found.length !== expected.length || expected.some(token => found.filter(item => item === token).length !== 1) || found.some(token => !expected.includes(token))) throw new Error(`Workflow command placeholders do not match its argument contract: ${source}`);
-  return { schemaVersion: 1, description: header.description, arguments: normalized, body };
+  return { schemaVersion: 1, description: header.description, arguments: normalized, body: reviewRubricCommandIds.includes(id) ? appendReviewRubric(body, reviewRubric()) : body };
 }
 
 export function loadWorkflowCommands(directory: string): Record<WorkflowCommandId, WorkflowCommand> {

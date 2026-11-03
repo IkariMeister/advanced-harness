@@ -5,7 +5,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseDocument, stringify } from 'yaml';
-import { compileWorkflowArtifacts, workflowCommandIds, type WorkflowArtifactHost } from '../src/workflow-commands.ts';
+import { compileWorkflowArtifacts, extractReviewRubric, loadWorkflowCommand, reviewRubricCommandIds, workflowCommandIds, type WorkflowArtifactHost } from '../src/workflow-commands.ts';
 
 const commandsDirectory = fileURLToPath(new URL('../commands/', import.meta.url));
 const hosts: WorkflowArtifactHost[] = ['opencode', 'claude-code', 'antigravity', 'codex', 'cursor'];
@@ -107,4 +107,26 @@ test('OpenCode-only compilation retains native argument templates and is deploym
   const defect = result.artifacts.find(item => item.command === 'report-defect')!;
   assert.match(defect.content, /\$1/);
   assert.match(defect.content, /\$2/);
+});
+
+test('review commands carry Reviewer\'s rubric on every host; other commands do not (#156)', async () => {
+  const rubric = extractReviewRubric(await readFile(new URL('../agents/reviewer.md', import.meta.url), 'utf8'));
+  for (const heading of ['## Risk-tiered review', '### Specialized lenses', '### Review summary format', '### Finding format']) assert.ok(rubric.includes(heading), heading);
+  const result = compileWorkflowArtifacts(commandsDirectory, hosts, bindings);
+  for (const host of hosts) {
+    for (const artifact of result.artifacts.filter(item => item.host === host)) {
+      const content = artifact.content.replace(/\r\n/g, '\n');
+      if (reviewRubricCommandIds.includes(artifact.command)) assert.ok(content.includes(rubric), `${host}/${artifact.command} includes the rubric`);
+      else assert.ok(!content.includes('## Risk-tiered review'), `${host}/${artifact.command} has no rubric`);
+    }
+  }
+});
+
+test('a Reviewer source without the rubric section fails command compilation (#156)', () => {
+  assert.throws(() => extractReviewRubric('# Reviewer\n\n## Checks and reporting\n'), /Review rubric section "## Risk-tiered review" not found/);
+  assert.throws(() => extractReviewRubric('intro\n## Risk-tiered review\nUse $ARGUMENTS here.\n'), /contains a command placeholder/);
+  assert.equal(extractReviewRubric('intro\r\n## Risk-tiered review\r\nTiers.\r\n### Lenses\r\nRisk.\r\n## Checks\r\nRun.\r\n'), '## Risk-tiered review\nTiers.\n### Lenses\nRisk.');
+  const source = '---\nschemaVersion: 1\ndescription: Review\narguments:\n  mode: full\n---\nReview: $ARGUMENTS\n';
+  assert.throws(() => loadWorkflowCommand(source, 'review-pr', 'review-pr.md', () => extractReviewRubric('no rubric here')), /not found/);
+  assert.equal(loadWorkflowCommand(source, 'start-issue', 'start-issue.md', () => { throw new Error('not read'); }).body, 'Review: $ARGUMENTS\n', 'other commands never read the rubric');
 });

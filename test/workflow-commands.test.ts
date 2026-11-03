@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { extractReviewRubric } from '../src/workflow-commands.ts';
 
 const root = new URL('../.opencode/commands/', import.meta.url);
 const commands = ['start-issue', 'review-pr', 'address-pr-feedback', 'report-defect', 'assess-debt', 'grill-me'];
@@ -88,15 +89,25 @@ test('Reviewer role instructions are the single source of the risk-tiered review
 });
 
 test('PR workflows apply the shared rubric with preflight, ordered gates, and no project-specific tiers', async () => {
-  const review = await readFile(new URL('review-pr.md', root), 'utf8');
-  const feedback = await readFile(new URL('address-pr-feedback.md', root), 'utf8');
+  // Each generated command is its own text followed by Reviewer's rubric, copied at compile time (#156).
+  const reviewer = await readFile(new URL('../agents/reviewer.md', import.meta.url), 'utf8');
+  const rubric = extractReviewRubric(reviewer);
+  const split = (text: string) => {
+    const at = text.indexOf('\n## Risk-tiered review\n');
+    assert.ok(at > 0, 'the rubric is appended to the command');
+    assert.equal(text.slice(at + 1).trim(), rubric, 'the appended rubric is exactly the Reviewer section');
+    return text.slice(0, at);
+  };
+  const review = split(await readFile(new URL('review-pr.md', root), 'utf8'));
+  const feedback = split(await readFile(new URL('address-pr-feedback.md', root), 'utf8'));
   const docs = await readFile(new URL('../docs/task-workflows.md', import.meta.url), 'utf8');
   for (const source of [review, feedback]) {
-    assert.match(source, /risk-tiered review rubric in Reviewer's role instructions/);
+    assert.match(source, /risk-tiered review rubric at the end of this command \(the same rubric Reviewer applies\)/);
+    assert.doesNotMatch(source, /Reviewer's role instructions\./, 'Lead is not sent to instructions it cannot read');
     assert.match(source, /preflights the (?:actual fix )?diff: report its size \(files and changed lines\)/);
     assert.match(source, /never waive scope, acceptance-criteria, consistency, or evidence checks/);
     assert.match(source, /a higher tier .*replaces the provisional one/i);
-    // Lens and domain criteria live only in agents/reviewer.md.
+    // Lens and domain criteria are written only in agents/reviewer.md; the command text itself never restates them.
     assert.doesNotMatch(source, /Compose|Roborazzi|coroutine/i);
     // Shipped templates must not carry this repository's own issue references.
     assert.doesNotMatch(source, /#\d+/);
