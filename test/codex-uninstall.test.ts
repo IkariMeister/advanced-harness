@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installCodex, planCodexUninstall } from '../src/codex-adapter.ts';
+import { recordThread } from '../src/codex-role-launcher.mjs';
 import { effectiveReceiptHost } from '../src/installation-receipt.ts';
 import { saveInstallation } from '../src/native-installer.ts';
 import { discoverReceiptChain, readReceiptForRestore } from '../src/receipt-lineage.ts';
@@ -131,13 +132,16 @@ test('an edited role profile blocks Codex uninstall with no writes', async t => 
   assert.deepEqual(readdirSync(box.codex).sort(), before);
 });
 
-test('Codex uninstall also removes the launcher thread registry and its empty directory', async t => {
+test('Codex uninstall also removes the launcher thread bindings and their empty directories', async t => {
   const box = sandbox(t);
   await install(box);
-  const registry = join(box.codex, 'advanced-harness', 'role-threads.json');
-  writeFileSync(registry, '{ "thread-1": "implementer" }\n');
+  const bindings = join(box.codex, 'advanced-harness', 'role-threads');
+  recordThread(bindings, 'thread-1', 'implementer');
+  recordThread(bindings, 'thread-2', 'reviewer');
   assert.equal(await uninstall(box), 0, box.errors.join('\n'));
-  assert.equal(existsSync(registry), false);
+  assert.equal(existsSync(bindings), false);
   assert.equal(existsSync(join(box.codex, 'advanced-harness')), false);
-  assert.ok(box.output.some(line => line.includes('role thread bindings')), 'listed in the planned actions before confirmation');
+  assert.ok(box.output.some(line => line.includes('remove 2 role thread binding file(s)')), 'listed in the planned actions before confirmation');
+  const backup = box.output.find(line => line.startsWith('Removed 2 role thread binding file(s)'))?.split('private backup: ')[1];
+  assert.ok(backup && existsSync(join(backup, 'thread-1')) && existsSync(join(backup, 'thread-2')), 'bindings are backed up privately');
 });

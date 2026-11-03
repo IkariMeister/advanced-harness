@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, lstatSync, rmdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, lstatSync, readdirSync, rmdirSync } from 'node:fs';
 import { basename, dirname, join, resolve, parse as pathParse } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -984,10 +984,12 @@ export function planCodexUninstall(statePath: string, backupParent: string): { a
       : `reverse harness edits in ${configPath}${reversed.kept.length ? ` (keeping changed: ${reversed.kept.join(', ')})` : ''}`,
     `remove ${statePath}`,
   ];
-  // The launcher's thread-to-role registry is runtime state outside the receipt.
-  const threadsPath = join(dirname(statePath), 'advanced-harness', 'role-threads.json');
-  const threadsText = existsSync(threadsPath) ? readFileSync(threadsPath, 'utf8') : undefined;
-  if (threadsText !== undefined) actions.push(`remove ${threadsPath} (role thread bindings)`);
+  // The launcher's thread-to-role bindings (one file per thread) are runtime state outside the receipt.
+  // Only the plain files seen now are removed; anything else in the directory is left in place.
+  const threadsPath = join(dirname(statePath), 'advanced-harness', 'role-threads');
+  const threadFiles = existsSync(threadsPath) && lstatSync(threadsPath).isDirectory()
+    ? readdirSync(threadsPath).filter(name => lstatSync(join(threadsPath, name)).isFile()) : [];
+  if (threadFiles.length) actions.push(`remove ${threadFiles.length} role thread binding file(s) in ${threadsPath}`);
   return {
     actions,
     kept: reversed?.kept ?? [],
@@ -1011,12 +1013,22 @@ export function planCodexUninstall(statePath: string, backupParent: string): { a
       backup(statePath, stateText);
       unlinkSync(statePath);
       lines.push(`Removed ${statePath}`);
-      if (threadsText !== undefined && existsSync(threadsPath)) {
-        backup(threadsPath, readFileSync(threadsPath, 'utf8'));
-        unlinkSync(threadsPath);
-        lines.push(`Removed ${threadsPath}`);
-        // Managed-file pruning ran first and kept this directory because the registry was still in it.
-        try { rmdirSync(dirname(threadsPath)); lines.push(`Removed empty installer directory: ${dirname(threadsPath)}`); } catch { /* not empty: left in place */ }
+      if (threadFiles.length) {
+        const threadBackup = join(backupDir, 'role-threads');
+        mkdirSync(threadBackup, { recursive: true, mode: 0o700 });
+        let removed = 0;
+        for (const name of threadFiles) {
+          const file = join(threadsPath, name);
+          if (!existsSync(file)) continue;
+          writeFileSync(join(threadBackup, name), readFileSync(file), { flag: 'wx', mode: 0o600 });
+          unlinkSync(file);
+          removed++;
+        }
+        lines.push(`Removed ${removed} role thread binding file(s) from ${threadsPath}; private backup: ${threadBackup}`);
+        // Managed-file pruning ran first and kept these directories because the bindings were still in them.
+        for (const dir of [threadsPath, dirname(threadsPath)]) {
+          try { rmdirSync(dir); lines.push(`Removed empty installer directory: ${dir}`); } catch { break; /* not empty: left in place */ }
+        }
       }
       return lines;
     },
