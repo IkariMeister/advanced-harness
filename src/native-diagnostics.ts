@@ -164,14 +164,14 @@ export async function diagnoseHost(
   let installed = false;
   if (host === 'opencode') {
     const globalDir = options.globalDirectory ?? resolve(join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode'));
-    const sources = expectedAgents(discoverConfigurations(project, globalDir));
+    const sources = expectedAgents(discoverConfigurations(options.scope === 'global' ? undefined : project, options.scope === 'project' ? undefined : globalDir));
     installed = Object.keys(sources).length > 0;
     if (!installed) {
       notes.push('OpenCode configuration not found in inspected project or global directory.');
     }
     const adapter = getHostAdapter(host);
     if (adapter?.doctor) {
-      const res = await adapter.doctor({ project });
+      const res = await adapter.doctor({ project, ...(options.scope ? { scope: options.scope } : {}) });
       issues.push(...res.issues);
       notes.push(...res.notes);
       return { host, displayName: cap.displayName, ok: res.ok && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, ...(sourcePolicy ? { sourcePolicy } : {}) };
@@ -212,7 +212,7 @@ export async function diagnoseHost(
 
   const adapter = getHostAdapter(host);
   if (adapter?.doctor) {
-    const res = await adapter.doctor({ project, home, globalDirectory: options.globalDirectory });
+    const res = await adapter.doctor({ project, home, globalDirectory: options.globalDirectory, ...(options.scope ? { scope: options.scope } : {}) });
     issues.push(...res.issues);
     notes.push(...res.notes);
     return { host, displayName: cap.displayName, ok: res.ok, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, ...(sourcePolicy ? { sourcePolicy } : {}) };

@@ -217,6 +217,36 @@ test('diagnoseHost at project scope does not count a global footprint as install
   assert.equal((await diagnoseHost('claude-code', { project, home, scope: 'project' })).installed, false);
 });
 
+test('doctor --scope project never reads a malformed global OpenCode config (#145)', t => {
+  const { xdg, project, run } = sandboxedDoctor(t);
+  writeFileSync(join(xdg, 'opencode', 'opencode.json'), '{ "agents": ');
+  const scoped = run(['--scope', 'project', '--host', 'opencode', '--project', project]);
+  assert.equal(scoped.status, 0, scoped.stderr);
+  assert.doesNotMatch(scoped.stderr, /inconclusive/i);
+  const both = run(['--host', 'opencode', '--project', project]);
+  assert.equal(both.status, 2, 'without --scope the malformed global file is read and fails');
+});
+
+test('doctor scope reaches Antigravity and Codex adapters so excluded global artifacts are not inspected (#145)', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-doctor-adapter-scope-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = join(root, 'home'); const project = join(root, 'project');
+  mkdirSync(join(home, '.gemini', 'config'), { recursive: true }); mkdirSync(join(home, '.codex'), { recursive: true }); mkdirSync(project);
+  writeFileSync(join(home, '.gemini', 'config', 'hooks.json'), '{ broken');
+  writeFileSync(join(home, '.codex', 'config.toml'), '[unterminated\n');
+  const globalIssue = (issues: string[]) => issues.filter(issue => /Global|\.gemini|\.codex/.test(issue) && !/not installed/.test(issue));
+
+  const antigravityBoth = await diagnoseHost('antigravity', { project, home });
+  assert.ok(globalIssue(antigravityBoth.issues).length > 0, 'the malformed global hooks.json is reported without a scope');
+  const antigravityProject = await diagnoseHost('antigravity', { project, home, scope: 'project' });
+  assert.deepEqual(globalIssue(antigravityProject.issues), []);
+
+  const codexBoth = await diagnoseHost('codex', { project, home });
+  assert.ok(globalIssue(codexBoth.issues).length > 0, 'the malformed global config.toml is reported without a scope');
+  const codexProject = await diagnoseHost('codex', { project, home, scope: 'project' });
+  assert.deepEqual(globalIssue(codexProject.issues), []);
+});
+
 test('doctor --scope limits OpenCode configuration sources to the requested scope (#145)', t => {
   const { xdg, project, run } = sandboxedDoctor(t);
   writeFileSync(join(xdg, 'opencode', 'opencode.json'), '{}');

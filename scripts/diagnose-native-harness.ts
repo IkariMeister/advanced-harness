@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, relative, resolve, isAbsolute } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverConfigurations } from '../src/native-installer.ts';
 import { DiagnosticError, expectedAgents, printReport, verifyRuntime, diagnoseHost, printHostDiagnosticReport } from '../src/native-diagnostics.ts';
@@ -36,11 +36,6 @@ function fail(message: string): undefined {
   return undefined;
 }
 
-function within(parent: string, path: string): boolean {
-  const rel = relative(parent, path);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-}
-
 if (args.includes('--help')) {
   console.log('Usage: npm run harness:doctor -- [--scope <global|project>] [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--project <directory>] [--opencode <CLI path>] [--server <URL>]');
   console.log('Inspects config and runtime agent/model catalogs for all specified or detected hosts. May start the OpenCode service; never reloads it, edits config, or sends model requests.');
@@ -66,8 +61,8 @@ if (args.includes('--help')) {
 
       for (const host of hosts) {
         if (host === 'opencode') {
-          const discovered = discoverConfigurations(scope === 'global' ? undefined : directory, global);
-          const sources = scope === 'project' ? discovered.filter(source => !within(global, source.path)) : discovered;
+          // The excluded scope is never read, so a malformed file there cannot fail this check.
+          const sources = discoverConfigurations(scope === 'global' ? undefined : directory, scope === 'project' ? undefined : global);
           console.log('\n=== OpenCode V2 Diagnostics ===');
           console.log('Configuration sources (no contents/credentials printed):');
           for (const source of sources) console.log(`  ${source.path}`);

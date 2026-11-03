@@ -376,6 +376,8 @@ export interface HostAdapterDoctorOptions {
   global?: boolean | undefined;
   home?: string | undefined;
   globalDirectory?: string | undefined;
+  /** doctor --scope: inspect only that scope's artifacts; omitted inspects both. */
+  scope?: 'global' | 'project' | undefined;
 }
 
 export interface HostAdapter {
@@ -468,6 +470,7 @@ registerHostAdapter({
       project: options.project,
       home: options.home,
       globalDirectory: options.globalDirectory,
+      scope: options.scope,
     });
   },
 });
@@ -482,7 +485,7 @@ registerHostAdapter({
   host: 'codex',
   install: codexGated,
   update: codexGated,
-  async doctor(options) { return await diagnoseCodex({ project: options.project, home: options.home ?? homedir(), globalDirectory: options.globalDirectory }); },
+  async doctor(options) { return await diagnoseCodex({ project: options.project, home: options.home ?? homedir(), globalDirectory: options.globalDirectory, scope: options.scope }); },
 });
 
 export function getHostAdapter(host: HostId): HostAdapter | undefined {

@@ -54,8 +54,9 @@ export function configurationFiles(directory: string): string[] {
 }
 
 /** Filesystem sources in V2 order; this is not a running server's effective config. */
-export function discoverConfigurations(project: string | undefined, globalDirectory: string): ConfigSource[] {
-  const paths = configurationFiles(globalDirectory);
+/** Omitting globalDirectory skips global sources before anything is read or parsed (doctor --scope project). */
+export function discoverConfigurations(project: string | undefined, globalDirectory: string | undefined): ConfigSource[] {
+  const paths = globalDirectory === undefined ? [] : configurationFiles(globalDirectory);
   if (project) {
     const ancestors: string[] = [];
     for (let directory = resolve(project); ; directory = dirname(directory)) {
