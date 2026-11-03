@@ -55,13 +55,17 @@ test('strict role source compiler preserves current normalized OpenCode definiti
   const baseline = legacyNormalizedDefinitions();
   assert.match(capturedArtifact.provenance, /reconstructed after v2 source migration/i);
   const agentsDirectory = fileURLToPath(agents);
-  const compiled = compileOpenCodeRoles(loadRoleDefinitions(agentsDirectory));
+  const currentDefinitions = loadRoleDefinitions(agentsDirectory);
+  const compiled = compileOpenCodeRoles(currentDefinitions);
   assert.deepEqual(compiled.diagnostics, []);
   assert.deepEqual(loadNativeDefinitions(fileURLToPath(legacyAgents)), baseline, 'historical sources normalize to their independent historical snapshot');
   const currentReviewer = readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8');
+  assert.equal(currentDefinitions.reviewer.instructions, currentReviewer.trim(), 'reviewer instructions match the independent current-reviewer snapshot');
   const expectedCurrent = currentNormalizedDefinitions();
-  expectedCurrent.reviewer.system = currentReviewer.trim();
-  assert.deepEqual(compiled.definitions, expectedCurrent, 'current compiler output preserves historical definitions except the independently snapshotted reviewer body and Operator fetch change');
+  for (const role of ['lead', 'planner', 'implementer', 'reviewer'] as const) {
+    expectedCurrent[role].system = currentDefinitions[role].instructions;
+  }
+  assert.deepEqual(compiled.definitions, expectedCurrent, 'current compiler output preserves historical definitions except the updated role contract bodies and Operator fetch change');
   assert.deepEqual(loadNativeDefinitions(agentsDirectory), expectedCurrent, 'current native loader output matches the independent expected full definitions');
 });
 
