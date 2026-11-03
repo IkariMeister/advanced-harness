@@ -11,7 +11,8 @@ version between releases.
 - OpenAI Codex install, update, doctor and uninstall at global scope: each child
   role runs as its own `codex exec` process with a source-derived profile, started
   by Lead through a launcher that re-applies the role settings on every launch and
-  resume, with your approval for each launch. Uninstall reverses only the
+  resume, with your approval for each launch. Uninstall removes only the Lead block
+  from a shared `AGENTS.md` and reverses only the
   harness's own `config.toml` edits (#45).
 
 ## v0.2.2 — 2026-11-03

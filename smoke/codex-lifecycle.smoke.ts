@@ -54,7 +54,7 @@ describe('SMK-CX Codex global role-process lifecycle (non-TTY piped answers)', (
     assert.equal(result.code, 0, result.transcript);
     assert.deepEqual(result.unansweredSteps, []);
     assert.match(result.stdout, /Cancelled\. No files, backups, or receipts were written\./);
-    assert.match(result.stdout, /you approve every launch/);
+    assert.match(result.stdout, /You approve every launch/);
     assert.deepEqual(tree(box.home), homeBefore);
   });
 

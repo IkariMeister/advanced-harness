@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { nativeRoles, type NativeRole } from './native-role-types.ts';
@@ -120,6 +121,52 @@ export function mergeCodexLeadBlock(existing: string | undefined, block: string)
     return existing.slice(0, from) + full + after;
   }
   return `${existing.replace(/\s+$/, '')}\n\n${full}`;
+}
+
+/**
+ * What uninstall needs to take the Lead block back out of ~/.codex/AGENTS.md. The file is the user's as
+ * well as the harness's, so it is tracked as this one block, never restored or compared as a whole file.
+ */
+export type CodexLeadBlockRecord = {
+  /** AGENTS.md did not exist before the first install, so uninstall may remove it once nothing else is in it. */
+  created: boolean;
+  /** Whitespace that ended the file where the block was added; merging replaces it with a separator. */
+  trailing: string;
+  /** Digest of the block the harness last wrote; a different block was edited and is not the harness's to remove. */
+  digest: string;
+};
+
+const leadBlockDigest = (block: string) => createHash('sha256').update(block).digest('hex');
+
+/** Records the block just written. `prior` keeps what the first install saw, which later updates cannot know. */
+export function codexLeadBlockRecord(before: string | undefined, after: string, prior?: CodexLeadBlockRecord): CodexLeadBlockRecord {
+  const extracted = extractCodexLeadBlock(after);
+  if ('problem' in extracted) throw new Error(`The merged Lead block ${extracted.problem}.`);
+  const from = before?.indexOf(codexLeadMarkers.start) ?? -1;
+  const preceding = before === undefined ? '' : from < 0 ? before : before.slice(0, from);
+  return {
+    created: prior ? prior.created : before === undefined,
+    trailing: prior ? prior.trailing : /\s*$/.exec(preceding)?.[0] ?? '',
+    digest: leadBlockDigest(extracted.block),
+  };
+}
+
+/**
+ * Takes the harness's Lead block out of the current AGENTS.md and leaves everything else as it is. A block
+ * that is malformed or edited since install is not removed: `kept` says why, for the user to review.
+ */
+export function removeCodexLeadBlock(text: string, record: CodexLeadBlockRecord): { text: string; kept?: string; found: boolean } {
+  const extracted = extractCodexLeadBlock(text);
+  if ('problem' in extracted) {
+    return extracted.problem === 'is missing' ? { text, found: false } : { text, kept: extracted.problem, found: true };
+  }
+  if (leadBlockDigest(extracted.block) !== record.digest) return { text, kept: 'was edited since install', found: true };
+  const { start, end } = codexLeadMarkers;
+  const head = text.slice(0, text.indexOf(start));
+  const tail = text.slice(text.indexOf(end) + end.length).replace(/^\r?\n/, '');
+  const body = head.replace(/\s+$/, '');
+  if (!tail.trim()) return { text: body + record.trailing, found: true };
+  return { text: body ? head + tail : tail.replace(/^(?:\r?\n)+/, ''), found: true };
 }
 
 /** The launcher source shipped verbatim to $CODEX_HOME/advanced-harness/codex-role.mjs. */

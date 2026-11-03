@@ -9,7 +9,7 @@ import { nativeRoles, type NativeRole } from './native-role-types.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import { codexDestructiveGitPrefixes, type CodexPrefixPattern } from './security-guardrails.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
-import { codexChildRoles, codexProfileName, codexRolePolicies, codexRoleLauncherSource, compileCodexLeadBlock, compileCodexRoleProfile, compileCodexRoleStatusSchema, extractCodexLeadBlock, mergeCodexLeadBlock } from './codex-role-processes.ts';
+import { codexChildRoles, codexProfileName, codexRolePolicies, codexRoleLauncherSource, compileCodexLeadBlock, compileCodexRoleProfile, compileCodexRoleStatusSchema, codexLeadBlockRecord, extractCodexLeadBlock, mergeCodexLeadBlock, removeCodexLeadBlock, type CodexLeadBlockRecord } from './codex-role-processes.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, type HarnessVersionStamp, type ManagedFileEvidence } from './receipt-lineage.ts';
 
 type PlannedFile = { path: string; content: string; before: string | undefined; kind: string };
@@ -861,16 +861,24 @@ export async function installCodex(options: {
     if (latest !== file.before) throw new Error(`File changed while confirmation was open: ${file.path}. Rerun; no file was overwritten.`);
   }
   const changed = selectedFiles.filter(file => file.before !== file.content);
-  // Role-process mode tracks config.toml through its recorded edits instead (see CodexConfigEdits).
-  const nextEvidence: ManagedFileEvidence[] = changed.filter(file => !(roleProcesses && file.kind === 'config')).map(file => ({ path: file.path, kind: file.kind === 'skill' ? 'skills' as const : file.kind === 'role' ? 'instructions' as const : file.kind as 'config' | 'rules' | 'instructions', before: file.before === undefined ? { absent: true as const } : file.kind === 'config' ? { digest: digest(file.before) } : { content: file.before }, after: file.kind === 'config' ? { digest: digest(file.content) } : { content: file.content } }));
-  const combinedEvidence = structuredClone(priorFiles).filter(file => !(roleProcesses && file.kind === 'config' && canonicalPath(file.path) === canonicalPath(configPath)));
+  // Role-process mode tracks config.toml through its recorded edits (see CodexConfigEdits) and the shared
+  // AGENTS.md as its Lead block (see CodexLeadBlockRecord), never as whole files the user cannot then edit.
+  const leadPath = join(base, 'AGENTS.md');
+  const recordedElsewhere = (path: string) => roleProcesses && (canonicalPath(path) === canonicalPath(configPath) || canonicalPath(path) === canonicalPath(leadPath));
+  const nextEvidence: ManagedFileEvidence[] = changed.filter(file => !recordedElsewhere(file.path)).map(file => ({ path: file.path, kind: file.kind === 'skill' ? 'skills' as const : file.kind === 'role' ? 'instructions' as const : file.kind as 'config' | 'rules' | 'instructions', before: file.before === undefined ? { absent: true as const } : file.kind === 'config' ? { digest: digest(file.before) } : { content: file.before }, after: file.kind === 'config' ? { digest: digest(file.content) } : { content: file.content } }));
+  const combinedEvidence = structuredClone(priorFiles).filter(file => !recordedElsewhere(file.path));
   for (const item of nextEvidence) {
     const old = combinedEvidence.find(evidence => canonicalPath(evidence.path) === canonicalPath(item.path));
     if (old) old.after = item.after; else combinedEvidence.push(item);
   }
   const priorEdits = stateValue.configEdits && typeof stateValue.configEdits === 'object' ? stateValue.configEdits as CodexConfigEdits : undefined;
   const configEdits = roleProcesses ? { configEdits: codexConfigEdits(existing, configAfter, priorEdits, configBefore === undefined) } : {};
-  const nextState = JSON.stringify({ ...stateValue, host: 'codex', ...(roleProcesses ? { mode: 'role-processes' } : {}), ...configEdits, selectedMcpServers: selected, disabledTools: selectedTools, managed: combinedEvidence.map(item => ({ path: item.path, after: item.after })) }, null, 2) + '\n';
+  const leadFile = roleProcesses ? selectedFiles.find(file => file.path === leadPath) : undefined;
+  // An earlier install may hold AGENTS.md as whole-file evidence: what it saw is still the original file.
+  const priorLead = priorFiles.find(file => canonicalPath(file.path) === canonicalPath(leadPath))?.before;
+  const leadOriginal = priorLead === undefined ? leadFile?.before : 'absent' in priorLead ? undefined : 'content' in priorLead ? priorLead.content : leadFile?.before;
+  const leadBlock = leadFile ? { leadBlock: codexLeadBlockRecord(leadOriginal, leadFile.content, stateValue.leadBlock as CodexLeadBlockRecord | undefined) } : {};
+  const nextState = JSON.stringify({ ...stateValue, host: 'codex', ...(roleProcesses ? { mode: 'role-processes' } : {}), ...configEdits, ...leadBlock, selectedMcpServers: selected, disabledTools: selectedTools, managed: combinedEvidence.map(item => ({ path: item.path, after: item.after })) }, null, 2) + '\n';
   if (changed.length === 0 && nextState === stateBefore) {
     output(omittedRoles.length
       ? 'Nothing was written: the selected files are already current, but the requested role assignments were not applied because existing role profiles were preserved.'
@@ -1026,23 +1034,23 @@ function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): st
   return issues;
 }
 
-/**
- * The Codex part of uninstall that the receipt does not cover: config.toml (recorded as edits, since the
- * file can hold MCP credentials) and the state manifest. Used as the generic flow's host step, so it is
- * previewed before confirmation and applied only after every receipt-managed file was restored.
- */
 /** A role thread binding the launcher writes: a file named by a thread ID that holds one child role's name. */
 const codexThreadIdPattern = /^[A-Za-z0-9-]{1,128}$/;
 
 /**
- * Plans the Codex host step of uninstall. `remove` deletes one file; tests replace it to inject failures.
- * Writes run in retry-safe order: thread bindings, then config.toml, and the state manifest last, so a
- * failure leaves the manifest in place and uninstall can be run again.
+ * The Codex part of uninstall that the receipt does not cover: config.toml (recorded as edits, since the
+ * file can hold MCP credentials), the Lead block in the shared AGENTS.md, and the state manifest. Used as
+ * the generic flow's host step, so it is previewed before confirmation and applied only after every
+ * receipt-managed file was restored.
+ *
+ * `remove` deletes one file; tests replace it to inject failures. Writes run in retry-safe order: thread
+ * bindings, config.toml, AGENTS.md, and the state manifest last, so a failure leaves the manifest in place
+ * and uninstall can be run again.
  */
 export function planCodexUninstall(statePath: string, backupParent: string, remove: (path: string) => void = unlinkSync): { actions: string[]; kept: string[]; apply(): string[] } {
   if (!existsSync(statePath)) throw new Error(`Codex state manifest is missing: ${statePath}; uninstall cannot identify the harness configuration edits.`);
   const stateText = readFileSync(statePath, 'utf8');
-  let state: { mode?: unknown; configEdits?: CodexConfigEdits };
+  let state: { mode?: unknown; configEdits?: CodexConfigEdits; leadBlock?: CodexLeadBlockRecord };
   try { state = JSON.parse(stateText) as typeof state; } catch { throw new Error(`Malformed Codex state manifest: ${statePath}; no changes made.`); }
   if (state.mode !== 'role-processes' || !state.configEdits) throw new Error('This Codex install has no recorded configuration edits (it predates role-process mode); uninstall is not supported for it. No changes made.');
   const edits = state.configEdits;
@@ -1051,6 +1059,12 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
   const configBefore = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
   const reversed = configBefore === undefined ? undefined : reverseCodexConfigEdits(configBefore, edits);
   const removeConfig = reversed !== undefined && edits.configCreated && !reversed.text.trim();
+  // Absent on an install that still holds AGENTS.md as receipt evidence: the managed restore handles that one.
+  const leadPath = join(dirname(statePath), 'AGENTS.md');
+  assertSafeFilesystemPath(leadPath, 'file');
+  const leadBefore = state.leadBlock && existsSync(leadPath) ? readFileSync(leadPath, 'utf8') : undefined;
+  const leadAfter = state.leadBlock && leadBefore !== undefined ? removeCodexLeadBlock(leadBefore, state.leadBlock) : undefined;
+  const removeLead = leadAfter !== undefined && !leadAfter.kept && state.leadBlock!.created && !leadAfter.text.trim();
   // The launcher's thread-to-role bindings are runtime state outside the receipt. Only entries that are
   // bindings by name and content are removed; anything else is kept and reported, never assumed ours.
   const threadsPath = join(dirname(statePath), 'advanced-harness', 'role-threads');
@@ -1071,6 +1085,11 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
       : removeConfig ? `remove ${configPath} (created by the harness, nothing else in it)`
       : reversed.text === configBefore ? `${configPath}: no harness edits left to reverse`
       : `reverse harness edits in ${configPath}${reversed.kept.length ? ` (keeping changed: ${reversed.kept.join(', ')})` : ''}`,
+    ...(leadAfter === undefined ? []
+      : leadAfter.kept ? [`keep the Lead block in ${leadPath}: it ${leadAfter.kept}; review by hand`]
+      : !leadAfter.found ? [`${leadPath}: no Lead block left to remove`]
+      : removeLead ? [`remove ${leadPath} (created by the harness, nothing else in it)`]
+      : [`remove the Lead block from ${leadPath}; your other content stays`]),
     `remove ${statePath}`,
   ];
   return {
@@ -1081,6 +1100,7 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
       const latest = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
       if (latest !== configBefore) throw new Error(`${configPath} changed after review; nothing was changed by the Codex step`);
       if (readFileSync(statePath, 'utf8') !== stateText) throw new Error(`${statePath} changed after review; nothing was changed by the Codex step`);
+      if (state.leadBlock && (existsSync(leadPath) ? readFileSync(leadPath, 'utf8') : undefined) !== leadBefore) throw new Error(`${leadPath} changed after review; nothing was changed by the Codex step`);
       for (const binding of bindings) {
         if (existsSync(binding.path) && (!lstatSync(binding.path).isFile() || readFileSync(binding.path, 'utf8') !== binding.content)) {
           throw new Error(`${binding.path} changed after review; nothing was changed by the Codex step`);
@@ -1112,6 +1132,11 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
           if (removeConfig) { remove(configPath); lines.push(`Removed ${configPath}`); }
           else { writeFileSync(configPath, reversed.text, 'utf8'); lines.push(`Reversed harness edits in ${configPath}`); }
         }
+        if (leadBefore !== undefined && leadAfter && leadAfter.text !== leadBefore) {
+          lines.push(`Private backup: ${backup(leadPath, leadBefore)}`);
+          if (removeLead) { remove(leadPath); lines.push(`Removed ${leadPath}`); }
+          else { writeFileSync(leadPath, leadAfter.text, 'utf8'); lines.push(`Removed the Lead block from ${leadPath}`); }
+        }
         // Last: while the manifest exists, a failed run can simply be retried.
         lines.push(`Private backup: ${backup(statePath, stateText)}`);
         remove(statePath);
@@ -1124,6 +1149,7 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
         throw new Error(`Codex step failed: ${error instanceof Error ? error.message : String(error)}. Completed before the failure: ${lines.join('; ') || 'nothing'}. ${kept}.`);
       }
       for (const path of unexpected) lines.push(`Kept ${path}: not a role thread binding; review by hand`);
+      if (leadAfter?.kept) lines.push(`Kept the Lead block in ${leadPath}: it ${leadAfter.kept}; review by hand`);
       // Managed-file pruning ran first and kept these directories because the bindings were still in them.
       if (!unexpected.length && bindings.length) {
         for (const dir of [threadsPath, dirname(threadsPath)]) {

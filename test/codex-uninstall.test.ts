@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installCodex, planCodexUninstall } from '../src/codex-adapter.ts';
@@ -237,4 +237,120 @@ test('a failed Codex step keeps the state manifest, reports completed work and b
   assert.ok(lines.includes(`Removed ${target}`), lines.join('\n'));
   assert.equal(existsSync(target), false);
   assert.equal(existsSync(bindings), false);
+});
+
+const leadStart = '<!-- BEGIN advanced-harness Codex Lead -->';
+// Stands in for a harness version whose Lead block text changed: an update then rewrites the block.
+const ageLeadBlock = (box: Box) => writeFileSync(join(box.codex, 'AGENTS.md'), readFileSync(join(box.codex, 'AGENTS.md'), 'utf8').replace('### Lead role instructions', '### Lead role instructions (older)'));
+
+test('Codex uninstall keeps notes added to AGENTS.md, with or without an update in between (#45)', async t => {
+  const direct = sandbox(t);
+  await install(direct);
+  appendFileSync(join(direct.codex, 'AGENTS.md'), '\n# My notes\n');
+  assert.equal(await uninstall(direct), 0, direct.errors.join('\n'));
+  assert.equal(readFileSync(join(direct.codex, 'AGENTS.md'), 'utf8'), '# My notes\n', 'a harness-created file stays while it holds user content');
+
+  const updated = sandbox(t);
+  await install(updated);
+  appendFileSync(join(updated.codex, 'AGENTS.md'), '\n# My notes\n');
+  ageLeadBlock(updated);
+  await install(updated);
+  assert.ok(!readFileSync(join(updated.codex, 'AGENTS.md'), 'utf8').includes('(older)'), 'the update refreshed the block');
+  assert.equal(await uninstall(updated), 0, updated.errors.join('\n'));
+  assert.equal(readFileSync(join(updated.codex, 'AGENTS.md'), 'utf8'), '# My notes\n');
+
+  const preexisting = sandbox(t);
+  mkdirSync(preexisting.codex);
+  writeFileSync(join(preexisting.codex, 'AGENTS.md'), '# Original\n');
+  await install(preexisting);
+  const edited = readFileSync(join(preexisting.codex, 'AGENTS.md'), 'utf8').replace('# Original\n', '# Original\n\n# Added before the block\n');
+  writeFileSync(join(preexisting.codex, 'AGENTS.md'), `${edited}\n# Added after the block\n`);
+  ageLeadBlock(preexisting);
+  await install(preexisting);
+  assert.equal(await uninstall(preexisting), 0, preexisting.errors.join('\n'));
+  assert.equal(readFileSync(join(preexisting.codex, 'AGENTS.md'), 'utf8'), '# Original\n\n# Added before the block\n\n\n# Added after the block\n');
+});
+
+test('Codex uninstall restores AGENTS.md whitespace and removes a harness-created file (#45)', async t => {
+  for (const original of ['# Notes', '# Notes\n\n\n', '# Notes\r\nMore\r\n', '  \n']) {
+    const box = sandbox(t);
+    mkdirSync(box.codex);
+    writeFileSync(join(box.codex, 'AGENTS.md'), original);
+    await install(box);
+    assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+    assert.equal(readFileSync(join(box.codex, 'AGENTS.md'), 'utf8'), original);
+  }
+  const created = sandbox(t);
+  await install(created);
+  await install(created);
+  assert.equal(await uninstall(created), 0, created.errors.join('\n'));
+  assert.equal(existsSync(join(created.codex, 'AGENTS.md')), false);
+});
+
+test('Codex keeps AGENTS.md out of the receipt (#45)', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  writeFileSync(join(box.codex, 'AGENTS.md'), '# Private notes\n');
+  await install(box);
+  const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
+  const chain = discoverReceiptChain(box.recovery, target, 'codex');
+  const receipt = readFileSync(join(chain.directory, chain.head!.file), 'utf8');
+  assert.ok(!receipt.includes('# Private notes'), 'the receipt holds no user AGENTS.md content');
+  const managed = (JSON.parse(receipt) as { managedFiles: Array<{ path: string }> }).managedFiles.map(file => file.path);
+  assert.ok(managed.length > 0);
+  assert.ok(!managed.some(path => path.endsWith('AGENTS.md')), 'the receipt does not manage AGENTS.md');
+});
+
+test('Codex uninstall keeps and reports an edited or malformed Lead block (#45)', async t => {
+  const cases: Array<[string, (text: string) => string, RegExp]> = [
+    ['edited', text => text.replace('You are Lead.', 'You are my Lead.'), /was edited since install/],
+    ['duplicated', text => `${text}${leadStart}\n`, /has 2 start and 1 end markers/],
+  ];
+  for (const [name, change, expected] of cases) {
+    const box = sandbox(t);
+    await install(box);
+    const text = change(readFileSync(join(box.codex, 'AGENTS.md'), 'utf8'));
+    writeFileSync(join(box.codex, 'AGENTS.md'), text);
+    assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+    assert.equal(readFileSync(join(box.codex, 'AGENTS.md'), 'utf8'), text, `${name}: left in place`);
+    assert.ok(box.output.some(line => line.trim().startsWith('keep the Lead block') && expected.test(line)), `${name}: listed before confirmation`);
+    assert.ok(box.output.some(line => line.startsWith('Kept the Lead block') && expected.test(line)), `${name}: reported after`);
+  }
+});
+
+test('Codex uninstall handles AGENTS.md changing or failing during the host step (#45)', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  writeFileSync(join(box.codex, 'AGENTS.md'), '# Notes\n');
+  await install(box);
+  const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
+
+  const changing = planCodexUninstall(target, box.recovery);
+  const installed = readFileSync(join(box.codex, 'AGENTS.md'), 'utf8');
+  writeFileSync(join(box.codex, 'AGENTS.md'), `${installed}\n# Just added\n`);
+  assert.throws(() => changing.apply(), /AGENTS\.md changed after review; nothing was changed/);
+  assert.ok(existsSync(target));
+  writeFileSync(join(box.codex, 'AGENTS.md'), installed);
+
+  let failed = false;
+  const failing = planCodexUninstall(target, box.recovery, path => { if (path === target && !failed) { failed = true; throw new Error('EBUSY'); } unlinkSync(path); });
+  assert.throws(() => failing.apply(), /Removed the Lead block[\s\S]*is kept, so uninstall can be run again/);
+  assert.equal(readFileSync(join(box.codex, 'AGENTS.md'), 'utf8'), '# Notes\n');
+
+  const retry = planCodexUninstall(target, box.recovery);
+  assert.ok(retry.actions.some(action => action.includes('no Lead block left to remove')));
+  retry.apply();
+  assert.equal(readFileSync(join(box.codex, 'AGENTS.md'), 'utf8'), '# Notes\n');
+  assert.equal(existsSync(target), false);
+});
+
+test('Codex uninstall reverses a dotted features.multi_agent byte for byte (#45)', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  const config = 'sandbox_mode = "read-only"\napproval_policy = "on-request"\nfeatures.web_search = true\n';
+  writeFileSync(join(box.codex, 'config.toml'), config);
+  await install(box);
+  assert.match(readFileSync(join(box.codex, 'config.toml'), 'utf8'), /^features\.multi_agent = false$/m);
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), config);
 });
