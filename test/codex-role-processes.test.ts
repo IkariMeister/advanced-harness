@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { diagnoseCodex, disableMultiAgent, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
 import { codexChildRoles, codexRoleLauncherSource, codexRolePolicies, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from '../src/codex-role-processes.ts';
-import { assertResumable, buildRoleInvocation, main as launcherMain, parseProfile, readThreadRegistry, recordThread, securityKeys, threadRegistryPath } from '../src/codex-role-launcher.mjs';
+import { assertResumable, buildRoleInvocation, main as launcherMain, parseProfile, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 
 const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -155,24 +156,106 @@ test('doctor reports a widened role profile and re-enabled multi_agent', async t
 
 test('resume is bound to the role that started the thread; unknown or other-role threads never run', t => {
   const { codex } = sandbox(t);
-  mkdirSync(join(codex, 'advanced-harness'), { recursive: true });
-  const registry = threadRegistryPath(codex);
-  recordThread(registry, 'thread-impl-1', 'implementer');
-  recordThread(registry, 'thread-review-1', 'reviewer');
-  assert.deepEqual(readThreadRegistry(registry), { 'thread-impl-1': 'implementer', 'thread-review-1': 'reviewer' });
-  assert.doesNotThrow(() => assertResumable(readThreadRegistry(registry), 'thread-impl-1', 'implementer'));
-  assert.throws(() => assertResumable(readThreadRegistry(registry), 'thread-review-1', 'implementer'), /belongs to reviewer; it cannot be resumed as implementer/);
-  assert.throws(() => assertResumable(readThreadRegistry(registry), 'thread-unknown', 'implementer'), /Unknown thread thread-unknown/);
-  assert.throws(() => assertResumable(readThreadRegistry(registry), '../x', 'implementer'), /Invalid thread ID/);
-  assert.throws(() => assertResumable(readThreadRegistry(registry), 'constructor', 'implementer'), /Unknown thread constructor/);
+  const bindings = threadBindingsPath(codex);
+  recordThread(bindings, 'thread-impl-1', 'implementer');
+  recordThread(bindings, 'thread-review-1', 'reviewer');
+  assert.doesNotThrow(() => recordThread(bindings, 'thread-impl-1', 'implementer'), 'recording the same binding twice is harmless');
+  assert.throws(() => recordThread(bindings, 'thread-impl-1', 'reviewer'), /already bound to implementer/);
+  assert.deepEqual({ ...readThreadBindings(bindings) }, { 'thread-impl-1': 'implementer', 'thread-review-1': 'reviewer' });
+  assert.doesNotThrow(() => assertResumable(readThreadBindings(bindings), 'thread-impl-1', 'implementer'));
+  assert.throws(() => assertResumable(readThreadBindings(bindings), 'thread-review-1', 'implementer'), /belongs to reviewer; it cannot be resumed as implementer/);
+  assert.throws(() => assertResumable(readThreadBindings(bindings), 'thread-unknown', 'implementer'), /Unknown thread thread-unknown/);
+  assert.throws(() => assertResumable(readThreadBindings(bindings), '../x', 'implementer'), /Invalid thread ID/);
+  assert.throws(() => assertResumable(readThreadBindings(bindings), 'constructor', 'implementer'), /Unknown thread constructor/);
 
   // Through main(): rejected before the Codex binary (a missing path here) is ever called.
   writeFileSync(join(codex, 'harness-implementer.config.toml'), compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x'));
   const env = { CODEX_HOME: codex, CODEX_BIN: join(codex, 'no-such-codex') };
   assert.throws(() => launcherMain(['implementer', '--resume', 'thread-review-1', '--task', 'continue'], env), /belongs to reviewer/);
   assert.throws(() => launcherMain(['implementer', '--resume', 'thread-unknown', '--task', 'continue'], env), /Unknown thread/);
-  writeFileSync(registry, '{ broken');
-  assert.throws(() => launcherMain(['implementer', '--resume', 'thread-impl-1', '--task', 'continue'], env), /Malformed role thread registry/);
+});
+
+test('concurrent launchers recording different threads keep every binding', async t => {
+  const { codex } = sandbox(t);
+  const bindings = threadBindingsPath(codex);
+  const launcher = new URL('../src/codex-role-launcher.mjs', import.meta.url).href;
+  const writers = 6, perWriter = 25;
+  // Separate processes, started together, each record their own threads into the same store.
+  const script = `import { recordThread } from ${JSON.stringify(launcher)};
+const [dir, writer, count] = process.argv.slice(1);
+for (let index = 0; index < Number(count); index++) recordThread(dir, \`thread-\${writer}-\${index}\`, writer % 2 ? 'reviewer' : 'implementer');`;
+  const exits = await Promise.all(Array.from({ length: writers }, (_, writer) => new Promise<number | null>(resolve => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, bindings, String(writer), String(perWriter)], { stdio: ['ignore', 'ignore', 'inherit'] });
+    child.on('exit', resolve);
+  })));
+  assert.deepEqual(exits, Array(writers).fill(0));
+  const recorded = readThreadBindings(bindings);
+  assert.equal(Object.keys(recorded).length, writers * perWriter);
+  for (let writer = 0; writer < writers; writer++) {
+    for (let index = 0; index < perWriter; index++) assert.equal(recorded[`thread-${writer}-${index}`], writer % 2 ? 'reviewer' : 'implementer');
+  }
+});
+
+test('malformed thread bindings stop a new launch or resume before any child starts', t => {
+  const { codex } = sandbox(t);
+  mkdirSync(join(codex, 'advanced-harness'), { recursive: true });
+  writeFileSync(join(codex, 'harness-implementer.config.toml'), compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x'));
+  const bindings = threadBindingsPath(codex);
+  // A missing binary would fail with ENOENT if the launcher got as far as calling Codex.
+  const env = { CODEX_HOME: codex, CODEX_BIN: join(codex, 'no-such-codex') };
+  const launch = () => launcherMain(['implementer', '--task', 'new work'], env);
+  const resume = () => launcherMain(['implementer', '--resume', 'thread-impl-1', '--task', 'continue'], env);
+
+  writeFileSync(bindings, '{ "thread-impl-1": "implementer" }');
+  assert.throws(launch, /Malformed role thread bindings .*not a directory/);
+  assert.throws(resume, /Malformed role thread bindings .*not a directory/);
+  rmSync(bindings);
+
+  recordThread(bindings, 'thread-impl-1', 'implementer');
+  writeFileSync(join(bindings, 'thread-broken'), '');
+  assert.throws(launch, /thread-broken does not name a role/);
+  assert.throws(resume, /thread-broken does not name a role/);
+  rmSync(join(bindings, 'thread-broken'));
+  writeFileSync(join(bindings, 'notes.txt'), 'x');
+  assert.throws(launch, /unexpected entry notes\.txt/);
+});
+
+test('a finished run whose thread cannot be recorded is reported for a decision, keeping its outcome', t => {
+  const { codex } = sandbox(t);
+  const bindings = threadBindingsPath(codex);
+  const stdout = ['{"type":"thread.started","thread_id":"thread-new-1"}', '{"type":"turn.completed"}'].join('\n');
+  const resultText = JSON.stringify({ status: 'Ready', summary: 'Implemented the change.', details: 'Edited src/a.ts' });
+
+  const ok = reportRun({ role: 'implementer', bindingsPath: bindings, stdout, exitCode: 0, resultText });
+  assert.equal(ok.code, 0);
+  assert.deepEqual(ok.report, { role: 'implementer', threadId: 'thread-new-1', exitCode: 0, status: 'Ready', summary: 'Implemented the change.', details: 'Edited src/a.ts' });
+  assert.equal(readThreadBindings(bindings)['thread-new-1'], 'implementer');
+
+  // The thread ID is already bound to another role: recording fails after the child did its work.
+  recordThread(bindings, 'thread-new-2', 'reviewer');
+  const conflict = reportRun({ role: 'implementer', bindingsPath: bindings, stdout: stdout.replace('thread-new-1', 'thread-new-2'), exitCode: 0, resultText });
+  assert.equal(conflict.code, 2);
+  assert.equal(conflict.report.status, 'Needs your decision');
+  assert.equal(conflict.report.threadId, 'thread-new-2');
+  assert.equal(conflict.report.exitCode, 0);
+  assert.match(String(conflict.report.summary), /finished \(exit 0\) but thread thread-new-2 could not be recorded.*already bound to reviewer/);
+  assert.match(String(conflict.report.details), /Do not repeat the task blindly/);
+  assert.deepEqual(conflict.report.roleResult, JSON.parse(resultText));
+  assert.equal(readThreadBindings(bindings)['thread-new-2'], 'reviewer', 'the existing binding is not overwritten');
+
+  // The store cannot be written at all (a file where the directory should be).
+  const blocked = join(codex, 'blocked');
+  writeFileSync(blocked, '');
+  const unwritable = reportRun({ role: 'implementer', bindingsPath: join(blocked, 'role-threads'), stdout, exitCode: 1, resultText: undefined });
+  assert.equal(unwritable.code, 2);
+  assert.equal(unwritable.report.threadId, 'thread-new-1');
+  assert.equal(unwritable.report.exitCode, 1);
+  assert.match(String(unwritable.report.summary), /finished \(exit 1\) but thread thread-new-1 could not be recorded/);
+  assert.equal((unwritable.report.roleResult as { status: string }).status, 'Needs your decision');
+
+  // A resume records nothing, so its result passes through unchanged.
+  const resumed = reportRun({ role: 'implementer', resumeId: 'thread-new-1', bindingsPath: join(blocked, 'role-threads'), stdout: '', exitCode: 0, resultText });
+  assert.deepEqual(resumed, { code: 0, report: { role: 'implementer', threadId: 'thread-new-1', exitCode: 0, status: 'Ready', summary: 'Implemented the change.', details: 'Edited src/a.ts' } });
 });
 
 test('doctor reports a missing, malformed, empty or edited Lead block without rewriting AGENTS.md', async t => {

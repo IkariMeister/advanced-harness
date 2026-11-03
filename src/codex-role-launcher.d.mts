@@ -12,9 +12,17 @@ export function buildRoleInvocation(options: {
   schemaPath: string;
   resultPath: string;
 }): string[];
-export function threadRegistryPath(home: string): string;
-export function readThreadRegistry(path: string): Record<string, string>;
-export function assertResumable(registry: Record<string, string>, threadId: string, role: string): void;
-export function recordThread(path: string, threadId: string, role: string): void;
+export function threadBindingsPath(home: string): string;
+export function readThreadBindings(dir: string): Record<string, string>;
+export function assertResumable(bindings: Record<string, string>, threadId: string, role: string): void;
+export function recordThread(dir: string, threadId: string, role: string): void;
+export function reportRun(options: {
+  role: string;
+  resumeId?: string | undefined;
+  bindingsPath: string;
+  stdout?: string | null | undefined;
+  exitCode: number | null;
+  resultText?: string | undefined;
+}): { code: number; report: Record<string, unknown> };
 export function findCodexBinary(env?: NodeJS.ProcessEnv): string;
 export function main(argv?: string[], env?: NodeJS.ProcessEnv): number;
