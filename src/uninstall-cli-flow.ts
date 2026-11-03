@@ -23,6 +23,9 @@ export async function runUninstallFlow(input: {
   const plan = planUninstall(input.receipt, input.current);
   if (plan.conflicts.length) {
     input.error(`Uninstall blocked by concurrent edits to: ${plan.conflicts.join(', ')}. No fields changed.`);
+    if (plan.conflicts.some(conflict => conflict.endsWith('(opaque legacy array)'))) {
+      input.error('A legacy permission array no longer matches its recorded state. Run npm run harness:update and type migrate at the legacy permission migration prompt to record the current state, then rerun uninstall.');
+    }
     return 1;
   }
   if (input.receipt.version === 2 && input.receipt.managedFiles?.length) {
