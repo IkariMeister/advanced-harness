@@ -130,3 +130,14 @@ test('an edited role profile blocks Codex uninstall with no writes', async t => 
   assert.match(box.errors.join('\n'), /Uninstall blocked by .*harness-reviewer\.config\.toml/);
   assert.deepEqual(readdirSync(box.codex).sort(), before);
 });
+
+test('Codex uninstall also removes the launcher thread registry and its empty directory', async t => {
+  const box = sandbox(t);
+  await install(box);
+  const registry = join(box.codex, 'advanced-harness', 'role-threads.json');
+  writeFileSync(registry, '{ "thread-1": "implementer" }\n');
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  assert.equal(existsSync(registry), false);
+  assert.equal(existsSync(join(box.codex, 'advanced-harness')), false);
+  assert.ok(box.output.some(line => line.includes('role thread bindings')), 'listed in the planned actions before confirmation');
+});

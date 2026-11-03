@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { diagnoseCodex, disableMultiAgent, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
 import { codexChildRoles, codexRoleLauncherSource, codexRolePolicies, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from '../src/codex-role-processes.ts';
-import { buildRoleInvocation, main as launcherMain, parseProfile, securityKeys } from '../src/codex-role-launcher.mjs';
+import { assertResumable, buildRoleInvocation, main as launcherMain, parseProfile, readThreadRegistry, recordThread, securityKeys, threadRegistryPath } from '../src/codex-role-launcher.mjs';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 
 const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -151,4 +151,53 @@ test('doctor reports a widened role profile and re-enabled multi_agent', async t
   assert.equal(doctor.ok, false);
   assert.match(doctor.issues.join('\n'), /reviewer sandbox_mode is not read-only/);
   assert.match(doctor.issues.join('\n'), /multi_agent is not false/);
+});
+
+test('resume is bound to the role that started the thread; unknown or other-role threads never run', t => {
+  const { codex } = sandbox(t);
+  mkdirSync(join(codex, 'advanced-harness'), { recursive: true });
+  const registry = threadRegistryPath(codex);
+  recordThread(registry, 'thread-impl-1', 'implementer');
+  recordThread(registry, 'thread-review-1', 'reviewer');
+  assert.deepEqual(readThreadRegistry(registry), { 'thread-impl-1': 'implementer', 'thread-review-1': 'reviewer' });
+  assert.doesNotThrow(() => assertResumable(readThreadRegistry(registry), 'thread-impl-1', 'implementer'));
+  assert.throws(() => assertResumable(readThreadRegistry(registry), 'thread-review-1', 'implementer'), /belongs to reviewer; it cannot be resumed as implementer/);
+  assert.throws(() => assertResumable(readThreadRegistry(registry), 'thread-unknown', 'implementer'), /Unknown thread thread-unknown/);
+  assert.throws(() => assertResumable(readThreadRegistry(registry), '../x', 'implementer'), /Invalid thread ID/);
+  assert.throws(() => assertResumable(readThreadRegistry(registry), 'constructor', 'implementer'), /Unknown thread constructor/);
+
+  // Through main(): rejected before the Codex binary (a missing path here) is ever called.
+  writeFileSync(join(codex, 'harness-implementer.config.toml'), compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x'));
+  const env = { CODEX_HOME: codex, CODEX_BIN: join(codex, 'no-such-codex') };
+  assert.throws(() => launcherMain(['implementer', '--resume', 'thread-review-1', '--task', 'continue'], env), /belongs to reviewer/);
+  assert.throws(() => launcherMain(['implementer', '--resume', 'thread-unknown', '--task', 'continue'], env), /Unknown thread/);
+  writeFileSync(registry, '{ broken');
+  assert.throws(() => launcherMain(['implementer', '--resume', 'thread-impl-1', '--task', 'continue'], env), /Malformed role thread registry/);
+});
+
+test('doctor reports a missing, malformed, empty or edited Lead block without rewriting AGENTS.md', async t => {
+  const { home, codex } = sandbox(t);
+  mkdirSync(codex);
+  writeFileSync(join(codex, 'AGENTS.md'), '# Personal Codex notes\n');
+  assert.equal(await run(home, answers('gpt-example')), 0);
+  const path = join(codex, 'AGENTS.md');
+  const installed = readFileSync(path, 'utf8');
+  const start = '<!-- BEGIN advanced-harness Codex Lead -->', end = '<!-- END advanced-harness Codex Lead -->';
+  const body = installed.slice(installed.indexOf(start) + start.length, installed.indexOf(end));
+  const cases: Array<[string, string, RegExp]> = [
+    ['missing', '# Personal Codex notes\n', /Lead block in .* is missing/],
+    ['empty', installed.replace(body, '\n'), /empty, edited, or from another harness version/],
+    ['edited', installed.replace('never use in-process subagents', 'may use in-process subagents'), /empty, edited, or from another harness version/],
+    ['duplicated', `${installed}${start}\n${end}\n`, /has 2 start and 2 end markers/],
+    ['out of order', installed.replace(start, 'TMP').replace(end, start).replace('TMP', end), /end marker before its start marker/],
+  ];
+  for (const [name, text, expected] of cases) {
+    writeFileSync(path, text);
+    const doctor = await diagnoseCodex({ home });
+    assert.equal(doctor.ok, false, name);
+    assert.match(doctor.issues.join('\n'), expected, name);
+    assert.equal(readFileSync(path, 'utf8'), text, `${name}: doctor never rewrites AGENTS.md`);
+  }
+  writeFileSync(path, installed.replace('# Personal Codex notes', '# Personal Codex notes, edited by me'));
+  assert.equal((await diagnoseCodex({ home })).ok, true, 'edits outside the managed block are not drift');
 });

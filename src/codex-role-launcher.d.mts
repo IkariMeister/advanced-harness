@@ -12,5 +12,9 @@ export function buildRoleInvocation(options: {
   schemaPath: string;
   resultPath: string;
 }): string[];
+export function threadRegistryPath(home: string): string;
+export function readThreadRegistry(path: string): Record<string, string>;
+export function assertResumable(registry: Record<string, string>, threadId: string, role: string): void;
+export function recordThread(path: string, threadId: string, role: string): void;
 export function findCodexBinary(env?: NodeJS.ProcessEnv): string;
 export function main(argv?: string[], env?: NodeJS.ProcessEnv): number;
