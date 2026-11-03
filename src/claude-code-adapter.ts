@@ -428,11 +428,15 @@ export async function diagnoseClaudeCode(options: ClaudeCodeDoctorOptions): Prom
   const notes: string[] = [];
   const project = options.project ? resolve(options.project) : undefined;
   const markers = ['CLAUDE.md', join('.claude', 'settings.json'), join('.claude', 'agents', 'lead.md')];
-  const projectInstalled = project !== undefined && markers.some(rel => existsSync(join(project, rel)));
-  // ~/.claude/settings.json exists for most Claude Code users, so only harness-owned markers count globally.
+  // A plain CLAUDE.md or settings.json is common without the harness, so only harness-owned markers
+  // (Lead agent file or Lead block) decide between a project and a global install.
+  const hasHarnessMarker = (target: ClaudeTarget) => existsSync(join(target.claudeDirectory, 'agents', 'lead.md'))
+    || (readIfExists(join(target.memoryDirectory, 'CLAUDE.md'))?.includes(claudeMarkers.start) ?? false);
+  const projectHarness = project !== undefined && hasHarnessMarker(claudeTarget('project', project));
   const global = options.home ? claudeTarget('global', resolve(options.home)) : undefined;
-  const globalInstalled = global !== undefined && (existsSync(join(global.claudeDirectory, 'agents', 'lead.md'))
-    || (readIfExists(join(global.memoryDirectory, 'CLAUDE.md'))?.includes(claudeMarkers.start) ?? false));
+  const globalInstalled = global !== undefined && hasHarnessMarker(global);
+  // Without a global install, generic project files still get a detailed (incomplete) project report.
+  const projectInstalled = projectHarness || (!globalInstalled && project !== undefined && markers.some(rel => existsSync(join(project, rel))));
   if (!projectInstalled && !globalInstalled) {
     issues.push(project
       ? 'Claude Code harness is not installed in this project (no CLAUDE.md, .claude/settings.json, or .claude/agents/lead.md) or in ~/.claude.'

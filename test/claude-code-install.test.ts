@@ -157,6 +157,28 @@ test('global scope installs into ~/.claude, preserves user content, and leaves p
   assert.ok(again.output.some(line => /No selected file needs changes/.test(line)), 'repeated global install is a no-op');
 });
 
+test('doctor inspects a valid global install when the project only has unrelated Claude files (#146)', async t => {
+  const h = harness(t, confirmOnly('yes'));
+  assert.equal(await runInstallerFlow({ scope: 'global', host: 'claude-code' }, h.deps), 0, h.errors.join('\n'));
+  writeFileSync(join(h.project, 'CLAUDE.md'), '# Project notes, not the harness\n');
+  mkdirSync(join(h.project, '.claude'));
+  writeFileSync(join(h.project, '.claude', 'settings.json'), '{ "theme": "dark" }\n');
+  const doctor = await diagnoseClaudeCode({ project: h.project, home: h.root });
+  assert.equal(doctor.ok, true, doctor.issues.join('\n'));
+  assert.ok(doctor.notes.some(note => note.includes('global Claude Code install')));
+});
+
+test('an actual project harness install keeps precedence over a valid global install (#146)', async t => {
+  const h = harness(t, confirmOnly('yes'));
+  assert.equal(await runInstallerFlow({ scope: 'global', host: 'claude-code' }, h.deps), 0, h.errors.join('\n'));
+  assert.equal(await install(h), 0, h.errors.join('\n'));
+  rmSync(join(h.project, '.claude', 'agents', 'qa.md'));
+  const doctor = await diagnoseClaudeCode({ project: h.project, home: h.root });
+  assert.equal(doctor.ok, false, 'the incomplete project install is inspected, not the healthy global one');
+  assert.match(doctor.issues.join('\n'), /Missing \.claude\/agents\/qa\.md/);
+  assert.ok(!doctor.notes.some(note => note.includes('global Claude Code install')));
+});
+
 test('doctor prefers a project install and ignores a plain ~/.claude/settings.json (#146)', async t => {
   const h = harness(t, confirmOnly('yes'));
   mkdirSync(join(h.root, '.claude'));
