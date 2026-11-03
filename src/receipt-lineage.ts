@@ -8,7 +8,9 @@ import { reconcilePermissions, type AttributedRule, type PermissionRule, type Re
 import { isSupportedHost, type HostId } from './host-registry.ts';
 
 export type HarnessVersionStamp = { version: string; commit: string; dirty?: boolean };
-export type PermissionEvidence = { path: string[]; order: PermissionRule[]; owned: AttributedRule[]; opaque?: FieldChange };
+/** `legacyMigration` records a consented refresh of `opaque.after` in this receipt only (#160). */
+export type LegacyMigrationEvidence = { from: unknown; replaced: PermissionRule[] };
+export type PermissionEvidence = { path: string[]; order: PermissionRule[]; owned: AttributedRule[]; opaque?: FieldChange; legacyMigration?: LegacyMigrationEvidence };
 export type ManagedFileEvidence = {
   path: string;
   kind: 'config' | 'instructions' | 'rules' | 'skills' | 'settings' | 'commands';
@@ -68,7 +70,7 @@ export function validateV2Receipt(value: unknown, target: string, allowPending =
   const receipt = value as unknown as V2Receipt;
   const paths = new Set<string>();
   for (const p of receipt.permissions) {
-    if (!record(p) || Object.keys(p).some(k => !['path', 'order', 'owned', 'opaque'].includes(k)) || !Array.isArray(p.path) || p.path.length !== 3 || p.path[0] !== 'agents' || !nativeRoles.includes(p.path[1] as NativeRole) || p.path[2] !== 'permissions' || paths.has(key(p.path)) || !Array.isArray(p.order) || !p.order.every(validRule) || !Array.isArray(p.owned)) throw new Error('Invalid permission provenance.');
+    if (!record(p) || Object.keys(p).some(k => !['path', 'order', 'owned', 'opaque', 'legacyMigration'].includes(k)) || !Array.isArray(p.path) || p.path.length !== 3 || p.path[0] !== 'agents' || !nativeRoles.includes(p.path[1] as NativeRole) || p.path[2] !== 'permissions' || paths.has(key(p.path)) || !Array.isArray(p.order) || !p.order.every(validRule) || !Array.isArray(p.owned)) throw new Error('Invalid permission provenance.');
     paths.add(key(p.path));
     for (const owned of p.owned) if (!record(owned) || Object.keys(owned).sort().join() !== 'rule,sources' || !validRule(owned.rule) || !Array.isArray(owned.sources) || owned.sources.some(s => typeof s !== 'string' || !s.trim()) || new Set(owned.sources).size !== owned.sources.length) throw new Error('Invalid permission source evidence.');
     const check = reconcilePermissions({ existing: p.order, prior: p.owned, desired: [] });
@@ -80,6 +82,18 @@ export function validateV2Receipt(value: unknown, target: string, allowPending =
     if (p.opaque) {
       validateLegacyReceipt({ version: 1, target, complete: true, provenance: 'installer', changes: [p.opaque], createdContainers: [] }, target);
       if (!equal(p.opaque.path, p.path) || !equal(p.opaque.before, change.before)) throw new Error('Invalid opaque legacy permission baseline.');
+    }
+    if (p.legacyMigration !== undefined) {
+      const m = p.legacyMigration as unknown;
+      const from = record(m) ? m.from : undefined;
+      const fromRules = record(from) ? unwrap(from) : undefined;
+      const baseline = p.opaque ? unwrap(p.opaque.before) : undefined;
+      const remainder = p.order.filter(r => !p.owned.some(o => equal(o.rule, r)));
+      // Replaced rules must come from the recorded legacy state and never from the pre-install baseline.
+      if (!p.opaque || !record(m) || Object.keys(m).sort().join() !== 'from,replaced' || !record(from) || Object.keys(from).length !== 1 || !(from.absent === true || 'value' in from)
+        || !Array.isArray(m.replaced) || !m.replaced.every(validRule)
+        || m.replaced.some(r => !Array.isArray(fromRules) || !fromRules.some(old => equal(old, r)) || Array.isArray(baseline) && baseline.some(old => equal(old, r)))
+        || !equal(unwrap(p.opaque.after), remainder)) throw new Error('Invalid legacy permission migration evidence.');
     }
   }
   if (receipt.changes.some(c => c.path.at(-1) === 'permissions' && !paths.has(key(c.path)))) throw new Error('Missing v2 permission evidence.');
@@ -129,7 +143,10 @@ export function discoverReceiptChain(directory: string, target: string, host?: H
     for (const old of parent.receipt.changes.filter(c => c.path.at(-1) === 'permissions')) {
       const next = entry.receipt.permissions.find(p => equal(p.path, old.path))!;
       const opaque = parent.receipt.version === 1 ? old : parent.receipt.permissions.find(p => equal(p.path, old.path))?.opaque;
-      if (!equal(next.opaque, opaque)) throw new Error('Successor changed opaque legacy evidence.');
+      if (next.legacyMigration) {
+        // A consented migration may refresh only the recorded legacy state, never its baseline.
+        if (!opaque || !next.opaque || !equal(next.opaque.path, opaque.path) || !equal(next.opaque.before, opaque.before) || !equal(next.legacyMigration.from, opaque.after)) throw new Error('Successor changed opaque legacy evidence without matching migration evidence.');
+      } else if (!equal(next.opaque, opaque)) throw new Error('Successor changed opaque legacy evidence.');
     }
   }
   for (const entry of entries) {
@@ -183,7 +200,7 @@ export function receiptReconciliationOptions(snapshot: ReceiptSnapshot): NativeR
   return result;
 }
 
-export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string | undefined, after: string, plans: Partial<Record<NativeRole, ReconciliationResult>>, harnessVersion?: HarnessVersionStamp, extra?: { host?: HostId; managedFiles?: ManagedFileEvidence[] }): V2Receipt {
+export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string | undefined, after: string, plans: Partial<Record<NativeRole, ReconciliationResult>>, harnessVersion?: HarnessVersionStamp, extra?: { host?: HostId; managedFiles?: ManagedFileEvidence[]; legacyMigrations?: Partial<Record<NativeRole, PermissionRule[]>> }): V2Receipt {
   revalidateReceiptSnapshot(snapshot);
   const delta = createReceipt(snapshot.target, before, after), parent = snapshot.head;
   const stamp = harnessVersion ?? (parent?.receipt.version === 2 ? parent.receipt.harnessVersion : undefined);
@@ -192,7 +209,8 @@ export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string
     const old = changes.find(c => equal(c.path, change.path));
     if (old) old.after = change.after; else changes.push(change);
   }
-  const permissions: PermissionEvidence[] = parent?.receipt.version === 2 ? structuredClone(parent.receipt.permissions) : [];
+  // Migration evidence belongs to the receipt that performed it, so it is never inherited.
+  const permissions: PermissionEvidence[] = parent?.receipt.version === 2 ? structuredClone(parent.receipt.permissions).map(({ legacyMigration: _, ...p }) => p) : [];
   for (const change of changes.filter(c => c.path.at(-1) === 'permissions')) {
     const role = change.path[1] as NativeRole;
     const plan = plans[role];
@@ -211,6 +229,12 @@ export function createSuccessorReceipt(snapshot: ReceiptSnapshot, before: string
       state.owned = structuredClone(plan.provenance); state.order = structuredClone(plan.rules);
       change.after = evidence(plan.rules);
     } else if (!equal(state.order, unwrap(change.after))) throw new Error('Permission changes require planner provenance.');
+  }
+  for (const [role, replaced] of Object.entries(extra?.legacyMigrations ?? {})) {
+    const state = permissions.find(p => equal(p.path, ['agents', role, 'permissions']));
+    if (!state?.opaque || !plans[role as NativeRole]) throw new Error('Legacy permission migration requires opaque legacy evidence and planner provenance.');
+    state.legacyMigration = { from: structuredClone(state.opaque.after), replaced: structuredClone(replaced ?? []) };
+    state.opaque.after = evidence(state.order.filter(r => !state.owned.some(o => equal(o.rule, r))));
   }
   const containers = [...(parent?.receipt.createdContainers ?? [])];
   for (const path of delta.createdContainers) if (!containers.some(p => equal(p, path))) containers.push(path);
