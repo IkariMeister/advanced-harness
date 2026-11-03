@@ -14,6 +14,9 @@ version between releases.
   `-u` (`--update-head-ok` for fetch) stay denied, and
   pull/push/clone remain External's.
   Run `harness:update` to apply (#144).
+- `harness:doctor` accepts `--scope <global|project>` and reports invalid,
+  duplicate or incomplete options instead of a generic "Verification
+  inconclusive" message (#145).
 - OpenCode `harness:install` and `harness:update` no longer exit non-zero when
   the post-save runtime verification is inconclusive; they warn and point to
   `harness:doctor`. Definite readiness failures still exit 1 (#143).
