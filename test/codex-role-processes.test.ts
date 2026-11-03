@@ -129,7 +129,7 @@ test('role-process install writes profiles, launcher, schema and Lead block, and
   assert.match(config, /sandbox_mode = "read-only"/);
   assert.match(config, /approval_policy = "on-request"/);
   assert.match(config, /\[features\]\r?\nmulti_agent = false/);
-  assert.ok(output.some(line => /you approve every launch/.test(line)));
+  assert.ok(output.some(line => /You approve every launch/.test(line)));
 
   const doctor = await diagnoseCodex({ home });
   assert.equal(doctor.ok, true, doctor.issues.join('\n'));
@@ -283,4 +283,79 @@ test('doctor reports a missing, malformed, empty or edited Lead block without re
   }
   writeFileSync(path, installed.replace('# Personal Codex notes', '# Personal Codex notes, edited by me'));
   assert.equal((await diagnoseCodex({ home })).ok, true, 'edits outside the managed block are not drift');
+});
+
+test('multi_agent follows the form config.toml already uses for features, so Codex can still load it (#45)', () => {
+  assert.equal(disableMultiAgent('features.web_search = true\n'), 'features.web_search = true\nfeatures.multi_agent = false\n');
+  assert.equal(disableMultiAgent('features.web_search = true # mine\nmodel = "x"\n\n[tui]\nfoo = 1\n'), 'features.web_search = true # mine\nfeatures.multi_agent = false\nmodel = "x"\n\n[tui]\nfoo = 1\n');
+  assert.equal(disableMultiAgent('features.web_search = true'), 'features.web_search = true\nfeatures.multi_agent = false\n');
+  assert.throws(() => disableMultiAgent('[features.sub]\nx = 1\n'), /out-of-order/, 'the scanner refuses a parent table after its sub-table, so this stops before any write');
+
+  const inlineFalse = 'features = { multi_agent = false }\n';
+  assert.equal(disableMultiAgent(inlineFalse), inlineFalse);
+  const warnings: string[] = [];
+  assert.equal(disableMultiAgent('features = { multi_agent = true }\n', line => warnings.push(line)), 'features = { multi_agent = true }\n');
+  assert.match(warnings.join('\n'), /sets features\.multi_agent explicitly/);
+  assert.throws(() => disableMultiAgent('features = { web_search = true }\n'), /inline table[\s\S]*No changes made/);
+});
+
+test('the TOML check refuses a table that redefines dotted keys, as Codex does (#45)', () => {
+  assert.throws(() => validateCodexToml('features.web_search = true\n\n[features]\nmulti_agent = false\n'), /redefines dotted keys/);
+  assert.throws(() => validateCodexToml('[a]\nb.c = 1\n\n[a.b]\nd = 2\n'), /redefines dotted keys/);
+  assert.throws(() => validateCodexToml('[a.b]\nc = 1\n\n[x]\ny = 1\n[a.b.d]\ne.f = 1\n\n[a.b.d.e]\ng = 1\n'), /redefines dotted keys/);
+  validateCodexToml('[a]\nb.c = 1\n\n[a.b.d]\ne = 2\n');
+  validateCodexToml('features.web_search = true\n\n[features.sub]\nx = 1\n');
+});
+
+test('install with dotted features writes a config doctor accepts, and refuses an inline table with no writes (#45)', async t => {
+  const dotted = sandbox(t);
+  mkdirSync(dotted.codex);
+  writeFileSync(join(dotted.codex, 'config.toml'), 'features.web_search = true\n');
+  assert.equal(await run(dotted.home, answers('gpt-example')), 0);
+  const written = readFileSync(join(dotted.codex, 'config.toml'), 'utf8');
+  assert.match(written, /^features\.web_search = true\nfeatures\.multi_agent = false$/m);
+  assert.doesNotMatch(written, /^\[features\]/m);
+  assert.deepEqual((await diagnoseCodex({ home: dotted.home })).issues, []);
+
+  const inline = sandbox(t);
+  mkdirSync(inline.codex);
+  const config = 'features = { web_search = true }\n';
+  writeFileSync(join(inline.codex, 'config.toml'), config);
+  await assert.rejects(run(inline.home, answers('gpt-example')), /inline table[\s\S]*No changes made/);
+  assert.deepEqual(readdirSync(inline.codex), ['config.toml']);
+  assert.equal(readFileSync(join(inline.codex, 'config.toml'), 'utf8'), config);
+});
+
+test('install warns and doctor fails when Lead settings remove the approval point (#45)', async t => {
+  const cases: Array<[string, RegExp[]]> = [
+    ['sandbox_mode = "danger-full-access"\napproval_policy = "never"\n', [/sandbox_mode is "danger-full-access"/, /approval_policy is "never"/]],
+    ['approval_policy = "never"\n', [/approval_policy is "never"/]],
+    ['sandbox_mode = "workspace-write"\n', [/sandbox_mode is "workspace-write"/]],
+  ];
+  for (const [config, expected] of cases) {
+    const box = sandbox(t);
+    mkdirSync(box.codex);
+    writeFileSync(join(box.codex, 'config.toml'), config);
+    const output: string[] = [];
+    assert.equal(await run(box.home, answers('gpt-example'), output), 0);
+    const preview = output.join('\n');
+    assert.match(preview, /you may not be asked to approve role launches/);
+    assert.doesNotMatch(preview, /You approve every launch/);
+    const doctor = await diagnoseCodex({ home: box.home });
+    assert.equal(doctor.ok, false, config);
+    for (const pattern of expected) {
+      assert.match(preview, pattern);
+      assert.match(doctor.issues.join('\n'), pattern);
+    }
+    assert.ok(readFileSync(join(box.codex, 'config.toml'), 'utf8').startsWith(config), 'the user values are kept');
+  }
+
+  const clean = sandbox(t);
+  const output: string[] = [];
+  assert.equal(await run(clean.home, answers('gpt-example'), output), 0);
+  assert.match(output.join('\n'), /You approve every launch/);
+  assert.deepEqual((await diagnoseCodex({ home: clean.home })).issues, []);
+
+  writeFileSync(join(clean.codex, 'config.toml'), readFileSync(join(clean.codex, 'config.toml'), 'utf8').replace('approval_policy = "on-request"', 'approval_policy = "never"'));
+  assert.match((await diagnoseCodex({ home: clean.home })).issues.join('\n'), /Lead approval_policy is "never"/, 'drift after install is caught too');
 });

@@ -232,6 +232,7 @@ function parseCodexToml(text: string, path: string): CodexTomlDocument {
   const explicitTables = new Set<string>();
   const values = new Set<string>();
   const scalarPaths = new Set<string>();
+  const dottedTables = new Set<string>();
   const tables: CodexTomlTable[] = [];
   const entries: CodexTomlEntry[] = [];
   let currentTable: string[] = [];
@@ -250,6 +251,8 @@ function parseCodexToml(text: string, path: string): CodexTomlDocument {
       if (!parts) throw new Error(`Unsupported TOML table in ${path} at line ${actualLine}; refusing to edit it.`);
       const tablePath = JSON.stringify(parts);
       if (hasExactPath(explicitTables, tablePath) || hasDescendantPath(explicitTables, tablePath)) throw new Error(`Duplicate or out-of-order TOML table in ${path} at line ${actualLine}.`);
+      // `a.b = 1` defines table `a`; TOML forbids a later `[a]`, and Codex refuses to load such a file.
+      if (dottedTables.has(tablePath)) throw new Error(`TOML table redefines dotted keys in ${path} at line ${actualLine}.`);
       const tableParts = parts;
       if ([...scalarPaths].some(valuePath => { const valueParts = JSON.parse(valuePath) as string[]; return isPrefix(valueParts, tableParts); })) throw new Error(`TOML scalar/table collision in ${path} at line ${actualLine}.`);
       if (tables.length) tables[tables.length - 1]!.end = offset;
@@ -270,6 +273,11 @@ function parseCodexToml(text: string, path: string): CodexTomlDocument {
     const fullKey = JSON.stringify([...currentTable, ...parts]);
     const fullParts = [...currentTable, ...parts];
     if ([...values].some(existing => { const prior = JSON.parse(existing) as string[]; return isPrefix(prior, fullParts) || isPrefix(fullParts, prior); }) || hasDescendantPath(explicitTables, fullKey)) throw new Error(`Duplicate TOML key or scalar/table collision in ${path} at line ${actualLine}.`);
+    for (let depth = 1; depth < parts.length; depth++) {
+      const dotted = JSON.stringify([...currentTable, ...parts.slice(0, depth)]);
+      if (hasExactPath(explicitTables, dotted)) throw new Error(`TOML dotted key redefines a table in ${path} at line ${actualLine}.`);
+      dottedTables.add(dotted);
+    }
     const valueStart = equals + 1;
     const parsedValue = parseTomlValue(uncommented, valueStart, path, actualLine);
     const valueEnd = parsedValue.end;
@@ -307,28 +315,67 @@ function appendSettings(existing: string | undefined): string {
   return `${text}${separator(text)}${blocks.join(`${newline}${newline}`)}${newline}`;
 }
 
-/** Adds `[features] multi_agent = false` when unset; an explicit user `true` is kept and reported. */
-export function disableMultiAgent(text: string, output: (message: string) => void = () => {}): string {
-  const document = parseCodexToml(text, 'config.toml');
+/** `features` written as one inline table, which cannot be extended without rewriting the user's line. */
+const inlineFeatures = (document: CodexTomlDocument): Record<string, unknown> | undefined => {
+  const value = document.entries.find(item => item.table.length === 0 && item.key.length === 1 && item.key[0] === 'features')?.value;
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+};
+
+/** The effective features.multi_agent in any supported form: `[features]`, a dotted key, or an inline table. */
+function multiAgentSetting(document: CodexTomlDocument): { value: unknown } | undefined {
   const entry = document.entries.find(item => (item.table.length === 1 && item.table[0] === 'features' && item.key.length === 1 && item.key[0] === 'multi_agent')
     || (item.table.length === 0 && item.key.length === 2 && item.key[0] === 'features' && item.key[1] === 'multi_agent'));
-  if (entry) {
-    if (entry.value !== false) output('Warning: config.toml sets features.multi_agent explicitly; Lead could spawn in-process subagents that share its sandbox. Set it to false to keep roles isolated.');
+  if (entry) return { value: entry.value };
+  const inline = inlineFeatures(document);
+  return inline && Object.hasOwn(inline, 'multi_agent') ? { value: inline.multi_agent } : undefined;
+}
+
+/**
+ * Adds `multi_agent = false` when unset, in the form the file already uses for features: a second
+ * `[features]` next to dotted keys is invalid TOML and stops Codex from loading the config at all.
+ * An explicit user `true` is kept and reported.
+ */
+export function disableMultiAgent(text: string, output: (message: string) => void = () => {}): string {
+  const document = parseCodexToml(text, 'config.toml');
+  const setting = multiAgentSetting(document);
+  if (setting) {
+    if (setting.value !== false) output('Warning: config.toml sets features.multi_agent explicitly; Lead could spawn in-process subagents that share its sandbox. Set it to false to keep roles isolated.');
     return text;
   }
+  if (inlineFeatures(document)) throw new Error('config.toml sets features as an inline table, which the harness cannot extend. Add multi_agent = false to it, or move it to a [features] table, then rerun. No changes made.');
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   const table = document.tables.find(item => item.parts.length === 1 && item.parts[0] === 'features');
+  const dotted = document.entries.filter(item => item.table.length === 0 && item.key.length > 1 && item.key[0] === 'features').at(-1);
   let result: string;
   if (table) {
     const section = text.slice(table.start, table.end);
     const suffix = /(?:\r?\n[ \t]*)*$/.exec(section)?.[0] ?? '';
     const bodyEnd = table.end - suffix.length;
     result = `${text.slice(0, bodyEnd)}${newline}multi_agent = false${suffix || newline}${text.slice(table.end)}`;
+  } else if (dotted) {
+    const lineEnd = text.indexOf('\n', dotted.valueEnd);
+    result = lineEnd < 0
+      ? `${text}${newline}features.multi_agent = false${newline}`
+      : `${text.slice(0, lineEnd + 1)}features.multi_agent = false${newline}${text.slice(lineEnd + 1)}`;
   } else {
     result = `${text.replace(/\s*$/, '')}${text.trim() ? `${newline}${newline}` : ''}[features]${newline}multi_agent = false${newline}`;
   }
   validateCodexToml(result, 'updated config.toml');
   return result;
+}
+
+/**
+ * Why Lead's base settings do not give the human approval point role-process mode relies on (#45).
+ * Lead must stay read-only with on-request approvals: under `danger-full-access` or `never`, roles
+ * would start with nobody approving them.
+ */
+function codexLeadApprovalProblems(document: CodexTomlDocument): string[] {
+  const root = (key: string) => document.entries.find(entry => entry.table.length === 0 && entry.key.length === 1 && entry.key[0] === key)?.value;
+  const shown = (value: unknown) => value === undefined ? 'unset' : JSON.stringify(value);
+  const problems: string[] = [];
+  if (root('sandbox_mode') !== 'read-only') problems.push(`sandbox_mode is ${shown(root('sandbox_mode'))}, not "read-only"`);
+  if (root('approval_policy') !== 'on-request') problems.push(`approval_policy is ${shown(root('approval_policy'))}, not "on-request"`);
+  return problems;
 }
 
 export function compileCodexAgent(role: NativeRole, model: string, reasoning: string, description: string, instructions: string): string {
@@ -678,8 +725,11 @@ export async function installCodex(options: {
   output(`Codex ${scope} deployment preview (${selectedFiles.length} files):`);
   for (const file of selectedFiles) output(`  ${file.path}: ${file.before === file.content ? 'current' : file.before === undefined ? 'new' : 'update'}`);
   if (roleProcesses) {
-    output('Each child role runs as its own codex exec process with its own sandbox, network and MCP settings; Lead (your Codex Desktop session) only launches them, and you approve every launch.');
-    output("Lead's session keeps the read-only baseline; in-process subagents (multi_agent) are turned off when not set. Codex runtime and Desktop approval behavior are not verified by this harness.");
+    const approvalProblems = codexLeadApprovalProblems(parseCodexToml(configAfter, 'config.toml'));
+    output('Each child role runs as its own codex exec process with its own sandbox, network and MCP settings; Lead (your Codex Desktop session) only launches them.');
+    if (approvalProblems.length) output(`Warning: your existing config.toml settings are kept, so you may not be asked to approve role launches: ${approvalProblems.join('; ')}. Set them in config.toml to restore the approval point; harness:doctor reports this until you do.`);
+    else output("You approve every launch: Lead's session keeps the read-only sandbox with on-request approvals.");
+    output('In-process subagents (multi_agent) are turned off when not set. Codex runtime and Desktop approval behavior are not verified by this harness.');
   } else output('Shared baseline adds read-only sandbox and on-request approval only when absent. Codex runtime behavior and universal write gating are not verified. MCP selections remain disabled pending validation. Direct gh pr merge rules are not universal indirect/API protection.');
   if ((await ask('Type install to apply these changes', 'cancel')) !== 'install') { output('Cancelled. No files, backups, or receipts were written.'); return 0; }
   for (const file of selectedFiles) {
@@ -816,9 +866,8 @@ export async function installCodex(options: {
 
 function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): string[] {
   const issues: string[] = [];
-  const multiAgent = config.entries.find(item => (item.table.length === 1 && item.table[0] === 'features' && item.key.length === 1 && item.key[0] === 'multi_agent')
-    || (item.table.length === 0 && item.key.length === 2 && item.key[0] === 'features' && item.key[1] === 'multi_agent'));
-  if (multiAgent?.value !== false) issues.push(`Codex features.multi_agent is not false in ${join(root, 'config.toml')}; Lead could spawn in-process subagents that share its sandbox.`);
+  for (const problem of codexLeadApprovalProblems(config)) issues.push(`Codex Lead ${problem} in ${join(root, 'config.toml')}; role launches may start without your approval.`);
+  if (multiAgentSetting(config)?.value !== false) issues.push(`Codex features.multi_agent is not false in ${join(root, 'config.toml')}; Lead could spawn in-process subagents that share its sandbox.`);
   const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
   const policies = codexRolePolicies(definitions);
   for (const role of codexChildRoles) {
@@ -880,7 +929,7 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
     try { roleProcesses = existsSync(statePathForMode) && (JSON.parse(readFileSync(statePathForMode, 'utf8')) as { mode?: unknown }).mode === 'role-processes'; } catch { /* reported below */ }
     if (roleProcesses) {
       issues.push(...diagnoseCodexRoleProcesses(root, configDocument));
-      notes.push('Role-process mode: each child role runs as its own codex exec process; Lead launches them with your approval.');
+      notes.push('Role-process mode: each child role runs as its own codex exec process, started by Lead.');
     }
     for (const role of roleProcesses ? [] : nativeRoles) {
       const path = join(root, 'agents', `${role}.toml`);
