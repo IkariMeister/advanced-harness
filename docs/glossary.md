@@ -55,6 +55,8 @@ To add or change a term, edit this file in the same change that first uses the n
 | **project context** | Project-specific settings in the application's `AGENTS.md`, shared across hosts (see [configuration](configuration.md)). | Global connections; an agent's reasoning context. |
 | **global connections** | Reusable, machine-level connections and defaults (MCP servers, preferences) shared across projects. | Project context. |
 | **legacy profile** | A pre-context project configuration that may only be migrated with explicit consent. | Codex profile; role setup. |
+| **legacy permission evidence** | A role's OpenCode permission array recorded by a pre-v2 (v1) receipt as one opaque field: no rule in it is attributed to the harness. | Owned rules; legacy profile. |
+| **legacy permission migration** | The consented `harness:update` step (type `migrate`) that records the current legacy permission array as its legacy state and replaces legacy-installer rules the current policy changes. | Legacy profile migration; uninstall. |
 | **Codex profile** | A `[profiles.<role>]` entry in Codex configuration. | Role setup; legacy profile. |
 | **model tier** | The capability class assigned to a role (economical, mid-tier, strong, frontier). It is a tier, not a provider model ID. | Review tier; `reasoningTier`. |
 | **`reasoningTier`** | A host preset field for reasoning effort (for example `low`). | Model tier; review tier. |
