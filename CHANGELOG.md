@@ -10,7 +10,8 @@ version between releases.
 
 - Operator may run `git fetch` to refresh the base before creating a worktree,
   so OpenCode bootstrap no longer stops on a denied fetch;
-  upload-pack options (any `--upl…` abbreviation, and `-u`) stay denied and
+  `--upload-pack` (including any `--upl…` abbreviation) and, defensively,
+  `-u` (`--update-head-ok` for fetch) stay denied, and
   pull/push/clone remain External's.
   Run `harness:update` to apply (#144).
 
