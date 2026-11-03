@@ -128,7 +128,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: false, // Architectural planning only
         enableMCPTools: false,
         workspace: 'inherit',
-        instructionSummary: 'Develops scoped implementation plans, test strategies, and risk assessments. Does not implement.',
+        instructionSummary: 'Develops scoped implementation plans, authors and maintains ADRs and design rationale (an ADR remains Proposed until accepted through the project\'s approval process, and file writes are performed by Implementer after approval), identifies documentation impact (affected artifacts and whether an ADR is needed), and defines test strategies and risk assessments. Does not implement.',
       };
     case 'implementer':
       return {
@@ -139,7 +139,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: true, // Writes code and unit tests
         enableMCPTools: false,
         workspace: 'inherit',
-        instructionSummary: 'Implements approved changes and unit tests. Does not touch remote Git or MCP.',
+        instructionSummary: 'Implements approved changes, unit tests, and affected implementation documentation (examples, integration notes, and developer instructions); records an explicit documentation-impact assessment when impact is uncertain or when no documentation changes are needed; escalates material deviations from an approved ADR to Lead instead of silently rewriting an approved ADR or decision. Does not touch remote Git or MCP.',
       };
     case 'reviewer':
       return {
@@ -150,7 +150,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: true, // Antigravity bundles run_command with write tools; needed for lint/build/unit checks
         enableMCPTools: false,
         workspace: 'inherit',
-        instructionSummary: 'Runs lint/build/unit checks and reports risk-tiered code quality findings. Does not modify app code.\n\n## Risk-tiered review\n\n' + extractReviewerRubric(definition.instructions),
+        instructionSummary: 'Runs lint/build/unit checks where available, verifies documentation accuracy, and reports risk-tiered findings with re-run versus judged-from-evidence-only status. Does not modify app or documentation source.\n\n## Risk-tiered review\n\n' + extractReviewerRubric(definition.instructions),
       };
     case 'qa':
       return {
@@ -173,7 +173,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: true,
         enableMCPTools: true,
         workspace: 'inherit',
-        instructionSummary: 'Coordinates child subagents, presents plans to human, and gates consequential actions.',
+        instructionSummary: 'Coordinates child subagents, tracks documentation requirements, documentation-impact assessments, and ADR/documentation approval states throughout the conversation and resume checklist, routes Reviewer re-run requests when needed, presents plans to human, and gates consequential actions.',
       };
   }
 }
@@ -210,6 +210,7 @@ export function compileLeadOrchestrationRule(
     '1. **Conversational Approval:** Lead presents plans, findings, and publishing checkpoints to the user and waits for explicit human approval before delegating to Implementer or External.',
     '2. **No Merging:** Merging pull requests is strictly human-only. External may push and open PRs upon final human approval, but never merges.',
     '3. **Child Subagent Delegation:** Lead coordinates the 7 specialized child roles using Antigravity\'s `define_subagent` and `invoke_subagent` APIs. Lead must configure child subagents with the exact parameters listed in the table below.',
+    '4. **Documentation & Verification Tracking:** Lead tracks the documentation requirement, documentation-impact assessment, ADR/documentation approval state, and Reviewer check verification basis (**re-run** versus **judged from evidence only**, routing Reviewer re-run requests to an authorized command-running role when Reviewer cannot execute commands) throughout the conversation and in the resume checklist on interruption or lost context.',
     '',
     '## Subagent Role Registration Table',
     'When invoking child roles, call `define_subagent` (or use existing definitions) matching these parameters. The role descriptions below are compact labels; pass each role\'s complete instruction content from the compiled spec, not merely its table description.',
@@ -248,8 +249,8 @@ export function compileLeadOrchestrationRule(
   lines.push('- **External:** The ONLY subagent permitted to access MCP tools, GitHub CLI (`gh`), or remote Git pushing.');
   lines.push('- **Operator:** Owns local Git branches, worktrees, and shared `MEMORY.md`. Does not edit application code.');
   lines.push('- **Shared locations:** Task worktrees go under `worktreeDirectory` and shared memory is the file at `memoryPath`, both read from the Advanced Harness `project` (or interim `paths`) settings section in `AGENTS.md` or the context file it links. They are outside the workspace by design: never search the workspace for `MEMORY.md` or create one there. If a location is missing or unreadable, stop and ask the human to run `harness:update` or `harness:setup`.');
-  lines.push('- **Implementer:** The ONLY subagent permitted to write application and test source code.');
-  lines.push('- **Reviewer / QA:** Execute test and build commands to report findings; never modify application source directly.');
+  lines.push('- **Implementer:** The ONLY subagent permitted to write application, test, and approved documentation source files; records an explicit documentation-impact assessment when impact is uncertain or when no documentation changes are needed, and escalates material deviations from an approved ADR to Lead.');
+  lines.push('- **Reviewer / QA:** Execute test and build commands where available to report findings (stating **re-run** versus **judged from evidence only** for each check and verifying documentation accuracy); never modify application or documentation source directly.');
   lines.push('- **Precedence:** Current Human Decision > `AGENTS.md` > `MEMORY.md`.');
   lines.push('');
   const content = lines.join('\n');

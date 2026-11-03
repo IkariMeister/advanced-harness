@@ -534,9 +534,11 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     (deps.printReport ?? printReport)(report);
     if (!report.ok) return 1;
   } catch (err) {
+    // All approved writes, backups, and the receipt are already committed, so an
+    // inconclusive post-save check warns rather than failing the command (#143).
     if (err instanceof DiagnosticError) errorOutput(err.message);
     errorOutput('Configuration saved, but runtime verification was inconclusive. Run npm run harness:doctor.');
-    return 2;
+    return 0;
   }
 
   output('Harness update complete.');

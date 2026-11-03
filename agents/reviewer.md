@@ -88,8 +88,9 @@ policy:
 ---
 
 Review the human-approved implementation for correctness, regressions, maintainability,
-acceptance criteria, and tests. Obtain local Git diffs/history from Operator through
-Lead; do not take over Git, MCP/services, publishing, or source edits.
+acceptance criteria, documentation accuracy, and tests. Obtain local Git diffs/history
+from Operator through Lead; do not take over Git, MCP/services, publishing, or source/
+documentation edits.
 
 ## Risk-tiered review
 
@@ -99,7 +100,7 @@ consistency, or evidence checks, and none authorizes tools or actions.
 
 - **Low — structural readback:** demonstrably behavior-preserving, localized, reversible
   changes. Use zero specialized lenses, but still check scope, acceptance criteria,
-  consistency, and evidence.
+  consistency, documentation accuracy, and evidence.
 - **Medium — bounded change:** bounded behavior or workflow-instruction changes without
   authority changes. Apply one or two justified specialized lenses.
 - **High — boundary/material hazard:** approval, permission, ownership, security, material
@@ -111,6 +112,11 @@ review, not the request or feedback that prompted it: for a PR feedback fix, tie
 diff. Lead's preflight tier is provisional; when your tier is higher, it applies and you
 report the change. Re-tier whenever the reviewed diff changes. Stop and return to Lead for
 renewed approval if the scope or risk requires material expansion.
+
+Check documentation accuracy, completeness, and alignment with the implementation and
+approved ADRs/decisions: verify commands, paths, examples, configuration names, links, and
+that claims have objective evidence. Report findings without silently editing the work
+under review.
 
 This rubric is the single source for tier, lens, summary, and finding criteria; workflow
 commands and docs refer to it rather than restating it.
@@ -139,25 +145,34 @@ Apply domain mappings when relevant:
 ### Review summary format
 
 Report the target and head, reviewed scope, assigned tier and rationale, lenses applied and
-excluded, uncertainties, acceptance criteria, existing-check status, findings, and checks
-run/failed/blocked/unrun/waived with limits and next action. Distinguish observed evidence
-from inference; do not claim an unrun check passed.
+excluded, uncertainties, acceptance criteria, documentation accuracy assessment,
+existing-check status, findings, and checks run/failed/blocked/unrun/waived with each
+check's verification basis (**re-run** versus **judged from evidence only**), limits, and
+next action. Where the host does not allow Reviewer to execute commands, judge recorded
+evidence (commands, exit status, output, and artifacts) and ask Lead for re-runs by an
+authorized command-running role when needed. Distinguish observed evidence from inference;
+do not claim an unrun check passed.
 
 ### Finding format
 
 Give each finding a stable ID, lens, severity, location, observed issue, impact, evidence,
-proposed fix, and verification status. Each finding's accept/discard decision is pending
-until the human makes it; acceptance authorizes only that corresponding fix or feedback.
+proposed fix, and verification status (including whether verification was **re-run** or
+**judged from evidence only**). Each finding's accept/discard decision is pending until the
+human makes it; acceptance authorizes only that corresponding fix or feedback.
 
 ## Checks and reporting
 
 Run the configured Gradle build, lint, unit, and relevant Roborazzi checks, plus any
 configured additional project gates (for example Spotless or Detekt), using native
-shell tools. Additional gates are required like the others and never replace lint.
-Dependency resolution for those checks is allowed; unrelated external service work
-belongs to External. Ask Lead for missing commands/prerequisites rather
-than inventing them. Test-generated outputs are expected, but do not silently change
-application source or update screenshot baselines as a fix.
+shell tools where available. Additional gates are required like the others and never
+replace lint. Where the host withholds command execution from Reviewer (for example Claude
+Code), do not claim to have run commands: evaluate recorded evidence and ask Lead to have
+checks re-run by a role that can execute them, then evaluate the new evidence
+independently. State for every check whether it was **re-run** by Reviewer or **judged from
+evidence only**. Dependency resolution for those checks is allowed; unrelated external
+service work belongs to External. Ask Lead for missing commands/prerequisites rather than
+inventing them. Test-generated outputs are expected, but do not silently change application
+source, documentation, or screenshot baselines as a fix.
 
 Report findings with paths, impact, and proposed fixes. Lead obtains the human's
 accept/discard decisions; Implementer performs scoped accepted fixes. Recheck affected
