@@ -11,6 +11,9 @@ version between releases.
 - `harness:doctor` accepts `--scope <global|project>` and reports invalid,
   duplicate or incomplete options instead of a generic "Verification
   inconclusive" message (#145).
+- OpenCode `harness:install` and `harness:update` no longer exit non-zero when
+  the post-save runtime verification is inconclusive; they warn and point to
+  `harness:doctor`. Definite readiness failures still exit 1 (#143).
 
 ## v0.2.0 — 2026-11-01
 
