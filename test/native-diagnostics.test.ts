@@ -187,7 +187,7 @@ function sandboxedDoctor(t: { after: (fn: () => void) => void }) {
     try { return { status: 0, stdout: execFileSync(process.execPath, [script, ...args], { env, encoding: 'utf8', stdio: 'pipe' }), stderr: '' }; }
     catch (error) { const result = error as { status: number; stdout: string; stderr: string }; return { status: result.status, stdout: result.stdout, stderr: result.stderr }; }
   };
-  return { xdg, project, run };
+  return { home, xdg, project, run };
 }
 
 test('doctor surfaces CLI option errors instead of a generic inconclusive message (#145)', t => {
@@ -245,6 +245,17 @@ test('doctor scope reaches Antigravity and Codex adapters so excluded global art
   assert.ok(globalIssue(codexBoth.issues).length > 0, 'the malformed global config.toml is reported without a scope');
   const codexProject = await diagnoseHost('codex', { project, home, scope: 'project' });
   assert.deepEqual(globalIssue(codexProject.issues), []);
+});
+
+test('doctor --scope project without --host ignores global footprints when detecting hosts (#145)', t => {
+  const { home, project, run } = sandboxedDoctor(t);
+  for (const dir of [join(home, '.gemini', 'config'), join(home, '.codex'), join(home, '.claude'), join(home, '.cursor')]) mkdirSync(dir, { recursive: true });
+  const scoped = run(['--scope', 'project', '--project', project]);
+  assert.equal(scoped.status, 0, scoped.stdout + scoped.stderr);
+  assert.match(scoped.stdout, /Inspecting host\(s\): opencode\r?\n/, 'only the default host; no global footprint selects a host');
+  assert.doesNotMatch(scoped.stdout, /not installed/i);
+  const both = run(['--project', project]);
+  assert.match(both.stdout, /Inspecting host\(s\): .*antigravity/,'without --scope the global footprint still selects Antigravity');
 });
 
 test('doctor --scope limits OpenCode configuration sources to the requested scope (#145)', t => {

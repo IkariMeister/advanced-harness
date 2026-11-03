@@ -50,7 +50,8 @@ if (args.includes('--help')) {
 
       const hosts: HostId[] = options['--host']
         ? parseHostSelection(options['--host'])
-        : detectInstalledHosts(scope === 'global' ? undefined : directory, homedir(), process.env.XDG_CONFIG_HOME);
+        // Detection honours the scope: an excluded global footprint must not select a host (#145).
+        : detectInstalledHosts(scope === 'global' ? undefined : directory, homedir(), process.env.XDG_CONFIG_HOME, process.env, scope);
 
       console.log(`Harness checkout: ${describeHarnessCheckout(resolve(fileURLToPath(new URL('..', import.meta.url))))}`);
       console.log(`Checking location: ${directory}`);
