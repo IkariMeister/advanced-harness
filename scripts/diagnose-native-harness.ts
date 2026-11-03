@@ -8,64 +8,92 @@ import { detectInstalledHosts, parseHostSelection, type HostId } from '../src/ho
 import { describeHarnessCheckout } from '../src/harness-version.ts';
 
 const args = process.argv.slice(2);
+
+// Option errors are reported as-is: they never contain config or provider details (#145).
+function parseOptions(): Record<string, string> | undefined {
+  const options: Record<string, string> = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (!flag || !['--project', '--opencode', '--server', '--host', '--scope'].includes(flag)) return fail(`Unknown option: ${flag ?? ''}. Run --help.`);
+    if (options[flag]) return fail(`Duplicate option: ${flag}. Run --help.`);
+    if (!value || value.startsWith('--')) return fail(`Missing value for ${flag}. Run --help.`);
+    options[flag] = value;
+  }
+  if (options['--scope'] && !['global', 'project'].includes(options['--scope'])) return fail('Invalid --scope; use global or project. Run --help.');
+  if (options['--host']) {
+    try { parseHostSelection(options['--host']); } catch (error) { return fail(error instanceof Error ? error.message : 'Invalid --host. Run --help.'); }
+  }
+  let directory: string | undefined;
+  try { directory = resolve(options['--project'] ?? process.cwd()); if (!statSync(directory).isDirectory()) directory = undefined; } catch { directory = undefined; }
+  if (!directory) return fail('Select an existing project directory (--project). No configuration was changed.');
+  return options;
+}
+
+function fail(message: string): undefined {
+  console.error(message);
+  process.exitCode = 2;
+  return undefined;
+}
+
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:doctor -- [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--project <directory>] [--opencode <CLI path>] [--server <URL>]');
+  console.log('Usage: npm run harness:doctor -- [--scope <global|project>] [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--project <directory>] [--opencode <CLI path>] [--server <URL>]');
   console.log('Inspects config and runtime agent/model catalogs for all specified or detected hosts. May start the OpenCode service; never reloads it, edits config, or sends model requests.');
+  console.log('--scope global inspects only global configuration; --scope project inspects only the project. Without --scope, both are inspected.');
 } else {
-  try {
-    const options: Record<string, string> = {};
-    for (let index = 0; index < args.length; index += 2) {
-      const flag = args[index];
-      const value = args[index + 1];
-      if (!flag || !['--project', '--opencode', '--server', '--host'].includes(flag) || !value || value.startsWith('--') || options[flag]) throw new Error('Unknown, duplicate, or incomplete option. Run --help.');
-      options[flag] = value;
-    }
-    const directory = resolve(options['--project'] ?? process.cwd());
-    if (!statSync(directory).isDirectory()) throw new Error('Select an existing project directory.');
+  const options = parseOptions();
+  if (options) {
+    try {
+      const directory = resolve(options['--project'] ?? process.cwd());
+      const scope = options['--scope'] as 'global' | 'project' | undefined;
+      const global = resolve(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode'));
 
-    const hosts: HostId[] = options['--host']
-      ? parseHostSelection(options['--host'])
-      : detectInstalledHosts(directory, homedir(), process.env.XDG_CONFIG_HOME);
+      const hosts: HostId[] = options['--host']
+        ? parseHostSelection(options['--host'])
+        // Detection honours the scope: an excluded global footprint must not select a host (#145).
+        : detectInstalledHosts(scope === 'global' ? undefined : directory, homedir(), process.env.XDG_CONFIG_HOME, process.env, scope);
 
-    console.log(`Harness checkout: ${describeHarnessCheckout(resolve(fileURLToPath(new URL('..', import.meta.url))))}`);
-    console.log(`Checking location: ${directory}`);
-    console.log(`Inspecting host(s): ${hosts.join(', ')}`);
+      console.log(`Harness checkout: ${describeHarnessCheckout(resolve(fileURLToPath(new URL('..', import.meta.url))))}`);
+      console.log(`Checking location: ${directory}`);
+      if (scope) console.log(`Checking scope: ${scope}`);
+      console.log(`Inspecting host(s): ${hosts.join(', ')}`);
 
-    let allOk = true;
+      let allOk = true;
 
-    for (const host of hosts) {
-      if (host === 'opencode') {
-        const global = resolve(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode'));
-        const sources = discoverConfigurations(directory, global);
-        console.log('\n=== OpenCode V2 Diagnostics ===');
-        console.log('Configuration sources (no contents/credentials printed):');
-        for (const source of sources) console.log(`  ${source.path}`);
-        if (!sources.length) {
-          console.log('  None. Install at global scope or in this project.');
-        } else {
-          try {
-            console.log('Querying OpenCode runtime; this may start its service. No reload/restart will be performed.');
-            const report = await verifyRuntime({ directory, ...(options['--opencode'] ? { executable: options['--opencode'] } : {}), ...(options['--server'] ? { server: options['--server'] } : {}) }, expectedAgents(sources));
-            printReport(report);
-            if (!report.ok) allOk = false;
-          } catch (err) {
-            if (err instanceof DiagnosticError) console.error(err.message);
-            console.error('OpenCode runtime check inconclusive.');
-            allOk = false;
+      for (const host of hosts) {
+        if (host === 'opencode') {
+          // The excluded scope is never read, so a malformed file there cannot fail this check.
+          const sources = discoverConfigurations(scope === 'global' ? undefined : directory, scope === 'project' ? undefined : global);
+          console.log('\n=== OpenCode V2 Diagnostics ===');
+          console.log('Configuration sources (no contents/credentials printed):');
+          for (const source of sources) console.log(`  ${source.path}`);
+          if (!sources.length) {
+            console.log(scope ? `  None at ${scope} scope.` : '  None. Install at global scope or in this project.');
+          } else {
+            try {
+              console.log('Querying OpenCode runtime; this may start its service. No reload/restart will be performed.');
+              const report = await verifyRuntime({ directory, ...(options['--opencode'] ? { executable: options['--opencode'] } : {}), ...(options['--server'] ? { server: options['--server'] } : {}) }, expectedAgents(sources));
+              printReport(report);
+              if (!report.ok) allOk = false;
+            } catch (err) {
+              if (err instanceof DiagnosticError) console.error(err.message);
+              console.error('OpenCode runtime check inconclusive.');
+              allOk = false;
+            }
           }
+        } else {
+          const diag = await diagnoseHost(host, { ...(scope === 'global' ? {} : { project: directory }), ...(scope ? { scope } : {}) });
+          printHostDiagnosticReport(diag);
+          if (!diag.ok) allOk = false;
         }
-      } else {
-        const diag = await diagnoseHost(host, { project: directory });
-        printHostDiagnosticReport(diag);
-        if (!diag.ok) allOk = false;
       }
-    }
 
-    process.exitCode = allOk ? 0 : 1;
-  } catch (error) {
-    if (error instanceof DiagnosticError) console.error(error.message);
-    // Other raw errors may contain provider/config details and are suppressed.
-    console.error('Verification inconclusive. Check project/config validity, CLI path, and OpenCode service/connection. No configuration was changed.');
-    process.exitCode = 2;
+      process.exitCode = allOk ? 0 : 1;
+    } catch (error) {
+      if (error instanceof DiagnosticError) console.error(error.message);
+      // Other raw errors may contain provider/config details and are suppressed.
+      console.error('Verification inconclusive. Check project/config validity, CLI path, and OpenCode service/connection. No configuration was changed.');
+      process.exitCode = 2;
+    }
   }
 }
