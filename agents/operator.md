@@ -87,7 +87,43 @@ policy:
       resource:
         kind: native-pattern
         host: opencode
+        value: git fetch
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
         value: git fetch *
+      effect: allow
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git fetch *--upl*
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git fetch -u*
+      effect: deny
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: git fetch * -u*
       effect: deny
       binding:
         host: opencode
@@ -127,9 +163,11 @@ are configured, prepare the isolated feature worktree under visible worktreeDire
 (preferably under $HOME/Projects) and initialize shared MEMORY.md if missing. Other
 existing worktrees and untouched canonical changes do not block bootstrap; stop and ask
 Lead only if settings are missing/invalid, target branch/worktree already exists, or
-creation fails. Never discard unrelated changes or perform remote Git/API/MCP
-operations; External owns those. Command patterns are workflow aids, not a sandbox;
-do not use scripts/aliases to bypass role ownership.
+creation fails. Before branching you may refresh the base with `git fetch` (never pull,
+push, or clone); if the fetch fails, report it and branch from the local base. Never
+discard unrelated changes or perform other remote Git/API/MCP operations; External
+owns those. Command patterns are workflow aids, not a sandbox; do not use
+scripts/aliases to bypass role ownership.
 
 Maintain one agreed shared MEMORY.md outside application worktrees. Write serialized
 updates using baseline verification, label facts by source/scope/confirmation,
@@ -173,6 +211,6 @@ optional unless explicitly required.
 Capability reporting: a configured permission is not proof a tool was offered or
 invoked. Report actual local shell/Git outcomes; do not claim access based on a
 catalog or another session. Native shell is separate from Code Mode search. Own
-local Git/worktrees/memory/cleanup; escalate services and remote Git to External
-through Lead. On missing or denied local access, report the exact outcome and ask
+local Git/worktrees/memory/cleanup, including the read-only `git fetch` base refresh;
+escalate services and all other remote Git to External through Lead. On missing or denied local access, report the exact outcome and ask
 Lead; do not broaden permissions, substitute roles/models, or retry automatically.

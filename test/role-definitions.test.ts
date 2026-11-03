@@ -29,6 +29,28 @@ const capturedArtifact = JSON.parse(readFileSync(new URL('./fixtures/compiled-ro
 };
 const legacyNormalizedDefinitions = () => capturedArtifact.definitions;
 
+// #144: Operator may refresh the base with `git fetch`, written out independently of the sources.
+function withOperatorFetch(definitions: Record<typeof nativeRoles[number], NativeDefinition>): Record<typeof nativeRoles[number], NativeDefinition> {
+  const operator = definitions.operator;
+  const permissions = operator.permissions as Array<{ action: string; resource: string; effect: string }>;
+  const index = permissions.findIndex(rule => rule.action === 'shell' && rule.resource === 'git fetch *' && rule.effect === 'deny');
+  assert.notEqual(index, -1, 'historical snapshot denies git fetch for Operator');
+  permissions.splice(index, 1,
+    { action: 'shell', resource: 'git fetch', effect: 'allow' },
+    { action: 'shell', resource: 'git fetch *', effect: 'allow' },
+    { action: 'shell', resource: 'git fetch *--upl*', effect: 'deny' },
+    { action: 'shell', resource: 'git fetch -u*', effect: 'deny' },
+    { action: 'shell', resource: 'git fetch * -u*', effect: 'deny' });
+  const previous = 'creation fails. Never discard unrelated changes or perform remote Git/API/MCP\noperations; External owns those. Command patterns are workflow aids, not a sandbox;\ndo not use scripts/aliases to bypass role ownership.';
+  assert.ok(operator.system.includes(previous));
+  operator.system = operator.system.replace(previous, 'creation fails. Before branching you may refresh the base with `git fetch` (never pull,\npush, or clone); if the fetch fails, report it and branch from the local base. Never\ndiscard unrelated changes or perform other remote Git/API/MCP operations; External\nowns those. Command patterns are workflow aids, not a sandbox; do not use\nscripts/aliases to bypass role ownership.');
+  const closing = 'local Git/worktrees/memory/cleanup; escalate services and remote Git to External\nthrough Lead.';
+  assert.ok(operator.system.includes(closing));
+  operator.system = operator.system.replace(closing, 'local Git/worktrees/memory/cleanup, including the read-only `git fetch` base refresh;\nescalate services and all other remote Git to External through Lead.');
+  return definitions;
+}
+const currentNormalizedDefinitions = () => withOperatorFetch(structuredClone(legacyNormalizedDefinitions()));
+
 test('strict role source compiler preserves current normalized OpenCode definitions for all roles', () => {
   const baseline = legacyNormalizedDefinitions();
   assert.match(capturedArtifact.provenance, /reconstructed after v2 source migration/i);
@@ -37,9 +59,9 @@ test('strict role source compiler preserves current normalized OpenCode definiti
   assert.deepEqual(compiled.diagnostics, []);
   assert.deepEqual(loadNativeDefinitions(fileURLToPath(legacyAgents)), baseline, 'historical sources normalize to their independent historical snapshot');
   const currentReviewer = readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8');
-  const expectedCurrent = structuredClone(baseline);
+  const expectedCurrent = currentNormalizedDefinitions();
   expectedCurrent.reviewer.system = currentReviewer.trim();
-  assert.deepEqual(compiled.definitions, expectedCurrent, 'current compiler output preserves historical definitions except the independently snapshotted reviewer body');
+  assert.deepEqual(compiled.definitions, expectedCurrent, 'current compiler output preserves historical definitions except the independently snapshotted reviewer body and Operator fetch change');
   assert.deepEqual(loadNativeDefinitions(agentsDirectory), expectedCurrent, 'current native loader output matches the independent expected full definitions');
 });
 
@@ -93,16 +115,35 @@ test('OpenCode role compiler returns independent ordered permission data', () =>
   assert.notEqual(compiled.definition?.permissions[0], lowered.permissions?.[0]);
 });
 
+test('Operator may git fetch but not run upload-pack or other remote Git (#144)', () => {
+  const rules = loadNativeDefinitions(fileURLToPath(agents)).operator.permissions as Array<{ action: string; resource?: string; effect: string }>;
+  // OpenCode evaluates ordered rules last-match-wins; `*` and `?` are wildcards.
+  const wildcard = (pattern: string) => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 's');
+  const effect = (command: string) => rules.filter(rule => (rule.action === 'shell' || rule.action === '*') && (rule.resource === undefined || wildcard(rule.resource).test(command))).at(-1)?.effect;
+  assert.equal(effect('git fetch'), 'allow');
+  assert.equal(effect('git fetch origin main'), 'allow');
+  assert.equal(effect('git fetch --prune origin'), 'allow');
+  assert.equal(effect('git fetch origin feature-ui'), 'allow', 'a -u inside a ref name is not an option');
+  // --upload-pack runs a command; Git also accepts any unambiguous prefix (--upl is the shortest).
+  for (const command of ['git fetch --upload-pack=evil origin', 'git fetch origin --upload-pack evil', 'git fetch --upl=evil origin', 'git fetch origin --uplo evil']) assert.equal(effect(command), 'deny', command);
+  assert.equal(effect('git fetch --no-upload-pack origin'), 'allow', 'the negated option runs nothing');
+  // -u is --update-head-ok for fetch in Git 2.55, but is upload-pack for clone/fetch-pack: denied defensively.
+  for (const command of ['git fetch -u evil origin', 'git fetch -uevil origin', 'git fetch origin -u evil', 'git fetch origin -uevil']) assert.equal(effect(command), 'deny', command);
+  assert.equal(effect('git pull origin main'), 'deny');
+  assert.equal(effect('git push origin main'), 'deny');
+  assert.equal(effect('git status'), 'ask');
+});
+
 test('capability normalization round-trips ordered OpenCode rules without changing policy semantics', () => {
   const definitions = loadRoleDefinitions(fileURLToPath(agents));
   for (const role of nativeRoles) {
     const policy = definitions[role].deployment.opencode.policy;
     const lowered = lowerOpenCodePolicy(role, policy);
     assert.deepEqual(lowered.diagnostics, [], role);
-    const sourcePermissions = legacyNormalizedDefinitions()[role].permissions.filter(rule => !isOpenCodeGuardrailRule(rule as PermissionRule));
+    const sourcePermissions = currentNormalizedDefinitions()[role].permissions.filter(rule => !isOpenCodeGuardrailRule(rule as PermissionRule));
     assert.notEqual(lowered.permissions, legacyNormalizedDefinitions()[role].permissions, `${role}: normalized permissions are independently allocated from the original snapshot`);
     assert.deepEqual(lowered.permissions, sourcePermissions, role);
-    assert.deepEqual(legacyNormalizedDefinitions()[role].permissions, [...lowered.permissions!, ...openCodeGuardrailRules(lowered.permissions!)], role);
+    assert.deepEqual(currentNormalizedDefinitions()[role].permissions, [...lowered.permissions!, ...openCodeGuardrailRules(lowered.permissions!)], role);
     assert.deepEqual(policy.rules.map(rule => rule.binding.action), sourcePermissions.map(rule => (rule as { action: string }).action));
   }
   const leadRules = definitions.lead.deployment.opencode.policy.rules;
