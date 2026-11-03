@@ -11,6 +11,7 @@ import { discoverReceiptChain } from '../src/receipt-lineage.ts';
 import { createSuccessorReceipt, finalizeSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
 import { loadNativeDefinitions, updateNativeConfiguration } from '../src/native-installer.ts';
 import type { HostAdapter } from '../src/host-registry.ts';
+import { DiagnosticError } from '../src/native-diagnostics.ts';
 
 function createDummyInstalledConfig(): Record<string, unknown> {
   return {
@@ -278,6 +279,29 @@ test('missing role permission preview agrees with saved rules and final order', 
   assert.deepEqual(previewLines.slice(leadHeader + 1, nextRole === -1 ? undefined : nextRole),
     permissions.map(rule => `    ${JSON.stringify(rule)}`));
   assert.deepEqual(permissions, loadNativeDefinitions(join(process.cwd(), 'agents')).lead.permissions);
+});
+
+test('inconclusive post-save runtime verification warns without failing update (#143)', async t => {
+  const root = makeTempRoot('harness-update-inconclusive-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const config = join(project, 'opencode.json');
+  const recovery = join(root, 'recovery');
+  const initial = JSON.stringify(createDummyInstalledConfig(), null, 2);
+  writeFileSync(config, initial);
+  const output: string[] = [], errors: string[] = [];
+  const status = await runUpdateFlow({ scope: 'project', project }, {
+    ask: async question => question.startsWith('Check remote') ? 'no' : question.includes('system prompt to latest') ? 'yes' : question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'update' : (() => { throw new Error(question); })(),
+    output: text => output.push(text), error: text => errors.push(text), home: root, recoveryDirectory: recovery,
+    runCommand: (_cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : '',
+    verify: async () => { throw new DiagnosticError('OpenCode API check failed or timed out.'); }, printReport: () => {}
+  });
+  assert.equal(status, 0);
+  assert.notEqual(readFileSync(config, 'utf8'), initial);
+  assert.ok(output.some(line => line.startsWith('Successor receipt finalized at:')));
+  assert.ok(errors.includes('OpenCode API check failed or timed out.'));
+  assert.ok(errors.includes('Configuration saved, but runtime verification was inconclusive. Run npm run harness:doctor.'));
+  assert.ok(!output.includes('Harness update complete.'));
 });
 
 test('receipt-managed prompt remains unchanged when prompt update is declined', async t => {

@@ -270,19 +270,21 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
   },
 };
 
+/** Hosts with a footprint in the project and/or home. At `scope: 'project'` global footprints are ignored; pass `project: undefined` for global only. */
 export function detectInstalledHosts(
   project: string | undefined,
   home = homedir(),
   xdgConfigHome?: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  scope?: 'global' | 'project'
 ): HostId[] {
   const detected = new Set<HostId>();
+  const global = scope !== 'project';
   const globalOpenCode = resolve(join(xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
 
   // 1. OpenCode detection
   if (
-    existsSync(join(globalOpenCode, 'opencode.json')) ||
-    existsSync(join(globalOpenCode, 'opencode.jsonc')) ||
+    (global && (existsSync(join(globalOpenCode, 'opencode.json')) || existsSync(join(globalOpenCode, 'opencode.jsonc')))) ||
     (project && (
       existsSync(join(project, '.opencode')) ||
       existsSync(join(project, 'opencode.json')) ||
@@ -294,8 +296,7 @@ export function detectInstalledHosts(
 
   // 2. Claude Code detection
   if (
-    existsSync(join(home, '.claude')) ||
-    existsSync(join(home, '.claude.json')) ||
+    (global && (existsSync(join(home, '.claude')) || existsSync(join(home, '.claude.json')))) ||
     (project && (
       existsSync(join(project, 'CLAUDE.md')) ||
       existsSync(join(project, '.claude')) ||
@@ -307,8 +308,7 @@ export function detectInstalledHosts(
 
   // 3. Antigravity detection
   if (
-    existsSync(join(home, '.gemini', 'config')) ||
-    existsSync(join(home, '.gemini', 'antigravity')) ||
+    (global && (existsSync(join(home, '.gemini', 'config')) || existsSync(join(home, '.gemini', 'antigravity')))) ||
     (project && (
       existsSync(join(project, '.agents')) ||
       existsSync(join(project, 'mcp_config.json')) ||
@@ -320,7 +320,7 @@ export function detectInstalledHosts(
 
   // 4. Codex detection
   if (
-    existsSync(join(home, '.codex')) ||
+    (global && existsSync(join(home, '.codex'))) ||
     (project && existsSync(join(project, '.codex')))
   ) {
     detected.add('codex');
@@ -328,7 +328,7 @@ export function detectInstalledHosts(
 
   // 5. Cursor detection
   if (
-    existsSync(join(home, '.cursor')) ||
+    (global && existsSync(join(home, '.cursor'))) ||
     (project && existsSync(join(project, '.cursor')))
   ) {
     detected.add('cursor');
@@ -376,6 +376,8 @@ export interface HostAdapterDoctorOptions {
   global?: boolean | undefined;
   home?: string | undefined;
   globalDirectory?: string | undefined;
+  /** doctor --scope: inspect only that scope's artifacts; omitted inspects both. */
+  scope?: 'global' | 'project' | undefined;
 }
 
 export interface HostAdapter {
@@ -468,6 +470,7 @@ registerHostAdapter({
       project: options.project,
       home: options.home,
       globalDirectory: options.globalDirectory,
+      scope: options.scope,
     });
   },
 });
@@ -482,7 +485,7 @@ registerHostAdapter({
   host: 'codex',
   install: codexGated,
   update: codexGated,
-  async doctor(options) { return await diagnoseCodex({ project: options.project, home: options.home ?? homedir(), globalDirectory: options.globalDirectory }); },
+  async doctor(options) { return await diagnoseCodex({ project: options.project, home: options.home ?? homedir(), globalDirectory: options.globalDirectory, scope: options.scope }); },
 });
 
 export function getHostAdapter(host: HostId): HostAdapter | undefined {
