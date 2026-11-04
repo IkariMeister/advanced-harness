@@ -24,6 +24,14 @@ export const claudeCodeInstall = (confirmation: string): Step[] => [
   ask('Type yes to install the Claude Code harness', confirmation),
 ];
 
+/** Codex global install/update (#45): no MCP selection, no live catalog, one model and effort per child role. */
+export const codexInstall = (confirmation: string, model = 'gpt-smoke'): Step[] => [
+  ask('Existing Codex MCP server ID(s)'),
+  ask('Query the live Codex model catalog', 'no'),
+  ...roles.filter(role => role !== 'lead').flatMap(role => [ask(`${role}: explicitly assigned Codex model ID`, model), ask(`${role}: reasoning effort`, 'medium')]),
+  ask('Type install to apply these changes', confirmation),
+];
+
 export const antigravityInstall = (confirmation: string): Step[] => [
   ...roles.filter(role => role !== 'lead').map(role => ask(`${role}: Antigravity model tier`)),
   ...roles.map(role => ask(`${role}: desired model preference`)),

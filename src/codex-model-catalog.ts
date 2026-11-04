@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { findCodexBinary } from './codex-role-launcher.mjs';
 
 /** A listed Codex model and the reasoning efforts it advertises (empty when unknown). */
 export type CodexCatalogModel = { id: string; efforts: string[] };
@@ -11,7 +12,7 @@ export class CodexDiscoveryError extends Error {}
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
 export function findCodex(explicit?: string): string {
-  return explicit ?? process.env.CODEX_BIN ?? 'codex';
+  return explicit ?? findCodexBinary(process.env);
 }
 
 /**

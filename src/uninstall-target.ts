@@ -14,7 +14,7 @@ export type UninstallTargetOptions = {
 
 // Receipt-keyed file per host: Claude Code keys on <project>/.claude/settings.json or
 // <home>/.claude/settings.json (global); Antigravity keys on <project>/.agents/hooks.json or
-// <home>/.gemini/config/hooks.json (global).
+// <home>/.gemini/config/hooks.json (global); Codex keys on <home>/.codex/.advanced-harness-state.json (global).
 function selectHostTarget(host: Exclude<HostId, 'opencode'>, options: UninstallTargetOptions): string {
   if (options.config) throw new Error(`--config is supported only with --host opencode; ${host} uninstall targets its own receipt file.`);
   if (host === 'claude-code') {
@@ -27,6 +27,13 @@ function selectHostTarget(host: Exclude<HostId, 'opencode'>, options: UninstallT
     if (!options.project) throw new Error('--project is required with --scope project.');
     return join(resolve(options.cwd, options.project), '.claude', 'settings.json');
   }
+  if (host === 'codex') {
+    // Role-process installs are global only; their receipts key on the Codex state manifest.
+    if ((options.scope ?? 'global') !== 'global') throw new Error('Codex harness installs are global; use --scope global.');
+    if (options.project) throw new Error('--project cannot be combined with --host codex.');
+    return join(options.home, '.codex', '.advanced-harness-state.json');
+  }
+  if (host !== 'antigravity') throw new Error(`Uninstall is not supported for --host ${host}.`);
   const scope = options.scope ?? (options.project ? 'project' : 'global');
   if (!['global', 'project'].includes(scope)) throw new Error('--scope must be global or project.');
   if (scope === 'project') {
