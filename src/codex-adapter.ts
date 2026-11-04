@@ -9,6 +9,7 @@ import { nativeRoles, type NativeRole } from './native-role-types.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import { codexDestructiveGitPrefixes, type CodexPrefixPattern } from './security-guardrails.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
+import { threadIdPattern } from './codex-role-launcher.mjs';
 import { codexChildRoles, codexProfileName, codexRolePolicies, codexRoleLauncherSource, compileCodexLeadBlock, compileCodexRoleProfile, compileCodexRoleStatusSchema, codexLeadBlockRecord, extractCodexLeadBlock, mergeCodexLeadBlock, removeCodexLeadBlock, type CodexLeadBlockRecord } from './codex-role-processes.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, type HarnessVersionStamp, type ManagedFileEvidence } from './receipt-lineage.ts';
 
@@ -304,15 +305,20 @@ function appendSettings(existing: string | undefined): string {
   if (!rootHas('approval_policy')) blocks.push('approval_policy = "on-request"');
   if (!blocks.length) return text;
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
-  const separator = (prefix: string) => !prefix ? '' : prefix.endsWith(`${newline}${newline}`) ? '' : prefix.endsWith(newline) ? newline : `${newline}${newline}`;
-  const document = parseCodexToml(text, 'config.toml');
-  const firstTable = document.tables[0]?.start;
+  const firstTable = parsed.tables[0]?.start;
   if (firstTable !== undefined) {
-    const prefix = text.slice(0, firstTable);
-    const insertion = `${separator(prefix)}${blocks.join(`${newline}${newline}`)}${newline}${newline}`;
+    const insertion = `${baselineSeparator(text)}${blocks.join(`${newline}${newline}`)}${newline}${newline}`;
     return text.slice(0, firstTable) + insertion + text.slice(firstTable);
   }
-  return `${text}${separator(text)}${blocks.join(`${newline}${newline}`)}${newline}`;
+  return `${text}${baselineSeparator(text)}${blocks.join(`${newline}${newline}`)}${newline}`;
+}
+
+/** The blank space appendSettings puts before the baseline keys, so they don't run into existing root keys. */
+function baselineSeparator(text: string): string {
+  const newline = text.includes('\r\n') ? '\r\n' : '\n';
+  const firstTable = parseCodexToml(text, 'config.toml').tables[0]?.start;
+  const prefix = firstTable === undefined ? text : text.slice(0, firstTable);
+  return !prefix || prefix.endsWith(`${newline}${newline}`) ? '' : prefix.endsWith(newline) ? newline : `${newline}${newline}`;
 }
 
 /** `features` written as one inline table, which cannot be extended without rewriting the user's line. */
@@ -371,6 +377,8 @@ export function disableMultiAgent(text: string, output: (message: string) => voi
  */
 export type CodexConfigEdits = {
   addedRootKeys: string[];
+  /** What appendSettings inserted before those keys; it goes back out with them. */
+  baselineSeparator?: string;
   multiAgentAdded: boolean;
   /** config.toml did not exist before the first install, so uninstall may remove it once it is empty. */
   configCreated: boolean;
@@ -399,8 +407,11 @@ function ownRecords(records: CodexConfigEdits['mcp'] | undefined): CodexConfigEd
 /** Diffs config.toml before and after an install, then folds in edits recorded by earlier installs. */
 export function codexConfigEdits(before: string, after: string, prior?: CodexConfigEdits, created = false): CodexConfigEdits {
   const was = parseCodexToml(before, 'config.toml'), now = parseCodexToml(after, 'config.toml');
+  const addedNow = ['sandbox_mode', 'approval_policy'].filter(key => !findEntry(was, [], key) && findEntry(now, [], key));
+  const separatorBefore = prior?.baselineSeparator ?? (addedNow.length ? baselineSeparator(before) : undefined);
   const edits: CodexConfigEdits = {
-    addedRootKeys: [...new Set([...(prior?.addedRootKeys ?? []), ...['sandbox_mode', 'approval_policy'].filter(key => !findEntry(was, [], key) && findEntry(now, [], key))])],
+    addedRootKeys: [...new Set([...(prior?.addedRootKeys ?? []), ...addedNow])],
+    ...(separatorBefore === undefined ? {} : { baselineSeparator: separatorBefore }),
     multiAgentAdded: (prior?.multiAgentAdded ?? false) || (!findEntry(was, ['features'], 'multi_agent') && Boolean(findEntry(now, ['features'], 'multi_agent'))),
     configCreated: prior ? prior.configCreated : created,
     featuresTableAdded: (prior?.featuresTableAdded ?? false) || (!was.tables.some(table => table.path === 'features') && now.tables.some(table => table.path === 'features')),
@@ -451,19 +462,33 @@ export function reverseCodexConfigEdits(text: string, edits: CodexConfigEdits): 
     changes.push({ start: line.start, end: line.end + blank, text: '' });
   };
   const harnessValues: Record<string, string> = { sandbox_mode: 'read-only', approval_policy: 'on-request' };
-  for (const key of edits.addedRootKeys) removeIf(findEntry(document, [], key), harnessValues[key], key, true);
+  const baselineRemovals: Array<{ start: number }> = [];
+  for (const key of edits.addedRootKeys) {
+    const count = changes.length;
+    removeIf(findEntry(document, [], key), harnessValues[key], key, true);
+    if (changes.length > count) baselineRemovals.push(changes.at(-1)!);
+  }
+  // Only once no baseline key is left does the separator in front of them have nothing to separate.
+  if (edits.baselineSeparator && baselineRemovals.length && baselineRemovals.length === edits.addedRootKeys.length) {
+    const first = baselineRemovals.reduce((a, b) => a.start <= b.start ? a : b);
+    const size = edits.baselineSeparator.length;
+    if (text.slice(first.start - size, first.start) === edits.baselineSeparator) first.start -= size;
+  }
   if (edits.multiAgentAdded) removeIf(findEntry(document, ['features'], 'multi_agent'), false, 'features.multi_agent');
   for (const [id, record] of Object.entries(edits.mcp)) {
     const path = ['mcp_servers', id];
     const enabled = findEntry(document, path, 'enabled');
-    if (enabled && enabled.value !== false) kept.push(`mcp_servers.${id}.enabled`);
+    // Already back at its original value (a retried uninstall, or the user's own edit): nothing to do or report.
+    if (enabled && enabled.value === record.enabledBefore) { /* nothing to reverse */ }
+    else if (enabled && enabled.value !== false) kept.push(`mcp_servers.${id}.enabled`);
     else if (enabled && record.enabledBefore === null) changes.push({ ...lineOf(enabled), text: '' });
     else if (enabled && record.enabledBefore !== false) changes.push({ start: enabled.valueStart, end: enabled.valueEnd, text: 'true' });
     const tools = findEntry(document, path, 'disabled_tools');
     if (tools && record.addedTools.length) {
       // Only an unchanged list is narrowed: removing entries from a customized list would drop a user restriction.
-      const unchanged = Array.isArray(tools.value) && Array.isArray(record.toolsAfter)
-        && tools.value.length === record.toolsAfter.length && (tools.value as unknown[]).every((name, index) => name === record.toolsAfter![index]);
+      const unchanged = Array.isArray(tools.value) && Array.isArray(record.toolsAfter) && sameTools(tools.value, record.toolsAfter);
+      // Already narrowed by an earlier run of this uninstall.
+      if (!unchanged && Array.isArray(record.toolsAfter) && sameTools(tools.value as unknown[], record.toolsAfter.filter(name => !record.addedTools.includes(name)))) continue;
       if (!unchanged) { kept.push(`mcp_servers.${id}.disabled_tools`); continue; }
       const remaining = (tools.value as string[]).filter(name => !record.addedTools.includes(name));
       if (!remaining.length && record.toolsKeyAdded) changes.push({ ...lineOf(tools), text: '' });
@@ -669,7 +694,7 @@ export async function installCodex(options: {
   scope: 'project' | 'global'; project?: string | undefined; home: string; recoveryDirectory?: string | undefined;
   agentsDirectory?: string | undefined; commandsDirectory?: string | undefined; ask: Ask; output(message: string): void; error(message: string): void;
   save?: typeof saveInstallation;
-  /** Live catalog for the role prompts; omitted means no discovery (wire discoverCodexModels() when the #45 gate lifts). */
+  /** Live catalog for the role prompts; omitted means no discovery. */
   discoverModels?: CodexModelDiscovery | undefined;
   /** role-processes: one `codex exec` process per role with its own profile (#45); global scope only. */
   mode?: 'shared-agents' | 'role-processes' | undefined;
@@ -1035,9 +1060,6 @@ function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): st
   return issues;
 }
 
-/** A role thread binding the launcher writes: a file named by a thread ID that holds one child role's name. */
-const codexThreadIdPattern = /^[A-Za-z0-9-]{1,128}$/;
-
 /**
  * The Codex part of uninstall that the receipt does not cover: config.toml (recorded as edits, since the
  * file can hold MCP credentials), the Lead block in the shared AGENTS.md, and the state manifest. Used as
@@ -1075,7 +1097,7 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
     else for (const name of readdirSync(threadsPath)) {
       const path = join(threadsPath, name);
       const content = lstatSync(path).isFile() ? readFileSync(path, 'utf8') : undefined;
-      if (content !== undefined && codexThreadIdPattern.test(name) && (codexChildRoles as readonly string[]).includes(content.trim())) bindings.push({ path, content });
+      if (content !== undefined && threadIdPattern.test(name) && (codexChildRoles as readonly string[]).includes(content.trim())) bindings.push({ path, content });
       else unexpected.push(path);
     }
   }
@@ -1152,8 +1174,10 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
       for (const path of unexpected) lines.push(`Kept ${path}: not a role thread binding; review by hand`);
       if (leadAfter?.kept) lines.push(`Kept the Lead block in ${leadPath}: it ${leadAfter.kept}; review by hand`);
       // Managed-file pruning ran first and kept these directories because the bindings were still in them.
-      if (!unexpected.length && bindings.length) {
+      // A retry has no bindings left to remove, but the directories a failed run emptied still go.
+      if (!unexpected.length) {
         for (const dir of [threadsPath, dirname(threadsPath)]) {
+          if (!existsSync(dir)) continue;
           try { rmdirSync(dir); lines.push(`Removed empty installer directory: ${dir}`); } catch { break; /* not empty: left in place */ }
         }
       }

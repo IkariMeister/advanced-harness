@@ -11,7 +11,7 @@ import type { ReconciliationResult } from './permission-reconciliation.ts';
 import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
 import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 
-import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, isCodexOnly, selectNativeHost, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string; context?: string }
@@ -51,11 +51,10 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
 
   let scope = options.scope;
-  const scopeDefault = selectedHosts.length === 1 && selectedHosts[0] === 'codex' ? 'global' : 'project';
+  const codexOnly = isCodexOnly(selectedHosts);
+  const scopeDefault = codexOnly ? 'global' : 'project';
   while (!scope || !['project', 'global'].includes(scope)) scope = (await ask('Install scope: project or global', scopeDefault)) || scopeDefault;
   if (scope === 'global' && options.project) throw new Error('--project cannot be combined with global scope.');
-  // Codex role profiles live in ~/.codex, so Codex installs are global only (#45).
-  const codexOnly = selectedHosts.length === 1 && selectedHosts[0] === 'codex';
   if (codexOnly && scope === 'project') {
     errorOutput('Codex installation is global only: role profiles live in ~/.codex. Rerun with --scope global. No files were changed.');
     return 2;

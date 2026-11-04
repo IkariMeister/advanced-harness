@@ -15,6 +15,9 @@ export type HostId = typeof supportedHosts[number];
 export const supportedNativeHosts = ['opencode', 'antigravity', 'claude-code', 'codex'] as const satisfies readonly HostId[];
 export type NativeHostId = typeof supportedNativeHosts[number];
 
+/** Codex alone was selected: its role profiles live in ~/.codex, so it installs and updates at global scope only (#45). */
+export const isCodexOnly = (hosts: readonly HostId[]): boolean => hosts.length === 1 && hosts[0] === 'codex';
+
 /** Why a host cannot be installed or updated natively, for blocked-selection messages. */
 export function describeBlockedHost(host: HostId): string {
   return `native deployment is not implemented${host === 'cursor' ? ' (issue #46)' : ''}`;

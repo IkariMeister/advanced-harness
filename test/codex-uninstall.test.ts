@@ -28,14 +28,14 @@ const install = async (box: Box, mcp = '', tools = '') => {
 };
 
 // Mirrors scripts/uninstall-native-harness.ts for --host codex after target selection.
-async function uninstall(box: Box, answer = 'uninstall') {
+async function uninstall(box: Box, answer = 'uninstall', remove?: (path: string) => void) {
   const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
   const current = readFileSync(target, 'utf8');
   const chain = discoverReceiptChain(box.recovery, target, 'codex');
   assert.ok(chain.head, 'active Codex receipt');
   const receipt = readReceiptForRestore(join(chain.directory, chain.head.file), target);
   assert.equal(effectiveReceiptHost(receipt), 'codex');
-  const hostStep = planCodexUninstall(target, box.recovery);
+  const hostStep = planCodexUninstall(target, box.recovery, remove);
   for (const key of hostStep.kept) box.output.push(`Kept in config.toml (changed since install, review by hand): ${key}`);
   return runUninstallFlow({
     receipt, current, hostStep, backupParent: box.recovery, host: 'codex', pruneRoot: uninstallPruneRoot('codex', target, box.home),
@@ -353,4 +353,58 @@ test('Codex uninstall reverses a dotted features.multi_agent byte for byte (#45)
   assert.match(readFileSync(join(box.codex, 'config.toml'), 'utf8'), /^features\.multi_agent = false$/m);
   assert.equal(await uninstall(box), 0, box.errors.join('\n'));
   assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), config);
+});
+
+test('Codex uninstall restores config.toml byte for byte whatever separates the baseline keys (#45)', async t => {
+  const configs = [
+    'model = "x"\n[tui]\nfoo = 1\n',
+    'model = "x"\n\n[tui]\nfoo = 1\n',
+    'model = "x"\r\n[tui]\r\nfoo = 1\r\n',
+    '[tui]\nfoo = 1\n',
+    'model = "x"\n',
+    'features.web_search = true\n',
+    'model = "x"\n\n[features]\nweb_search = true\n',
+  ];
+  for (const config of configs) {
+    const box = sandbox(t);
+    mkdirSync(box.codex);
+    writeFileSync(join(box.codex, 'config.toml'), config);
+    await install(box);
+    assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+    assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), config, JSON.stringify(config));
+  }
+
+  const kept = sandbox(t);
+  mkdirSync(kept.codex);
+  writeFileSync(join(kept.codex, 'config.toml'), 'model = "x"\n[tui]\nfoo = 1\n');
+  await install(kept);
+  const path = join(kept.codex, 'config.toml');
+  writeFileSync(path, readFileSync(path, 'utf8').replace('approval_policy = "on-request"', 'approval_policy = "untrusted"'));
+  assert.equal(await uninstall(kept), 0, kept.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), 'model = "x"\n\napproval_policy = "untrusted"\n\n[tui]\nfoo = 1\n', 'the separator stays while a baseline key does');
+});
+
+test('a retried Codex uninstall reports nothing false and removes emptied directories (#45)', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  writeFileSync(join(box.codex, 'config.toml'), userConfig);
+  await install(box, 'gh', 'merge_pr');
+  const threads = join(box.codex, 'advanced-harness', 'role-threads');
+  recordThread(threads, 'thread-1', 'reviewer');
+  const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
+
+  // Everything but the manifest completes, as when the first run fails on its last step.
+  let failed = false;
+  assert.equal(await uninstall(box, 'uninstall', path => { if (path === target && !failed) { failed = true; throw new Error('EBUSY'); } unlinkSync(path); }), 1);
+  assert.match(box.errors.join('\n'), /is kept, so uninstall can be run again/);
+  assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), userConfig);
+  assert.deepEqual(readdirSync(threads), [], 'the first run emptied the directory but could not get to removing it');
+
+  box.output.length = 0;
+  box.errors.length = 0;
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  assert.ok(!box.output.some(line => line.startsWith('Kept in config.toml')), 'values the first run reversed are not reported as user changes');
+  assert.equal(existsSync(join(box.codex, 'advanced-harness')), false, 'the emptied launcher directories are removed');
+  assert.ok(box.output.some(line => line.startsWith('Removed empty installer directory') && line.includes('role-threads')));
+  assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), userConfig);
 });

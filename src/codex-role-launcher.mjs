@@ -72,7 +72,7 @@ export function readSelectedMcpServers(home) {
   return selected;
 }
 
-const threadIdPattern = /^[A-Za-z0-9-]{1,128}$/;
+export const threadIdPattern = /^[A-Za-z0-9-]{1,128}$/;
 const rolePattern = /^[a-z][a-z0-9_-]{0,63}$/;
 
 /**

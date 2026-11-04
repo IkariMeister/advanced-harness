@@ -40,7 +40,7 @@ import {
   preflightOpenCodeCommandDeployment,
   type WorkflowCommandId
 } from './workflow-commands.ts';
-import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, isCodexOnly, selectNativeHost, type HostId } from './host-registry.ts';
 import { parseGlobalProjectDefaults, runSharedLocationStep, type GlobalProjectDefaults } from './project-setup.ts';
 import { checkAntigravityConfigMerge } from './antigravity-adapter.ts';
 
@@ -90,15 +90,14 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
 
   let scope = options.scope;
-  const scopeDefault = selectedHosts.length === 1 && selectedHosts[0] === 'codex' ? 'global' : 'project';
+  const codexOnly = isCodexOnly(selectedHosts);
+  const scopeDefault = codexOnly ? 'global' : 'project';
   while (!scope || !['project', 'global'].includes(scope)) {
     scope = (await ask('Update scope: project or global', scopeDefault)) || scopeDefault;
   }
   if (scope === 'global' && options.project) {
     throw new Error('--project cannot be combined with global scope.');
   }
-  // Codex role profiles live in ~/.codex, so Codex installs are global only (#45).
-  const codexOnly = selectedHosts.length === 1 && selectedHosts[0] === 'codex';
   if (codexOnly && scope === 'project') {
     errorOutput('Codex update is global only: role profiles live in ~/.codex. Rerun with --scope global. No files were changed.');
     return 2;
