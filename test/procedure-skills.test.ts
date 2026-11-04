@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { parseDocument } from 'yaml';
 import { combineProcedureSkillArtifacts, compileProcedureSkills, emitProcedureSkill, emittedProcedureSkillName, loadProcedureSkill, type ProcedureSkillHost } from '../src/procedure-skills.ts';
 import { compileWorkflowArtifacts, workflowCommandIds } from '../src/workflow-commands.ts';
-import { applyProcedureFiles, canonicalProcedurePath, planProcedureDeployment, procedureManagedEvidence } from '../src/procedure-deployment.ts';
+import { applyProcedureFiles, canonicalProcedurePath, mergeProcedureManagedEvidence, planProcedureDeployment, procedureManagedEvidence } from '../src/procedure-deployment.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
 import { assertNoForeignManagedFileClaims } from '../src/procedure-deployment.ts';
 import { writeFileSync } from 'node:fs';
@@ -165,7 +165,7 @@ test('deployment planner preserves customized files by default and tracks/restor
   const artifact = [{ host: 'opencode' as const, relativePath: path, content: binary }];
   let plan = planProcedureDeployment(artifact, root);
   assert.equal(plan[0]!.status, 'new');
-  const selected = new Set([plan[0]!.path.toLowerCase()]);
+  const selected = new Set([canonicalProcedurePath(plan[0]!.path)]);
   const evidence = procedureManagedEvidence(plan, selected);
   assert.deepEqual(evidence[0]!.before, { absent: true });
   assert.equal('contentBase64' in evidence[0]!.after && evidence[0]!.after.contentBase64, binary.toString('base64'));
@@ -177,7 +177,7 @@ test('deployment planner preserves customized files by default and tracks/restor
   artifact[0]!.content = revisedBytes;
   plan = planProcedureDeployment(artifact, root, evidence);
   assert.equal(plan[0]!.status, 'outdated');
-  const updateSelection = new Set([plan[0]!.path.toLowerCase()]);
+  const updateSelection = new Set([canonicalProcedurePath(plan[0]!.path)]);
   let backupPath = '';
   applyProcedureFiles(plan, updateSelection, join(root, 'backups'), path => { backupPath = path; });
   assert.deepEqual(await readFile(backupPath), binary);
@@ -188,7 +188,7 @@ test('deployment planner preserves customized files by default and tracks/restor
   plan = planProcedureDeployment(artifact, root, updatedEvidence);
   assert.equal(plan[0]!.status, 'customized');
   assert.deepEqual(procedureManagedEvidence(plan), []);
-  const replace = new Set([plan[0]!.path.toLowerCase()]);
+  const replace = new Set([canonicalProcedurePath(plan[0]!.path)]);
   const customizedEvidence = procedureManagedEvidence(plan, replace)[0]!.before;
   assert.ok('content' in customizedEvidence);
   assert.equal(customizedEvidence.content, customized.toString('utf8'));
@@ -216,22 +216,44 @@ test('procedure selection, predecessor lookup, evidence, and execution share pla
   }
 });
 
+test('procedure managed evidence merges canonical-equivalent paths without replacing the earliest before-state', () => {
+  const path = resolve('Project', '.opencode', 'skills', 'CaseSkill', 'SKILL.md');
+  const alternate = process.platform === 'win32' ? path.toUpperCase() : path;
+  const earlier = { path, kind: 'skills' as const, before: { content: 'earliest' }, after: { content: 'prior' } };
+  const update = { path: alternate, kind: 'skills' as const, before: { absent: true as const }, after: { content: 'latest' } };
+  const merged = [earlier];
+  mergeProcedureManagedEvidence(merged, [update]);
+  if (canonicalProcedurePath(path) === canonicalProcedurePath(alternate)) {
+    assert.equal(merged.length, 1);
+    assert.deepEqual(merged[0]!.before, earlier.before);
+    assert.deepEqual(merged[0]!.after, update.after);
+  } else {
+    assert.equal(merged.length, 2);
+  }
+});
+
 test('another host active receipt blocks procedure skill overwrite but identical unowned content is not claimed', async t => {
   const root = await mkdtemp(join(tmpdir(), 'procedure-owner-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const recovery = join(root, 'recovery');
   const target = join(root, 'claude-settings.json');
   const skillPath = join(root, 'project', '.agents', 'skills', 'harness-procedure-sample', 'SKILL.md');
+  const absentClaimPath = join(root, 'project', '.agents', 'skills', 'previously-removed', 'SKILL.md');
   const after = Buffer.from([0, 255, 128]);
   const encode = (bytes: Buffer) => ({ contentBase64: bytes.toString('base64'), digest: createHash('sha256').update(bytes).digest('hex') });
   const snapshot = discoverReceiptChain(recovery, target, 'claude-code');
-  const receipt = createSuccessorReceipt(snapshot, undefined, '{}', {}, undefined, { host: 'claude-code', managedFiles: [{ path: skillPath, kind: 'skills', before: { absent: true }, after: encode(after) }] });
+  const receipt = createSuccessorReceipt(snapshot, undefined, '{}', {}, undefined, { host: 'claude-code', managedFiles: [
+    { path: skillPath, kind: 'skills', before: { absent: true }, after: encode(after) },
+    { path: absentClaimPath, kind: 'skills', before: { content: 'previously owned' }, after: { absent: true } },
+  ] });
   const pending = writePendingSuccessor(snapshot, receipt);
+  assert.throws(() => assertNoForeignManagedFileClaims(recovery, 'antigravity', [skillPath]), /Pending/);
   writeFileSync(target, '{}');
   await mkdir(join(root, 'project', '.agents', 'skills', 'harness-procedure-sample'), { recursive: true });
   writeFileSync(skillPath, after, { flag: 'w' });
   finalizeSuccessor(pending, '{}');
   assert.throws(() => assertNoForeignManagedFileClaims(recovery, 'antigravity', [skillPath]), /another host's active receipt ownership/);
+  assert.doesNotThrow(() => assertNoForeignManagedFileClaims(recovery, 'antigravity', [absentClaimPath]));
   assert.doesNotThrow(() => assertNoForeignManagedFileClaims(recovery, 'antigravity', [join(root, 'other-skill') ]));
   const matching = planProcedureDeployment([{ host: 'antigravity', relativePath: '.agents/skills/harness-procedure-sample/SKILL.md', content: after }], join(root, 'project'));
   assert.equal(matching[0]!.status, 'current');

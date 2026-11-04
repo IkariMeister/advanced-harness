@@ -277,6 +277,44 @@ test('managed receipt restore handles digest-only lineage conservatively and blo
   assert.equal(status, 1); assert.equal(saves, 0); assert.equal(existsSync(backups), false);
 });
 
+test('managed restore distinguishes absent files from empty files and restores legitimate empty prior bytes', t => {
+  const { directory, target } = fixture(t);
+  const absentBefore = join(directory, 'absent-before.txt');
+  const absentAfter = join(directory, 'absent-after.txt');
+  const emptyPrior = join(directory, 'empty-prior.txt');
+  writeFileSync(absentBefore, '');
+  writeFileSync(absentAfter, '');
+  writeFileSync(emptyPrior, 'installed');
+  const snapshot = discoverReceiptChain(directory, target);
+  const receipt = createSuccessorReceipt(snapshot, undefined, '{}', {}, undefined, { managedFiles: [
+    { path: absentBefore, kind: 'skills', before: { absent: true }, after: { content: 'installed' } },
+    { path: absentAfter, kind: 'skills', before: { content: 'prior' }, after: { absent: true } },
+    { path: emptyPrior, kind: 'skills', before: { content: '' }, after: { content: 'installed' } },
+  ] });
+  const pending = writePendingSuccessor(snapshot, receipt);
+  writeFileSync(target, '{}'); finalizeSuccessor(pending, '{}');
+  const loaded = readInstallationReceipt(pending.path, target);
+  const restore = planV2Restore(loaded as V2Receipt, '{}');
+  assert.ok(restore.conflicts.some(conflict => conflict.includes(absentBefore)));
+  assert.ok(restore.conflicts.some(conflict => conflict.includes(absentAfter)));
+  assert.ok(restore.actions.some(action => action === `${emptyPrior}: restore prior skills`));
+  assert.ok(!restore.actions.some(action => action === `${absentAfter}: remove installer-created skills`));
+
+  const validTarget = join(directory, 'empty-opencode.json');
+  const validPath = join(directory, 'legitimate-empty.txt'); writeFileSync(validPath, 'installed');
+  const validSnapshot = discoverReceiptChain(directory, validTarget);
+  const validEmptyReceipt = createSuccessorReceipt(validSnapshot, undefined, '{}', {}, undefined, { managedFiles: [
+    { path: validPath, kind: 'skills', before: { content: '' }, after: { content: 'installed' } },
+  ] });
+  const validPending = writePendingSuccessor(validSnapshot, validEmptyReceipt);
+  writeFileSync(validTarget, '{}'); finalizeSuccessor(validPending, '{}');
+  const validLoaded = readInstallationReceipt(validPending.path, validTarget);
+  const prepared = prepareManagedFilePlan(validLoaded as V2Receipt, directory);
+  applyManagedFilePlan(validLoaded as V2Receipt, directory, prepared);
+  assert.equal(existsSync(validPath), true);
+  assert.equal(readFileSync(validPath).length, 0);
+});
+
 test('managed file backup identities distinguish equal basenames and preflight every target before mutation', async t => {
   const { directory, target } = fixture(t);
   const left = join(directory, 'left', 'same.txt'), right = join(directory, 'right', 'same.txt');

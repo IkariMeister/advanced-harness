@@ -13,7 +13,7 @@ import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } fr
 
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, isCodexOnly, selectNativeHost, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
-import { canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims } from './procedure-deployment.ts';
+import { canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, mergeProcedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims } from './procedure-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string; context?: string }
 export interface InstallerFlowDependencies {
@@ -235,10 +235,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
       combinedManagedFiles.push(ev);
     }
   }
-  for (const ev of procedureManagedEvidence(skillPlan, new Set(skillPlan.filter(file => skillSelections.has(canonicalProcedurePath(file.path))).map(file => canonicalProcedurePath(file.path))))) {
-    const existing = combinedManagedFiles.find(m => m.path === ev.path);
-    if (existing) existing.after = structuredClone(ev.after); else combinedManagedFiles.push(ev);
-  }
+  mergeProcedureManagedEvidence(combinedManagedFiles, procedureManagedEvidence(skillPlan, skillSelections));
 
   const provenanceChanged = history.head?.receipt.version === 2 && nativeRoles.some(role => JSON.stringify(plans[role]?.provenance ?? []) !== JSON.stringify(history.head!.receipt.version === 2 ? history.head!.receipt.permissions.find(p => p.path[1] === role)?.owned ?? [] : []));
   const configChanged = updated !== (original ?? '{}\n');

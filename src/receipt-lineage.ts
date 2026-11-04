@@ -341,13 +341,14 @@ export function planV2Restore(receipt: V2Receipt, text: string): { updated: stri
       const expectedAfter = readState(f.after, 'after');
       const expectedBefore = readState(f.before, 'before');
       if (expectedAfter === null || expectedBefore === null) continue;
-      if (current?.equals(expectedAfter ?? Buffer.alloc(0)) === true || (current === undefined && expectedAfter === undefined)) {
+      const matches = (expected: Buffer | undefined) => expected === undefined ? current === undefined : current !== undefined && current.equals(expected);
+      if (matches(expectedAfter)) {
         if (expectedBefore === undefined) {
           actions.push(`${f.path}: remove installer-created ${f.kind}`);
         } else {
           actions.push(`${f.path}: restore prior ${f.kind}`);
         }
-      } else if (current?.equals(expectedBefore ?? Buffer.alloc(0)) === true || (current === undefined && expectedBefore === undefined)) {
+      } else if (matches(expectedBefore)) {
         actions.push(`${f.path}: already restored`);
       } else {
         conflicts.push(`${f.path} (concurrently modified)`);

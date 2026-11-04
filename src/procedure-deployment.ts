@@ -58,6 +58,13 @@ export function procedureManagedEvidence(files: readonly ProcedureFilePlan[], re
     return { path: file.path, kind: 'skills', before: old === undefined ? { absent: true } : encode(old), after: encode(file.content) };
   });
 }
+export function mergeProcedureManagedEvidence(into: ManagedFileEvidence[], updates: readonly ManagedFileEvidence[]): void {
+  for (const update of updates) {
+    const existing = into.find(file => canonical(file.path) === canonical(update.path));
+    if (existing) existing.after = structuredClone(update.after);
+    else into.push(structuredClone(update));
+  }
+}
 export function assertNoForeignManagedFileClaims(recoveryDirectory: string, host: HostId, paths: readonly string[]): void {
   if (!existsSync(recoveryDirectory)) return;
   const candidates = readdirSync(recoveryDirectory).filter(name => /^native-install-.*\.json$/.test(name));
@@ -77,7 +84,7 @@ export function assertNoForeignManagedFileClaims(recoveryDirectory: string, host
     if (owner === host) continue;
     const chain = discoverReceiptChain(recoveryDirectory, target, owner);
     for (const file of chain.head?.receipt.version === 2 ? chain.head.receipt.managedFiles ?? [] : []) {
-      if (owner !== host) protectedPaths.add(canonical(file.path));
+      if (!('absent' in file.after && file.after.absent)) protectedPaths.add(canonical(file.path));
     }
   }
   const collisions = paths.filter(path => protectedPaths.has(canonical(path)));
