@@ -6,6 +6,22 @@ version between releases.
 
 ## Unreleased
 
+## v0.2.3 — 2026-11-04
+
+Patch release on the 0.2 line (#170).
+
+### Fixed
+
+- `harness:update` no longer stops on a rule the harness owns when the current
+  policy changes its effect, such as the Operator `git fetch *` deny from v0.2.0
+  and earlier on installs with per-rule receipts. The preview flags the change
+  (`! effect change`), and it applies only after the final `update` confirmation.
+  Rules you added or edited, rules another source still needs, and required
+  denials still block. Run `harness:update` to apply (#167, #168).
+- A global or project OpenCode directory where `opencode.json` and
+  `opencode.jsonc` are a symlink to each other no longer requires `--config`:
+  the regular file is the target and the link is kept (#167, #168).
+
 ## v0.2.2 — 2026-11-03
 
 Patch release on the 0.2 line (#161).
