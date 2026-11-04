@@ -361,6 +361,10 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       }
       for (const rule of p.preview.removals) output(`    - ${JSON.stringify(rule)}`);
       for (const rule of p.preview.retainedObsolete) output(`    = retained obsolete ${JSON.stringify(rule)}`);
+      for (const rule of p.preview.additions) {
+        const old = p.preview.removals.find(r => r.action === rule.action && r.resource === rule.resource);
+        if (old) output(`    ! effect change: ${rule.action} ${rule.resource} goes from ${old.effect} to ${rule.effect}`);
+      }
     }
   }
 
