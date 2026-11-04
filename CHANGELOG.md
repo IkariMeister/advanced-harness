@@ -6,6 +6,13 @@ version between releases.
 
 ## Unreleased
 
+### Added
+
+- Codex role-process mode in the gated Codex adapter: each child role runs as its
+  own `codex exec` process with a source-derived profile, started by Lead through
+  a launcher that re-applies the role settings on every launch and resume (#45).
+  Installation stays gated.
+
 ## v0.2.2 — 2026-11-03
 
 Patch release on the 0.2 line (#161).
