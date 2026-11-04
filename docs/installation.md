@@ -138,7 +138,7 @@ Prerequisites: Node.js 24.x, a usable interactive TTY, and an explicitly disposa
 
 Do not use redirected stdin as interactive evidence. Record fixture location, command, and observed results; clean up only the explicitly disposable fixture after verifying no recovery evidence needs preservation.
 
-`--project` is only for project scope. `--config <file>` selects an explicit `opencode.json` or `opencode.jsonc` within that scope, including the project's `.opencode` folder. This resolves a filename ambiguity when both JSON and JSONC exist. Paths supplied at prompts accept leading `~` or `$HOME`. Scope/destination are always shown before confirmation. Run in an interactive terminal; piped input is refused. This is setup, not the separate runtime approval terminal removed from the product plan.
+`--project` is only for project scope. `--config <file>` selects an explicit `opencode.json` or `opencode.jsonc` within that scope, including the project's `.opencode` folder. This resolves a filename ambiguity when both JSON and JSONC exist. When one name is only a symlink to the other, the regular file is selected without `--config` and the link is kept. Paths supplied at prompts accept leading `~` or `$HOME`. Scope/destination are always shown before confirmation. Run in an interactive terminal; piped input is refused. This is setup, not the separate runtime approval terminal removed from the product plan.
 
 ## What configuration is read
 
@@ -366,6 +366,14 @@ before role, command-replacement, or final-confirmation prompts. It reports the
 configuration path and each conflict's role, code, and message, then returns status
 2. Review and resolve the permissions deliberately before rerunning. The blocked
 path does not write configuration, commands, backups, receipts, or run verification.
+
+A policy change to the effect of a rule the receipt shows the harness alone owns is
+not a conflict. For example, on a per-rule receipt the older Operator `git fetch *`
+deny is replaced by the current allow. The preview marks this `! effect change`, which
+can widen access, and nothing is written until the final `update` confirmation. These
+still block: a rule with no receipt ownership, an edited or moved owned rule, a rule
+another active source still needs, a required denial (`gh pr merge` or a security
+guardrail), and any existing restriction the new rule would override.
 
 ### If Lead is missing
 
