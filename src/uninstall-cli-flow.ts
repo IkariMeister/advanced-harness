@@ -19,8 +19,8 @@ export async function runUninstallFlow(input: {
   pruneRoot?: string | undefined;
   /** Project root whose local Git exclude block this host releases; omitted for global targets. */
   excludeRoot?: string | undefined;
-  /** Host-owned work outside the receipt: listed with the planned actions, applied after the managed restore succeeds. */
-  hostStep?: { actions: string[]; apply(): string[] } | undefined;
+  /** Host-owned work outside the receipt: listed with the planned actions, re-checked after confirmation, applied after the managed restore succeeds. */
+  hostStep?: { actions: string[]; verify?(): void; apply(): string[] } | undefined;
 }): Promise<number> {
   const plan = planUninstall(input.receipt, input.current);
   if (plan.conflicts.length) {
@@ -45,6 +45,8 @@ export async function runUninstallFlow(input: {
     input.output('Cancelled; no configuration writes made.');
     return 0;
   }
+  try { input.hostStep?.verify?.(); }
+  catch (err) { input.error(`Uninstall blocked because the host step's files changed during confirmation: ${err instanceof Error ? err.message : String(err)}. No writes made.`); return 1; }
   const reviewedAgain = planUninstall(input.receipt, input.current);
   if (reviewedAgain.conflicts.length) {
     input.error(`Uninstall blocked because restore evidence changed during confirmation: ${reviewedAgain.conflicts.join(', ')}. No writes made.`);

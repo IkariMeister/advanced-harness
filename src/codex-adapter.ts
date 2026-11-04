@@ -379,6 +379,8 @@ export type CodexConfigEdits = {
   addedRootKeys: string[];
   /** What appendSettings inserted before those keys; it goes back out with them. */
   baselineSeparator?: string;
+  /** How the file ended before multi_agent went at its end; adding it replaces that whitespace. */
+  endWhitespace?: string;
   multiAgentAdded: boolean;
   /** config.toml did not exist before the first install, so uninstall may remove it once it is empty. */
   configCreated: boolean;
@@ -409,10 +411,14 @@ export function codexConfigEdits(before: string, after: string, prior?: CodexCon
   const was = parseCodexToml(before, 'config.toml'), now = parseCodexToml(after, 'config.toml');
   const addedNow = ['sandbox_mode', 'approval_policy'].filter(key => !findEntry(was, [], key) && findEntry(now, [], key));
   const separatorBefore = prior?.baselineSeparator ?? (addedNow.length ? baselineSeparator(before) : undefined);
+  const multiAgentAddedNow = !findEntry(was, ['features'], 'multi_agent') && Boolean(findEntry(now, ['features'], 'multi_agent'));
+  // Baseline keys added at the end of a file with no tables: their separator already accounts for how it ended.
+  const endBefore = prior?.endWhitespace ?? (multiAgentAddedNow && (!addedNow.length || was.tables.length) ? /\s*$/.exec(before)?.[0] : undefined);
   const edits: CodexConfigEdits = {
     addedRootKeys: [...new Set([...(prior?.addedRootKeys ?? []), ...addedNow])],
     ...(separatorBefore === undefined ? {} : { baselineSeparator: separatorBefore }),
-    multiAgentAdded: (prior?.multiAgentAdded ?? false) || (!findEntry(was, ['features'], 'multi_agent') && Boolean(findEntry(now, ['features'], 'multi_agent'))),
+    ...(endBefore === undefined ? {} : { endWhitespace: endBefore }),
+    multiAgentAdded: (prior?.multiAgentAdded ?? false) || multiAgentAddedNow,
     configCreated: prior ? prior.configCreated : created,
     featuresTableAdded: (prior?.featuresTableAdded ?? false) || (!was.tables.some(table => table.path === 'features') && now.tables.some(table => table.path === 'features')),
     mcp: ownRecords(prior?.mcp),
@@ -469,12 +475,14 @@ export function reverseCodexConfigEdits(text: string, edits: CodexConfigEdits): 
     if (changes.length > count) baselineRemovals.push(changes.at(-1)!);
   }
   // Only once no baseline key is left does the separator in front of them have nothing to separate.
-  if (edits.baselineSeparator && baselineRemovals.length && baselineRemovals.length === edits.addedRootKeys.length) {
-    const first = baselineRemovals.reduce((a, b) => a.start <= b.start ? a : b);
-    const size = edits.baselineSeparator.length;
-    if (text.slice(first.start - size, first.start) === edits.baselineSeparator) first.start -= size;
+  const separator = edits.baselineSeparator !== undefined && baselineRemovals.length && baselineRemovals.length === edits.addedRootKeys.length ? edits.baselineSeparator : undefined;
+  let separatorEnd = separator === undefined ? undefined : Math.min(...baselineRemovals.map(removal => removal.start));
+  let multiAgentAtEnd = false;
+  if (edits.multiAgentAdded) {
+    const multiAgent = findEntry(document, ['features'], 'multi_agent'), count = changes.length;
+    removeIf(multiAgent, false, 'features.multi_agent');
+    multiAgentAtEnd = changes.length > count && !text.slice(lineOf(multiAgent!).end).trim();
   }
-  if (edits.multiAgentAdded) removeIf(findEntry(document, ['features'], 'multi_agent'), false, 'features.multi_agent');
   for (const [id, record] of Object.entries(edits.mcp)) {
     const path = ['mcp_servers', id];
     const enabled = findEntry(document, path, 'enabled');
@@ -496,16 +504,30 @@ export function reverseCodexConfigEdits(text: string, edits: CodexConfigEdits): 
     }
   }
   let result = text;
-  for (const change of changes.sort((a, b) => b.start - a.start)) result = result.slice(0, change.start) + change.text + result.slice(change.end);
+  for (const change of changes.sort((a, b) => b.start - a.start)) {
+    result = result.slice(0, change.start) + change.text + result.slice(change.end);
+    if (separatorEnd !== undefined && change.end <= separatorEnd) separatorEnd += change.text.length - (change.end - change.start);
+  }
+  let featuresHeaderGone = false;
   if (edits.featuresTableAdded) {
     const after = parseCodexToml(result, 'config.toml');
     const features = after.tables.find(table => table.path === 'features');
     if (features && !after.entries.some(entry => entry.table.length === 1 && entry.table[0] === 'features')) {
       const end = result.indexOf('\n', features.start);
-      const start = result.slice(0, features.start).replace(/(\r?\n)+$/, '').length;
-      result = result.slice(0, start) + (start ? result.slice(start, features.start).match(/\r?\n/)?.[0] ?? '' : '') + result.slice(end < 0 ? result.length : end + 1);
+      // Directly after the baseline keys, the separator below decides the spacing; otherwise one line break stays.
+      const afterBaseline = separatorEnd === features.start;
+      const start = afterBaseline ? features.start : result.slice(0, features.start).replace(/(\r?\n)+$/, '').length;
+      const gap = afterBaseline || !start ? '' : result.slice(start, features.start).match(/\r?\n/)?.[0] ?? '';
+      result = result.slice(0, start) + gap + result.slice(end < 0 ? result.length : end + 1);
+      featuresHeaderGone = true;
     }
   }
+  // Last, so no intermediate text joins a line to the next one. It stays if something the user added would.
+  if (separator !== undefined && separatorEnd !== undefined) {
+    const head = result.slice(0, separatorEnd - separator.length), rest = result.slice(separatorEnd);
+    if (result.slice(separatorEnd - separator.length, separatorEnd) === separator && (!rest.trim() || !head || head.endsWith('\n'))) result = head + rest;
+  }
+  if (edits.endWhitespace !== undefined && multiAgentAtEnd && (!edits.featuresTableAdded || featuresHeaderGone)) result = result.replace(/\s*$/, '') + edits.endWhitespace;
   validateCodexToml(result, 'restored config.toml');
   return { text: result, kept };
 }
@@ -1070,8 +1092,9 @@ function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): st
  * bindings, config.toml, AGENTS.md, and the state manifest last, so a failure leaves the manifest in place
  * and uninstall can be run again.
  */
-export function planCodexUninstall(statePath: string, backupParent: string, remove: (path: string) => void = unlinkSync): { actions: string[]; kept: string[]; apply(): string[] } {
+export function planCodexUninstall(statePath: string, backupParent: string, remove: (path: string) => void = unlinkSync): { actions: string[]; kept: string[]; verify(): void; apply(): string[] } {
   if (!existsSync(statePath)) throw new Error(`Codex state manifest is missing: ${statePath}; uninstall cannot identify the harness configuration edits.`);
+  assertSafeFilesystemPath(statePath, 'file');
   const stateText = readFileSync(statePath, 'utf8');
   let state: { mode?: unknown; configEdits?: CodexConfigEdits; leadBlock?: CodexLeadBlockRecord };
   try { state = JSON.parse(stateText) as typeof state; } catch { throw new Error(`Malformed Codex state manifest: ${statePath}; no changes made.`); }
@@ -1091,6 +1114,7 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
   // The launcher's thread-to-role bindings are runtime state outside the receipt. Only entries that are
   // bindings by name and content are removed; anything else is kept and reported, never assumed ours.
   const threadsPath = join(dirname(statePath), 'advanced-harness', 'role-threads');
+  assertSafeFilesystemPath(dirname(threadsPath), 'either');
   const bindings: Array<{ path: string; content: string }> = [], unexpected: string[] = [];
   if (existsSync(threadsPath)) {
     if (!lstatSync(threadsPath).isDirectory()) unexpected.push(threadsPath);
@@ -1115,20 +1139,30 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
       : [`remove the Lead block from ${leadPath}; your other content stays`]),
     `remove ${statePath}`,
   ];
+  /** Everything reviewed, re-checked before the first write. A same-content link passes a content check, so paths go first. */
+  const verify = () => {
+    try {
+      for (const path of [statePath, configPath, leadPath, ...bindings.map(binding => binding.path)]) assertSafeFilesystemPath(path, 'file');
+      assertSafeFilesystemPath(dirname(threadsPath), 'either');
+      if (!unexpected.includes(threadsPath)) assertSafeFilesystemPath(threadsPath, 'directory');
+      assertSafeFilesystemPath(backupParent, 'directory');
+    } catch (error) { throw new Error(`${error instanceof Error ? error.message : String(error)}; nothing was changed by the Codex step`); }
+    const latest = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
+    if (latest !== configBefore) throw new Error(`${configPath} changed after review; nothing was changed by the Codex step`);
+    if (readFileSync(statePath, 'utf8') !== stateText) throw new Error(`${statePath} changed after review; nothing was changed by the Codex step`);
+    if (state.leadBlock && (existsSync(leadPath) ? readFileSync(leadPath, 'utf8') : undefined) !== leadBefore) throw new Error(`${leadPath} changed after review; nothing was changed by the Codex step`);
+    for (const binding of bindings) {
+      if (existsSync(binding.path) && (!lstatSync(binding.path).isFile() || readFileSync(binding.path, 'utf8') !== binding.content)) {
+        throw new Error(`${binding.path} changed after review; nothing was changed by the Codex step`);
+      }
+    }
+  };
   return {
     actions,
     kept: reversed?.kept ?? [],
+    verify,
     apply() {
-      // Everything reviewed is re-checked before the first write.
-      const latest = existsSync(configPath) ? readFileSync(configPath, 'utf8') : undefined;
-      if (latest !== configBefore) throw new Error(`${configPath} changed after review; nothing was changed by the Codex step`);
-      if (readFileSync(statePath, 'utf8') !== stateText) throw new Error(`${statePath} changed after review; nothing was changed by the Codex step`);
-      if (state.leadBlock && (existsSync(leadPath) ? readFileSync(leadPath, 'utf8') : undefined) !== leadBefore) throw new Error(`${leadPath} changed after review; nothing was changed by the Codex step`);
-      for (const binding of bindings) {
-        if (existsSync(binding.path) && (!lstatSync(binding.path).isFile() || readFileSync(binding.path, 'utf8') !== binding.content)) {
-          throw new Error(`${binding.path} changed after review; nothing was changed by the Codex step`);
-        }
-      }
+      verify();
       const lines: string[] = [];
       const backupDir = join(backupParent, `${new Date().toISOString().replaceAll(':', '-')}-codex-uninstall-${digest(statePath).slice(0, 8)}`);
       const backup = (path: string, content: string, folder = backupDir) => {
@@ -1150,15 +1184,14 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
           }
           lines.push(`Removed ${removed} role thread binding file(s) from ${threadsPath}`);
         }
+        // saveInstallation replaces the file by rename, so a link swapped in after verify() is never written through.
         if (configBefore !== undefined && reversed && reversed.text !== configBefore) {
-          lines.push(`Private backup: ${backup(configPath, configBefore)}`);
-          if (removeConfig) { remove(configPath); lines.push(`Removed ${configPath}`); }
-          else { writeFileSync(configPath, reversed.text, 'utf8'); lines.push(`Reversed harness edits in ${configPath}`); }
+          if (removeConfig) { lines.push(`Private backup: ${backup(configPath, configBefore)}`); remove(configPath); lines.push(`Removed ${configPath}`); }
+          else { lines.push(`Private backup: ${saveInstallation(configPath, configBefore, reversed.text, backupParent)}`); lines.push(`Reversed harness edits in ${configPath}`); }
         }
         if (leadBefore !== undefined && leadAfter && leadAfter.text !== leadBefore) {
-          lines.push(`Private backup: ${backup(leadPath, leadBefore)}`);
-          if (removeLead) { remove(leadPath); lines.push(`Removed ${leadPath}`); }
-          else { writeFileSync(leadPath, leadAfter.text, 'utf8'); lines.push(`Removed the Lead block from ${leadPath}`); }
+          if (removeLead) { lines.push(`Private backup: ${backup(leadPath, leadBefore)}`); remove(leadPath); lines.push(`Removed ${leadPath}`); }
+          else { lines.push(`Private backup: ${saveInstallation(leadPath, leadBefore, leadAfter.text, backupParent)}`); lines.push(`Removed the Lead block from ${leadPath}`); }
         }
         // Last: while the manifest exists, a failed run can simply be retried.
         lines.push(`Private backup: ${backup(statePath, stateText)}`);

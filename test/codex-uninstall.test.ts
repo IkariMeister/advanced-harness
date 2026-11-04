@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installCodex, planCodexUninstall } from '../src/codex-adapter.ts';
@@ -28,7 +28,7 @@ const install = async (box: Box, mcp = '', tools = '') => {
 };
 
 // Mirrors scripts/uninstall-native-harness.ts for --host codex after target selection.
-async function uninstall(box: Box, answer = 'uninstall', remove?: (path: string) => void) {
+async function uninstall(box: Box, answer = 'uninstall', remove?: (path: string) => void, duringConfirm?: () => void) {
   const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
   const current = readFileSync(target, 'utf8');
   const chain = discoverReceiptChain(box.recovery, target, 'codex');
@@ -39,7 +39,7 @@ async function uninstall(box: Box, answer = 'uninstall', remove?: (path: string)
   for (const key of hostStep.kept) box.output.push(`Kept in config.toml (changed since install, review by hand): ${key}`);
   return runUninstallFlow({
     receipt, current, hostStep, backupParent: box.recovery, host: 'codex', pruneRoot: uninstallPruneRoot('codex', target, box.home),
-    confirm: async () => answer, output: line => box.output.push(line), error: line => box.errors.push(line),
+    confirm: async () => { duringConfirm?.(); return answer; }, output: line => box.output.push(line), error: line => box.errors.push(line),
     save: updated => { saveInstallation(target, current, updated, box.recovery); },
   });
 }
@@ -407,4 +407,142 @@ test('a retried Codex uninstall reports nothing false and removes emptied direct
   assert.equal(existsSync(join(box.codex, 'advanced-harness')), false, 'the emptied launcher directories are removed');
   assert.ok(box.output.some(line => line.startsWith('Removed empty installer directory') && line.includes('role-threads')));
   assert.equal(readFileSync(join(box.codex, 'config.toml'), 'utf8'), userConfig);
+});
+
+test('Codex uninstall handles a config.toml without a final newline, byte for byte (#45)', async t => {
+  const configs = [
+    'model = "x"',
+    'model = "x"\n',
+    'model = "x"\n\n',
+    'model = "x"\n\n\n',
+    'model = "x"\r\nname = "y"',
+    '# only a comment',
+    'features.web_search = true',
+    'sandbox_mode = "read-only"\napproval_policy = "on-request"',
+    'sandbox_mode = "read-only"\napproval_policy = "on-request"\n\n\n',
+    'sandbox_mode = "read-only"\napproval_policy = "on-request"\nfeatures.web_search = true',
+    'sandbox_mode = "read-only"\napproval_policy = "on-request"\n\n[features]\nweb_search = true',
+    '[tui]\nfoo = 1',
+    'model = "x"\n[mcp_servers.gh]\ncommand = "gh-mcp"\nenabled = true',
+  ];
+  for (const config of configs) {
+    for (const updates of [1, 2]) {
+      const box = sandbox(t);
+      mkdirSync(box.codex);
+      const path = join(box.codex, 'config.toml');
+      writeFileSync(path, config);
+      for (let run = 0; run < updates; run++) await install(box, config.includes('mcp_servers') ? 'gh' : '', config.includes('mcp_servers') ? 'merge_pr' : '');
+      assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+      assert.equal(readFileSync(path, 'utf8'), config, JSON.stringify(config));
+    }
+  }
+});
+
+test('Codex uninstall keeps config.toml valid when the user added keys after the baseline', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  const path = join(box.codex, 'config.toml');
+  writeFileSync(path, 'model = "x"');
+  await install(box);
+  appendFileSync(path, 'web_search = true\n');
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  assert.match(readFileSync(path, 'utf8'), /^model = "x"\n+\[features\]\nweb_search = true\n$/);
+
+  const other = sandbox(t);
+  mkdirSync(other.codex);
+  const second = join(other.codex, 'config.toml');
+  writeFileSync(second, 'model = "x"');
+  await install(other);
+  writeFileSync(second, readFileSync(second, 'utf8').replace('[features]', 'added = 1\n\n[features]'));
+  assert.equal(await uninstall(other), 0, other.errors.join('\n'));
+  assert.match(readFileSync(second, 'utf8'), /^model = "x"\n+added = 1\n$/);
+});
+
+// Replaces a reviewed file with a link to a same-content file elsewhere, so a content check alone passes.
+function swapForLink(t: { skip(message: string): void }, box: Box, path: string): string | undefined {
+  const outside = join(box.root, 'outside-' + path.split(/[\\/]/).at(-1));
+  writeFileSync(outside, readFileSync(path));
+  const moved = path + '.moved';
+  renameSync(path, moved);
+  try { symlinkSync(outside, path, 'file'); }
+  catch (error) {
+    renameSync(moved, path);
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') { t.skip('creating a symlink needs extra privileges here'); return undefined; }
+    throw error;
+  }
+  rmSync(moved);
+  return outside;
+}
+
+test('a same-content link swapped in during confirmation is refused with no writes', async t => {
+  for (const name of ['config.toml', 'AGENTS.md', '.advanced-harness-state.json']) {
+    const box = sandbox(t);
+    mkdirSync(box.codex);
+    writeFileSync(join(box.codex, 'config.toml'), userConfig);
+    writeFileSync(join(box.codex, 'AGENTS.md'), '# Notes\n');
+    await install(box);
+    const path = join(box.codex, name);
+    let outside: string | undefined, before = '';
+    const launcher = readdirSync(join(box.codex, 'advanced-harness'));
+    const code = await uninstall(box, 'uninstall', undefined, () => { before = readFileSync(path, 'utf8'); outside = swapForLink(t, box, path); });
+    if (!outside) return;
+    assert.equal(code, 1, name);
+    assert.match(box.errors.join('\n'), /Symlink path component refused[\s\S]*No writes made/);
+    assert.equal(readFileSync(outside, 'utf8'), before, 'the link destination is not modified');
+    assert.ok(lstatSync(path).isSymbolicLink(), 'the link is left as found');
+    assert.deepEqual(readdirSync(join(box.codex, 'advanced-harness')), launcher, 'managed files are not restored either');
+  }
+});
+
+test('a link swapped in after the flow check is refused by the Codex step itself', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  writeFileSync(join(box.codex, 'config.toml'), userConfig);
+  await install(box);
+  const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
+  const step = planCodexUninstall(target, box.recovery);
+  const before = readFileSync(join(box.codex, 'config.toml'), 'utf8');
+  const outside = swapForLink(t, box, join(box.codex, 'config.toml'));
+  if (!outside) return;
+  assert.throws(() => step.apply(), /Symlink path component refused[\s\S]*nothing was changed by the Codex step/);
+  assert.equal(readFileSync(outside, 'utf8'), before);
+  assert.ok(existsSync(target), 'state manifest kept');
+});
+
+test('a binding directory replaced by a link is refused, leaving its destination alone', async t => {
+  const box = sandbox(t);
+  await install(box);
+  const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
+  const threads = join(box.codex, 'advanced-harness', 'role-threads');
+  recordThread(threads, 'thread-1', 'implementer');
+  const step = planCodexUninstall(target, box.recovery);
+  const outside = join(box.root, 'outside-threads');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'thread-1'), 'implementer\n');
+  rmSync(threads, { recursive: true });
+  // A junction needs no extra privileges on Windows; elsewhere the type is ignored.
+  symlinkSync(outside, threads, 'junction');
+  assert.throws(() => step.apply(), /Symlink path component refused[\s\S]*nothing was changed/);
+  assert.equal(readFileSync(join(outside, 'thread-1'), 'utf8'), 'implementer\n');
+  assert.ok(existsSync(target));
+});
+
+test('a Codex directory swapped for a same-content link is refused, leaving its destination alone', async t => {
+  const box = sandbox(t);
+  mkdirSync(box.codex);
+  writeFileSync(join(box.codex, 'config.toml'), userConfig);
+  writeFileSync(join(box.codex, 'AGENTS.md'), '# Notes\n');
+  await install(box);
+  const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
+  const step = planCodexUninstall(target, box.recovery);
+  const before = readFileSync(join(box.codex, 'config.toml'), 'utf8');
+  const lead = readFileSync(join(box.codex, 'AGENTS.md'), 'utf8');
+  const outside = join(box.root, 'outside-codex');
+  renameSync(box.codex, outside);
+  // A junction needs no extra privileges on Windows; elsewhere the type is ignored.
+  symlinkSync(outside, box.codex, 'junction');
+  assert.throws(() => step.apply(), /Symlink path component refused[\s\S]*nothing was changed/);
+  assert.equal(readFileSync(join(outside, 'config.toml'), 'utf8'), before);
+  assert.equal(readFileSync(join(outside, 'AGENTS.md'), 'utf8'), lead);
+  assert.ok(existsSync(join(outside, '.advanced-harness-state.json')));
 });
