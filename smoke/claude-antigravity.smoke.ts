@@ -51,6 +51,7 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
     assert.ok(JSON.stringify(settings.permissions?.deny ?? []).includes('gh pr merge'), 'gh pr merge is denied');
     for (const role of roles) assert.ok(existsSync(join(box.project, '.claude', 'agents', `${role}.md`)), role);
     for (const command of commands) assert.ok(existsSync(join(box.project, '.claude', 'commands', `${command}.md`)), command);
+    assert.ok(existsSync(join(box.project, '.claude', 'skills', 'harness-procedure-documentation-impact', 'SKILL.md')), 'canonical procedure skill installed separately from workflow commands');
     assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
     assert.deepEqual(box.openCodeCalls(), []);
   });
@@ -66,6 +67,7 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
     assert.equal(result.code, 0, result.transcript);
     for (const role of roles) assert.equal(existsSync(join(box.project, '.claude', 'agents', `${role}.md`)), false, role);
     for (const command of commands) assert.equal(existsSync(join(box.project, '.claude', 'commands', `${command}.md`)), false, command);
+    assert.equal(existsSync(join(box.project, '.claude', 'skills', 'harness-procedure-documentation-impact', 'SKILL.md')), false, 'installer-created procedure skill removed');
     assert.equal(existsSync(join(box.project, '.claude', 'settings.json')), false, 'settings.json');
     assert.equal(existsSync(join(box.project, 'CLAUDE.md')), false, 'CLAUDE.md');
     assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
@@ -102,6 +104,7 @@ describe('SMK-AG Antigravity project lifecycle (non-TTY piped answers)', () => {
     const agents = join(box.project, '.agents');
     assert.ok(existsSync(join(agents, 'rules', 'advanced-harness-lead.md')));
     for (const command of commands) assert.ok(existsSync(join(agents, 'skills', command, 'SKILL.md')), command);
+    assert.ok(existsSync(join(agents, 'skills', 'harness-procedure-documentation-impact', 'SKILL.md')), 'canonical procedure skill does not replace workflow skills');
     assert.ok(existsSync(join(agents, 'scripts', 'antigravity-merge-guard.mjs')));
     assert.match(readFileSync(join(agents, 'hooks.json'), 'utf8'), /antigravity-merge-guard/);
     assert.ok(readFileSync(join(box.project, 'AGENTS.md'), 'utf8').startsWith(pristine.get('AGENTS.md')!.trimEnd()), 'original AGENTS.md content preserved');
@@ -119,6 +122,7 @@ describe('SMK-AG Antigravity project lifecycle (non-TTY piped answers)', () => {
     const agents = join(box.project, '.agents');
     assert.equal(existsSync(join(agents, 'rules', 'advanced-harness-lead.md')), false, 'lead rule');
     for (const command of commands) assert.equal(existsSync(join(agents, 'skills', command, 'SKILL.md')), false, command);
+    assert.equal(existsSync(join(agents, 'skills', 'harness-procedure-documentation-impact', 'SKILL.md')), false, 'installer-created procedure skill removed');
     assert.equal(existsSync(join(agents, 'scripts', 'antigravity-merge-guard.mjs')), false, 'merge guard script');
     assert.equal(existsSync(join(agents, 'hooks.json')), false, 'hooks.json');
     assert.equal(existsSync(join(agents, 'mcp_config.json')), false, 'mcp_config.json');

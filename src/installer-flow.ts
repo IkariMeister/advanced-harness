@@ -13,6 +13,7 @@ import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } fr
 
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
 import { loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution, applyCommandDeployment, preflightCommandDeployment, type CommandDeploymentPlan, type CommandFilePlan } from './command-deployment.ts';
+import { canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims } from './procedure-deployment.ts';
 
 export interface InstallerFlowOptions { scope?: string; project?: string; config?: string; opencode?: string; host?: string; context?: string }
 export interface InstallerFlowDependencies {
@@ -25,6 +26,7 @@ export interface InstallerFlowDependencies {
   recoveryDirectory?: string;
   agentsDirectory?: string;
   commandsDirectory?: string;
+  skillsDirectory?: string;
   harnessRoot?: string;
   environment?: NodeJS.ProcessEnv;
   runCommand?: Runner;
@@ -176,6 +178,14 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   let commandFilesToWrite: CommandFilePlan[] = [];
   let commandEvidence: ReturnType<typeof filterCommandPlanForExecution>['managedEvidence'] = [];
   let commandPlan: CommandDeploymentPlan | undefined;
+  const skillPlan = planProcedureDeployment(discoverProcedureSkills(deps.skillsDirectory ?? fileURLToPath(new URL('../skills/', import.meta.url)), 'opencode'), project ?? globalDirectory, existingManagedFiles, scope === 'global');
+  const skillSelections = new Set<string>();
+  output('\nReusable procedure skills:');
+  for (const file of skillPlan) {
+    output(`  ${file.path}: ${file.status}${file.status === 'customized' ? ' (preserved unless explicitly replaced)' : ''}`);
+    if (file.status === 'new' || file.status === 'outdated') skillSelections.add(canonicalProcedurePath(file.path));
+    else if (file.status === 'customized' && /^(y|yes)$/i.test((await ask(`Replace customized/unowned procedure skill ${file.path}?`, 'no')).trim())) skillSelections.add(canonicalProcedurePath(file.path));
+  }
 
   if (shouldDeployCommands) {
     const loadedCommands = loadWorkflowCommands(commandsSourceDir);
@@ -202,11 +212,16 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
       combinedManagedFiles.push(ev);
     }
   }
+  for (const ev of procedureManagedEvidence(skillPlan, new Set(skillPlan.filter(file => skillSelections.has(canonicalProcedurePath(file.path))).map(file => canonicalProcedurePath(file.path))))) {
+    const existing = combinedManagedFiles.find(m => m.path === ev.path);
+    if (existing) existing.after = structuredClone(ev.after); else combinedManagedFiles.push(ev);
+  }
 
   const provenanceChanged = history.head?.receipt.version === 2 && nativeRoles.some(role => JSON.stringify(plans[role]?.provenance ?? []) !== JSON.stringify(history.head!.receipt.version === 2 ? history.head!.receipt.permissions.find(p => p.path[1] === role)?.owned ?? [] : []));
   const configChanged = updated !== (original ?? '{}\n');
   const commandsChanged = commandFilesToWrite.length > 0;
-  const needsReceipt = configChanged || provenanceChanged || commandsChanged;
+  const skillsChanged = [...skillSelections].some(path => skillPlan.some(file => canonicalProcedurePath(file.path) === path && file.status !== 'current'));
+  const needsReceipt = configChanged || provenanceChanged || commandsChanged || skillsChanged;
   const receipt = needsReceipt ? createSuccessorReceipt(history, original, updated, plans, stamp, { host: 'opencode', ...(combinedManagedFiles.length ? { managedFiles: combinedManagedFiles } : {}) }) : undefined;
   output('\nAssignments:');
   for (const role of nativeRoles) {
@@ -230,13 +245,14 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
     output('Workflow commands: skipped.');
   }
   output('Providers, credentials, MCP servers, plugins, and unrelated agents/settings will not be changed.');
+  assertNoForeignManagedFileClaims(backupParent, 'opencode', skillPlan.filter(file => skillSelections.has(canonicalProcedurePath(file.path))).map(file => file.path));
   output('Assignments are stored inline in agents; no plugin or separate approval host is installed.');
   if (original !== undefined && configChanged) output(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
   output('After writing, runtime verification may start the OpenCode service. It will not restart/reload it or send paid model requests.');
   const exclude = previewGitExclude(project, 'opencode', output);
   output(`Harness version: ${formatVersionStamp(stamp)}`);
   if (await ask('Type install to apply these changes', 'cancel') !== 'install') { output('Cancelled. No files were changed.'); return 0; }
-  if (!receipt && !configChanged && !commandsChanged) {
+  if (!receipt && !configChanged && !commandsChanged && !skillsChanged) {
     output('Configuration and workflow commands already match; no configuration, backup, or receipt writes are needed.');
     finishGitExclude(exclude, output, errorOutput);
     return 0;
@@ -246,15 +262,19 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   let backup: string | undefined;
   try {
     revalidatePendingSuccessor(pending);
+    assertNoForeignManagedFileClaims(backupParent, 'opencode', skillPlan.filter(file => skillSelections.has(canonicalProcedurePath(file.path))).map(file => file.path));
     if (commandFilesToWrite.length > 0) {
       preflightCommandDeployment(commandFilesToWrite, commandsTargetDir);
     }
+    preflightProcedureFiles(skillPlan.filter(file => skillSelections.has(canonicalProcedurePath(file.path))));
+    for (const file of skillPlan) assertSafeFilesystemPath(file.path, 'file');
     if (configChanged) {
       backup = (deps.save ?? saveInstallation)(target, original, updated, backupParent);
     }
     if (commandFilesToWrite.length > 0) {
       (deps.applyCommands ?? applyCommandDeployment)(commandFilesToWrite, commandsTargetDir);
     }
+    if (skillsChanged) applyProcedureFiles(skillPlan, skillSelections, backupParent, path => output(`Procedure skill backup: ${path}`));
   }
   catch (err) {
     // Check if any command files or config actually changed
@@ -266,7 +286,13 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
       return true;
     });
 
-    if (configMatchesOriginal && commandFilesUnchanged) {
+    const skillFilesUnchanged = skillPlan.every(f => {
+      const exists = existsSync(f.path);
+      const current = exists ? readFileSync(f.path) : undefined;
+      return f.status === 'current' ? current?.equals(f.content) : current === undefined ? f.current === undefined : f.current?.equals(current);
+    });
+    const skillFailureMayHaveBackupOrWrites = err instanceof Error && err.message.includes('Procedure skill deployment may be partial');
+    if (configMatchesOriginal && commandFilesUnchanged && skillFilesUnchanged && !skillFailureMayHaveBackupOrWrites) {
       recoverFailedSuccessor(pending, original);
     } else {
       errorOutput(`Configuration or command writes may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
@@ -278,6 +304,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   catch (err) { errorOutput(`Configuration saved but receipt finalization failed; pending evidence retained at ${receiptPath}. Resolve recovery before any further update or restore.`); throw err; }
   if (configChanged) output(`Configuration written (runtime not yet verified): ${target}`);
   if (commandFilesToWrite.length > 0) output(`Workflow commands deployed: ${commandsTargetDir}`);
+  if (skillsChanged) output('Reusable procedure skills deployed.');
   if (backup) output(`Backup: ${backup}`);
   output(`Private uninstall receipt retained at ${receiptPath}`);
   finishGitExclude(exclude, output, errorOutput);

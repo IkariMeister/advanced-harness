@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync, writeFileSync, unlinkSync, existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFileSync, rmSync, writeFileSync, unlinkSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
-import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, planV2Restore, prepareManagedFilePlan, applyManagedFilePlan } from '../src/receipt-lineage.ts';
+import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor, planV2Restore, prepareManagedFilePlan, applyManagedFilePlan, type V2Receipt } from '../src/receipt-lineage.ts';
 import { adoptExisting, createReceipt, planUninstall, readInstallationReceipt, writeAdoptionReceipt, writeInstallationReceipt } from '../src/installation-receipt.ts';
 import { reconcilePermissions, type PermissionRule, type ReconciliationResult } from '../src/permission-reconciliation.ts';
 import { loadNativeDefinitions, nativeRoles, parseConfiguration, updateNativeConfiguration, type NativeRole } from '../src/native-installer.ts';
@@ -100,6 +101,31 @@ test('missing, altered, duplicate and forked receipt evidence fails closed', t =
   assert.throws(() => discoverReceiptChain(directory, target), /Duplicate/);
   writeFileSync(duplicate, JSON.stringify({ ...next, id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }));
   assert.throws(() => discoverReceiptChain(directory, target), /Forked/);
+});
+
+test('managed-file receipts preserve and restore arbitrary binary bytes exactly', t => {
+  const { directory, target } = fixture(t);
+  const managedPath = join(directory, '.agents', 'skills', 'harness-procedure-documentation-impact', 'fixtures', 'sample.bin');
+  const before = Buffer.from([0, 255, 192, 128, 13, 10, 1]);
+  const after = Buffer.from([255, 0, 254, 128, 10, 0, 255]);
+  const encode = (bytes: Buffer) => ({ contentBase64: bytes.toString('base64'), digest: createHash('sha256').update(bytes).digest('hex') });
+  const snapshot = discoverReceiptChain(directory, target, 'opencode');
+  const receipt = createSuccessorReceipt(snapshot, undefined, '{}', {}, undefined, {
+    host: 'opencode',
+    managedFiles: [{ path: managedPath, kind: 'skills', before: encode(before), after: encode(after) }],
+  });
+  const pending = writePendingSuccessor(snapshot, receipt);
+  mkdirSync(dirname(managedPath), { recursive: true });
+  writeFileSync(managedPath, before);
+  writeFileSync(managedPath, after);
+  writeFileSync(target, '{}');
+  finalizeSuccessor(pending, '{}');
+  const loaded = readInstallationReceipt(pending.path, target);
+  assert.deepEqual(planUninstall(loaded, '{}').conflicts, []);
+  const prepared = prepareManagedFilePlan(loaded as V2Receipt, join(directory, 'backups'));
+  const applied = applyManagedFilePlan(loaded as V2Receipt, join(directory, 'backups'), prepared);
+  assert.deepEqual(readFileSync(managedPath), before);
+  assert.deepEqual(readFileSync(applied.backups[0]!), after);
 });
 
 test('receipt inventory is revalidated before pending writes, config save, and restore', t => {
@@ -340,6 +366,21 @@ test('validateV2Receipt accepts commands kind and rejects unknown kinds', t => {
       { path: join(directory, 'cmd.md'), kind: 'unknown-kind' as never, before: { absent: true }, after: { content: 'cmd' } },
     ] });
   }, /Invalid managedFiles evidence item/);
+});
+
+test('binary managed evidence validates canonical base64 and hashes decoded bytes', t => {
+  const { directory, target } = fixture(t);
+  const snapshot = discoverReceiptChain(directory, target);
+  const bytes = Buffer.from([0, 255, 128, 13]);
+  const encoded = bytes.toString('base64');
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const base = { path: join(directory, 'binary.dat'), kind: 'skills' as const, before: { absent: true as const } };
+  const receipt = createSuccessorReceipt(snapshot, undefined, '{}', {}, undefined, { managedFiles: [{ ...base, after: { contentBase64: encoded, digest } }] });
+  assert.ok(receipt.managedFiles?.[0] && 'contentBase64' in receipt.managedFiles[0].after);
+  assert.equal(receipt.managedFiles?.[0] && 'contentBase64' in receipt.managedFiles[0].after ? receipt.managedFiles[0].after.contentBase64 : undefined, encoded);
+  assert.throws(() => createSuccessorReceipt(snapshot, undefined, '{}', {}, undefined, { managedFiles: [{ ...base, after: { contentBase64: 'abc', digest } }] }), /Invalid or contradictory/);
+  assert.throws(() => createSuccessorReceipt(snapshot, undefined, '{}', {}, undefined, { managedFiles: [{ ...base, after: { contentBase64: encoded, digest: '0'.repeat(64) } }] }), /Invalid or contradictory/);
+  assert.throws(() => createSuccessorReceipt(snapshot, undefined, '{}', {}, undefined, { managedFiles: [{ ...base, after: { contentBase64: encoded, content: 'not bytes', digest } }] }), /Invalid or contradictory/);
 });
 
 test('successor receipts inherit the predecessor harnessVersion unless an explicit stamp is passed', async t => {

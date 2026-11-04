@@ -45,6 +45,7 @@ describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
     assert.deepEqual(Object.keys(agents).sort(), [...roles].sort());
     assert.equal(agents.lead?.mode, 'primary');
     for (const command of commands) assert.ok(existsSync(join(box.project, '.opencode', 'commands', `${command}.md`)), command);
+    assert.ok(existsSync(join(box.project, '.opencode', 'skills', 'harness-procedure-documentation-impact', 'SKILL.md')), 'canonical reusable procedure skill installed');
     assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
     assert.equal([...tree(box.recoveryDirectory).keys()].filter(file => file.startsWith('native-install-')).length, 1);
     for (const role of roles) assert.match(result.stdout, new RegExp(`PASS ${role}:`));
@@ -103,6 +104,7 @@ describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
     assert.match(removed.stdout, /Uninstall complete\. Backup retained:/);
     assert.equal(readConfig().agents, undefined);
     for (const command of commands) assert.equal(existsSync(join(box.project, '.opencode', 'commands', `${command}.md`)), false, command);
+    assert.equal(existsSync(join(box.project, '.opencode', 'skills', 'harness-procedure-documentation-impact', 'SKILL.md')), false, 'installer-created procedure skill removed by receipt');
     assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
   });
 

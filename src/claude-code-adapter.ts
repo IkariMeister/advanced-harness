@@ -18,6 +18,7 @@ import {
 } from './receipt-lineage.ts';
 import { saveInstallation, type Ask } from './native-installer.ts';
 import { nativeRoles, type NativeRole } from './native-role-types.ts';
+import { discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims, type ProcedureFilePlan } from './procedure-deployment.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import {
@@ -46,6 +47,7 @@ export interface ClaudeCodeInstallOptions {
   recoveryDirectory?: string | undefined;
   agentsDirectory?: string | undefined;
   commandsDirectory?: string | undefined;
+  skillsDirectory?: string | undefined;
   harnessVersion?: HarnessVersionStamp | undefined;
   ask: Ask;
   output(message: string): void;
@@ -149,7 +151,7 @@ export function planClaudeDeployment(
   commandsDirectory: string,
   priorManagedFiles: readonly ManagedFileEvidence[] = [],
   models: Record<NativeRole, string> = installedClaudeModels(targetOrProject)
-): { files: ClaudeCodeDeploymentItem[]; mappings: Record<NativeRole, ClaudeRoleMapping>; settingsPath: string; models: Record<NativeRole, string> } {
+): { files: ClaudeCodeDeploymentItem[]; mappings: Record<NativeRole, ClaudeRoleMapping>; settingsPath: string; models: Record<NativeRole, string>; skills: ProcedureFilePlan[] } {
   const target = asTarget(targetOrProject);
   const { claudeDirectory, label } = target;
   const roles = loadRoleDefinitions(agentsDirectory);
@@ -227,7 +229,8 @@ export function planClaudeDeployment(
     }
     return { ...item, currentContent, status };
   });
-  return { files, mappings, settingsPath, models };
+  const skills = planProcedureDeployment(discoverProcedureSkills(fileURLToPath(new URL('../skills/', import.meta.url)), 'claude-code'), target.scope === 'global' ? claudeDirectory : target.memoryDirectory, priorManagedFiles, target.scope === 'global');
+  return { files, mappings, settingsPath, models, skills };
 }
 
 export async function installClaudeCode(options: ClaudeCodeInstallOptions): Promise<number> {
@@ -285,6 +288,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   }
 
   const selectedFilesToWrite: ClaudeCodeDeploymentItem[] = [];
+  const selectedSkills = new Set<string>();
   output('\nFiles to deploy:');
   for (const f of plan.files) {
     const statusLabel = f.status === 'new'
@@ -307,13 +311,19 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
       }
     }
   }
+  output('\nReusable procedure skills:');
+  for (const f of plan.skills) {
+    output(`  ${f.path}: ${f.status}${f.status === 'customized' ? ' (preserved unless explicitly replaced)' : ''}`);
+    if (f.status === 'new' || f.status === 'outdated') selectedSkills.add(canonical(f.path));
+    else if (f.status === 'customized' && /^(yes|y)$/i.test((await ask(`Overwrite customized/unowned procedure skill ${f.path}? (yes/no)`, 'no')).trim())) selectedSkills.add(canonical(f.path));
+  }
 
   const targetInitial = readIfExists(plan.settingsPath);
   const targetFinal = plan.files.find(f => f.absolutePath === plan.settingsPath)?.content ?? (targetInitial ?? '');
   const configChanged = targetFinal !== (targetInitial ?? '');
   // A user-level install has no project whose Git exclude could hold harness scratch state.
   const exclude = scope === 'project' ? previewGitExclude(project, 'claude-code', output) : undefined;
-  const filesChanged = selectedFilesToWrite.length > 0 || configChanged;
+  const filesChanged = selectedFilesToWrite.length > 0 || configChanged || selectedSkills.size > 0;
   if (!filesChanged && exclude?.status !== 'change') {
     output('No selected file needs changes; no files, backups, or receipts were modified.');
     return 0;
@@ -340,6 +350,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
     return 0;
   }
 
+  assertNoForeignManagedFileClaims(backupParent, 'claude-code', [...selectedSkills]);
   for (const f of plan.files) assertSafeFilesystemPath(f.absolutePath, 'file');
   const preflight = () => {
     for (const f of plan.files) {
@@ -350,6 +361,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
     }
   };
   preflight();
+  preflightProcedureFiles(plan.skills.filter(file => selectedSkills.has(canonical(file.path))));
 
   const newManagedEvidence: ManagedFileEvidence[] = selectedFilesToWrite.map(f => ({
     path: f.absolutePath,
@@ -361,6 +373,10 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   }));
 
   const combinedManagedFiles = structuredClone(priorManagedFiles);
+  for (const ev of procedureManagedEvidence(plan.skills, selectedSkills)) {
+    const existing = combinedManagedFiles.find(m => canonical(m.path) === canonical(ev.path));
+    if (existing) existing.after = structuredClone(ev.after); else combinedManagedFiles.push(ev);
+  }
   for (const ev of newManagedEvidence) {
     const existing = combinedManagedFiles.find(m => canonical(m.path) === canonical(ev.path));
     if (existing) {
@@ -383,13 +399,19 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
 
   try {
     revalidatePendingSuccessor(pending);
+    assertNoForeignManagedFileClaims(backupParent, 'claude-code', [...selectedSkills]);
     preflight();
+    preflightProcedureFiles(plan.skills.filter(file => selectedSkills.has(canonical(file.path))));
     for (const f of selectedFilesToWrite) {
       saveInstallation(f.absolutePath, f.currentContent, f.content, backupParent);
     }
+    if (selectedSkills.size) applyProcedureFiles(plan.skills, selectedSkills, backupParent, path => output(`Procedure skill backup: ${path}`));
   } catch (err) {
-    const allUnchanged = plan.files.every(f => readIfExists(f.absolutePath) === f.currentContent || !selectedFilesToWrite.includes(f));
-    if (allUnchanged) {
+    const allUnchanged = plan.files.every(f => readIfExists(f.absolutePath) === f.currentContent || !selectedFilesToWrite.includes(f)) && plan.skills.every(file => {
+      const now = existsSync(file.path) ? readFileSync(file.path) : undefined;
+      return !selectedSkills.has(canonical(file.path)) || (now === undefined ? file.current === undefined : file.current !== undefined && now.equals(file.current));
+    });
+    if (allUnchanged && !(err instanceof Error && err.message.includes('Procedure skill deployment may be partial'))) {
       recoverFailedSuccessor(pending, targetInitial);
     } else {
       error(`Configuration or artifact writes may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
@@ -400,6 +422,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   finishGitExclude(exclude, output, error);
 
   output('\nClaude Code harness deployment complete (runtime not verified).');
+  if (selectedSkills.size) output('Reusable procedure skills deployed.');
   output(`• ${memoryLabel(target)} Lead block and ${target.label}settings.json (agent: lead, gh pr merge denied) are configured.`);
   output(`• Subagents: ${claudeChildRoles.join(', ')} plus lead in ${target.label}agents.`);
   output(`• Workflow commands: ${workflowCommandIds.join(', ')} in ${target.label}commands.`);

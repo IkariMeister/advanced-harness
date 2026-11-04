@@ -22,7 +22,7 @@ Global scope is the default suggestion when no `--project` is supplied. Every se
 
 Integration setup currently configures OpenCode only. `--host opencode` (the default) is supported; unsupported hosts and `all`/multi-host selections fail before discovery, checks, or writes. This does not imply that integration adapters exist for the other installation hosts.
 
-Workflow source compilation can emit deterministic host-specific command/skill artifacts, but compilation alone is not installation. Native adapters are available for OpenCode, Antigravity, and Claude Code (project scope; runtime-unverified). Codex installation is gated (issue #45) and Cursor remains tracked in issue #46. Installer and updater reject gated, unsupported or mixed selections before mutation.
+Workflow and canonical procedure source compilation can emit deterministic host-specific command/skill artifacts, but compilation alone is not installation. Native adapters are available for OpenCode, Antigravity, and Claude Code (project and global scope; runtime-unverified), including receipt-managed canonical procedure skills. Codex installation is gated (issue #45) and Cursor remains tracked in issue #46. Installer and updater reject gated, unsupported or mixed selections before mutation.
 
 ### OpenAI Codex selections (installation gated)
 

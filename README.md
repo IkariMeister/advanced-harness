@@ -24,8 +24,8 @@ The TypeScript code covers native installation for OpenCode V2, Google Antigravi
 
 ## Scope
 
-- Host-neutral workflow artifacts compile deterministically for OpenCode V2, Claude Code, Google Antigravity, OpenAI Codex, and Cursor IDE. Native installation adapters exist for OpenCode V2, Antigravity, and Claude Code (project scope; runtime-unvalidated). Codex installation is gated pending issue #45 and Cursor remains tracked in issue #46. Gated, unsupported and mixed-host selections fail closed before adapter invocation or file mutation.
-- Canonical reusable procedure skills under `skills/` compile to host skill artifacts; compilation does not install them or create permissions. See [`skills/README.md`](skills/README.md).
+- Host-neutral workflow artifacts compile deterministically for OpenCode V2, Claude Code, Google Antigravity, OpenAI Codex, and Cursor IDE. Native installation adapters exist for OpenCode V2, Antigravity, and Claude Code (project/global scope; runtime-unvalidated). Codex installation is gated pending issue #45 and Cursor remains tracked in issue #46. Gated, unsupported and mixed-host selections fail closed before adapter invocation or file mutation.
+- Canonical reusable procedure skills under `skills/` compile to host skill artifacts and are deployed by the supported OpenCode, Claude Code, and Antigravity install/update lifecycle. Compilation alone does not install them or create permissions. See [`skills/README.md`](skills/README.md).
 - Interactive project/global installation across projects, preserving host-neutral `AGENTS.md` and enabling coexistence without hosts clobbering each other.
 - Customizable agents, explicit model/reasoning assignments, and machine-local provider mappings.
 - Host-scoped V2 receipts, backups, and uninstall tracking footprint per `(target, host)`.

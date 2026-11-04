@@ -62,8 +62,9 @@ test('installer flow in project scope deploys commands and records managedFiles 
   const receipt = JSON.parse(readFileSync(join(recovery, receipts[0]!), 'utf8'));
   assert.equal(receipt.version, 2);
   assert.ok(Array.isArray(receipt.managedFiles));
-  assert.equal(receipt.managedFiles.length, 6);
-  for (const f of receipt.managedFiles) {
+  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 6);
+  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills').length, 1);
+  for (const f of receipt.managedFiles.filter((item: {kind: string}) => item.kind === 'commands')) {
     assert.equal(f.kind, 'commands');
     assert.equal(f.before.absent, true);
     assert.ok(typeof f.after.content === 'string');
@@ -109,7 +110,7 @@ test('installer flow in global scope deploys commands to global commands directo
   }
 });
 
-test('answering no to workflow commands prompt leaves commands folder untouched and omits managedFiles', async t => {
+test('answering no to workflow commands prompt leaves commands folder untouched while managing selected procedure skills', async t => {
   const root = makeTempRoot('harness-cmd-deploy-no-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project');
@@ -144,7 +145,8 @@ test('answering no to workflow commands prompt leaves commands folder untouched 
   const receipts = readdirSync(recovery).filter(n => n.endsWith('.json'));
   assert.equal(receipts.length, 1);
   const receipt = JSON.parse(readFileSync(join(recovery, receipts[0]!), 'utf8'));
-  assert.equal(receipt.managedFiles, undefined);
+  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 0);
+  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills').length, 1);
 });
 
 test('cancellation at final confirmation creates no commands files, backups, or receipts', async t => {
@@ -253,7 +255,7 @@ test('differing customized command file: default no preserves it; yes overwrites
     assert.ok(existsSync(join(commandsDir, 'start-issue.md')));
     const { readdirSync } = await import('node:fs');
     const receipt = JSON.parse(readFileSync(join(recovery, readdirSync(recovery)[0]!), 'utf8'));
-    assert.equal(receipt.managedFiles.length, 5);
+    assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 5);
     assert.ok(!receipt.managedFiles.some((f: { path: string }) => f.path.endsWith('grill-me.md')));
     rmSync(root, { recursive: true, force: true });
   }
@@ -293,7 +295,7 @@ test('differing customized command file: default no preserves it; yes overwrites
     assert.notEqual(readFileSync(join(commandsDir, 'grill-me.md'), 'utf8'), 'CUSTOM GRILL ME');
     const { readdirSync } = await import('node:fs');
     const receipt = JSON.parse(readFileSync(join(recovery, readdirSync(recovery)[0]!), 'utf8'));
-    assert.equal(receipt.managedFiles.length, 6);
+    assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 6);
     const grillEntry = receipt.managedFiles.find((f: { path: string }) => f.path.endsWith('grill-me.md'));
     assert.ok(grillEntry);
     assert.equal(grillEntry.before.content, 'CUSTOM GRILL ME');
