@@ -98,6 +98,16 @@ export function reconcilePermissions(options: ReconcileOptions): ReconciliationR
       position = at;
     }
   }
+  // A policy may change the effect of a rule only the retiring sources own. The old rule goes
+  // first so nothing is checked against it, and the new one takes the ordinary addition path.
+  for (const req of options.desired) {
+    const matches = rules.filter(r => identity(r) === identity(req.rule));
+    const old = matches[0];
+    if (matches.length !== 1 || !old || old.effect === req.rule.effect || requiredDenial(old)) continue;
+    if (!prior.some(p => same(p.rule, old)) || owned.get(identity(old))?.size !== 0) continue;
+    rules.splice(rules.indexOf(old), 1);
+    removals.push({ ...old });
+  }
   for (const req of options.desired) {
     if (!req.sources.length || req.sources.some(s => !s.trim())) conflict('source', 'Requirements need nonempty source identities.');
     const matches = rules.filter(r => identity(r) === identity(req.rule));
