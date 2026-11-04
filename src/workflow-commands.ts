@@ -123,6 +123,7 @@ export function compileWorkflowArtifacts(
   hosts: readonly WorkflowArtifactHost[],
   callerBindings: Partial<Record<WorkflowCommandId, string | { parent?: string; description?: string }>> = {}
 ): WorkflowCompilation {
+  if (workflowCommandIds.some(id => id.startsWith('harness-procedure-'))) throw new Error('Workflow command ID conflicts with the reserved procedure skill namespace.');
   const commands = loadWorkflowCommands(sourceDirectory);
   const artifacts: WorkflowArtifact[] = [];
   const diagnostics: string[] = [];

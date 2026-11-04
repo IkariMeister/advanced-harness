@@ -13,6 +13,11 @@ remainder. This records host bindings only: it does not tokenize, quote, validat
 execute user input. Missing or unclear information is handled by the command's
 clarification instructions. Inserted argument text is not recursively substituted.
 
+These six task workflows remain workflow commands even on hosts that represent them
+with `SKILL.md`. Reusable procedures are a separate source namespace in `skills/`;
+their emitted names use the reserved `harness-procedure-` prefix. See
+[`skills/README.md`](../skills/README.md).
+
 Native host compilers may emit only the metadata and bindings their verified native
 contracts support. Neutral schema fields must not leak into host-specific command
 files. Command prose does not grant workflow permissions or infer `allowedTools`.
