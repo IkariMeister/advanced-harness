@@ -67,7 +67,7 @@ test('update flow cancellation makes no configuration or recovery writes', async
   assert.ok(output.some(line => line.includes('Update cancelled. No files or receipts were modified.')));
 });
 
-test('Codex update is gated before prompts or filesystem writes, even with --context', async t => {
+test('Codex project-scope update is refused before prompts or filesystem writes, even with --context', async t => {
   const root = makeTempRoot('codex-gated-update-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const context of [undefined, 'local']) {
@@ -78,7 +78,7 @@ test('Codex update is gated before prompts or filesystem writes, even with --con
     });
     assert.equal(status, 2);
     assert.equal(prompts, 0);
-    assert.ok(errors.some(message => message.includes('Update blocked') && message.includes('issue #45')), errors.join('\n'));
+    assert.ok(errors.some(message => message.includes('Codex update is global only')), errors.join('\n'));
     assert.deepEqual(readdirSync(root), []);
   }
 });

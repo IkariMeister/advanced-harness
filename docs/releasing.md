@@ -47,7 +47,7 @@ version.
 
 `main` should be releasable when a milestone closes:
 
-- Merge unfinished features behind a gate (as Codex install is gated by #45), or
+- Merge unfinished features behind a gate (as Codex install was gated by #45 until role-process mode), or
   keep them as an unmerged PR stack until complete.
 - Fixes merge to `main` first.
 
