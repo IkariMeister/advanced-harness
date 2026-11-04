@@ -9,10 +9,11 @@ import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
 import { discoverReceiptChain, readReceiptForRestore, revalidateRestoreReceipt } from '../src/receipt-lineage.ts';
 import { parseHostSelection, type HostId } from '../src/host-registry.ts';
 import { selectUninstallTarget, uninstallPruneRoot } from '../src/uninstall-target.ts';
+import { planCodexUninstall } from '../src/codex-adapter.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:uninstall -- [--host opencode|claude-code|antigravity] [--scope global|project] [--project <directory>] [--config <opencode.json|opencode.jsonc>] [--receipt <receipt>] | --adopt-existing [--before-config <known-before-config>]\n  --host claude-code: project scope (<project>/.claude/settings.json) or global (~/.claude/settings.json).\n  --host antigravity: project scope (<project>/.agents/hooks.json) or global (~/.gemini/config/hooks.json).\n  --config is OpenCode-only.');
+  console.log('Usage: npm run harness:uninstall -- [--host opencode|claude-code|antigravity|codex] [--scope global|project] [--project <directory>] [--config <opencode.json|opencode.jsonc>] [--receipt <receipt>] | --adopt-existing [--before-config <known-before-config>]\n  --host claude-code: project scope (<project>/.claude/settings.json) or global (~/.claude/settings.json).\n  --host antigravity: project scope (<project>/.agents/hooks.json) or global (~/.gemini/config/hooks.json).\n  --host codex: global only (~/.codex/.advanced-harness-state.json); harness edits to config.toml are reversed, keys you changed since install are kept.\n  --config is OpenCode-only.');
 } else {
   const options: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {
@@ -90,8 +91,11 @@ if (args.includes('--help')) {
       }
     }
     if (!options['--adopt-existing']) {
+      // Codex config.toml is tracked as recorded edits, not in the receipt; the host step reverses them.
+      const hostStep = effectiveReceiptHost(receipt!) === 'codex' ? planCodexUninstall(target, backupParent) : undefined;
+      for (const key of hostStep?.kept ?? []) console.log(`Kept in config.toml (changed since install, review by hand): ${key}`);
       const status = await runUninstallFlow({
-        receipt: receipt!, current,
+        receipt: receipt!, current, hostStep,
         backupParent,
         host: effectiveReceiptHost(receipt!),
         pruneRoot: uninstallPruneRoot(host, target, home),

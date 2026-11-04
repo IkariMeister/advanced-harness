@@ -77,8 +77,8 @@ test('injected installer cancellation makes no configuration or recovery writes'
   assert.equal(existsSync(join(root, 'recovery')), false);
 });
 
-test('Codex install is gated before Codex prompts or filesystem writes, even with --context', async t => {
-  const root = makeTempRoot('codex-gated-install-');
+test('Codex project-scope install is refused before prompts or filesystem writes, even with --context', async t => {
+  const root = makeTempRoot('codex-project-scope-refusal-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const context of [undefined, 'local']) {
     let prompts = 0;
@@ -88,7 +88,7 @@ test('Codex install is gated before Codex prompts or filesystem writes, even wit
     });
     assert.equal(status, 2);
     assert.equal(prompts, 0);
-    assert.ok(errors.some(message => message.includes('Installation blocked') && message.includes('issue #45')), errors.join('\n'));
+    assert.ok(errors.some(message => message.includes('Codex installation is global only')), errors.join('\n'));
     assert.deepEqual(readdirSync(root), []);
   }
 });

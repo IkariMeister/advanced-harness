@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTempRoot } from './temp-directory.ts';
-import { CodexDiscoveryError, chooseCodexCatalog, listCodexModels, parseCodexModelPage, withCodexAppServer, type CodexCatalogModel } from '../src/codex-model-catalog.ts';
+import { CodexDiscoveryError, chooseCodexCatalog, findCodex, listCodexModels, parseCodexModelPage, withCodexAppServer, type CodexCatalogModel } from '../src/codex-model-catalog.ts';
 import { installCodex } from '../src/codex-adapter.ts';
 import { nativeRoles } from '../src/native-role-types.ts';
 
@@ -167,4 +167,25 @@ test('failed discovery falls back to typed IDs, and cancelling writes nothing', 
   assert.ok(output.includes('Continuing with typed model IDs; they are not checked against a catalog.'));
   assert.equal(existsSync(join(box.project, '.codex')), false);
   assert.equal(existsSync(join(box.home, 'Projects')), false);
+});
+
+test('discovery finds the CLI the launcher finds: CODEX_BIN, then the Desktop bundle, then PATH (#45)', { skip: process.platform !== 'win32' }, t => {
+  const root = makeTempRoot('codex-find-');
+  const previous = { bin: process.env.CODEX_BIN, local: process.env.LOCALAPPDATA };
+  t.after(() => {
+    rmSync(root, { recursive: true, force: true });
+    if (previous.bin === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = previous.bin;
+    if (previous.local === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = previous.local;
+  });
+  delete process.env.CODEX_BIN;
+  process.env.LOCALAPPDATA = join(root, 'empty');
+  assert.equal(findCodex(), 'codex');
+  const bundled = join(root, 'local', 'OpenAI', 'Codex', 'bin', 'abc123');
+  mkdirSync(bundled, { recursive: true });
+  writeFileSync(join(bundled, 'codex.exe'), '');
+  process.env.LOCALAPPDATA = join(root, 'local');
+  assert.equal(findCodex(), join(bundled, 'codex.exe'));
+  process.env.CODEX_BIN = 'custom-codex';
+  assert.equal(findCodex(), 'custom-codex');
+  assert.equal(findCodex('explicit-codex'), 'explicit-codex');
 });

@@ -40,7 +40,7 @@ import {
   preflightOpenCodeCommandDeployment,
   type WorkflowCommandId
 } from './workflow-commands.ts';
-import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, selectNativeHost, type HostId } from './host-registry.ts';
+import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, isCodexOnly, selectNativeHost, type HostId } from './host-registry.ts';
 import { parseGlobalProjectDefaults, runSharedLocationStep, type GlobalProjectDefaults } from './project-setup.ts';
 import { checkAntigravityConfigMerge } from './antigravity-adapter.ts';
 import { canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims } from './procedure-deployment.ts';
@@ -94,11 +94,17 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   const selectedHosts: HostId[] = options.host ? parseHostSelection(options.host) : ['opencode'];
 
   let scope = options.scope;
+  const codexOnly = isCodexOnly(selectedHosts);
+  const scopeDefault = codexOnly ? 'global' : 'project';
   while (!scope || !['project', 'global'].includes(scope)) {
-    scope = (await ask('Update scope: project or global', 'project')) || 'project';
+    scope = (await ask('Update scope: project or global', scopeDefault)) || scopeDefault;
   }
   if (scope === 'global' && options.project) {
     throw new Error('--project cannot be combined with global scope.');
+  }
+  if (codexOnly && scope === 'project') {
+    errorOutput('Codex update is global only: role profiles live in ~/.codex. Rerun with --scope global. No files were changed.');
+    return 2;
   }
 
   const expand = (path: string) => path.replace(/^(?:~|\$HOME)(?=[/\\]|$)/, home);
@@ -164,6 +170,23 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     const result = await adapter.update({
       scope: scope as 'project' | 'global',
       project,
+      home,
+      recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
+      agentsDirectory: deps.agentsDirectory,
+      commandsDirectory: deps.workflowCommandsDirectory,
+      harnessVersion: toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand)),
+      ask,
+      output,
+      error: errorOutput,
+    });
+    return typeof result === 'number' ? result : 0;
+  }
+
+  if (dispatch.host === 'codex') {
+    const adapter = (deps.getHostAdapter ?? getHostAdapter)('codex');
+    if (!adapter || !adapter.update) throw new Error('Codex host adapter update is not available.');
+    const result = await adapter.update({
+      scope: 'global',
       home,
       recoveryDirectory: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR,
       agentsDirectory: deps.agentsDirectory,
@@ -365,6 +388,10 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       }
       for (const rule of p.preview.removals) output(`    - ${JSON.stringify(rule)}`);
       for (const rule of p.preview.retainedObsolete) output(`    = retained obsolete ${JSON.stringify(rule)}`);
+      for (const rule of p.preview.additions) {
+        const old = p.preview.removals.find(r => r.action === rule.action && r.resource === rule.resource);
+        if (old) output(`    ! effect change: ${rule.action} ${rule.resource} goes from ${old.effect} to ${rule.effect}`);
+      }
     }
   }
 

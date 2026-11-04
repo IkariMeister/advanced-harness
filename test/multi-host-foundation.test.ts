@@ -72,9 +72,9 @@ test('supportedHosts and parseHostSelection validate all hosts, aliases, and err
 
 test('native dispatch selection is shared and fails closed for unsupported/mixed hosts', () => {
   assert.deepEqual(selectNativeHost(['claude-code']), { host: 'claude-code', unsupported: [], multi: false });
-  assert.deepEqual(selectNativeHost(['codex']), { unsupported: ['codex'], multi: false });
+  assert.deepEqual(selectNativeHost(['codex']), { host: 'codex', unsupported: [], multi: false });
   assert.deepEqual(selectNativeHost(['claude-code', 'opencode']), { unsupported: [], multi: true });
-  assert.deepEqual(selectNativeHost(['codex', 'opencode']), { unsupported: ['codex'], multi: true });
+  assert.deepEqual(selectNativeHost(['codex', 'opencode']), { unsupported: [], multi: true });
   assert.deepEqual(selectNativeHost(['cursor']), { unsupported: ['cursor'], multi: false });
 });
 
@@ -157,7 +157,7 @@ test('HOST_CAPABILITIES distinguishes deployed OpenCode enforcement from deferre
     assert.match(HOST_CAPABILITIES[host].ghPrMergeGuard, /No .* merge guard is deployed/);
     assert.ok(HOST_CAPABILITIES[host].disclosures.some(note => /not deployed|no native role files/i.test(note)));
   }
-  assert.equal(HOST_CAPABILITIES.codex.isolationModel, 'native-subagents');
+  assert.equal(HOST_CAPABILITIES.codex.isolationModel, 'cli-profile-exec');
   assert.equal(HOST_CAPABILITIES.codex.permissionModel, 'execpolicy-and-sandbox');
   assert.match(HOST_CAPABILITIES.codex.ghPrMergeGuard, /indirect\/API routes are not universally blocked/);
   assert.equal(HOST_CAPABILITIES.cursor.configLocations.project.includes('.cursor/skills'), true);
@@ -314,7 +314,7 @@ test('multi-host receipt lineage: host isolation, managedFiles restore, and asse
   }
 });
 
-test('Codex and Cursor install/update fail closed before adapters or writes', async () => {
+test('Codex project scope and Cursor install/update fail closed before adapters or writes', async () => {
   const tempProject = createTempDir('flow-multihost-test');
   const tempHome = createTempDir('flow-home');
   const logs: string[] = [];
@@ -330,7 +330,8 @@ test('Codex and Cursor install/update fail closed before adapters or writes', as
     }
     assert.equal(adapterCalls, 0);
     assert.ok(logs.some(l => l.includes('issue #46')));
-    assert.ok(logs.some(l => l.includes('issue #45') && l.includes('strict per-role isolation')));
+    assert.ok(logs.some(l => l.includes('Codex installation is global only')));
+    assert.ok(logs.some(l => l.includes('Codex update is global only')));
   } finally {
     rmSync(tempProject, { recursive: true, force: true });
     rmSync(tempHome, { recursive: true, force: true });

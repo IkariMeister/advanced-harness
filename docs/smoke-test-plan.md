@@ -66,8 +66,7 @@ input with no writes.
 ## Journeys and cases
 
 Hosts covered: OpenCode V2, Claude Code, and Google Antigravity, which have
-native deployment. OpenAI Codex installation is gated (issue #45); its smoke cases
-assert the gate. The host-selection prompt journey is covered by
+native deployment, and OpenAI Codex at global scope (one process per role, issue #45). The host-selection prompt journey is covered by
 `smoke/host-selection.smoke.ts`: it re-asks comma-separated and `all` answers,
 keeps OpenCode on Enter, and rejects unsupported Cursor without writes. Cursor
 otherwise remains compile-only and is covered by `npm test`.
@@ -114,17 +113,27 @@ otherwise remains compile-only and is covered by `npm test`.
 | AG-04 | `harness:doctor --host antigravity` | Exit 0, `Installed: Yes` |
 | AG-05 | Receipt-backed uninstall (`--host antigravity --scope project`) | Exit 0; rules, workflow and procedure skills, merge-guard script, `hooks.json`, `mcp_config.json` removed; `AGENTS.md` equals its pristine content |
 
-### SMK-CX: Codex install gate (`smoke/codex-lifecycle.smoke.ts`)
+### SMK-CX: Codex global role-process lifecycle (`smoke/codex-lifecycle.smoke.ts`)
 
-Codex installation is gated because issue #45 requires strict per-role isolation, which Codex does not provide.
-The adapter's behavior (install, update, rollback, doctor) is covered by `test/codex-adapter.test.ts`.
+Codex installs at global scope only, with each child role as its own `codex exec` process (#45). The
+journey never starts a real Codex binary: the live catalog prompt is answered `no`. Adapter details
+(rollback, MCP handling, doctor findings) are covered by `test/codex-*.test.ts`.
 
 | ID | Case | Expected |
 | --- | --- | --- |
-| CX-01 | `harness:install --host codex` (project) against a fixture with an existing Codex config | Exit 2; stderr names issue #45; project tree byte-identical; no recovery directory |
-| CX-02 | `harness:update --host codex` (project) | Exit 2; stderr names issue #45; project tree and recovery directory unchanged |
-| CX-03 | Global install and update | Exit 2; sandbox home unchanged; fingerprints of harness-written paths in the real home match before/after; the fingerprint helper is proven against a secret-like fixture and returns hashes only |
-| CX-04 | `harness:doctor --host codex` | Doctor stays available: non-zero exit with a Codex message when nothing is installed; nothing is written |
+| CX-01 | `harness:install --host codex --scope project` | Exit 2; "Codex installation is global only"; project tree byte-identical; no recovery directory |
+| CX-02 | `harness:update --host codex --scope project` | Exit 2; "Codex update is global only"; project tree unchanged |
+| CX-03 | Global install, Enter at `Type install` | Exit 0; "Cancelled. No files, backups, or receipts were written."; sandbox home unchanged |
+| CX-04 | Global install confirmed | Exit 0; seven `~/.codex/harness-<role>.config.toml`, launcher, Lead block in `~/.codex/AGENTS.md`, `multi_agent = false`; no `agents/`; project and real home untouched |
+| CX-05 | `harness:doctor --host codex` | Exit 0; reports role-process mode |
+| CX-06 | `harness:uninstall --host codex --scope global` | Exit 0; prior `config.toml` restored byte for byte; profiles, launcher, Lead block and state removed |
+
+**Manual (human, Codex Desktop):** after CX-04 on a real machine, open a Codex Desktop session in a
+disposable Git project and ask Lead to review a small diff. Expected: Lead runs the launcher for
+`reviewer`, Desktop asks to approve that exact command (role and task visible, "approve once"), and the
+launcher prints JSON with a `status` of Working, Checking, Ready, or Needs your decision. Then ask for a
+one-line change: Lead launches `implementer` with a separate approval and the change lands in the
+project. Record who ran it, the Codex version, and the result on #45.
 
 ### SMK-PS / SMK-PI: project context (`smoke/project-context.smoke.ts`)
 
@@ -141,9 +150,9 @@ it. When a gap is fixed, remove the `todo` option so the test becomes a gate.
 
 The previously recorded Claude Code/Antigravity uninstall gap (CC-04, AG-05),
 Antigravity confirmation-default gap (AG-02), and install version-stamp gap (OC-08)
-are resolved by the host-aware uninstall, #81, and #82 respectively. Codex
-receipt-backed uninstall remains unimplemented and explicitly deferred (CX-07);
-the Codex gate cases do not assert install or uninstall support.
+are resolved by the host-aware uninstall, #81, and #82 respectively. Codex now has
+automated global role-process install/update/uninstall coverage; this is not
+interactive TTY or Codex Desktop runtime validation.
 
 Codex Windows/macOS TTY validation remains pending; the human waived this manual
 test for this pass only. Codex Desktop validation also remains pending and out of

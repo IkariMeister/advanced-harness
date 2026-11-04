@@ -1,4 +1,4 @@
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, parse as pathParse, resolve } from 'node:path';
 import { applyEdits, modify, parse, parseTree, type Node, type ParseError } from 'jsonc-parser';
@@ -74,7 +74,12 @@ export function discoverConfigurations(project: string | undefined, globalDirect
 
 export function chooseConfiguration(directory: string): string {
   const files = configurationFiles(directory);
-  if (files.length > 1) throw new Error(`Both opencode.json and opencode.jsonc exist in ${directory}; choose a target with --config.`);
+  if (files.length > 1) {
+    // A symlink to its sibling is one configuration under two names; only the regular file is a safe target.
+    const regular = files.filter(file => !lstatSync(file).isSymbolicLink());
+    if (regular.length === 1 && new Set(files.map(file => realpathSync(file))).size === 1) return regular[0]!;
+    throw new Error(`Both opencode.json and opencode.jsonc exist in ${directory}; choose a target with --config.`);
+  }
   return files[0] ?? join(directory, 'opencode.jsonc');
 }
 

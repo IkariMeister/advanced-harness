@@ -1,77 +1,91 @@
-// SMK-CX: Codex installation is gated (issue #45 requires strict per-role isolation, which Codex lacks).
-// The real harness:* CLIs must refuse install and update without prompting for Codex answers or writing
-// anything, while harness:doctor stays available. Adapter behavior is covered by test/codex-adapter.test.ts.
+// SMK-CX: Codex installs at global scope in role-process mode (#45): each child role is its own
+// codex exec process with a ~/.codex/harness-<role>.config.toml profile. The real harness:* CLIs
+// refuse project scope, install into the sandbox home only, pass doctor, and uninstall back to the
+// prior home. No real Codex binary is started (the live catalog prompt is answered "no").
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSandbox, realHomeFingerprintOf, tree, type Sandbox } from './support/sandbox.ts';
+import { ask, codexInstall, roles } from './support/steps.ts';
 
-describe('SMK-CX Codex install gate (non-TTY piped answers)', () => {
+const childRoles = roles.filter(role => role !== 'lead');
+// realHomeFingerprintOf joins each entry onto homedir(), so watched paths must be home-relative. Only
+// harness-written paths are watched: the rest of a real ~/.codex (sessions, logs, databases) is live.
+const watched = ['.codex/config.toml', '.codex/AGENTS.md', '.codex/advanced-harness', '.codex/agents', '.codex/rules', '.codex/.advanced-harness-state.json', '.agents/skills', 'Projects/advanced-harness-backups',
+  ...childRoles.map(role => `.codex/harness-${role}.config.toml`)];
+
+describe('SMK-CX Codex global role-process lifecycle (non-TTY piped answers)', () => {
   let box: Sandbox;
-  let pristine: Map<string, string>;
-  const projectArgs = (host = 'codex') => ['--host', host, '--scope', 'project', '--project', box.project];
+  let pristineProject: Map<string, string>;
+  let realHomeBefore: Map<string, string>;
+  const userConfig = '# smoke-owned original\n\n[mcp_servers.fixture]\ncommand = "fixture-mcp"\nenabled = true\n';
+  const codexHome = () => join(box.home, '.codex');
   before(() => {
     box = createSandbox('codex');
-    const config = join(box.project, '.codex', 'config.toml');
+    // A project-level Codex config the harness must never touch.
     mkdirSync(join(box.project, '.codex'), { recursive: true });
-    writeFileSync(config, '# smoke-owned original\r\n\r\n[mcp_servers."fixture.server"] # keep this comment\r\nenabled = true\r\n');
-    pristine = tree(box.project);
+    writeFileSync(join(box.project, '.codex', 'config.toml'), '# smoke-owned project original\r\n');
+    pristineProject = tree(box.project);
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), 'config.toml'), userConfig);
+    realHomeBefore = realHomeFingerprintOf(watched);
   });
   after(() => box.dispose());
 
-  it('CX-01 install is blocked with the #45 reason and changes nothing', async () => {
-    const result = await box.run('install-native-harness.ts', projectArgs());
+  it('CX-01 project-scope install is refused before any prompt and changes nothing', async () => {
+    const result = await box.run('install-native-harness.ts', ['--host', 'codex', '--scope', 'project', '--project', box.project]);
     assert.equal(result.code, 2, result.transcript);
-    assert.deepEqual(result.unansweredSteps, []);
-    assert.match(result.stderr, /Installation blocked: OpenAI Codex native installation is gated: issue #45 requires strict per-role isolation/);
-    assert.deepEqual(tree(box.project), pristine);
+    assert.match(result.stderr, /Codex installation is global only/);
+    assert.deepEqual(tree(box.project), pristineProject);
     assert.equal(existsSync(box.recoveryDirectory), false);
   });
 
-  it('CX-02 update is blocked with the #45 reason and changes nothing', async () => {
-    const result = await box.run('update-native-harness.ts', projectArgs());
+  it('CX-02 project-scope update is refused before any prompt and changes nothing', async () => {
+    const result = await box.run('update-native-harness.ts', ['--host', 'codex', '--scope', 'project', '--project', box.project]);
     assert.equal(result.code, 2, result.transcript);
-    assert.match(result.stderr, /Update blocked: OpenAI Codex native installation is gated: issue #45/);
-    assert.deepEqual(tree(box.project), pristine);
-    assert.equal(existsSync(box.recoveryDirectory), false);
+    assert.match(result.stderr, /Codex update is global only/);
+    assert.deepEqual(tree(box.project), pristineProject);
   });
 
-  it('CX-03 global scope is blocked and leaves the sandbox home and the real home untouched', async () => {
-    // realHomeFingerprintOf joins each entry onto homedir(), so watched paths must be home-relative. Only
-    // harness-written paths are watched: the rest of a real ~/.codex (sessions, logs, databases) is live.
-    const watched = ['.codex/config.toml', '.codex/agents', '.codex/rules', '.codex/.advanced-harness-state.json', '.agents/skills', 'Projects/advanced-harness-backups'];
-    // Prove the guard resolves and hashes a real directory (and never returns its contents) by pointing
-    // homedir() at a fixture that holds a secret-like file.
-    const homeVariable = process.platform === 'win32' ? 'USERPROFILE' : 'HOME';
-    const fixtureHome = join(box.root, 'fingerprint-home');
-    mkdirSync(join(fixtureHome, '.codex'), { recursive: true });
-    writeFileSync(join(fixtureHome, '.codex', 'auth.json'), 'SECRET-LIKE-SENTINEL-do-not-log');
-    const savedHome = process.env[homeVariable];
-    process.env[homeVariable] = fixtureHome;
-    let fixtureFingerprint: string | undefined;
-    try { fixtureFingerprint = realHomeFingerprintOf(['.codex']).get('.codex'); }
-    finally { if (savedHome === undefined) delete process.env[homeVariable]; else process.env[homeVariable] = savedHome; }
-    assert.match(fixtureFingerprint ?? '', /^directory:auth\.json:file:\d+:[a-f0-9]{64}$/);
-    assert.doesNotMatch(fixtureFingerprint ?? '', /SECRET-LIKE-SENTINEL/);
-
-    const before = realHomeFingerprintOf(watched);
+  it('CX-03 Enter at the global install confirmation cancels with no writes', async () => {
     const homeBefore = tree(box.home);
-    for (const script of ['install-native-harness.ts', 'update-native-harness.ts']) {
-      const result = await box.run(script, ['--host', 'codex', '--scope', 'global']);
-      assert.equal(result.code, 2, result.transcript);
-      assert.match(result.stderr, /issue #45/);
-    }
+    const result = await box.run('install-native-harness.ts', ['--host', 'codex', '--scope', 'global'], { steps: codexInstall('') });
+    assert.equal(result.code, 0, result.transcript);
+    assert.deepEqual(result.unansweredSteps, []);
+    assert.match(result.stdout, /Cancelled\. No files, backups, or receipts were written\./);
+    assert.match(result.stdout, /You approve every launch/);
     assert.deepEqual(tree(box.home), homeBefore);
-    assert.equal(existsSync(join(box.home, '.codex')), false);
-    assert.equal(existsSync(join(box.home, '.agents')), false);
-    assert.deepEqual(realHomeFingerprintOf(watched), before, 'real-home harness paths remain unchanged');
   });
 
-  it('CX-04 doctor stays available and reports the missing installation', async () => {
-    const result = await box.run('diagnose-native-harness.ts', ['--host', 'codex', '--project', box.project]);
-    assert.notEqual(result.code, 0, result.transcript);
-    assert.match(result.transcript, /Codex/);
-    assert.deepEqual(tree(box.project), pristine);
+  it('CX-04 global install writes role profiles, launcher and Lead block only into the sandbox home', async () => {
+    const result = await box.run('install-native-harness.ts', ['--host', 'codex', '--scope', 'global'], { steps: codexInstall('install') });
+    assert.equal(result.code, 0, result.transcript);
+    assert.deepEqual(result.unansweredSteps, []);
+    for (const role of childRoles) assert.match(readFileSync(join(codexHome(), `harness-${role}.config.toml`), 'utf8'), /model = "gpt-smoke"/, role);
+    assert.ok(existsSync(join(codexHome(), 'advanced-harness', 'codex-role.mjs')));
+    assert.equal(existsSync(join(box.home, '.agents', 'skills', 'harness-procedure-documentation-impact', 'SKILL.md')), false, 'Codex procedure artifacts are not deployed by the global lifecycle');
+    assert.match(readFileSync(join(codexHome(), 'AGENTS.md'), 'utf8'), /Advanced Harness Lead \(Codex, one process per role\)/);
+    assert.match(readFileSync(join(codexHome(), 'config.toml'), 'utf8'), /multi_agent = false/);
+    assert.equal(existsSync(join(codexHome(), 'agents')), false, 'no in-process custom agents');
+    assert.deepEqual(tree(box.project), pristineProject, 'project .codex is untouched');
+    assert.deepEqual(realHomeFingerprintOf(watched), realHomeBefore, 'real-home harness paths remain unchanged');
+  });
+
+  it('CX-05 doctor passes for the global install', async () => {
+    const empty = join(box.root, 'no-codex-project'); mkdirSync(empty, { recursive: true });
+    const result = await box.run('diagnose-native-harness.ts', ['--host', 'codex', '--project', empty]);
+    assert.equal(result.code, 0, result.transcript);
+    assert.match(result.stdout, /Role-process mode/);
+  });
+
+  it('CX-06 uninstall restores the prior home, including config.toml byte for byte', async () => {
+    const result = await box.run('uninstall-native-harness.ts', ['--host', 'codex', '--scope', 'global'], { steps: [ask('Type uninstall to continue', 'uninstall')] });
+    assert.equal(result.code, 0, result.transcript);
+    assert.equal(readFileSync(join(codexHome(), 'config.toml'), 'utf8'), userConfig);
+    for (const role of childRoles) assert.equal(existsSync(join(codexHome(), `harness-${role}.config.toml`)), false, role);
+    for (const path of ['AGENTS.md', 'advanced-harness', '.advanced-harness-state.json']) assert.equal(existsSync(join(codexHome(), path)), false, path);
+    assert.deepEqual(tree(box.project), pristineProject);
+    assert.deepEqual(realHomeFingerprintOf(watched), realHomeBefore, 'real-home harness paths remain unchanged');
   });
 });
