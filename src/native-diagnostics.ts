@@ -178,8 +178,7 @@ export async function diagnoseHost(
       const res = await adapter.doctor({ project, ...(options.scope ? { scope: options.scope } : {}) });
       issues.push(...res.issues);
       notes.push(...res.notes);
-       notes.push(...procedureSkills.notes);
-       return { host, displayName: cap.displayName, ok: res.ok && procedureSkills.issues.length === 0 && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, procedureSkills, ...(sourcePolicy ? { sourcePolicy } : {}) };
+        return { host, displayName: cap.displayName, ok: res.ok && procedureSkills.issues.length === 0 && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, procedureSkills, ...(sourcePolicy ? { sourcePolicy } : {}) };
     }
     return {
       host,
@@ -221,7 +220,6 @@ export async function diagnoseHost(
     const res = await adapter.doctor({ project, home, globalDirectory: options.globalDirectory, ...(options.scope ? { scope: options.scope } : {}) });
     issues.push(...res.issues);
     notes.push(...res.notes);
-    notes.push(...procedureSkills.notes);
     return { host, displayName: cap.displayName, ok: res.ok && procedureSkills.issues.length === 0, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, procedureSkills, ...(sourcePolicy ? { sourcePolicy } : {}) };
   }
 
@@ -249,6 +247,10 @@ export function printHostDiagnosticReport(report: HostDiagnosticReport): void {
   if (report.issues.length) {
     console.log('Issues:');
     for (const issue of report.issues) console.log(`  FAIL: ${issue}`);
+  }
+  if (report.procedureSkills) {
+    console.log(`Procedure skills: ${report.procedureSkills.status} (static validation only)`);
+    for (const note of report.procedureSkills.notes) console.log(`  ℹ ${note}`);
   }
   if (report.sourcePolicy) {
     console.log(`Source-policy compatibility: ${report.sourcePolicy.status.toUpperCase()} (runtime verified: no; separate from installation footprint)`);
