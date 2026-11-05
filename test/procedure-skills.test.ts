@@ -79,8 +79,14 @@ test('BH-064: meeting-task-extraction procedure skill compiles for every support
   assert.match(skill.body, /\[missing due date\]/i);
   assert.match(skill.body, /\[inferred\]/i);
   assert.match(skill.body, /accept, edit, or reject proposed tasks one by one/i);
-  assert.match(skill.body, /cancelling the review creates nothing/i);
   assert.match(skill.body, /per-task approval/i);
+  assert.match(skill.body, /individual task approvals are staged.*without creating any issues/i);
+  assert.match(skill.body, /no issues are created until the full review is complete and the human gives final confirmation/i);
+  assert.match(skill.body, /cancels.*all staged approvals are discarded and nothing is created/i);
+  assert.match(skill.body, /routing creation through external using the confirmed tracker procedure/i);
+  assert.match(skill.body, /ask the human when.*unspecified/i);
+  assert.match(skill.body, /do not use `?\/start-issue`? to create issues/i);
+  assert.doesNotMatch(skill.body, /such as `?\/start-issue`?/i);
   assert.match(skill.body, /operates from a pasted or exported transcript with no integration configured/i);
 });
 
