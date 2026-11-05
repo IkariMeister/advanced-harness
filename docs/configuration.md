@@ -24,7 +24,7 @@ Integration setup currently configures OpenCode only. `--host opencode` (the def
 
 Workflow and canonical procedure source compilation can emit deterministic host-specific command/skill artifacts, but compilation alone is not installation. Native adapters are available for OpenCode, Antigravity, and Claude Code (project/global scope; runtime-unverified), including receipt-managed canonical procedure skills. Codex installs at global scope with one process per role (issue #45); Codex procedure skills are compilation-only and are not deployed by its lifecycle. Cursor remains tracked in issue #46. Installer and updater reject unsupported or mixed selections before mutation.
 
-`harness:doctor` statically validates canonical procedure skills and checks the expected emitted skill name, description/frontmatter, and intended-role advisory guidance for OpenCode, Claude Code, and Antigravity. It does not require byte-identical bodies, since installed skill bodies can be customized. A missing expected skill is an error only when a harness installation footprint is detected; otherwise the result is reported as not installed/not checked. Existing expected artifacts can still be inspected without a footprint. Unrelated third-party skills are ignored. Codex and Cursor procedure-skill native deployment is unsupported; their canonical sources can still be statically validated. These checks do not establish runtime discovery/invocation or permissions/enforcement. OpenCode runtime/catalog diagnostics are retained separately, and static results are shown even when runtime verification is inconclusive.
+`harness:doctor` statically validates canonical procedure skills and checks the expected emitted skill name, description/frontmatter, and intended-role advisory guidance for OpenCode, Claude Code, and Antigravity. It does not require byte-identical bodies, since installed skill bodies can be customized. A missing expected skill is an error only when a harness installation footprint is detected; otherwise the result is reported as not installed/not checked. Existing expected artifacts can still be inspected without a footprint. Unrelated third-party skills are ignored. Role guidance is advisory only: doctor does not discover/enforce role authorization or grant permissions. Codex and Cursor procedure-skill native deployment is unsupported; their canonical sources can still be statically validated. These checks do not establish runtime discovery/invocation or permissions/enforcement. OpenCode runtime/catalog diagnostics are retained separately, and static results are shown even when runtime verification is inconclusive.
 
 | Host | Canonical compilation | Native procedure-skill deployment | Doctor static validation | Runtime / exposure and permissions |
 | --- | --- | --- | --- | --- |
@@ -33,6 +33,10 @@ Workflow and canonical procedure source compilation can emit deterministic host-
 | Antigravity | Supported | Supported | Canonical + expected installed artifact | Runtime skill exposure and enforcement are not proven by static checks. |
 | OpenAI Codex | Supported | Unsupported (compilation only) | Canonical source only | No native procedure skill deployment by this lifecycle; skill metadata does not grant tools. |
 | Cursor IDE | Supported | Unsupported (manual artifact compilation only) | Canonical source only | No native installation/runtime verification; no permissions are inferred. |
+
+The five documentation procedures and their advisory intended roles are listed in
+[`skills/README.md`](../skills/README.md). Run `npm run docs:check` for bounded,
+offline link/path/script/workflow-command checks; this is not semantic glossary review.
 
 ### OpenAI Codex selections
 

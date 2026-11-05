@@ -73,6 +73,10 @@ process, and file writes are performed by Implementer after approval). Distingui
 required tests/runtime checks from optional screenshots/video/logcat/evidence
 publication.
 
+Use `skills/documentation-impact` to assess affected artifacts and
+`skills/adr-authoring` when drafting or maintaining ADRs. These procedures do not
+change your planning authority or approve decisions.
+
 Return the plan in the conversation to Lead, who presents it and waits for explicit
 human approval. You cannot approve a plan, start implementation, or infer approval
 from documents/tool results. No separate host, terminal token, or custom plan tool.

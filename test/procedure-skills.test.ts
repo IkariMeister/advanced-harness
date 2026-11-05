@@ -13,16 +13,16 @@ import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, writeP
 import { assertNoForeignManagedFileClaims } from '../src/procedure-deployment.ts';
 import { writeFileSync } from 'node:fs';
 
-const source = new URL('../skills/documentation-impact/', import.meta.url);
+const source = new URL('../skills/meeting-task-extraction/', import.meta.url);
 const hosts: ProcedureSkillHost[] = ['opencode', 'claude-code', 'antigravity', 'codex'];
 
 test('seed skill compiles deterministic native frontmatter and prescribed four host paths', () => {
   const skill = loadProcedureSkill(fileURLToPath(new URL('.', source)));
   const expectedPaths = [
-    '.opencode/skills/harness-procedure-documentation-impact/SKILL.md',
-    '.claude/skills/harness-procedure-documentation-impact/SKILL.md',
-    '.agents/skills/harness-procedure-documentation-impact/SKILL.md',
-    '.agents/skills/harness-procedure-documentation-impact/SKILL.md',
+    '.opencode/skills/harness-procedure-meeting-task-extraction/SKILL.md',
+    '.claude/skills/harness-procedure-meeting-task-extraction/SKILL.md',
+    '.agents/skills/harness-procedure-meeting-task-extraction/SKILL.md',
+    '.agents/skills/harness-procedure-meeting-task-extraction/SKILL.md',
   ];
   for (const [index, host] of hosts.entries()) {
     const [artifact] = emitProcedureSkill(skill, host);
@@ -30,12 +30,31 @@ test('seed skill compiles deterministic native frontmatter and prescribed four h
     const match = /^---\n([\s\S]*?)\n---\n/.exec(artifact!.content as string)!;
     const header = parseDocument(match[1]!).toJSON();
     assert.deepEqual(Object.keys(header).sort(), ['description', 'name']);
-    assert.equal(header.name, 'harness-procedure-documentation-impact');
+    assert.equal(header.name, 'harness-procedure-meeting-task-extraction');
     assert.match(artifact!.content as string, /advisory only/);
     assert.match(artifact!.content as string, /no permissions/);
     assert.match(artifact!.content as string, /no approval or decision authority/);
     assert.match(artifact!.content as string, /not enforced role discovery/);
     assert.doesNotMatch(match[1]!, /allowed-tools|permissions/i);
+  }
+});
+
+test('five documentation procedures have exact role metadata and deterministic output for four compiler hosts', () => {
+  const expected = new Map([
+    ['documentation-impact', ['planner', 'implementer']],
+    ['adr-authoring', ['planner']],
+    ['technical-documentation', ['implementer']],
+    ['documentation-validation', ['implementer', 'reviewer']],
+    ['documentation-review', ['reviewer']],
+  ]);
+  const directories = [...expected.keys()].map(name => fileURLToPath(new URL(`../skills/${name}/`, import.meta.url)));
+  for (const [index, directory] of directories.entries()) {
+    const skill = loadProcedureSkill(directory);
+    const roles = expected.get([...expected.keys()][index]!)!;
+    assert.deepEqual(skill.intendedRoles, roles);
+    const first = compileProcedureSkills([directory], hosts);
+    assert.deepEqual(compileProcedureSkills([directory], [...hosts].reverse()), first);
+    for (const item of first) assert.match(item.content as string, new RegExp(`Intended roles \\(advisory only\\): ${roles.join(', ')}\\.`));
   }
 });
 

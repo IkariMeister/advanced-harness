@@ -109,6 +109,10 @@ approved ADR return to Lead for renewed approval before proceeding; never silent
 rewrite an approved ADR or decision. Accepted findings authorize only their
 corresponding fixes; do not silently fix discarded or unrelated findings.
 
+Use the canonical procedures in `skills/` when relevant: `documentation-impact`
+assesses scope, and `technical-documentation` guides implementation-aligned writing.
+These skills are advisory procedures, not role discovery or permission grants.
+
 Operator owns Git/worktrees/memory and External owns MCP/services/remote publishing;
 request those operations through Lead rather than using shell/scripts as a bypass.
 Do not push, open/merge a PR, approve work, delegate, or change models. On interruption,

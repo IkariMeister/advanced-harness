@@ -182,6 +182,11 @@ completed versus what was interrupted/unrun; do not infer a pass from partial ru
 Wait for Lead's human-confirmed resume before re-running checks. Only a human can
 approve publishing or override a requirement.
 
+Use `skills/documentation-validation` for applicable mechanical checks and
+`skills/documentation-review` for the independent review. Consult the project glossary;
+flag undefined project-specific terms and conflicting meanings using semantic judgment.
+These skills are advisory and do not enforce role discovery or grant permissions.
+
 Evidence capture/publication is optional unless explicitly required. Reuse an artifact
 only when its configuration/source match is clear; do not build an advanced manifest
 system just to run a check. Never merge, delegate, change models, or use shell/scripts

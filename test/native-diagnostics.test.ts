@@ -339,7 +339,7 @@ test('non-OpenCode CLI prints procedure-skill errors once and exits nonzero', t 
   const combined = result.stdout + result.stderr;
   assert.equal(result.status, 1, combined);
   assert.match(combined, /Procedure skills: installed \(static validation only\)/);
-  assert.equal((combined.match(/Expected installed project procedure skill is missing/g) ?? []).length, 1);
+  assert.equal((combined.match(/Expected installed project procedure skill is missing/g) ?? []).length, 6);
 });
 
 function requireDirectoryEntries(directory: string): string {
