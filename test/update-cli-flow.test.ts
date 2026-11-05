@@ -630,7 +630,7 @@ test('update flow adds missing commands, records managedFiles in receipt, and un
   assert.equal(chain.head.receipt.version, 2);
   assert.ok(Array.isArray(chain.head.receipt.managedFiles));
   assert.equal(chain.head.receipt.managedFiles.filter(f => f.kind === 'commands').length, 6);
-  assert.equal(chain.head.receipt.managedFiles.filter(f => f.kind === 'skills').length, 1);
+  assert.equal(chain.head.receipt.managedFiles.filter(f => f.kind === 'skills').length, 2);
   for (const f of chain.head.receipt.managedFiles.filter(f => f.kind === 'commands')) {
     assert.equal(f.kind, 'commands');
     assert.ok('absent' in f.before && f.before.absent === true);

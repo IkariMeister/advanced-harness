@@ -39,6 +39,51 @@ test('seed skill compiles deterministic native frontmatter and prescribed four h
   }
 });
 
+test('BH-064: meeting-task-extraction procedure skill compiles for every supported host and enforces safety rules', () => {
+  const meetingSkillDir = fileURLToPath(new URL('../skills/meeting-task-extraction/', import.meta.url));
+  const skill = loadProcedureSkill(meetingSkillDir);
+  assert.equal(skill.name, 'harness-procedure-meeting-task-extraction');
+  assert.equal(skill.schemaVersion, 1);
+  assert.deepEqual(skill.intendedRoles, ['lead', 'planner']);
+
+  const expectedPaths = [
+    '.opencode/skills/harness-procedure-meeting-task-extraction/SKILL.md',
+    '.claude/skills/harness-procedure-meeting-task-extraction/SKILL.md',
+    '.agents/skills/harness-procedure-meeting-task-extraction/SKILL.md',
+    '.agents/skills/harness-procedure-meeting-task-extraction/SKILL.md',
+  ];
+
+  for (const [index, host] of hosts.entries()) {
+    const [artifact] = emitProcedureSkill(skill, host);
+    assert.equal(artifact!.relativePath, expectedPaths[index]);
+    const match = /^---\n([\s\S]*?)\n---\n/.exec(artifact!.content as string)!;
+    const header = parseDocument(match[1]!).toJSON();
+    assert.deepEqual(Object.keys(header).sort(), ['description', 'name']);
+    assert.equal(header.name, 'harness-procedure-meeting-task-extraction');
+    assert.match(artifact!.content as string, /advisory only/);
+    assert.match(artifact!.content as string, /no permissions/);
+    assert.match(artifact!.content as string, /no approval or decision authority/);
+    assert.match(artifact!.content as string, /not enforced role discovery/);
+    assert.doesNotMatch(match[1]!, /allowed-tools|permissions/i);
+  }
+
+  // Acceptance criteria & safety invariants
+  assert.match(skill.body, /untrusted data/i);
+  assert.match(skill.body, /never executed or acted upon/i);
+  assert.match(skill.body, /links.*must not be followed without explicit human approval/i);
+  assert.match(skill.body, /inspect only the specific message/i);
+  assert.match(skill.body, /never search, scan, or read across the wider mailbox/i);
+  assert.match(skill.body, /never copy full meeting transcripts/i);
+  assert.match(skill.body, /minimal supporting quotation/i);
+  assert.match(skill.body, /\[missing owner\]/i);
+  assert.match(skill.body, /\[missing due date\]/i);
+  assert.match(skill.body, /\[inferred\]/i);
+  assert.match(skill.body, /accept, edit, or reject proposed tasks one by one/i);
+  assert.match(skill.body, /cancelling the review creates nothing/i);
+  assert.match(skill.body, /per-task approval/i);
+  assert.match(skill.body, /operates from a pasted or exported transcript with no integration configured/i);
+});
+
 test('multi-source compiler is stable under source/host reorder and duplicate shared host outputs coalesce', async t => {
   const directory = fileURLToPath(new URL('.', source));
   const parent = await mkdtemp(join(tmpdir(), 'procedure-skills-multi-'));

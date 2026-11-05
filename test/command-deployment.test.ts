@@ -63,7 +63,7 @@ test('installer flow in project scope deploys commands and records managedFiles 
   assert.equal(receipt.version, 2);
   assert.ok(Array.isArray(receipt.managedFiles));
   assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 6);
-  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills').length, 1);
+  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills').length, 2);
   for (const f of receipt.managedFiles.filter((item: {kind: string}) => item.kind === 'commands')) {
     assert.equal(f.kind, 'commands');
     assert.equal(f.before.absent, true);
@@ -146,7 +146,7 @@ test('answering no to workflow commands prompt leaves commands folder untouched 
   assert.equal(receipts.length, 1);
   const receipt = JSON.parse(readFileSync(join(recovery, receipts[0]!), 'utf8'));
   assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 0);
-  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills').length, 1);
+  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills').length, 2);
 });
 
 test('cancellation at final confirmation creates no commands files, backups, or receipts', async t => {
