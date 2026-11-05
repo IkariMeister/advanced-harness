@@ -15,6 +15,15 @@ version between releases.
   from a shared `AGENTS.md` and reverses only the
   harness's own `config.toml` edits (#45).
 
+### Fixed
+
+- `harness:uninstall` for Claude Code and Antigravity no longer stops when you
+  edited `CLAUDE.md` or `AGENTS.md` outside the harness block. It removes only the
+  block and keeps your edits. An edited or missing block still stops uninstall with
+  no writes (#84).
+- Uninstall no longer drops `CLAUDE.md` edits that a later update had recorded as
+  installed content. They used to survive only in the private backup (#84).
+
 ## v0.2.3 — 2026-11-04
 
 Patch release on the 0.2 line (#170).

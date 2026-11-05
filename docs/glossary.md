@@ -52,6 +52,7 @@ To add or change a term, edit this file in the same change that first uses the n
 | **host** | A supported agent environment: OpenCode, Claude Code, Antigravity, Codex, Cursor, and (planned) Pi. | Machine. |
 | **install scope** | Where an install writes: `project` or `global`. | Selection scope; review scope. |
 | **receipt** | The private installer record of what an install or update changed, used for update, uninstall, and recovery. | Gentle-AI "receipts". |
+| **harness block** | The marker-delimited section an install owns inside a shared instruction file: the Lead block in `CLAUDE.md` or the model-preference block in a project context file. Uninstall removes only this block when other content in the file changed. | Marked `project`, `integrations`, or `paths` context sections, which an install does not own. |
 | **project context** | Project-specific settings in the application's `AGENTS.md`, shared across hosts (see [configuration](configuration.md)). | Global connections; an agent's reasoning context. |
 | **global connections** | Reusable, machine-level connections and defaults (MCP servers, preferences) shared across projects. | Project context. |
 | **legacy profile** | A pre-context project configuration that may only be migrated with explicit consent. | Codex profile; role setup. |

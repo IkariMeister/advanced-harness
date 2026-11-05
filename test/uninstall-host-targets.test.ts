@@ -151,15 +151,172 @@ test('cancel at the uninstall prompt makes no writes, backups, or directory remo
   }
 });
 
-test('a file edited after install blocks uninstall with no writes', async t => {
+test('a whole-file managed artifact edited after install still blocks uninstall with no writes', async t => {
   const f = fixture(t);
   await install(f, 'claude-code', 'project');
-  writeFileSync(join(f.project, 'CLAUDE.md'), `${readFileSync(join(f.project, 'CLAUDE.md'), 'utf8')}\nHand edit.\n`);
+  writeFileSync(join(f.project, '.claude', 'agents', 'lead.md'), 'Hand edit.\n');
   const before = snapshot(f.root);
   assert.equal(await uninstall(f, 'claude-code', { scope: 'project', project: f.project }, 'uninstall'), 1);
-  assert.ok(f.errors.some(line => /Uninstall blocked by concurrent edits to: .*CLAUDE\.md \(concurrently modified\)/.test(line)), f.errors.join('\n'));
+  assert.ok(f.errors.some(line => /Uninstall blocked by concurrent edits to: .*lead\.md \(concurrently modified\)/.test(line)), f.errors.join('\n'));
   assert.equal(f.prompts.length, 0, 'blocked before confirmation');
   assert.deepEqual(snapshot(f.root), before);
+});
+
+const projectArgs = (f: Fixture) => ({ scope: 'project', project: f.project });
+const leadStart = '<!-- advanced-harness:lead:start -->';
+const leadEnd = '<!-- advanced-harness:lead:end -->';
+const backupCount = (f: Fixture) => f.output.filter(line => line.startsWith('Private backup:')).length;
+
+test('edits to an installer-created CLAUDE.md survive; only the block and its reference are removed', async t => {
+  const f = fixture(t);
+  await install(f, 'claude-code', 'project');
+  const path = join(f.project, 'CLAUDE.md');
+  writeFileSync(path, `# Mine\n\n${readFileSync(path, 'utf8')}\nTail note.\n`);
+  assert.equal(await uninstall(f, 'claude-code', projectArgs(f), 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), '# Mine\n\nTail note.\n');
+  assert.ok(f.output.some(line => /CLAUDE\.md: remove harness block; keep your edits/.test(line)), 'previewed before confirmation');
+  assert.ok(f.output.some(line => /Managed file restored: .*CLAUDE\.md \(harness block removed; other content kept\)/.test(line)), f.output.join('\n'));
+  assert.equal(existsSync(join(f.project, '.claude', 'agents', 'lead.md')), false, 'the rest of the footprint is removed');
+});
+
+test('edits to a pre-existing CLAUDE.md survive, and a reference the user already had is kept', async t => {
+  const f = fixture(t);
+  const path = join(f.project, 'CLAUDE.md');
+  writeFileSync(path, '# Team\n\n@AGENTS.md\n');
+  await install(f, 'claude-code', 'project');
+  const installed = readFileSync(path, 'utf8');
+  writeFileSync(path, installed.replace('# Team', '# Team (renamed)'));
+  assert.equal(await uninstall(f, 'claude-code', projectArgs(f), 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), '# Team (renamed)\n\n@AGENTS.md\n');
+  assert.ok(backupCount(f) > 0, 'the edited file is backed up before the block is removed');
+});
+
+test('a global CLAUDE.md keeps user edits when only the block is removed', async t => {
+  const f = fixture(t);
+  await install(f, 'claude-code', 'global');
+  const path = join(f.home, '.claude', 'CLAUDE.md');
+  writeFileSync(path, `${readFileSync(path, 'utf8')}\nGlobal note.\n`);
+  assert.equal(await uninstall(f, 'claude-code', { scope: 'global' }, 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), 'Global note.\n');
+});
+
+test('Antigravity keeps AGENTS.md edits outside the model-preference block', async t => {
+  const f = fixture(t);
+  const path = join(f.project, 'AGENTS.md');
+  writeFileSync(path, '# Project\n\nOriginal.\n');
+  await install(f, 'antigravity', 'project');
+  const installed = readFileSync(path, 'utf8');
+  assert.match(installed, /advanced-harness:model-preferences:start/);
+  const setupSection = '<!-- advanced-harness:project:start -->\nsetup section\n<!-- advanced-harness:project:end -->\n';
+  writeFileSync(path, `${installed.replace('Original.', 'Edited.')}\n${setupSection}`);
+  assert.equal(await uninstall(f, 'antigravity', projectArgs(f), 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), `# Project\n\nEdited.\n\n${setupSection}`);
+});
+
+test('an edited, missing, duplicated, or reordered harness block blocks uninstall with no writes', async t => {
+  const breakBlock: Record<string, (text: string) => string> = {
+    edited: text => text.replace(leadEnd, `changed\n${leadEnd}`),
+    missing: () => '# Only my notes\n',
+    duplicated: text => `${text}\n${leadStart}\nagain\n${leadEnd}\n`,
+    'without an end marker': text => text.replace(leadEnd, ''),
+    'out of order': text => text.replace(leadStart, '@@').replace(leadEnd, leadStart).replace('@@', leadEnd),
+  };
+  for (const [name, mutate] of Object.entries(breakBlock)) {
+    const f = fixture(t);
+    await install(f, 'claude-code', 'project');
+    const path = join(f.project, 'CLAUDE.md');
+    writeFileSync(path, mutate(readFileSync(path, 'utf8')));
+    const before = snapshot(f.root);
+    assert.equal(await uninstall(f, 'claude-code', projectArgs(f), 'uninstall'), 1, name);
+    assert.ok(f.errors.some(line => /CLAUDE\.md \(harness block edited or missing\)/.test(line)), `${name}: ${f.errors.join('\n')}`);
+    assert.equal(f.prompts.length, 0, `${name}: blocked before confirmation`);
+    assert.deepEqual(snapshot(f.root), before, `${name}: no writes or backups`);
+  }
+});
+
+test('cancelling a block-only removal makes no writes, backups, or directory removals', async t => {
+  for (const answer of ['', 'no', 'Uninstall']) {
+    const f = fixture(t);
+    await install(f, 'claude-code', 'project');
+    const path = join(f.project, 'CLAUDE.md');
+    writeFileSync(path, `${readFileSync(path, 'utf8')}\nHand edit.\n`);
+    const before = snapshot(f.root);
+    assert.equal(await uninstall(f, 'claude-code', projectArgs(f), answer), 0, answer);
+    assert.ok(f.output.some(line => /Cancelled; no configuration writes made\./.test(line)), answer);
+    assert.deepEqual(snapshot(f.root), before, `answer "${answer}" changed the tree`);
+  }
+});
+
+test('a block edited while the uninstall prompt is open blocks with no writes', async t => {
+  const f = fixture(t);
+  await install(f, 'claude-code', 'project');
+  const path = join(f.project, 'CLAUDE.md');
+  writeFileSync(path, `${readFileSync(path, 'utf8')}\nHand edit.\n`);
+  const target = selectUninstallTarget({ host: 'claude-code', ...projectArgs(f), home: f.home, cwd: f.root });
+  const chain = discoverReceiptChain(f.recovery, target, 'claude-code');
+  const receipt = readReceiptForRestore(join(chain.directory, chain.head!.file), target);
+  let duringPrompt: Map<string, string> | undefined;
+  const status = await runUninstallFlow({
+    receipt, current: readFileSync(target, 'utf8'), backupParent: f.recovery, host: 'claude-code', pruneRoot: uninstallPruneRoot('claude-code', target, f.home),
+    confirm: async () => {
+      writeFileSync(path, readFileSync(path, 'utf8').replace(leadEnd, `changed\n${leadEnd}`));
+      duringPrompt = snapshot(f.root);
+      return 'uninstall';
+    },
+    output: message => { f.output.push(message); },
+    error: message => { f.errors.push(message); },
+    save: () => { throw new Error('must not save'); },
+  });
+  assert.equal(status, 1);
+  assert.ok(f.errors.some(line => /harness block edited or missing/.test(line)), f.errors.join('\n'));
+  assert.deepEqual(snapshot(f.root), duringPrompt);
+});
+
+test('line-ending conversion alone does not count as a block edit, and converted endings are kept', async t => {
+  const f = fixture(t);
+  await install(f, 'claude-code', 'project');
+  const path = join(f.project, 'CLAUDE.md');
+  writeFileSync(path, `${readFileSync(path, 'utf8')}\nTail note.\n`.replaceAll('\n', '\r\n'));
+  assert.equal(await uninstall(f, 'claude-code', projectArgs(f), 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), 'Tail note.\r\n');
+});
+
+test('edits a harness update recorded as installed content still survive uninstall', async t => {
+  const f = fixture(t);
+  const path = join(f.project, 'CLAUDE.md');
+  writeFileSync(path, '# Team\n');
+  await install(f, 'claude-code', 'project');
+  // The second install rewrites only because the block differs, as a new harness version's block would.
+  writeFileSync(path, readFileSync(path, 'utf8').replace('# Team', '# Team\n\nAdded before the update.').replace(leadEnd, `older block\n${leadEnd}`));
+  await install(f, 'claude-code', 'project');
+  const chain = discoverReceiptChain(f.recovery, join(f.project, '.claude', 'settings.json'), 'claude-code');
+  const recorded = chain.head!.receipt.version === 2 ? chain.head!.receipt.managedFiles!.find(file => file.path === path)! : undefined;
+  assert.ok(recorded && 'content' in recorded.after && recorded.after.content!.includes('Added before the update.'), 'the update recorded the edit as installed content');
+  assert.equal(readFileSync(path, 'utf8'), (recorded!.after as { content: string }).content, 'the file matches its recorded installed state');
+  assert.equal(await uninstall(f, 'claude-code', projectArgs(f), 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), '# Team\n\nAdded before the update.\n');
+});
+
+test('an unedited file with no trailing newline is restored byte for byte', async t => {
+  const f = fixture(t);
+  const path = join(f.project, 'CLAUDE.md');
+  writeFileSync(path, '# Team');
+  await install(f, 'claude-code', 'project');
+  assert.equal(await uninstall(f, 'claude-code', projectArgs(f), 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), '# Team');
+});
+
+test('uninstall, reinstall, and uninstall again keep edits to CLAUDE.md', async t => {
+  const f = fixture(t);
+  await install(f, 'claude-code', 'project');
+  const path = join(f.project, 'CLAUDE.md');
+  writeFileSync(path, `${readFileSync(path, 'utf8')}\nKeep me.\n`);
+  assert.equal(await uninstall(f, 'claude-code', projectArgs(f), 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), 'Keep me.\n');
+  await install(f, 'claude-code', 'project');
+  assert.match(readFileSync(path, 'utf8'), /advanced-harness:lead:start/);
+  assert.equal(await uninstall(f, 'claude-code', projectArgs(f), 'uninstall'), 0, f.errors.join('\n'));
+  assert.equal(readFileSync(path, 'utf8'), 'Keep me.\n');
 });
 
 test('an absent settings.json is not recreated by uninstall; the rest of the footprint is still removed', async t => {
