@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -253,7 +253,8 @@ test('doctor --scope project without --host ignores global footprints when detec
   const scoped = run(['--scope', 'project', '--project', project]);
   assert.equal(scoped.status, 0, scoped.stdout + scoped.stderr);
   assert.match(scoped.stdout, /Inspecting host\(s\): opencode\r?\n/, 'only the default host; no global footprint selects a host');
-  assert.doesNotMatch(scoped.stdout, /not installed/i);
+  assert.doesNotMatch(scoped.stdout, /Inspecting host\(s\):[^\n]*(?:antigravity|codex|claude-code|cursor)/i, 'excluded global hosts must not be selected');
+  assert.match(scoped.stdout, /Procedure skills: not-installed \(static validation only\)/, 'the legitimate procedure-skill status remains visible');
   const both = run(['--project', project]);
   assert.match(both.stdout, /Inspecting host\(s\): .*antigravity/,'without --scope the global footprint still selects Antigravity');
 });
@@ -273,3 +274,16 @@ test('doctor --scope limits OpenCode configuration sources to the requested scop
   assert.match(scoped.stdout, /None at project scope\./);
   assert.ok(!scoped.stdout.includes(join(xdg, 'opencode')), 'global source is excluded at project scope');
 });
+
+test('OpenCode doctor prints static procedure-skill status before runtime checks and remains read-only', t => {
+  const { project, run } = sandboxedDoctor(t);
+  const before = requireDirectoryEntries(project);
+  const result = run(['--host', 'opencode', '--project', project]);
+  assert.match(result.stdout, /Procedure skills: not-installed \(static validation only\)/);
+  assert.match(result.stdout, /OpenCode V2 Diagnostics/);
+  assert.equal(requireDirectoryEntries(project), before);
+});
+
+function requireDirectoryEntries(directory: string): string {
+  return readdirSync(directory).sort().join('|');
+}

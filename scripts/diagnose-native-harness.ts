@@ -6,6 +6,7 @@ import { discoverConfigurations } from '../src/native-installer.ts';
 import { DiagnosticError, expectedAgents, printReport, verifyRuntime, diagnoseHost, printHostDiagnosticReport } from '../src/native-diagnostics.ts';
 import { detectInstalledHosts, parseHostSelection, type HostId } from '../src/host-registry.ts';
 import { describeHarnessCheckout } from '../src/harness-version.ts';
+import { diagnoseProcedureSkills } from '../src/procedure-skill-diagnostics.ts';
 
 const args = process.argv.slice(2);
 
@@ -62,6 +63,11 @@ if (args.includes('--help')) {
 
       for (const host of hosts) {
         if (host === 'opencode') {
+          const skillCheck = diagnoseProcedureSkills({ host, ...(scope === 'global' ? {} : { project: directory }), ...(scope ? { scope } : {}), globalDirectory: global });
+          console.log(`Procedure skills: ${skillCheck.status} (static validation only)`);
+          for (const note of skillCheck.notes) console.log(`  ℹ ${note}`);
+          for (const issue of skillCheck.issues) console.error(`  FAIL: ${issue}`);
+          if (skillCheck.issues.length) allOk = false;
           // The excluded scope is never read, so a malformed file there cannot fail this check.
           const sources = discoverConfigurations(scope === 'global' ? undefined : directory, scope === 'project' ? undefined : global);
           console.log('\n=== OpenCode V2 Diagnostics ===');
@@ -82,6 +88,11 @@ if (args.includes('--help')) {
             }
           }
         } else {
+          const skillCheck = diagnoseProcedureSkills({ host, ...(scope === 'global' ? {} : { project: directory }), ...(scope ? { scope } : {}), globalDirectory: global });
+          console.log(`Procedure skills: ${skillCheck.status} (static validation only)`);
+          for (const note of skillCheck.notes) console.log(`  ℹ ${note}`);
+          for (const issue of skillCheck.issues) console.error(`  FAIL: ${issue}`);
+          if (skillCheck.issues.length) allOk = false;
           const diag = await diagnoseHost(host, { ...(scope === 'global' ? {} : { project: directory }), ...(scope ? { scope } : {}) });
           printHostDiagnosticReport(diag);
           if (!diag.ok) allOk = false;

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { discoverConfigurations, modelReference, nativeRoles, type ConfigSource, type NativeRole } from './native-installer.ts';
 import { loadRoleDefinitions } from './role-definitions.ts';
 import { preflightClaudePermissions, type ClaudePermissionPreflightReport } from './claude-permission-preflight.ts';
+import { diagnoseProcedureSkills, type ProcedureSkillCheck } from './procedure-skill-diagnostics.ts';
 
 type Row = Record<string, unknown>;
 export type Snapshot = { agents: Row[]; models: Row[]; providers: Row[] };
@@ -144,6 +145,7 @@ export interface HostDiagnosticReport {
   rolePresets: Record<NativeRole, HostRolePreset>;
   opencodeReport?: Report;
   sourcePolicy?: ClaudePermissionPreflightReport;
+  procedureSkills?: ProcedureSkillCheck;
 }
 
 export async function diagnoseHost(
@@ -156,6 +158,8 @@ export async function diagnoseHost(
   const project = options.project ? resolve(options.project) : undefined;
   const issues: string[] = [];
   const notes: string[] = [];
+  const procedureSkills = diagnoseProcedureSkills({ host, ...(project ? { project } : {}), home, ...(options.globalDirectory ? { globalDirectory: options.globalDirectory } : {}), ...(options.scope ? { scope: options.scope } : {}) });
+  issues.push(...procedureSkills.issues);
   const sourcePolicy = host === 'claude-code'
     ? preflightClaudePermissions(loadRoleDefinitions(options.agentsDirectory ?? fileURLToPath(new URL('../agents/', import.meta.url))))
     : undefined;
@@ -174,7 +178,8 @@ export async function diagnoseHost(
       const res = await adapter.doctor({ project, ...(options.scope ? { scope: options.scope } : {}) });
       issues.push(...res.issues);
       notes.push(...res.notes);
-      return { host, displayName: cap.displayName, ok: res.ok && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, ...(sourcePolicy ? { sourcePolicy } : {}) };
+       notes.push(...procedureSkills.notes);
+       return { host, displayName: cap.displayName, ok: res.ok && procedureSkills.issues.length === 0 && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, procedureSkills, ...(sourcePolicy ? { sourcePolicy } : {}) };
     }
     return {
       host,
@@ -185,6 +190,7 @@ export async function diagnoseHost(
       notes,
       disclosures: cap.disclosures,
       rolePresets: presets,
+      procedureSkills,
       ...(sourcePolicy ? { sourcePolicy } : {}),
     };
   }
@@ -215,7 +221,8 @@ export async function diagnoseHost(
     const res = await adapter.doctor({ project, home, globalDirectory: options.globalDirectory, ...(options.scope ? { scope: options.scope } : {}) });
     issues.push(...res.issues);
     notes.push(...res.notes);
-    return { host, displayName: cap.displayName, ok: res.ok, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, ...(sourcePolicy ? { sourcePolicy } : {}) };
+    notes.push(...procedureSkills.notes);
+    return { host, displayName: cap.displayName, ok: res.ok && procedureSkills.issues.length === 0, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, procedureSkills, ...(sourcePolicy ? { sourcePolicy } : {}) };
   }
 
   return {
@@ -227,6 +234,7 @@ export async function diagnoseHost(
     notes,
     disclosures: cap.disclosures,
     rolePresets: presets,
+    procedureSkills,
     ...(sourcePolicy ? { sourcePolicy } : {}),
   };
 }
