@@ -114,3 +114,44 @@ test('linked .opencode ancestor is rejected before expected installed artifacts 
   assert.match(result.issues.join(' '), /symbolic-link ancestor/);
   assert.doesNotMatch(result.issues.join(' '), /malformed or unsafe SKILL\.md/);
 });
+
+test('canonical source location is independent of cwd while an explicit source override is honored', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const original = process.cwd();
+  try {
+    process.chdir(f.root);
+    const defaultSource = diagnoseProcedureSkills({ host: 'codex' });
+    assert.deepEqual(defaultSource.issues, []);
+    const override = diagnoseProcedureSkills({ host: 'codex', skillsDirectory: f.skills });
+    assert.deepEqual(override.issues, []);
+    writeFileSync(join(f.skills, 'my-procedure', 'SKILL.md'), 'bad');
+    assert.match(diagnoseProcedureSkills({ host: 'codex', skillsDirectory: f.skills }).issues.join(' '), /Canonical procedure skill/);
+  } finally {
+    process.chdir(original);
+  }
+});
+
+test('Antigravity harness rule footprint detects missing procedure skills in both isolated scopes', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const projectRules = join(f.project, '.agents', 'rules');
+  const globalRules = join(f.home, '.gemini', 'config', 'rules');
+  mkdirSync(projectRules, { recursive: true });
+  mkdirSync(globalRules, { recursive: true });
+  writeFileSync(join(projectRules, 'advanced-harness-lead.md'), 'project lead rules');
+  writeFileSync(join(globalRules, 'advanced-harness-lead.md'), 'global lead rules');
+  const project = diagnoseProcedureSkills({ ...f.options, host: 'antigravity', scope: 'project' });
+  const global = diagnoseProcedureSkills({ ...f.options, host: 'antigravity', scope: 'global' });
+  const both = diagnoseProcedureSkills({ ...f.options, host: 'antigravity' });
+  assert.match(project.issues.join(' '), /project procedure skill is missing/);
+  assert.match(global.issues.join(' '), /global procedure skill is missing/);
+  assert.equal(both.issues.filter(issue => /procedure skill is missing/.test(issue)).length, 2);
+});
+
+test('Claude project agent footprint detection remains supported', t => {
+  const f = fixture(); t.after(f.cleanup);
+  const agents = join(f.project, '.claude', 'agents');
+  mkdirSync(agents, { recursive: true });
+  writeFileSync(join(agents, 'lead.md'), 'Claude Lead');
+  const result = diagnoseProcedureSkills({ ...f.options, host: 'claude-code', scope: 'project' });
+  assert.match(result.issues.join(' '), /project procedure skill is missing/);
+});

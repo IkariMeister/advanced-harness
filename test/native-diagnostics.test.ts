@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assessRuntime, cliQuery, decodeRows, diagnoseHost, expectedAgents, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
 import { nativeRoles } from '../src/native-installer.ts';
+import { clearRegisteredAdapters, getHostAdapter, registerHostAdapter, supportedHosts, type HostAdapter } from '../src/host-registry.ts';
 
 function fixture() {
   const expected: Record<string, Record<string, unknown>> = Object.fromEntries(nativeRoles.map(role => [role, { mode: role === 'lead' ? 'primary' : 'subagent', model: 'company/nested/model#low' }]));
@@ -282,6 +283,63 @@ test('OpenCode doctor prints static procedure-skill status before runtime checks
   assert.match(result.stdout, /Procedure skills: not-installed \(static validation only\)/);
   assert.match(result.stdout, /OpenCode V2 Diagnostics/);
   assert.equal(requireDirectoryEntries(project), before);
+});
+
+test('non-OpenCode doctor prints one merged procedure-skill status for installed and unsupported outcomes', t => {
+  const { project, run } = sandboxedDoctor(t);
+  for (const [host, status, exitCode] of [['antigravity', 'not-installed', 1], ['cursor', 'unsupported', 0]] as const) {
+    const result = run(['--host', host, '--scope', 'project', '--project', project]);
+    assert.equal(result.status, exitCode, result.stderr + result.stdout);
+    const matches = result.stdout.match(/Procedure skills: .* \(static validation only\)/g) ?? [];
+    assert.equal(matches.length, 1, `${host} should display one procedure-skill status`);
+    assert.match(result.stdout, new RegExp(`Procedure skills: ${status} \\(static validation only\\)`));
+  }
+});
+
+test('adapter-backed host reports retain procedure-skill failures in ok aggregation', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'harness-doctor-adapter-skills-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); const home = join(root, 'home'); const global = join(root, 'global');
+  mkdirSync(project); mkdirSync(home); mkdirSync(global);
+  writeFileSync(join(project, 'opencode.json'), '{"agents":{"lead":{},"implementer":{}}}');
+  mkdirSync(join(project, '.agents', 'rules'), { recursive: true });
+  writeFileSync(join(project, '.agents', 'rules', 'advanced-harness-lead.md'), 'lead rule');
+
+  const baseline = supportedHosts.flatMap(host => {
+    const adapter = getHostAdapter(host);
+    return adapter ? [[host, adapter] as const] : [];
+  });
+  const restoreAdapters = () => {
+    clearRegisteredAdapters();
+    for (const [, adapter] of baseline) registerHostAdapter(adapter);
+  };
+  try {
+    for (const host of ['opencode', 'antigravity'] as const) {
+      const healthyAdapter: HostAdapter = { host, install: async () => {}, doctor: async () => ({ ok: true, issues: [], notes: [] }) };
+      registerHostAdapter(healthyAdapter);
+      try {
+        const report = await diagnoseHost(host, { project, home, globalDirectory: global, scope: 'project' });
+        assert.equal(report.ok, false, `${host} adapter is healthy, but expected installed procedure skill is missing`);
+        assert.match(report.issues.join(' '), /Expected installed project procedure skill is missing/);
+      } finally {
+        restoreAdapters();
+      }
+    }
+  } finally {
+    restoreAdapters();
+  }
+});
+
+test('non-OpenCode CLI prints procedure-skill errors once and exits nonzero', t => {
+  const { project, run } = sandboxedDoctor(t);
+  const rules = join(project, '.agents', 'rules');
+  mkdirSync(rules, { recursive: true });
+  writeFileSync(join(rules, 'advanced-harness-lead.md'), 'lead rule');
+  const result = run(['--host', 'antigravity', '--scope', 'project', '--project', project]);
+  const combined = result.stdout + result.stderr;
+  assert.equal(result.status, 1, combined);
+  assert.match(combined, /Procedure skills: installed \(static validation only\)/);
+  assert.equal((combined.match(/Expected installed project procedure skill is missing/g) ?? []).length, 1);
 });
 
 function requireDirectoryEntries(directory: string): string {

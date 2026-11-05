@@ -2,7 +2,8 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, parse as parsePath, resolve } from 'node:path';
 import { parseDocument } from 'yaml';
-import { loadProcedureSkill, emittedProcedureSkillName, type ProcedureSkill } from './procedure-skills.ts';
+import { fileURLToPath } from 'node:url';
+import { loadProcedureSkill, type ProcedureSkill } from './procedure-skills.ts';
 import { nativeRoles } from './native-role-types.ts';
 import type { HostId } from './host-registry.ts';
 
@@ -38,10 +39,14 @@ function harnessFootprint(host: HostId, project: string | undefined, home: strin
       return /"lead"\s*:/.test(text) && /"implementer"\s*:/.test(text);
     });
   }
-  const agentRoots = host === 'claude-code'
-    ? scope === 'project' ? (project ? [join(project, '.claude', 'agents')] : []) : [join(home, '.claude', 'agents')]
-    : scope === 'project' ? (project ? [join(project, '.agents', 'rules')] : []) : [join(home, '.gemini', 'config', 'rules')];
-  return agentRoots.some(root => existsSync(root) && nativeRoles.some(role => existsSync(join(root, `${role}.md`))));
+  if (host === 'claude-code') {
+    const roots = scope === 'project' ? (project ? [join(project, '.claude', 'agents')] : []) : [join(home, '.claude', 'agents')];
+    return roots.some(root => existsSync(root) && nativeRoles.some(role => existsSync(join(root, `${role}.md`))));
+  }
+  const leadRule = scope === 'project'
+    ? project ? join(project, '.agents', 'rules', 'advanced-harness-lead.md') : undefined
+    : join(home, '.gemini', 'config', 'rules', 'advanced-harness-lead.md');
+  return !!leadRule && existsSync(leadRule);
 }
 
 /** Reject symbolic-link components before following any expected installed path. */
@@ -68,7 +73,7 @@ export function diagnoseProcedureSkills(options: { host: HostId; project?: strin
   const global = options.globalDirectory ?? resolve(join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode'));
   const issues: string[] = [];
   const notes: string[] = [];
-  const canonicalRoot = options.skillsDirectory ?? resolve(join(import.meta.dirname ?? process.cwd(), '..', 'skills'));
+  const canonicalRoot = options.skillsDirectory ?? fileURLToPath(new URL('../skills/', import.meta.url));
   const skills: ProcedureSkill[] = [];
   try {
     const directories = sourceDirectories(canonicalRoot);
@@ -140,16 +145,15 @@ export function diagnoseProcedureSkills(options: { host: HostId; project?: strin
         if (header.name !== name) issues.push(`Installed procedure skill ${name} has an unexpected name.`);
         if (typeof header.description !== 'string' || !header.description.trim()) issues.push(`Installed procedure skill ${name} has invalid description frontmatter.`);
         if (header.name === name && header.description !== skill.description) issues.push(`Installed procedure skill ${name} description differs from canonical metadata.`);
-        const emitted = emittedProcedureSkillName(name.replace(/^harness-procedure-/, ''));
         const expectedGuidance = `${guidance} ${skill.intendedRoles.join(', ')}.`;
-        if (!match[2]!.includes(expectedGuidance) || !match[2]!.includes('advisory only')) issues.push(`Installed procedure skill ${emitted} is missing intended-role advisory guidance.`);
+        if (!match[2]!.includes(expectedGuidance) || !match[2]!.includes('advisory only')) issues.push(`Installed procedure skill ${name} is missing intended-role advisory guidance.`);
       } catch {
         issues.push(`Installed procedure skill ${name} has malformed or unsafe SKILL.md frontmatter/artifact.`);
       }
     }
   }
   if (!inspected) {
-    notes.push('Procedure skills: not installed/not checked (no native skill installation footprint detected).');
+    notes.push('No native procedure-skill installation footprint detected; missing installed skills are not checked.');
     return { host: options.host, status: 'not-installed', issues, notes };
   }
   notes.push(`Procedure skill validation is static and advisory; it does not verify runtime discovery, invocation, permissions, or enforcement (${options.host}).`);
