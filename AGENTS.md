@@ -29,6 +29,14 @@ Preserve unrelated work in both repositories. Project settings belong only in th
 application's AGENTS.md or explicitly referenced context; reusable connections and
 defaults are global. Existing legacy profiles require explicit migration consent.
 
+## Receipt-managed files
+
+When implementing or testing receipt-managed file selections, use platform-aware
+canonical file identity. When coalescing changes, preserve the earliest before-state
+and latest after-state. Represent file absence separately from a present zero-byte
+file. For foreign ownership, an explicitly absent after-state is not active ownership;
+retain validation and pending-operation guards.
+
 ## Terminology
 
 Use the meanings in `docs/glossary.md` in docs, ADRs, agent contracts, and issues.
