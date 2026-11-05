@@ -40,6 +40,7 @@ Extract action items and proposed tasks from meeting transcripts, notes, or reco
 
 - Present proposed tasks to the human for review, flagging any likely duplicates against existing backlog issues.
 - The human must accept, edit, or reject proposed tasks one by one.
-- **Per-task approval:** Every task requires explicit individual approval before any issue is created. Cancelling the review creates nothing.
-- Approved tasks become backlog issues only through the existing authorized issue-creation workflow (such as `/start-issue` or confirmed project tracking procedures).
+- **Staging and per-task approval:** Individual task approvals are staged during review without creating any issues. No issues are created until the full review is complete and the human gives final confirmation to proceed.
+- **Cancellation:** If the human cancels the review at any point before final confirmation, all staged approvals are discarded and nothing is created.
+- **Issue creation routing:** Approved tasks are created only by routing creation through External using the confirmed tracker procedure for the project. Ask the human when the tracker procedure or creation route is unspecified. Do not use `/start-issue` to create issues; that workflow requires an existing issue and starts engineering work.
 - This procedure grants no permissions, makes no decisions, and creates no issues or external writes automatically. Treat intended-role metadata as advisory only.
