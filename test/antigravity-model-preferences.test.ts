@@ -323,7 +323,31 @@ test('global model preferences are managed with earliest before-state and repeat
   assert.equal(readdirSync(recovery).filter(name => name.startsWith('native-install-')).length, receiptsBefore);
 });
 
-test('alternate-context installation is managed and uninstall blocks after concurrent content changes', async t => {
+test('alternate-context uninstall removes only the harness block when the file was edited outside it', async t => {
+  const root = makeTempRoot('ag-model-uninstall-edit-'); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); const home = join(root, 'home'); const recovery = join(root, 'recovery');
+  mkdirSync(join(project, 'docs'), { recursive: true }); mkdirSync(home);
+  const context = join(project, 'docs', 'HARNESS.md'); writeFileSync(context, '# Preserve these notes\n');
+  const exitCode = await runInstallerFlow({ scope: 'project', project, context: 'docs/HARNESS.md', host: 'antigravity' }, {
+    home, recoveryDirectory: recovery, agentsDirectory: rolesDir, commandsDirectory: commandsDir,
+    ask: async (question, suggested) => defaultAnswer(question, suggested), output: () => {}, error: () => {},
+  });
+  assert.equal(exitCode, 0);
+  writeFileSync(context, `${readFileSync(context, 'utf8')}\nUser edit after install.\n`);
+  const targetConfig = join(project, '.agents', 'hooks.json');
+  const snapshot = discoverReceiptChain(recovery, targetConfig, 'antigravity');
+  const receipt = readReceiptForRestore(join(snapshot.directory, snapshot.head!.file), targetConfig);
+  const status = await runUninstallFlow({
+    receipt,
+    current: readFileSync(targetConfig, 'utf8'),
+    confirm: async () => 'uninstall', output: () => {}, error: message => assert.fail(message),
+    save: () => {}, backupParent: recovery,
+  });
+  assert.equal(status, 0);
+  assert.equal(readFileSync(context, 'utf8'), '# Preserve these notes\n\nUser edit after install.\n');
+});
+
+test('alternate-context installation is managed and uninstall blocks after its harness block changes', async t => {
   const root = makeTempRoot('ag-model-uninstall-'); t.after(() => rmSync(root, { recursive: true, force: true }));
   const project = join(root, 'project'); const home = join(root, 'home'); const recovery = join(root, 'recovery');
   mkdirSync(join(project, 'docs'), { recursive: true }); mkdirSync(home);
@@ -344,7 +368,9 @@ test('alternate-context installation is managed and uninstall blocks after concu
   assert.ok(readFileSync(context, 'utf8').includes('# Preserve these notes'));
   assert.ok(readFileSync(join(project, 'AGENTS.md'), 'utf8').includes('docs/HARNESS.md'));
   const installedContext = readFileSync(context, 'utf8');
-  writeFileSync(context, installedContext + '\nUser edit after install.\n');
+  const editedBlock = installedContext.replace('<!-- advanced-harness:model-preferences:end -->', 'User edit after install.\n<!-- advanced-harness:model-preferences:end -->');
+  assert.notEqual(editedBlock, installedContext);
+  writeFileSync(context, editedBlock);
   const targetConfig = join(project, '.agents', 'hooks.json');
   const snapshot = discoverReceiptChain(recovery, targetConfig, 'antigravity');
   assert.ok(snapshot.head);

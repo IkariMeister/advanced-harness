@@ -2,7 +2,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSandbox, repoRoot, tree, type Sandbox } from './support/sandbox.ts';
 import { antigravityInstall, ask, claudeCodeInstall, roles } from './support/steps.ts';
@@ -71,6 +71,56 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
     assert.equal(existsSync(join(box.project, '.claude', 'settings.json')), false, 'settings.json');
     assert.equal(existsSync(join(box.project, 'CLAUDE.md')), false, 'CLAUDE.md');
     assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
+  });
+});
+
+describe('SMK-CC edited CLAUDE.md uninstall (non-TTY piped answers)', () => {
+  let box: Sandbox;
+  const args = () => ['--host', 'claude-code', '--scope', 'project', '--project', box.project];
+  const claudeMd = () => join(box.project, 'CLAUDE.md');
+  before(() => { box = createSandbox('claude-edited'); });
+  after(() => box.dispose());
+
+  it('SMK-CC-05 cancel keeps the edited file, then uninstall removes only the harness block', async () => {
+    assert.equal((await box.run('install-native-harness.ts', args(), { steps: claudeCodeInstall('yes') })).code, 0);
+    writeFileSync(claudeMd(), `${readFileSync(claudeMd(), 'utf8')}\nHand edit.\n`);
+    const reviewed = tree(box.project);
+    const cancelled = await box.run('uninstall-native-harness.ts', args(), { steps: [ask('Type uninstall to continue', '')] });
+    assert.equal(cancelled.code, 0, cancelled.transcript);
+    assert.match(cancelled.stdout, /remove harness block; keep your edits/);
+    assert.deepEqual(tree(box.project), reviewed);
+    const result = await box.run('uninstall-native-harness.ts', args(), { steps: [ask('Type uninstall to continue', 'uninstall')] });
+    assert.equal(result.code, 0, result.transcript);
+    assert.equal(readFileSync(claudeMd(), 'utf8'), 'Hand edit.\n');
+  });
+
+  it('SMK-CC-06 an edited harness block blocks uninstall before the prompt with no writes', async () => {
+    assert.equal((await box.run('install-native-harness.ts', args(), { steps: claudeCodeInstall('yes') })).code, 0);
+    writeFileSync(claudeMd(), readFileSync(claudeMd(), 'utf8').replace('<!-- advanced-harness:lead:end -->', 'changed\n<!-- advanced-harness:lead:end -->'));
+    const reviewed = tree(box.project);
+    const result = await box.run('uninstall-native-harness.ts', args());
+    assert.equal(result.code, 1, result.transcript);
+    assert.match(result.transcript, /harness block edited or missing/);
+    assert.deepEqual(tree(box.project), reviewed);
+  });
+});
+
+describe('SMK-AG edited AGENTS.md uninstall (non-TTY piped answers)', () => {
+  let box: Sandbox;
+  const args = () => ['--host', 'antigravity', '--scope', 'project', '--project', box.project];
+  before(() => { box = createSandbox('antigravity-edited'); });
+  after(() => box.dispose());
+
+  it('SMK-AG-06 uninstall removes the model-preference block and keeps edits to AGENTS.md', async () => {
+    assert.equal((await box.run('install-native-harness.ts', args(), { steps: antigravityInstall('yes') })).code, 0);
+    const agents = join(box.project, 'AGENTS.md');
+    assert.match(readFileSync(agents, 'utf8'), /advanced-harness:model-preferences:start/);
+    writeFileSync(agents, `Hand edit.\n\n${readFileSync(agents, 'utf8')}`);
+    const result = await box.run('uninstall-native-harness.ts', args(), { steps: [ask('Type uninstall to continue', 'uninstall')] });
+    assert.equal(result.code, 0, result.transcript);
+    const text = readFileSync(agents, 'utf8');
+    assert.ok(text.startsWith('Hand edit.\n'), text);
+    assert.doesNotMatch(text, /advanced-harness:model-preferences/);
   });
 });
 

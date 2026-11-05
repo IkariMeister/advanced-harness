@@ -6,6 +6,7 @@ import { nativeRoles, type NativeReconciliationOptions, type NativeRole } from '
 import { reconcilePermissions, type AttributedRule, type PermissionRule, type ReconciliationResult } from './permission-reconciliation.ts';
 
 import { isSupportedHost, type HostId } from './host-registry.ts';
+import { planInstructionBlockRestore } from './instruction-block-restore.ts';
 
 export type HarnessVersionStamp = { version: string; commit: string; dirty?: boolean };
 /** `legacyMigration` records a consented refresh of `opaque.after` in this receipt only (#160). */
@@ -342,7 +343,12 @@ export function planV2Restore(receipt: V2Receipt, text: string): { updated: stri
       const expectedBefore = readState(f.before, 'before');
       if (expectedAfter === null || expectedBefore === null) continue;
       const matches = (expected: Buffer | undefined) => expected === undefined ? current === undefined : current !== undefined && current.equals(expected);
-      if (matches(expectedAfter)) {
+      const block = current !== undefined && !matches(expectedBefore) ? planInstructionBlockRestore(f, current) : undefined;
+      if (block?.conflict) {
+        conflicts.push(`${f.path} (harness block edited or missing)`);
+      } else if (block?.keepsEdits) {
+        actions.push(`${f.path}: remove harness block; keep your edits`);
+      } else if (block || matches(expectedAfter)) {
         if (expectedBefore === undefined) {
           actions.push(`${f.path}: remove installer-created ${f.kind}`);
         } else {
@@ -362,7 +368,7 @@ export function planV2Restore(receipt: V2Receipt, text: string): { updated: stri
   return { updated: conflicts.length ? text : rest.updated, actions, conflicts };
 }
 
-export type ManagedRestorePlan = { backupDir: string; plans: { path: string; exists: boolean; current: Buffer | undefined; next: Buffer | undefined }[] };
+export type ManagedRestorePlan = { backupDir: string; plans: { path: string; exists: boolean; current: Buffer | undefined; next: Buffer | undefined; keepsEdits?: boolean }[] };
 
 export function prepareManagedFilePlan(receipt: V2Receipt, backupParent: string): ManagedRestorePlan {
   if (!receipt.managedFiles?.length) return { backupDir: '', plans: [] };
@@ -387,6 +393,12 @@ export function prepareManagedFilePlan(receipt: V2Receipt, backupParent: string)
     const beforeKnown = 'absent' in f.before || bytesForEvidence(f.before) !== undefined;
     const afterKnown = 'absent' in f.after || bytesForEvidence(f.after) !== undefined;
     if (stateMatches(f.before)) continue;
+    const block = current !== undefined ? planInstructionBlockRestore(f, current) : undefined;
+    if (block?.conflict) throw new Error(`Managed file changed after restore preflight: ${f.path}`);
+    if (block) {
+      plans.push({ path: f.path, exists, current, next: block.next, ...(block.keepsEdits ? { keepsEdits: true } : {}) });
+      continue;
+    }
     if (stateMatches(f.after)) {
       if (!beforeKnown) throw new Error(`Managed restore lacks recoverable prior content for ${f.path}; digest-only prior state cannot authorize reconstruction.`);
       plans.push({ path: f.path, exists, current, next: 'absent' in f.before ? undefined : bytesForEvidence(f.before) });
@@ -418,7 +430,7 @@ export function applyManagedFilePlan(receipt: V2Receipt, backupParent: string, p
         backups.push(backupPath);
       }
       if (plan.next === undefined) { if (plan.exists) unlinkSync(plan.path); modified.push(`${plan.path} (removed)`); }
-      else { writeFileSync(plan.path, plan.next); modified.push(`${plan.path} (restored)`); }
+      else { writeFileSync(plan.path, plan.next); modified.push(`${plan.path} (${plan.keepsEdits ? 'harness block removed; other content kept' : 'restored'})`); }
     } catch (err) {
       throw new Error(`Managed restore partially completed; completed: ${modified.join(', ') || '(none)'}. Backups: ${backups.join(', ') || '(none)'}. Cause: ${String(err)}`);
     }
