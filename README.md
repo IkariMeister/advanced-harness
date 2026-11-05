@@ -147,7 +147,7 @@ Check an installed harness without reinstalling:
 npm run harness:doctor -- --project "path/to/android-project"
 ```
 
-It prints the harness checkout version and whether it is on a release tag (no network access). This verifies agent visibility/modes and model/variant catalog availability, not account entitlement. It may start OpenCode's service but never restarts it or sends model requests. See [installation troubleshooting](docs/installation.md#after-installation).
+It prints the harness checkout version and whether it is on a release tag (no network access). This verifies agent visibility/modes and model/variant catalog availability, not account entitlement. It also statically validates canonical procedure-skill metadata and expected installed skills; role guidance is advisory and does not grant permissions. Missing installed skills fail only when an installation footprint is detected. Codex and Cursor native procedure-skill deployment are unsupported. Static skill checks remain available when OpenCode runtime verification is inconclusive. Doctor may start OpenCode's service but never restarts it or sends model requests. See [installation troubleshooting](docs/installation.md#after-installation).
 
 Check for updates and preview changes to installed prompts and permissions:
 
