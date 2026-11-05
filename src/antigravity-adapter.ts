@@ -34,6 +34,7 @@ import {
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import { HOST_CAPABILITIES, HOST_MODEL_PRESETS, type HostRolePreset } from './host-registry.ts';
 import { antigravityGlobalModelPreferencesPath, antigravityPreferenceEvidence, assertAntigravityPreferencePredecessorState, assertNoAntigravityPreferenceDeploymentOverlap, planAntigravityModelPreferenceWrites, preflightAntigravityPreferenceWrites } from './antigravity-model-preferences.ts';
+import { discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims, type ProcedureFilePlan } from './procedure-deployment.ts';
 
 export interface AntigravityAdapterInstallOptions {
   scope: 'project' | 'global';
@@ -119,6 +120,7 @@ export function planAntigravityDeployment(
   targetConfig: string;
   filesToDeploy: AntigravityDeploymentItem[];
   tiers: Record<NativeRole, AntigravityTier>;
+  skills: ProcedureFilePlan[];
 } {
   const roles = loadRoleDefinitions(agentsDir);
   const leadRule = compileLeadOrchestrationRule(roles, antigravityPresetsWithTiers(tiers));
@@ -313,7 +315,9 @@ export function planAntigravityDeployment(
     };
   });
 
-  return { targetConfig, filesToDeploy, tiers };
+  const skillRoot = scope === 'project' ? projectRoot! : join(home, '.gemini', 'config');
+  const skills = planProcedureDeployment(discoverProcedureSkills(fileURLToPath(new URL('../skills/', import.meta.url)), 'antigravity'), skillRoot, priorManagedFiles, scope === 'global');
+  return { targetConfig, filesToDeploy, tiers, skills };
 }
 
 /** One-line, actionable report for a merged config file that blocks planning. */
@@ -423,6 +427,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   for (const role of nativeRoles) output(`  ${role}: ${tiers[role]}${role === 'lead' ? ' (session model)' : ''}`);
 
   const selectedFilesToWrite: AntigravityDeploymentItem[] = [];
+  const selectedSkills = new Set<string>();
 
   output('\nFiles to deploy:');
   for (const f of plan.filesToDeploy) {
@@ -446,6 +451,12 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
       }
     }
   }
+  output('\nReusable procedure skills:');
+  for (const f of plan.skills) {
+    output(`  ${f.path}: ${f.status}${f.status === 'customized' ? ' (preserved unless explicitly replaced)' : ''}`);
+    if (f.status === 'new' || f.status === 'outdated') selectedSkills.add(canonicalPath(f.path));
+    else if (f.status === 'customized' && /^(yes|y)$/i.test((await ask(`Overwrite customized/unowned procedure skill ${f.path}? (yes/no)`, 'no')).trim())) selectedSkills.add(canonicalPath(f.path));
+  }
 
   const preferencePlan = await planAntigravityModelPreferenceWrites({
     scope,
@@ -457,6 +468,9 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     runtimeTiers: tiers,
   });
   assertNoAntigravityPreferenceDeploymentOverlap(preferencePlan.paths, plan.filesToDeploy);
+  const procedureSkillTargets = new Set(plan.skills.map(file => canonicalPath(file.path)));
+  const preferenceSkillCollisions = preferencePlan.paths.filter(path => procedureSkillTargets.has(canonicalPath(path)));
+  if (preferenceSkillCollisions.length) throw new Error(`Antigravity preference paths overlap canonical procedure skills: ${preferenceSkillCollisions.join(', ')}.`);
   output('\nDesired model preference preview (labels only; no runtime assignment or access verification):');
   for (const role of nativeRoles) {
     output(`  ${role} (runtime tier ${tiers[role]}, not changed by preferences): ${preferencePlan.preferences.preferences[role] ?? 'unconfigured'}`);
@@ -477,6 +491,8 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
 
   // Preflight all planned files against snapshot taken before confirmation
   preflightAntigravityDeployment(plan.filesToDeploy);
+  assertNoForeignManagedFileClaims(backupParent, 'antigravity', [...selectedSkills]);
+  preflightProcedureFiles(plan.skills.filter(file => selectedSkills.has(canonicalPath(file.path))));
   preflightAntigravityPreferenceWrites(preferencePlan.writes);
   // Customized-artifact prompts and preference questions are asynchronous. A
   // predecessor context may have changed while either was open, including when
@@ -499,6 +515,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     });
   }
   newManagedEvidence.push(...antigravityPreferenceEvidence(preferencePlan.writes));
+  newManagedEvidence.push(...procedureManagedEvidence(plan.skills, selectedSkills));
 
   // Preserve earliest before baseline from prior managed files across upgrades/reinstalls
   const combinedManagedFiles = structuredClone(priorManagedFiles);
@@ -515,7 +532,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   }
 
   const configChanged = targetFinal !== (targetInitial ?? '');
-  const hasWrites = selectedFilesToWrite.length > 0 || preferencePlan.writes.length > 0;
+  const hasWrites = selectedFilesToWrite.length > 0 || preferencePlan.writes.length > 0 || selectedSkills.size > 0;
 
   if (!hasWrites && !configChanged) {
     output('Configuration and artifacts already match; no files, backups, or receipts were modified.');
@@ -537,8 +554,10 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
 
   try {
     revalidatePendingSuccessor(pending);
+    assertNoForeignManagedFileClaims(backupParent, 'antigravity', [...selectedSkills]);
     preflightAntigravityDeployment(plan.filesToDeploy);
     preflightAntigravityPreferenceWrites(preferencePlan.writes);
+    preflightProcedureFiles(plan.skills.filter(file => selectedSkills.has(canonicalPath(file.path))));
 
     for (const f of selectedFilesToWrite) {
       saveInstallation(f.absolutePath, f.currentContent, f.content, backupParent);
@@ -546,15 +565,20 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
     for (const file of preferencePlan.writes) {
       saveInstallation(file.path, file.currentContent, file.content, backupParent);
     }
+    if (selectedSkills.size) applyProcedureFiles(plan.skills, selectedSkills, backupParent, path => output(`Procedure skill backup: ${path}`));
   } catch (err) {
     const targetUnchanged = (existsSync(plan.targetConfig) ? readFileSync(plan.targetConfig, 'utf8') : undefined) === targetInitial;
     const allFilesUnchanged = selectedFilesToWrite.every(f => {
       const exists = existsSync(f.absolutePath);
       if (f.currentContent === undefined) return !exists;
       return exists && readFileSync(f.absolutePath, 'utf8') === f.currentContent;
-    }) && preferencePlan.writes.every(f => (existsSync(f.path) ? readFileSync(f.path, 'utf8') : undefined) === f.currentContent);
+    }) && preferencePlan.writes.every(f => (existsSync(f.path) ? readFileSync(f.path, 'utf8') : undefined) === f.currentContent) && plan.skills.every(file => {
+      if (!selectedSkills.has(canonicalPath(file.path))) return true;
+      const current = existsSync(file.path) ? readFileSync(file.path) : undefined;
+      return current === undefined ? file.current === undefined : file.current !== undefined && current.equals(file.current);
+    });
 
-    if (targetUnchanged && allFilesUnchanged) {
+    if (targetUnchanged && allFilesUnchanged && !(err instanceof Error && err.message.includes('Procedure skill deployment may be partial'))) {
       recoverFailedSuccessor(pending, targetInitial);
     } else {
       error(`Configuration or artifact writes may have partially succeeded; pending recovery evidence retained at ${receiptPath}.`);
@@ -566,6 +590,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   finishGitExclude(exclude, output, error);
 
   output('\nAntigravity harness deployment complete.');
+  if (selectedSkills.size) output('• Reusable procedure skills deployed.');
   output('• Rules deployed for Lead orchestrator with subagent delegation contract.');
   output('• PreToolUse hook installed to block "gh pr merge".');
   output('• Workflow skills and MCP config generated.\n');

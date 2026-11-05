@@ -64,6 +64,7 @@ describe('SMK-CX Codex global role-process lifecycle (non-TTY piped answers)', (
     assert.deepEqual(result.unansweredSteps, []);
     for (const role of childRoles) assert.match(readFileSync(join(codexHome(), `harness-${role}.config.toml`), 'utf8'), /model = "gpt-smoke"/, role);
     assert.ok(existsSync(join(codexHome(), 'advanced-harness', 'codex-role.mjs')));
+    assert.equal(existsSync(join(box.home, '.agents', 'skills', 'harness-procedure-documentation-impact', 'SKILL.md')), false, 'Codex procedure artifacts are not deployed by the global lifecycle');
     assert.match(readFileSync(join(codexHome(), 'AGENTS.md'), 'utf8'), /Advanced Harness Lead \(Codex, one process per role\)/);
     assert.match(readFileSync(join(codexHome(), 'config.toml'), 'utf8'), /multi_agent = false/);
     assert.equal(existsSync(join(codexHome(), 'agents')), false, 'no in-process custom agents');

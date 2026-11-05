@@ -67,8 +67,35 @@ test('update flow cancellation makes no configuration or recovery writes', async
   assert.ok(output.some(line => line.includes('Update cancelled. No files or receipts were modified.')));
 });
 
+test('foreign skill ownership conflict is checked before pending receipt or backups are created', async t => {
+  const root = makeTempRoot('harness-update-foreign-skill-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project'); mkdirSync(project);
+  const config = join(project, 'opencode.json');
+  const initial = JSON.stringify(createDummyInstalledConfig(), null, 2);
+  writeFileSync(config, initial);
+  const recovery = join(root, 'recovery'); mkdirSync(recovery);
+  const foreignTarget = join(root, 'claude', 'settings.json'); mkdirSync(join(root, 'claude'));
+  writeFileSync(foreignTarget, '{}');
+  const skillPath = join(project, '.opencode', 'skills', 'harness-procedure-documentation-impact', 'SKILL.md');
+  const foreign = createSuccessorReceipt(discoverReceiptChain(recovery, foreignTarget, 'claude-code'), undefined, '{}', {}, undefined, { host: 'claude-code', managedFiles: [{ path: skillPath, kind: 'skills', before: { absent: true }, after: { content: 'foreign' } }] });
+  finalizeSuccessor(writePendingSuccessor(discoverReceiptChain(recovery, foreignTarget, 'claude-code'), foreign), '{}');
+  let pendingAttempts = 0;
+  const answers = (question: string) => question.startsWith('Check remote') || question.includes('system prompt to latest') || question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'update' : (() => { throw new Error(`Unexpected question: ${question}`); })();
+  await assert.rejects(runUpdateFlow({ scope: 'project', project }, {
+    ask: async question => answers(question), output: () => {}, error: () => {}, home: root,
+    recoveryDirectory: recovery, runCommand: (_exe, args) => args[0] === 'rev-parse' ? 'a'.repeat(40) : (() => { throw new Error('remote checks unavailable in fixture'); })(),
+    writePending: (...args) => { pendingAttempts++; return writePendingSuccessor(...args); },
+  }), /another host's active receipt ownership/);
+  assert.equal(pendingAttempts, 0);
+  assert.equal(readFileSync(config, 'utf8'), initial);
+  assert.equal(existsSync(skillPath), false);
+  assert.equal(readdirSync(recovery).filter(name => name.endsWith('.pending.json')).length, 0);
+  assert.equal(readdirSync(recovery).filter(name => name.startsWith('native-install-')).length, 1);
+});
+
 test('Codex project-scope update is refused before prompts or filesystem writes, even with --context', async t => {
-  const root = makeTempRoot('codex-gated-update-');
+  const root = makeTempRoot('codex-project-scope-refusal-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const context of [undefined, 'local']) {
     let prompts = 0;
@@ -602,8 +629,9 @@ test('update flow adds missing commands, records managedFiles in receipt, and un
   assert.ok(chain.head);
   assert.equal(chain.head.receipt.version, 2);
   assert.ok(Array.isArray(chain.head.receipt.managedFiles));
-  assert.equal(chain.head.receipt.managedFiles.length, 6);
-  for (const f of chain.head.receipt.managedFiles) {
+  assert.equal(chain.head.receipt.managedFiles.filter(f => f.kind === 'commands').length, 6);
+  assert.equal(chain.head.receipt.managedFiles.filter(f => f.kind === 'skills').length, 1);
+  for (const f of chain.head.receipt.managedFiles.filter(f => f.kind === 'commands')) {
     assert.equal(f.kind, 'commands');
     assert.ok('absent' in f.before && f.before.absent === true);
     assert.ok('content' in f.after && typeof f.after.content === 'string');

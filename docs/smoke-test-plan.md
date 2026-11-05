@@ -80,11 +80,11 @@ otherwise remains compile-only and is covered by `npm test`.
 | SMK-HS-03 | Update host prompt receives a comma-separated answer, then unsupported Cursor | Multi-host answer is re-asked; Cursor is rejected before writes, with no unanswered prompts |
 | OC-01 | Install with piped stdin and no TTY preload | Non-zero exit, guard message, no files or receipts |
 | OC-02 | Install preview, Enter at `Type install` | "Cancelled", project tree unchanged, no recovery dir, no runtime calls |
-| OC-03 | Install with default model suggestions | 8 inline agents (Lead primary), 6 `.opencode/commands`, 1 receipt, `AGENTS.md` untouched, runtime PASS for 8 roles, only `opencode api get` calls |
+| OC-03 | Install with default model suggestions | 8 inline agents (Lead primary), 6 `.opencode/commands`, canonical procedure skill under `.opencode/skills/harness-procedure-documentation-impact/`, 1 receipt, `AGENTS.md` untouched, runtime PASS for 8 roles, only `opencode api get` calls |
 | OC-04 | `harness:doctor --host opencode` | Exit 0, 8 PASS lines, no-paid-request disclosure |
 | OC-05 | Drift Lead's system prompt, then `harness:deploy-prompts` and type `deploy` | Prompt restored from `agents/lead.md`, model unchanged |
 | OC-06 | `harness:update`: cancel, then `update` | Cancel changes nothing; apply succeeds; a rerun no longer reports an unknown installed version |
-| OC-07 | `harness:uninstall`: cancel, then `uninstall` | Cancel changes nothing; apply removes all harness agents and commands, keeps a backup, `AGENTS.md` untouched |
+| OC-07 | `harness:uninstall`: cancel, then `uninstall` | Cancel changes nothing; apply removes harness agents, commands, and installer-created procedure skills from receipt evidence, keeps exact backups for restored files, `AGENTS.md` untouched |
 | OC-08 | Fresh install receipt has a version stamp | Install exits 0; `harness:update` prints `Installed version: <version> (<commit>)` instead of `unknown` |
 | OC-09 | `harness:update` model reselection with live catalog, then cancel | Live catalog list printed with the entitlement disclaimer; installed models are catalog matches (no `absent` warning); cancel changes nothing; only read-only `opencode api get /api/model` calls |
 
@@ -99,9 +99,9 @@ otherwise remains compile-only and is covered by `npm test`.
 | ID | Case | Expected |
 | --- | --- | --- |
 | CC-01 | Enter at `Type yes to install` (default `no`) | Exit 1, "No files written", tree unchanged |
-| CC-02 | `yes` | `CLAUDE.md` Lead block, `.claude/settings.json` (`agent: lead`, `gh pr merge` denied), 8 agents, 6 commands, `AGENTS.md` untouched, no OpenCode calls; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
+| CC-02 | `yes` | `CLAUDE.md` Lead block, `.claude/settings.json` (`agent: lead`, `gh pr merge` denied), 8 agents, 6 commands, canonical procedure skill under `.claude/skills/`, `AGENTS.md` untouched, no OpenCode calls; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
 | CC-03 | `harness:doctor --host claude-code` | Exit 0, `HEALTHY (Installed: Yes)` |
-| CC-04 | Receipt-backed uninstall (`--host claude-code --scope project`) | Exit 0; agents, commands, `settings.json`, and `CLAUDE.md` removed; `AGENTS.md` equals its pristine content |
+| CC-04 | Receipt-backed uninstall (`--host claude-code --scope project`) | Exit 0; agents, commands, procedure skills, `settings.json`, and `CLAUDE.md` removed; `AGENTS.md` equals its pristine content |
 
 ### SMK-AG: Antigravity project lifecycle (`smoke/claude-antigravity.smoke.ts`)
 
@@ -109,9 +109,9 @@ otherwise remains compile-only and is covered by `npm test`.
 | --- | --- | --- |
 | AG-01 | `no` at the confirmation | Exit 1, "No files written", tree unchanged |
 | AG-02 | Enter at `Type yes to install` (default `no`) | Exit 1, "No files written", tree unchanged |
-| AG-03 | `yes` with unconfigured model preferences | `.agents/` rules, 6 skills, merge-guard script and hook, MCP config; original `AGENTS.md` content preserved; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
+| AG-03 | `yes` with unconfigured model preferences | `.agents/` rules, 6 workflow skills and the distinct canonical procedure skill, merge-guard script and hook, MCP config; original `AGENTS.md` content preserved; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
 | AG-04 | `harness:doctor --host antigravity` | Exit 0, `Installed: Yes` |
-| AG-05 | Receipt-backed uninstall (`--host antigravity --scope project`) | Exit 0; rules, skills, merge-guard script, `hooks.json`, `mcp_config.json` removed; `AGENTS.md` equals its pristine content |
+| AG-05 | Receipt-backed uninstall (`--host antigravity --scope project`) | Exit 0; rules, workflow and procedure skills, merge-guard script, `hooks.json`, `mcp_config.json` removed; `AGENTS.md` equals its pristine content |
 
 ### SMK-CX: Codex global role-process lifecycle (`smoke/codex-lifecycle.smoke.ts`)
 
@@ -150,9 +150,9 @@ it. When a gap is fixed, remove the `todo` option so the test becomes a gate.
 
 The previously recorded Claude Code/Antigravity uninstall gap (CC-04, AG-05),
 Antigravity confirmation-default gap (AG-02), and install version-stamp gap (OC-08)
-are resolved by the host-aware uninstall, #81, and #82 respectively. Codex
-receipt-backed uninstall remains unimplemented and explicitly deferred (CX-07);
-the Codex gate cases do not assert install or uninstall support.
+are resolved by the host-aware uninstall, #81, and #82 respectively. Codex now has
+automated global role-process install/update/uninstall coverage; this is not
+interactive TTY or Codex Desktop runtime validation.
 
 Codex Windows/macOS TTY validation remains pending; the human waived this manual
 test for this pass only. Codex Desktop validation also remains pending and out of

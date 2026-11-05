@@ -78,7 +78,7 @@ test('injected installer cancellation makes no configuration or recovery writes'
 });
 
 test('Codex project-scope install is refused before prompts or filesystem writes, even with --context', async t => {
-  const root = makeTempRoot('codex-gated-install-');
+  const root = makeTempRoot('codex-project-scope-refusal-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const context of [undefined, 'local']) {
     let prompts = 0;

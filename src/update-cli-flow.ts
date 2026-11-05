@@ -43,6 +43,9 @@ import {
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, isCodexOnly, selectNativeHost, type HostId } from './host-registry.ts';
 import { parseGlobalProjectDefaults, runSharedLocationStep, type GlobalProjectDefaults } from './project-setup.ts';
 import { checkAntigravityConfigMerge } from './antigravity-adapter.ts';
+import { canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims } from './procedure-deployment.ts';
+
+const canonicalManagedPath = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 
 export interface UpdateFlowOptions {
   scope?: string;
@@ -64,6 +67,7 @@ export interface UpdateFlowDependencies {
   recoveryDirectory?: string;
   agentsDirectory?: string;
   workflowCommandsDirectory?: string;
+  skillsDirectory?: string;
   applyWorkflowCommands?: typeof applyOpenCodeCommandDeployment;
   harnessRoot?: string;
   environment?: NodeJS.ProcessEnv;
@@ -459,6 +463,14 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   const commandSource = deps.workflowCommandsDirectory ?? join(harnessRoot, 'commands');
   const commandDirectory = join(project ?? globalDirectory, project ? '.opencode' : '', 'commands');
   const commandPlan = planOpenCodeCommandDeployment(commandSource, commandDirectory, existingManagedFiles);
+  const skillPlan = planProcedureDeployment(discoverProcedureSkills(deps.skillsDirectory ?? fileURLToPath(new URL('../skills/', import.meta.url)), 'opencode'), project ?? globalDirectory, existingManagedFiles, scope === 'global');
+  const skillSelections = new Set<string>();
+  output('\nReusable procedure skill update preview:');
+  for (const file of skillPlan) {
+    output(`  ${file.path}: ${file.status}${file.status === 'customized' ? ' (preserved unless explicitly replaced)' : ''}`);
+    if (file.status === 'new' || file.status === 'outdated') skillSelections.add(canonicalProcedurePath(file.path));
+    else if (file.status === 'customized' && /^(y|yes)$/i.test(await ask(`Replace customized/unowned procedure skill ${file.path}?`, 'no'))) skillSelections.add(canonicalProcedurePath(file.path));
+  }
   const commandSelections: WorkflowCommandId[] = [];
   output('\nWorkflow command update preview:');
   for (const item of commandPlan) {
@@ -498,6 +510,10 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     commandSelections,
     existingManagedFiles
   );
+  for (const ev of procedureManagedEvidence(skillPlan, new Set(skillPlan.filter(file => skillSelections.has(canonicalProcedurePath(file.path))).map(file => canonicalProcedurePath(file.path))))) {
+    const existing = combinedManagedFiles.find(item => canonicalManagedPath(item.path) === canonicalManagedPath(ev.path));
+    if (existing) existing.after = structuredClone(ev.after); else combinedManagedFiles.push(ev);
+  }
 
   const successor = createSuccessorReceipt(
     history,
@@ -512,20 +528,26 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     }
   );
 
-  const pending = (deps.writePending ?? writePendingSuccessor)(history, successor);
-  const receiptPath = pending.path;
-  let backup: string | undefined;
-
   const configChanged = updated !== original;
   const selectedCommandItems = commandPlan.filter(
     item => commandSelections.includes(item.id) && item.status !== 'current'
   );
+  const selectedSkillItems = skillPlan.filter(file => skillSelections.has(canonicalProcedurePath(file.path)) && file.status !== 'current');
+  // Fail before creating a pending receipt; retain the guarded recheck below for races.
+  assertNoForeignManagedFileClaims(backupParent, 'opencode', selectedSkillItems.map(file => file.path));
+
+  const pending = (deps.writePending ?? writePendingSuccessor)(history, successor);
+  const receiptPath = pending.path;
+  let backup: string | undefined;
 
   try {
     revalidatePendingSuccessor(pending);
+    assertNoForeignManagedFileClaims(backupParent, 'opencode', selectedSkillItems.map(file => file.path));
     if (selectedCommandItems.length > 0) {
       preflightOpenCodeCommandDeployment(commandPlan, commandSelections);
     }
+    preflightProcedureFiles(selectedSkillItems);
+    for (const file of skillPlan) assertSafeFilesystemPath(file.path, 'file');
     if (configChanged) {
       backup = (deps.save ?? saveInstallation)(target, original, updated, backupParent);
     }
@@ -540,6 +562,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
         }
       );
     }
+    if (selectedSkillItems.length) applyProcedureFiles(skillPlan, skillSelections, backupParent, path => output(`Procedure skill backup: ${path}`));
   } catch (err) {
     const configMatchesOriginal = (existsSync(target) ? readFileSync(target, 'utf8') : undefined) === original;
     const commandFilesUnchanged = selectedCommandItems.every(item => {
@@ -548,7 +571,12 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       return exists && readFileSync(item.target, 'utf8') === item.current;
     });
 
-    if (configMatchesOriginal && commandFilesUnchanged) {
+    const skillFilesUnchanged = skillPlan.every(file => {
+      const current = existsSync(file.path) ? readFileSync(file.path) : undefined;
+      return file.status === 'current' ? current?.equals(file.content) : current === undefined ? file.current === undefined : file.current?.equals(current);
+    });
+    const skillFailureMayHaveBackupOrWrites = err instanceof Error && err.message.includes('Procedure skill deployment may be partial');
+    if (configMatchesOriginal && commandFilesUnchanged && skillFilesUnchanged && !skillFailureMayHaveBackupOrWrites) {
       recoverFailedSuccessor(pending, original);
     } else {
       errorOutput(
@@ -569,6 +597,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   if (configChanged) {
     output(`\nConfiguration updated: ${target}`);
   }
+  if (selectedSkillItems.length) output('Reusable procedure skills updated.');
   if (backup) {
     output(`Backup created: ${backup}`);
   }

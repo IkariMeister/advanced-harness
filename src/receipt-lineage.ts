@@ -14,8 +14,8 @@ export type PermissionEvidence = { path: string[]; order: PermissionRule[]; owne
 export type ManagedFileEvidence = {
   path: string;
   kind: 'config' | 'instructions' | 'rules' | 'skills' | 'settings' | 'commands';
-  before: { absent: true } | { digest?: string; content?: string };
-  after: { absent: true } | { digest?: string; content?: string };
+  before: { absent: true } | { digest?: string; content?: string; contentBase64?: string };
+  after: { absent: true } | { digest?: string; content?: string; contentBase64?: string };
 };
 export type V2Receipt = Omit<InstallationReceipt, 'version' | 'status'> & {
   version: 2; id: string; status: 'pending' | 'complete';
@@ -28,6 +28,8 @@ export type V2Receipt = Omit<InstallationReceipt, 'version' | 'status'> & {
 type Entry = { file: string; text: string; identity: string; digest: string; receipt: AnyReceipt };
 export type ReceiptSnapshot = { directory: string; target: string; host?: HostId | undefined; fingerprint: string; entries: Entry[]; head?: Entry | undefined };
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+const hashBytes = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+const bytesForEvidence = (state: { content?: string; contentBase64?: string }): Buffer | undefined => state.contentBase64 !== undefined ? Buffer.from(state.contentBase64, 'base64') : state.content !== undefined ? Buffer.from(state.content, 'utf8') : undefined;
 const canonicalTarget = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 const key = (path: string[]) => path.join('.');
 const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -52,11 +54,14 @@ export function validateV2Receipt(value: unknown, target: string, allowPending =
       }
       for (const state of [f.before, f.after]) {
         if (Object.keys(state).length === 1 && state.absent === true) continue;
-        if (Object.keys(state).some(k => !['content', 'digest'].includes(k)) ||
+        if (Object.keys(state).some(k => !['content', 'contentBase64', 'digest'].includes(k)) ||
             state.content !== undefined && typeof state.content !== 'string' ||
+            state.contentBase64 !== undefined && (typeof state.contentBase64 !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(state.contentBase64) || Buffer.from(state.contentBase64, 'base64').toString('base64') !== state.contentBase64) ||
+            state.content !== undefined && state.contentBase64 !== undefined ||
             state.digest !== undefined && (typeof state.digest !== 'string' || !/^[a-f0-9]{64}$/.test(state.digest)) ||
-            state.content === undefined && state.digest === undefined ||
-            state.content !== undefined && state.digest !== undefined && hash(state.content) !== state.digest) {
+            state.content === undefined && state.contentBase64 === undefined && state.digest === undefined ||
+            state.content !== undefined && state.digest !== undefined && hash(state.content) !== state.digest ||
+            state.contentBase64 !== undefined && state.digest !== undefined && hashBytes(Buffer.from(state.contentBase64, 'base64')) !== state.digest) {
           throw new Error('Invalid or contradictory managedFiles content/digest evidence.');
         }
       }
@@ -321,12 +326,13 @@ export function planV2Restore(receipt: V2Receipt, text: string): { updated: stri
       if ([...managedTargets].some(existing => existing === identity || existing.startsWith(identity + (process.platform === 'win32' ? '\\' : '/')) || identity.startsWith(existing + (process.platform === 'win32' ? '\\' : '/')))) conflicts.push(`${f.path} (duplicate or overlapping managed target)`);
       managedTargets.add(identity);
       const exists = existsSync(f.path);
-      const current = exists ? readFileSync(f.path, 'utf8') : undefined;
-      const readState = (state: { absent?: true; content?: string; digest?: string }, label: string): string | undefined | null => {
+      const current = exists ? readFileSync(f.path) : undefined;
+      const readState = (state: { absent?: true; content?: string; contentBase64?: string; digest?: string }, label: string): Buffer | undefined | null => {
         if (state.absent) return undefined;
-        if (state.content !== undefined) return state.content;
+        const content = bytesForEvidence(state);
+        if (content !== undefined) return content;
         if (state.digest !== undefined) {
-          if (current !== undefined && hash(current) === state.digest) return current;
+          if (current !== undefined && hashBytes(current) === state.digest) return current;
           conflicts.push(`${f.path} (${label} digest-only evidence; content unavailable or changed)`);
           return null;
         }
@@ -335,13 +341,14 @@ export function planV2Restore(receipt: V2Receipt, text: string): { updated: stri
       const expectedAfter = readState(f.after, 'after');
       const expectedBefore = readState(f.before, 'before');
       if (expectedAfter === null || expectedBefore === null) continue;
-      if (current === expectedAfter) {
+      const matches = (expected: Buffer | undefined) => expected === undefined ? current === undefined : current !== undefined && current.equals(expected);
+      if (matches(expectedAfter)) {
         if (expectedBefore === undefined) {
           actions.push(`${f.path}: remove installer-created ${f.kind}`);
         } else {
           actions.push(`${f.path}: restore prior ${f.kind}`);
         }
-      } else if (current === expectedBefore) {
+      } else if (matches(expectedBefore)) {
         actions.push(`${f.path}: already restored`);
       } else {
         conflicts.push(`${f.path} (concurrently modified)`);
@@ -355,7 +362,7 @@ export function planV2Restore(receipt: V2Receipt, text: string): { updated: stri
   return { updated: conflicts.length ? text : rest.updated, actions, conflicts };
 }
 
-export type ManagedRestorePlan = { backupDir: string; plans: { path: string; exists: boolean; current: string | undefined; next: string | undefined }[] };
+export type ManagedRestorePlan = { backupDir: string; plans: { path: string; exists: boolean; current: Buffer | undefined; next: Buffer | undefined }[] };
 
 export function prepareManagedFilePlan(receipt: V2Receipt, backupParent: string): ManagedRestorePlan {
   if (!receipt.managedFiles?.length) return { backupDir: '', plans: [] };
@@ -370,16 +377,19 @@ export function prepareManagedFilePlan(receipt: V2Receipt, backupParent: string)
     if ([...targets].some(existing => existing === identity || existing.startsWith(identity + (process.platform === 'win32' ? '\\' : '/')) || identity.startsWith(existing + (process.platform === 'win32' ? '\\' : '/')))) throw new Error(`Duplicate or overlapping managed restore target: ${f.path}`);
     targets.add(identity);
     const exists = existsSync(f.path);
-    const current = exists ? readFileSync(f.path, 'utf8') : undefined;
-    const stateMatches = (state: { absent?: true; content?: string; digest?: string }) => state.absent ? current === undefined
-      : state.content !== undefined ? current === state.content
-      : state.digest !== undefined && current !== undefined && hash(current) === state.digest;
-    const beforeKnown = 'absent' in f.before || 'content' in f.before;
-    const afterKnown = 'absent' in f.after || 'content' in f.after;
+    const current = exists ? readFileSync(f.path) : undefined;
+    const stateMatches = (state: { absent?: true; content?: string; contentBase64?: string; digest?: string }) => {
+      if (state.absent) return current === undefined;
+      const content = bytesForEvidence(state);
+      if (content) return current?.equals(content) ?? false;
+      return state.digest !== undefined && current !== undefined && hashBytes(current) === state.digest;
+    };
+    const beforeKnown = 'absent' in f.before || bytesForEvidence(f.before) !== undefined;
+    const afterKnown = 'absent' in f.after || bytesForEvidence(f.after) !== undefined;
     if (stateMatches(f.before)) continue;
     if (stateMatches(f.after)) {
       if (!beforeKnown) throw new Error(`Managed restore lacks recoverable prior content for ${f.path}; digest-only prior state cannot authorize reconstruction.`);
-      plans.push({ path: f.path, exists, current, next: 'absent' in f.before ? undefined : f.before.content });
+      plans.push({ path: f.path, exists, current, next: 'absent' in f.before ? undefined : bytesForEvidence(f.before) });
     } else {
       if (!afterKnown) throw new Error(`Managed restore cannot safely establish digest-only after state for ${f.path}`);
       throw new Error(`Managed file changed after restore preflight: ${f.path}`);
@@ -388,7 +398,7 @@ export function prepareManagedFilePlan(receipt: V2Receipt, backupParent: string)
   return { backupDir, plans };
 }
 
-export function applyManagedFilePlan(receipt: V2Receipt, backupParent: string, prepared = prepareManagedFilePlan(receipt, backupParent), io: { writeBackup?: (path: string, content: string) => void } = {}): { backups: string[]; modified: string[] } {
+export function applyManagedFilePlan(receipt: V2Receipt, backupParent: string, prepared = prepareManagedFilePlan(receipt, backupParent), io: { writeBackup?: (path: string, content: Buffer) => void } = {}): { backups: string[]; modified: string[] } {
   const backups: string[] = [];
   const modified: string[] = [];
   if (!receipt.managedFiles?.length) return { backups, modified };
@@ -398,8 +408,8 @@ export function applyManagedFilePlan(receipt: V2Receipt, backupParent: string, p
   for (const plan of prepared.plans) {
     try {
       assertSafeFilesystemPath(plan.path, 'file');
-      const current = existsSync(plan.path) ? readFileSync(plan.path, 'utf8') : undefined;
-      if (current !== plan.current) throw new Error(`Managed file changed after preflight: ${plan.path}`);
+      const current = existsSync(plan.path) ? readFileSync(plan.path) : undefined;
+      if (current === undefined ? plan.current !== undefined : plan.current === undefined || !current.equals(plan.current)) throw new Error(`Managed file changed after preflight: ${plan.path}`);
       if (plan.current !== undefined) {
         mkdirSync(prepared.backupDir, { recursive: true, mode: 0o700 });
         const backupPath = join(prepared.backupDir, `${hash(canonicalTarget(plan.path)).slice(0, 16)}-${basename(plan.path)}`);
@@ -408,7 +418,7 @@ export function applyManagedFilePlan(receipt: V2Receipt, backupParent: string, p
         backups.push(backupPath);
       }
       if (plan.next === undefined) { if (plan.exists) unlinkSync(plan.path); modified.push(`${plan.path} (removed)`); }
-      else { writeFileSync(plan.path, plan.next, 'utf8'); modified.push(`${plan.path} (restored)`); }
+      else { writeFileSync(plan.path, plan.next); modified.push(`${plan.path} (restored)`); }
     } catch (err) {
       throw new Error(`Managed restore partially completed; completed: ${modified.join(', ') || '(none)'}. Backups: ${backups.join(', ') || '(none)'}. Cause: ${String(err)}`);
     }

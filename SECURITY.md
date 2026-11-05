@@ -109,7 +109,7 @@ Git commands. The shared list lives in `src/security-guardrails.ts`.
 | OpenCode | Deny rules appended last to each role; ordered last-match keeps them in force. Home-directory paths also have `~`-free forms in both `/` and `\` separators. Bundled short force flags (`-uf`, `-fu`, up to four letters) are denied via `?` patterns. Update reconciliation inserts later setup rules before them and refuses later overrides. |
 | Claude Code | Project `.claude/settings.json` `Read`/`Edit`/`Bash` deny rules for every session and subagent. |
 | Antigravity | The `PreToolUse` hook denies destructive Git in `run_command`. Sensitive paths are instruction-level only until file-tool hook payloads are captured (see the [validation checklist](docs/guardrail-validation.md)). |
-| Codex (gated) | Managed `prefix_rule` entries forbid destructive Git prefixes, bundled short force flags, and force flags right after `origin` or `upstream`. Force flags after other remotes or a refspec are not matched. Sensitive paths are instruction-level only. |
+| Codex (global role-process install) | Managed `prefix_rule` entries forbid destructive Git prefixes, bundled short force flags, and force flags right after `origin` or `upstream`. Force flags after other remotes or a refspec are not matched. Sensitive paths are instruction-level only. |
 
 Patterns are guardrails, not a sandbox: scripts, aliases, other tools, or separate
 processes can still reach these files and commands. Runtime enforcement on each
