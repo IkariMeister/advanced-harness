@@ -41,3 +41,18 @@ test('machine-local paths, external destinations, and placeholders are documente
   await writeFile(join(root, 'README.md'), '[external](https://example.invalid) [local](C:\\Users\\name\\file.md) [placeholder]({{path}})\n');
   assert.deepEqual(checkDocumentation(root), []);
 });
+
+test('documentation discovery checks root Markdown and recursively checks only the four documentation trees', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'docs-check-bounds-')); t.after(() => rm(root, { recursive: true, force: true }));
+  for (const dir of ['docs/nested', 'agents/nested', 'commands/nested', 'skills/nested', '.worktrees/hidden', 'other/nested']) await mkdir(join(root, dir), { recursive: true });
+  await writeFile(join(root, 'package.json'), JSON.stringify({ scripts: {} }));
+  const bad = '[broken](missing.md)';
+  await writeFile(join(root, 'README.md'), `# Root\n\n${bad}\n`);
+  for (const dir of ['docs/nested', 'agents/nested', 'commands/nested', 'skills/nested']) await writeFile(join(root, dir, 'checked.md'), `# Nested\n\n${bad}\n`);
+  await writeFile(join(root, '.worktrees', 'hidden', 'ignored.md'), `# Hidden\n\n${bad}\n`);
+  await writeFile(join(root, 'other', 'nested', 'ignored.md'), `# Unrelated\n\n${bad}\n`);
+  const errors = checkDocumentation(root).filter(error => /Missing local link/.test(error.message));
+  assert.deepEqual(errors.map(error => error.file), [
+    'agents/nested/checked.md', 'commands/nested/checked.md', 'docs/nested/checked.md', 'README.md', 'skills/nested/checked.md',
+  ]);
+});

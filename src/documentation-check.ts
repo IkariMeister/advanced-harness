@@ -4,7 +4,7 @@ import { workflowCommandIds } from './workflow-commands.ts';
 
 export interface DocumentationDiagnostic { file: string; line: number; message: string }
 
-const roots = ['.', 'docs', 'agents', 'commands', 'skills'];
+const recursiveRoots = ['docs', 'agents', 'commands', 'skills'];
 function markdownFiles(root: string): string[] {
   const result: string[] = [];
   const walk = (directory: string) => {
@@ -16,7 +16,14 @@ function markdownFiles(root: string): string[] {
       else if (stat.isFile() && extname(name).toLowerCase() === '.md') result.push(path);
     }
   };
-  for (const entry of roots) {
+  // Keep repository-root discovery bounded: worktrees and unrelated directories
+  // must not become part of the documentation check merely by being present.
+  try {
+    for (const name of readdirSync(root).sort()) {
+      if (extname(name).toLowerCase() === '.md' && statSync(join(root, name)).isFile()) result.push(join(root, name));
+    }
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  for (const entry of recursiveRoots) {
     const path = resolve(root, entry);
     try { if (statSync(path).isDirectory()) walk(path); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
