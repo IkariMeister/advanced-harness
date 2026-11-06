@@ -14,9 +14,28 @@ version between releases.
   resume, with your approval for each launch. Uninstall removes only the Lead block
   from a shared `AGENTS.md` and reverses only the
   harness's own `config.toml` edits (#45).
+- `harness:doctor` reports each resolved worktree and shared `MEMORY.md` location
+  and its source, and fails on invalid or conflicting settings. Missing settings
+  are reported without failing (#176).
+
+### Changed
+
+- All worktrees of a repository now get the same default worktree and shared
+  `MEMORY.md` locations. Paths under your home directory are saved as `$HOME/...`,
+  and settings saved that way no longer record `projectRoot`. Harness checkouts
+  older than this change reject such settings, so update them before committing
+  portable settings. Existing absolute settings keep working (#176).
+- `harness:update` no longer asks about valid saved locations. Use
+  `--change-shared-locations` to change them (#176).
+- Role contracts tell agents to read these locations from project context on every
+  compiled host, and to ask only when a value is missing, invalid, or conflicting
+  (#176).
 
 ### Fixed
 
+- Committed project settings no longer count as belonging to "another checkout"
+  in other worktrees, and a task worktree under the configured worktree parent no
+  longer fails validation (#176).
 - `harness:uninstall` for Claude Code and Antigravity no longer stops when you
   edited `CLAUDE.md` or `AGENTS.md` outside the harness block. It removes only the
   block and keeps your edits. An edited or missing block still stops uninstall with

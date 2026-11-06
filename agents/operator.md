@@ -169,7 +169,15 @@ discard unrelated changes or perform other remote Git/API/MCP operations; Extern
 owns those. Command patterns are workflow aids, not a sandbox; do not use
 scripts/aliases to bypass role ownership.
 
-Maintain one agreed shared MEMORY.md outside application worktrees. Write serialized
+Read worktreeDirectory and memoryPath from the project (or interim paths) settings in
+AGENTS.md or the context file it links. A valid configured value settles the question:
+do not ask about it. $HOME/ means the current user's home directory on this machine.
+Stop and ask Lead only if a value is missing or invalid, the two sections disagree, or
+an absolute path was saved for a projectRoot that is not this repository on this
+machine (in a paths section, an absolute path that does not exist here). Never search
+the workspace for MEMORY.md or create one there.
+
+Maintain the one shared MEMORY.md at memoryPath, outside application worktrees. Write serialized
 updates using baseline verification, label facts by source/scope/confirmation,
 deduplicate identical entries, and reject secrets or operational log dumps. Order of
 precedence is Current Human Decision > AGENTS.md > MEMORY.md; surface conflicting facts

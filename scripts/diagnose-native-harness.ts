@@ -7,6 +7,7 @@ import { DiagnosticError, expectedAgents, printReport, verifyRuntime, diagnoseHo
 import { detectInstalledHosts, parseHostSelection, type HostId } from '../src/host-registry.ts';
 import { describeHarnessCheckout } from '../src/harness-version.ts';
 import { diagnoseProcedureSkills } from '../src/procedure-skill-diagnostics.ts';
+import { diagnoseSharedLocations } from '../src/shared-location-diagnostics.ts';
 
 const args = process.argv.slice(2);
 
@@ -60,6 +61,14 @@ if (args.includes('--help')) {
       console.log(`Inspecting host(s): ${hosts.join(', ')}`);
 
       let allOk = true;
+
+      if (scope !== 'global') {
+        const locations = diagnoseSharedLocations(directory);
+        console.log(`Shared locations: ${locations.status}`);
+        for (const note of locations.notes) console.log(`  ℹ ${note}`);
+        for (const issue of locations.issues) console.error(`  FAIL: ${issue}`);
+        if (locations.issues.length) allOk = false;
+      }
 
       for (const host of hosts) {
         if (host === 'opencode') {
