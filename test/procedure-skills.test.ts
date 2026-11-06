@@ -401,3 +401,33 @@ test('workflow compilation retains unchanged behavior and command output exclude
   assert.equal(mixed.length, result.artifacts.length + 1);
   assert.ok(mixed.some(item => item.relativePath === '.opencode/commands/start-issue.md'));
 });
+
+test('multiline procedure skill descriptions emit valid YAML frontmatter and roundtrip correctly for all hosts (#166)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'harness-multiline-skill-'));
+  try {
+    const skillDir = join(dir, 'multiline-test');
+    await mkdir(skillDir);
+    const multilineDescription = 'First line of procedure description.\nSecond line with special characters: #, @, and "quotes".\nThird line of description.';
+    const skillContent = `---\nschemaVersion: 1\nname: multiline-test\ndescription: |-\n  First line of procedure description.\n  Second line with special characters: #, @, and "quotes".\n  Third line of description.\nintendedRoles:\n  - lead\n---\n# Multiline Test Procedure\n\nBody content.\n`;
+    await writeFile(join(skillDir, 'SKILL.md'), skillContent, 'utf8');
+
+    const loaded = loadProcedureSkill(skillDir);
+    assert.equal(loaded.description, multilineDescription);
+
+    for (const host of hosts) {
+      const artifacts = emitProcedureSkill(loaded, host);
+      const skillArtifact = artifacts.find(a => a.relativePath.endsWith('SKILL.md'));
+      assert.ok(skillArtifact, `Missing SKILL.md artifact for host ${host}`);
+      const content = skillArtifact.content as string;
+      const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(content);
+      assert.ok(match, `Frontmatter missing or malformed for host ${host}`);
+      const doc = parseDocument(match[1]!);
+      assert.equal(doc.errors.length, 0, `YAML parse errors encountered for host ${host}: ${doc.errors.map(e => e.message).join('; ')}`);
+      const header = doc.toJSON() as { name: string; description: string };
+      assert.equal(header.name, 'harness-procedure-multiline-test');
+      assert.equal(header.description, multilineDescription);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
