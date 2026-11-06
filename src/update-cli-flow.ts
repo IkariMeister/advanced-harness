@@ -41,7 +41,7 @@ import {
   type WorkflowCommandId
 } from './workflow-commands.ts';
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, isCodexOnly, selectNativeHost, type HostId } from './host-registry.ts';
-import { parseGlobalProjectDefaults, runSharedLocationStep, type GlobalProjectDefaults } from './project-setup.ts';
+import { globalDefaultsNotice, lookupGlobalDefaults, runSharedLocationStep } from './project-setup.ts';
 import { checkAntigravityConfigMerge } from './antigravity-adapter.ts';
 import { canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims } from './procedure-deployment.ts';
 
@@ -150,16 +150,14 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
 
   if (project) {
     // Shared locations are host-neutral, so they are settled once before any host update.
-    const globalDefaultsPath = join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode', 'harness.project.json');
-    let globalDefaults: GlobalProjectDefaults | undefined;
-    if (existsSync(globalDefaultsPath)) {
-      try { globalDefaults = parseGlobalProjectDefaults(readFileSync(globalDefaultsPath, 'utf8')); } catch { /* malformed defaults only lose suggestions */ }
-    }
+    const lookup = lookupGlobalDefaults({ home, environment: env, xdgConfigHome: deps.xdgConfigHome });
+    const notice = globalDefaultsNotice(lookup);
+    if (notice) output(notice);
     await (deps.sharedLocations ?? runSharedLocationStep)(project, {
       ask,
       output,
       home,
-      globalDefaults,
+      globalDefaults: lookup.defaults,
       backupParent: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups'),
     });
   }

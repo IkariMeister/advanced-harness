@@ -10,7 +10,15 @@ npm run harness:setup -- --project "C:/path/to/project-checkout"
 
 Or run `npm run harness:setup` and select scope interactively (`global` or `project`). Leading `~` and `$HOME` are expanded in prompted paths. Setup supports any Git checkout/worktree root as well as non-Git project directories. Android Gradle build/settings files and `package.json` scripts are detected heuristically for check suggestions, but neither is required. Git worktree `.git` files are supported. Use `--help` for invocation details. Piped input is refused.
 
-Project settings are stored **only in project context**: `AGENTS.md` by default, or a Markdown file selected with `--context docs/HARNESS.md`. An alternate file receives an explicit reference from `AGENTS.md`. In global scope, defaults are saved to `~/.config/opencode/harness.project.json`. There is no required machine-local JSON profile in the project checkout.
+Project settings are stored **only in project context**: `AGENTS.md` by default, or a Markdown file selected with `--context docs/HARNESS.md`. An alternate file receives an explicit reference from `AGENTS.md`. In global scope, defaults are saved to `~/.config/advanced-harness/project-defaults.json`, or under `$XDG_CONFIG_HOME` when it is set. There is no required machine-local JSON profile in the project checkout.
+
+### Global project defaults from an older version
+
+Earlier versions saved global project defaults to `~/.config/opencode/harness.project.json`. That file keeps working: when the new file is absent, project setup and `harness:update` read the old one, print a one-line notice, and write nothing to either path.
+
+To move to the new path, run `harness:setup --global`. It says the old file was found, then asks you to type `migrate` to use its values as suggestions; Enter or anything else starts from current suggestions. The preview says the old file is no longer read once the new one is saved, and only `save` writes the new file. Cancelling leaves no file, directory, or backup. The harness never edits or deletes the old file, so you can remove it yourself once you no longer need it.
+
+The new file always wins when it exists. If it is invalid, setup warns and gives no suggestions rather than falling back to the old file. An invalid old file gives no suggestions, is not offered for migration, and does not block setup.
 
 ## What setup asks
 

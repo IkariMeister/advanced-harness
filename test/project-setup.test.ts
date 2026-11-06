@@ -439,8 +439,9 @@ test('runSetupFlow in global scope configures and saves harness.project.json', a
   );
 
   assert.equal(code, 0);
-  const savedPath = join(xdg, 'opencode', 'harness.project.json');
+  const savedPath = join(xdg, 'advanced-harness', 'project-defaults.json');
   assert.equal(existsSync(savedPath), true);
+  assert.equal(existsSync(join(xdg, 'opencode', 'harness.project.json')), false, 'nothing is written to the OpenCode path');
   const saved = parseGlobalProjectDefaults(readFileSync(savedPath, 'utf8'));
   assert.equal(saved.baseBranch, 'main');
   assert.equal(saved.shell, 'bash');
