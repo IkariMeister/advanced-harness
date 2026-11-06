@@ -15,6 +15,13 @@ version between releases.
   from a shared `AGENTS.md` and reverses only the
   harness's own `config.toml` edits (#45).
 
+### Changed
+
+- Global project defaults now save to `~/.config/advanced-harness/project-defaults.json`
+  instead of the OpenCode config directory. The old file keeps working as a read-only
+  fallback. Run `harness:setup --global` and type `migrate` to move its values; the
+  old file is never edited or deleted (#190).
+
 ### Fixed
 
 - `harness:uninstall` for Claude Code and Antigravity no longer stops when you

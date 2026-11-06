@@ -228,6 +228,40 @@ export function parseGlobalProjectDefaults(text: string): GlobalProjectDefaults 
   } catch { throw new Error('Invalid existing global project defaults; resolve it before setup. No files changed.'); }
 }
 
+export interface GlobalDefaultsLookup {
+  canonicalPath: string;
+  legacyPath: string;
+  /** The file that was consulted. The legacy file is consulted only when the canonical one is absent. */
+  source: 'canonical' | 'legacy' | 'none';
+  /** Exact canonical contents, used to detect concurrent changes before saving. */
+  canonicalText?: string | undefined;
+  defaults?: GlobalProjectDefaults | undefined;
+  invalid: boolean;
+}
+
+/** Finds global project defaults. Read-only: the legacy OpenCode path is a fallback and is never written. */
+export function lookupGlobalDefaults(options: { home: string; environment: NodeJS.ProcessEnv; xdgConfigHome?: string | undefined }): GlobalDefaultsLookup {
+  const configHome = options.xdgConfigHome || options.environment.XDG_CONFIG_HOME || join(options.home, '.config');
+  const canonicalPath = resolve(join(configHome, 'advanced-harness', 'project-defaults.json'));
+  const legacyPath = resolve(join(configHome, 'opencode', 'harness.project.json'));
+  const source = existsSync(canonicalPath) ? 'canonical' : existsSync(legacyPath) ? 'legacy' : 'none';
+  if (source === 'none') return { canonicalPath, legacyPath, source, invalid: false };
+  let text: string | undefined;
+  try {
+    text = readFileSync(source === 'canonical' ? canonicalPath : legacyPath, 'utf8');
+    return { canonicalPath, legacyPath, source, canonicalText: source === 'canonical' ? text : undefined, defaults: parseGlobalProjectDefaults(text), invalid: false };
+  } catch {
+    return { canonicalPath, legacyPath, source, canonicalText: source === 'canonical' ? text : undefined, invalid: true };
+  }
+}
+
+/** One-line notice for flows that read global defaults but do not migrate them. */
+export function globalDefaultsNotice(lookup: GlobalDefaultsLookup): string | undefined {
+  if (lookup.source === 'canonical' && lookup.invalid) return `Warning: global project defaults at ${lookup.canonicalPath} contain invalid data and were not loaded as suggestions.`;
+  if (lookup.source === 'legacy' && !lookup.invalid) return `Using global project defaults from the old location ${lookup.legacyPath}. Run harness:setup --global to move them to ${lookup.canonicalPath}.`;
+  return undefined;
+}
+
 async function choose<T extends string>(ask: Ask, question: string, choices: readonly T[], suggested: T): Promise<T> {
   for (;;) {
     const answer = (await ask(question, suggested)).trim() || suggested;
@@ -509,15 +543,22 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
     throw new Error('Global setup does not take project/context settings. Use project scope separately.');
   }
 
-  const globalDir = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
-  const globalDefaultsPath = join(globalDir, 'harness.project.json');
+  const lookup = lookupGlobalDefaults({ home, environment: env, xdgConfigHome: deps.xdgConfigHome });
+  const globalDefaultsPath = lookup.canonicalPath;
 
   if (scope === 'global') {
-    const originalDefaults = existsSync(globalDefaultsPath) ? readFileSync(globalDefaultsPath, 'utf8') : undefined;
+    const originalDefaults = lookup.canonicalText;
     let previous: GlobalProjectDefaults | undefined;
-    if (originalDefaults !== undefined) {
-      try { previous = parseGlobalProjectDefaults(originalDefaults); }
-      catch { output('Warning: Existing global project defaults file contains invalid data and will not be loaded as suggestions.'); }
+    if (lookup.source === 'canonical') {
+      previous = lookup.defaults;
+      if (lookup.invalid) output('Warning: Existing global project defaults file contains invalid data and will not be loaded as suggestions.');
+    } else if (lookup.source === 'legacy') {
+      if (lookup.invalid) {
+        output(`Warning: Global project defaults at the old location ${lookup.legacyPath} contain invalid data. They will not be loaded as suggestions, and this file will not be edited/deleted.`);
+      } else {
+        output(`Global project defaults found at the old location: ${lookup.legacyPath}. This file will not be edited/deleted.`);
+        if ((await ask('Type migrate to use them as suggestions for the new location; Enter starts from current suggestions', 'no')).trim() === 'migrate') previous = lookup.defaults;
+      }
     }
     const shell = await askProjectShell(ask, previous?.shell ?? (process.platform === 'win32' ? 'powershell' : 'bash'));
     const profile = await askGlobalProfile(previous, ask, home, shell);
@@ -528,6 +569,7 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
     output(updated);
     output('Files to write:');
     output(`  ${file.path}${file.original === undefined ? ' (new)' : ' (backup before updating)'}`);
+    if (lookup.source === 'legacy') output(`The old file stays in place, unchanged, but is no longer read once this is saved: ${lookup.legacyPath}`);
 
     const confirm = await ask('Full preview: type save (or legacy setup) to save; Enter or anything else cancels', 'cancel');
     const result = confirmAndSaveSetup(confirm, [file], backupParent);
@@ -585,12 +627,9 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
     if ((await ask('Type migrate to use legacy settings as suggestions in the context file', 'no')) === 'migrate') previous = parseProfile(readFileSync(legacyPath, 'utf8'));
   }
 
-  // Read global defaults if available
-  let globalDefaults: GlobalProjectDefaults | undefined;
-  if (existsSync(globalDefaultsPath)) {
-    try { globalDefaults = parseGlobalProjectDefaults(readFileSync(globalDefaultsPath, 'utf8')); }
-    catch { /* ignore malformed global defaults */ }
-  }
+  const globalDefaults = lookup.defaults;
+  const notice = globalDefaultsNotice(lookup);
+  if (notice) output(notice);
 
   const defaultShell = previous?.shell ?? globalDefaults?.shell ?? (process.platform === 'win32' ? 'powershell' : 'bash');
   const shell = await askProjectShell(ask, defaultShell);
