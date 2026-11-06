@@ -5,14 +5,19 @@ import { askHostSelection } from '../src/host-registry.ts';
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:update -- [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--scope project|global] [--project <directory>] [--config <file>] [--context <in-project Markdown>] [--opencode <CLI path>] [--check-remote]');
+  console.log('Usage: npm run harness:update -- [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--scope project|global] [--project <directory>] [--config <file>] [--context <in-project Markdown>] [--opencode <CLI path>] [--check-remote] [--change-shared-locations]');
   console.log('Safe harness update workflow. Discovers newer versions, previews prompt & permission updates, preserves customizations, and records recovery receipts.');
+  console.log('Valid saved worktree and shared MEMORY.md locations are not asked about again; --change-shared-locations reopens those prompts.');
 } else {
   const options: Record<string, string | boolean> = {};
   for (let index = 0; index < args.length; index++) {
     const flag = args[index];
     if (flag === '--check-remote') {
       options['--check-remote'] = true;
+      continue;
+    }
+    if (flag === '--change-shared-locations') {
+      options['--change-shared-locations'] = true;
       continue;
     }
     const value = args[index + 1];
@@ -40,6 +45,7 @@ if (args.includes('--help')) {
         ...(options['--context'] ? { context: String(options['--context']) } : {}),
         ...(options['--opencode'] ? { opencode: String(options['--opencode']) } : {}),
         ...(options['--check-remote'] ? { checkRemote: true } : {}),
+        ...(options['--change-shared-locations'] ? { changeSharedLocations: true } : {}),
         host
       },
       {

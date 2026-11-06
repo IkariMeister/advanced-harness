@@ -47,6 +47,10 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
   const closing = 'local Git/worktrees/memory/cleanup; escalate services and remote Git to External\nthrough Lead.';
   assert.ok(operator.system.includes(closing));
   operator.system = operator.system.replace(closing, 'local Git/worktrees/memory/cleanup, including the read-only `git fetch` base refresh;\nescalate services and all other remote Git to External through Lead.');
+  // #176: Operator reads the shared locations from project context instead of an "agreed" path.
+  const agreed = 'Maintain one agreed shared MEMORY.md outside application worktrees. Write serialized';
+  assert.ok(operator.system.includes(agreed));
+  operator.system = operator.system.replace(agreed, 'Read worktreeDirectory and memoryPath from the project (or interim paths) settings in\nAGENTS.md or the context file it links. A valid configured value settles the question:\ndo not ask about it. $$HOME/ means the current user\'s home directory on this machine.\nStop and ask Lead only if a value is missing or invalid, the two sections disagree, or\nan absolute path was saved for a projectRoot that is not this repository on this\nmachine (in a paths section, an absolute path that does not exist here). Never search\nthe workspace for MEMORY.md or create one there.\n\nMaintain the one shared MEMORY.md at memoryPath, outside application worktrees. Write serialized');
   return definitions;
 }
 const currentNormalizedDefinitions = () => withOperatorFetch(structuredClone(legacyNormalizedDefinitions()));

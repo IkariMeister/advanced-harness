@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSandbox, tree, type Sandbox } from './support/sandbox.ts';
 import { ask, setupSteps } from './support/steps.ts';
+import { expandStoredPath } from '../src/shared-locations.ts';
 
 describe('SMK-PS project setup + SMK-PI project integrations (non-TTY piped answers)', () => {
   let box: Sandbox;
@@ -35,8 +36,11 @@ describe('SMK-PS project setup + SMK-PI project integrations (non-TTY piped answ
     assert.equal(settings.checks.lint.status, 'unconfigured');
     assert.deepEqual(settings.additionalChecks, [{ name: 'detekt', command: './gradlew detekt' }], 'additional gate saved next to, not instead of, lint');
     assert.equal(existsSync(join(box.project, '.opencode', 'harness.project.json')), false, 'no legacy profile file');
-    assert.deepEqual(readdirSync(settings.worktreeDirectory), [], 'setup creates the worktree parent but no Git worktrees');
-    assert.equal(readFileSync(settings.memoryPath, 'utf8'), '# Shared Operator memory\n\n', 'setup creates a header-only shared memory file');
+    assert.match(settings.worktreeDirectory, /^\$HOME\//, 'default locations under home are saved in the portable form');
+    assert.match(settings.memoryPath, /^\$HOME\//, 'default locations under home are saved in the portable form');
+    assert.equal(settings.projectRoot, undefined, 'portable settings carry no machine path');
+    assert.deepEqual(readdirSync(expandStoredPath(settings.worktreeDirectory, box.home)), [], 'setup creates the worktree parent but no Git worktrees');
+    assert.equal(readFileSync(expandStoredPath(settings.memoryPath, box.home), 'utf8'), '# Shared Operator memory\n\n', 'setup creates a header-only shared memory file');
   });
 
   it('SMK-PI-01 project integrations (gh + repository) add their own section without touching setup settings', async () => {

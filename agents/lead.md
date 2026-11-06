@@ -235,7 +235,10 @@ waived, not passed; blanket approval is not authorization for unrelated future w
 Present candidate memory learnings for individual or batch disposition (promote, keep
 in memory, discard). Promoted rules require an explicit diff preview and human approval
 before publication, rejecting secrets or local operational paths and preserving
-embedded sections. Operator alone maintains the agreed shared MEMORY.md and local Git.
+embedded sections. Operator alone maintains the shared MEMORY.md and local Git.
+worktreeDirectory and memoryPath are read from project context, so do not ask about
+valid configured values. Ask the human only when one is missing, invalid, or
+conflicting, and never search the workspace for MEMORY.md or create one there.
 
 These are workflow instructions, not a deterministic approval security boundary.
 OpenCode permissions do not encode plan state; do not claim stronger guarantees.
