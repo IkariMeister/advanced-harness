@@ -78,14 +78,14 @@ export function loadProcedureSkill(directory: string): ProcedureSkill {
   return { schemaVersion: 1, name, description: data.description, intendedRoles: nativeRoles.filter(role => selectedRoles.has(role)), body, supportingFiles };
 }
 
-function yamlScalar(text: string): string { return stringifyYaml(text).trimEnd(); }
 export function emitProcedureSkill(skill: ProcedureSkill, host: ProcedureSkillHost): ProcedureSkillArtifact[] {
   const canonicalName = skill.name.replace(/^harness-procedure-/, '');
   const name = emittedProcedureSkillName(canonicalName);
   const prefix = host === 'opencode' ? '.opencode/skills' : host === 'claude-code' ? '.claude/skills' : '.agents/skills';
   const path = `${prefix}/${name}`;
   const guidance = `\n\nIntended roles (advisory only): ${skill.intendedRoles.join(', ')}. This metadata is descriptive guidance only; it grants no permissions, conveys no approval or decision authority, and is not enforced role discovery.`;
-  const content = `---\nname: ${yamlScalar(name)}\ndescription: ${yamlScalar(skill.description)}\n---\n${skill.body.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\s*$/, '')}${guidance}\n`;
+  const frontmatter = stringifyYaml({ name, description: skill.description }).trimEnd();
+  const content = `---\n${frontmatter}\n---\n${skill.body.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\s*$/, '')}${guidance}\n`;
   const files = [{ relativePath: `${path}/SKILL.md`, content }, ...skill.supportingFiles.map(file => ({ relativePath: `${path}/${file.relativePath}`, content: file.content }))];
   const paths = new Set<string>();
   for (const file of files) {

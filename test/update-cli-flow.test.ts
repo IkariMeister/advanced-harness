@@ -631,11 +631,13 @@ test('update flow adds missing commands, records managedFiles in receipt, and un
   assert.ok(Array.isArray(chain.head.receipt.managedFiles));
   assert.equal(chain.head.receipt.managedFiles.filter(f => f.kind === 'commands').length, 6);
   const skillFiles = chain.head.receipt.managedFiles.filter(f => f.kind === 'skills');
-  assert.equal(skillFiles.length, 6);
+  assert.equal(skillFiles.length, 9);
   assert.deepEqual(skillFiles.map(f => f.path.split(/[\\/]/).at(-2)).sort(), [
     'harness-procedure-adr-authoring', 'harness-procedure-documentation-impact',
     'harness-procedure-documentation-review', 'harness-procedure-documentation-validation',
-    'harness-procedure-meeting-task-extraction', 'harness-procedure-technical-documentation',
+    'harness-procedure-evidence-collection', 'harness-procedure-meeting-task-extraction',
+    'harness-procedure-static-analysis', 'harness-procedure-technical-documentation',
+    'harness-procedure-unit-tests',
   ]);
   for (const f of chain.head.receipt.managedFiles.filter(f => f.kind === 'commands')) {
     assert.equal(f.kind, 'commands');

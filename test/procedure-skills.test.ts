@@ -109,6 +109,65 @@ test('BH-064: meeting-task-extraction procedure skill compiles for every support
   assert.match(skill.body, /operates from a pasted or exported transcript with no integration configured/i);
 });
 
+test('BH-050: generic validation procedure skills (unit-tests, static-analysis, evidence-collection) compile for every host and enforce validation boundaries', () => {
+  const genericSkills = ['unit-tests', 'static-analysis', 'evidence-collection'] as const;
+  const expectedRoles = ['implementer', 'reviewer', 'qa'];
+
+  for (const skillName of genericSkills) {
+    const dir = fileURLToPath(new URL(`../skills/${skillName}/`, import.meta.url));
+    const skill = loadProcedureSkill(dir);
+    assert.equal(skill.name, `harness-procedure-${skillName}`);
+    assert.equal(skill.schemaVersion, 1);
+    assert.deepEqual(skill.intendedRoles, expectedRoles);
+
+    const expectedPaths = [
+      `.opencode/skills/harness-procedure-${skillName}/SKILL.md`,
+      `.claude/skills/harness-procedure-${skillName}/SKILL.md`,
+      `.agents/skills/harness-procedure-${skillName}/SKILL.md`,
+      `.agents/skills/harness-procedure-${skillName}/SKILL.md`,
+    ];
+
+    for (const [index, host] of hosts.entries()) {
+      const [artifact] = emitProcedureSkill(skill, host);
+      assert.equal(artifact!.relativePath, expectedPaths[index]);
+      const match = /^---\n([\s\S]*?)\n---\n/.exec(artifact!.content as string)!;
+      const header = parseDocument(match[1]!).toJSON();
+      assert.deepEqual(Object.keys(header).sort(), ['description', 'name']);
+      assert.equal(header.name, `harness-procedure-${skillName}`);
+      assert.match(artifact!.content as string, /advisory only/);
+      assert.match(artifact!.content as string, /no permissions/);
+      assert.match(artifact!.content as string, /no approval or decision authority/);
+      assert.match(artifact!.content as string, /not enforced role discovery/);
+      assert.doesNotMatch(match[1]!, /allowed-tools|permissions/i);
+    }
+
+    // Invariants shared across all generic validation skills
+    assert.match(skill.body, /procedural only/i);
+    assert.match(skill.body, /does (?:not|\*\*not\*\*) (?:evaluate pass\/fail criteria|decide whether results are acceptable|evaluate findings)/i);
+    assert.match(skill.body, /disposable (?:directory|artifact location|scratch locations|or ignored build directories)/i);
+  }
+
+  // Skill-specific invariants
+  const unitTestsSkill = loadProcedureSkill(fileURLToPath(new URL('../skills/unit-tests/', import.meta.url)));
+  assert.match(unitTestsSkill.body, /tree cleanliness/i);
+  assert.match(unitTestsSkill.body, /leaves the reviewed source tree unchanged/i);
+  assert.match(unitTestsSkill.body, /evidence-collection/i);
+
+  const staticAnalysisSkill = loadProcedureSkill(fileURLToPath(new URL('../skills/static-analysis/', import.meta.url)));
+  assert.match(staticAnalysisSkill.body, /non-mutating mode/i);
+  assert.match(staticAnalysisSkill.body, /never invoke tools in auto-fix or in-place format mode/i);
+  assert.match(staticAnalysisSkill.body, /check-only mode/i);
+
+  const evidenceSkill = loadProcedureSkill(fileURLToPath(new URL('../skills/evidence-collection/', import.meta.url)));
+  assert.match(evidenceSkill.body, /unified evidence format/i);
+  assert.match(evidenceSkill.body, /re-run/i);
+  assert.match(evidenceSkill.body, /judged from evidence only/i);
+  assert.match(evidenceSkill.body, /exitStatus/);
+  assert.match(evidenceSkill.body, /command:/);
+  assert.match(evidenceSkill.body, /artifacts:/);
+  assert.match(evidenceSkill.body, /findingsSummary:/);
+});
+
 test('multi-source compiler is stable under source/host reorder and duplicate shared host outputs coalesce', async t => {
   const directory = fileURLToPath(new URL('.', source));
   const parent = await mkdtemp(join(tmpdir(), 'procedure-skills-multi-'));
@@ -360,4 +419,34 @@ test('workflow compilation retains unchanged behavior and command output exclude
   const mixed = combineProcedureSkillArtifacts([[...result.artifacts, ...emitProcedureSkill(loadProcedureSkill(fileURLToPath(new URL('.', source))), 'opencode')]]);
   assert.equal(mixed.length, result.artifacts.length + 1);
   assert.ok(mixed.some(item => item.relativePath === '.opencode/commands/start-issue.md'));
+});
+
+test('multiline procedure skill descriptions emit valid YAML frontmatter and roundtrip correctly for all hosts (#166)', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'harness-multiline-skill-'));
+  try {
+    const skillDir = join(dir, 'multiline-test');
+    await mkdir(skillDir);
+    const multilineDescription = 'First line of procedure description.\nSecond line with special characters: #, @, and "quotes".\nThird line of description.';
+    const skillContent = `---\nschemaVersion: 1\nname: multiline-test\ndescription: |-\n  First line of procedure description.\n  Second line with special characters: #, @, and "quotes".\n  Third line of description.\nintendedRoles:\n  - lead\n---\n# Multiline Test Procedure\n\nBody content.\n`;
+    await writeFile(join(skillDir, 'SKILL.md'), skillContent, 'utf8');
+
+    const loaded = loadProcedureSkill(skillDir);
+    assert.equal(loaded.description, multilineDescription);
+
+    for (const host of hosts) {
+      const artifacts = emitProcedureSkill(loaded, host);
+      const skillArtifact = artifacts.find(a => a.relativePath.endsWith('SKILL.md'));
+      assert.ok(skillArtifact, `Missing SKILL.md artifact for host ${host}`);
+      const content = skillArtifact.content as string;
+      const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(content);
+      assert.ok(match, `Frontmatter missing or malformed for host ${host}`);
+      const doc = parseDocument(match[1]!);
+      assert.equal(doc.errors.length, 0, `YAML parse errors encountered for host ${host}: ${doc.errors.map(e => e.message).join('; ')}`);
+      const header = doc.toJSON() as { name: string; description: string };
+      assert.equal(header.name, 'harness-procedure-multiline-test');
+      assert.equal(header.description, multilineDescription);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

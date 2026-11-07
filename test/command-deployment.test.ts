@@ -64,11 +64,13 @@ test('installer flow in project scope deploys commands and records managedFiles 
   assert.ok(Array.isArray(receipt.managedFiles));
   assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 6);
   const skillFiles = receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills');
-  assert.equal(skillFiles.length, 6);
+  assert.equal(skillFiles.length, 9);
   assert.deepEqual(skillFiles.map((f: { path: string }) => f.path.split(/[\\/]/).at(-2)).sort(), [
     'harness-procedure-adr-authoring', 'harness-procedure-documentation-impact',
     'harness-procedure-documentation-review', 'harness-procedure-documentation-validation',
-    'harness-procedure-meeting-task-extraction', 'harness-procedure-technical-documentation',
+    'harness-procedure-evidence-collection', 'harness-procedure-meeting-task-extraction',
+    'harness-procedure-static-analysis', 'harness-procedure-technical-documentation',
+    'harness-procedure-unit-tests',
   ]);
   for (const f of receipt.managedFiles.filter((item: {kind: string}) => item.kind === 'commands')) {
     assert.equal(f.kind, 'commands');
@@ -153,11 +155,13 @@ test('answering no to workflow commands prompt leaves commands folder untouched 
   const receipt = JSON.parse(readFileSync(join(recovery, receipts[0]!), 'utf8'));
   assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 0);
   const skillFiles = receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills');
-  assert.equal(skillFiles.length, 6);
+  assert.equal(skillFiles.length, 9);
   assert.deepEqual(skillFiles.map((f: { path: string }) => f.path.split(/[\\/]/).at(-2)).sort(), [
     'harness-procedure-adr-authoring', 'harness-procedure-documentation-impact',
     'harness-procedure-documentation-review', 'harness-procedure-documentation-validation',
-    'harness-procedure-meeting-task-extraction', 'harness-procedure-technical-documentation',
+    'harness-procedure-evidence-collection', 'harness-procedure-meeting-task-extraction',
+    'harness-procedure-static-analysis', 'harness-procedure-technical-documentation',
+    'harness-procedure-unit-tests',
   ]);
 });
 

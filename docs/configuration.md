@@ -6,6 +6,7 @@
 | --- | --- |
 | Reusable MCP connections and agent permissions | Global host configuration (e.g. `~/.config/opencode/opencode.json(c)` for OpenCode, or host-specific config for Claude Code, Antigravity, Codex, Cursor) |
 | Default GitHub backend/host or MCP alias; optional Jira/design aliases | Global `harness.integrations.json` |
+| Global project defaults: suggested base branch, shell, checks, device preference, and worktree/memory parent directories | `~/.config/advanced-harness/project-defaults.json`, or under `$XDG_CONFIG_HOME` when set (host-neutral) |
 | Repository, chosen optional services, Jira project/status mapping, build/test/device/worktree/memory settings | Project `AGENTS.md` (host-neutral project context, shared across all installed hosts) |
 
 Global preferences contain **no repository names, Jira project keys/status mappings, or credentials**. Credentials stay in host/GitHub CLI stores or environment references. Project settings live in the host-neutral `AGENTS.md` and are preserved without modification across multiple hosts in the same workspace. Each host operates with its own scoped receipts, backups, and configurations without clobbering other hosts.
@@ -137,6 +138,8 @@ permission dialog authorizes a tool operation, not a plan.
 Existing `.opencode/harness.project.json`, `.opencode/harness.integrations.json`, and local OpenCode configs are **not deleted, overwritten, or promoted globally**. If no embedded section exists, setup offers legacy data as suggestions only after you type **`migrate`**. Final setup/integrations confirmation still approves the new context section. Declining migration leaves the old files untouched and starts from current suggestions.
 
 Check mode does not automatically read legacy profiles. Rerun the respective setup intentionally to create context, review it, and decide separately whether obsolete local files/config overrides should eventually be removed. Never discard unrelated Android work.
+
+Global project defaults saved by an earlier version at `~/.config/opencode/harness.project.json` keep working as a read-only fallback until the new file exists. Only `harness:setup --global` moves them, after you type **`migrate`** and then **`save`**; the old file is never edited or deleted. See [global project defaults from an older version](project-setup.md#global-project-defaults-from-an-older-version).
 
 ## 4. Antigravity desired model preferences
 
