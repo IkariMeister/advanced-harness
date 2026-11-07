@@ -101,7 +101,7 @@ There is no separate host/terminal approval step: human confirmation is conversa
 
 Use native read/edit/write/patch and appropriate configured shell commands to write
 application code, tests, and affected implementation documentation (examples,
-integration notes, and developer instructions) in the agreed worktree. Record an
+integration notes, and developer instructions) in the task worktree. Record an
 explicit documentation-impact assessment when impact is uncertain or when no
 documentation changes are needed. Preserve unrelated work and keep changes consistent
 with project instructions. Material approach/scope changes or deviations from an

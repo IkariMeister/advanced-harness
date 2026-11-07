@@ -55,6 +55,7 @@ export interface UpdateFlowOptions {
   checkRemote?: boolean;
   host?: string;
   context?: string;
+  changeSharedLocations?: boolean;
 }
 
 export interface UpdateFlowDependencies {
@@ -159,6 +160,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       home,
       globalDefaults: lookup.defaults,
       backupParent: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups'),
+      changeLocations: options.changeSharedLocations,
     });
   }
 

@@ -1,5 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { formatSharedMemory } from './shared-memory.ts';
@@ -17,37 +17,163 @@ function inside(path: string, directory: string): boolean {
   return child === '' || (!child.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && child !== '..' && !isAbsolute(child));
 }
 
-export function projectId(root: string): string {
-  const canonical = process.platform === 'win32' ? resolve(root).toLowerCase() : resolve(root);
-  return `${basename(root).replace(/[^a-zA-Z0-9_-]/g, '-') || 'project'}-${createHash('sha256').update(canonical).digest('hex').slice(0, 8)}`;
+/**
+ * The checkout that identifies this project: a linked worktree maps to its main checkout through the
+ * `.git` file and `commondir`, without running Git. Separate clones and submodules stay their own project.
+ */
+export function mainCheckoutRoot(root: string): string {
+  const own = resolve(root);
+  const dotGit = join(own, '.git');
+  const entry = lstatSync(dotGit, { throwIfNoEntry: false });
+  if (!entry?.isFile() || entry.size > 4096) return own;
+  try {
+    const gitDirectory = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(readFileSync(dotGit, 'utf8'))?.[1];
+    if (!gitDirectory) return own;
+    const linked = resolve(own, gitDirectory);
+    const commonFile = join(linked, 'commondir');
+    if (!lstatSync(commonFile, { throwIfNoEntry: false })?.isFile()) return own;
+    const common = resolve(linked, readFileSync(commonFile, 'utf8').trim());
+    if (!existsSync(common)) return own;
+    return basename(common) === '.git' ? dirname(common) : common;
+  } catch { return own; }
 }
 
-export function defaultLocations(root: string, parents: { worktreeParentDirectory?: string; memoryParentDirectory?: string } = {}, home = homedir()): SharedLocations {
-  const id = projectId(root);
+function canonicalPath(path: string): string {
+  let physical: string;
+  try { physical = physicalPath(path); } catch { physical = resolve(path); }
+  return process.platform === 'win32' ? physical.toLowerCase() : physical;
+}
+
+function idFor(name: string, canonical: string): string {
+  return `${name.replace(/[^a-zA-Z0-9_-]/g, '-') || 'project'}-${createHash('sha256').update(canonical).digest('hex').slice(0, 8)}`;
+}
+
+/** All worktrees of a repository share this ID; the main checkout's own ID does not change. */
+export function projectId(root: string): string {
+  const main = mainCheckoutRoot(root);
+  let physical: string;
+  try { physical = physicalPath(main); } catch { physical = main; }
+  return idFor(basename(physical), process.platform === 'win32' ? physical.toLowerCase() : physical);
+}
+
+/** The ID this checkout path had before worktrees shared one, kept only to find existing data. */
+export function legacyProjectId(root: string): string {
+  return idFor(basename(root), process.platform === 'win32' ? resolve(root).toLowerCase() : resolve(root));
+}
+
+/** Whether two checkouts are worktrees of one repository. Separate clones are different projects. */
+export function sameProject(left: string, right: string): boolean {
+  return canonicalPath(mainCheckoutRoot(left)) === canonicalPath(mainCheckoutRoot(right));
+}
+
+type LocationParents = { worktreeParentDirectory?: string; memoryParentDirectory?: string };
+
+function locationsFor(id: string, parents: LocationParents, home: string): SharedLocations {
   return {
     worktreeDirectory: join(parents.worktreeParentDirectory ?? join(home, 'Projects', 'advanced-harness-worktrees'), id),
     memoryPath: join(parents.memoryParentDirectory ?? join(home, 'Projects', 'advanced-harness-data'), id, 'MEMORY.md'),
   };
 }
 
-export function validateLocations(projectRoot: string, value: Record<string, unknown>): void {
-  for (const key of ['worktreeDirectory', 'memoryPath'] as const) {
-    if (typeof value[key] !== 'string' || !isAbsolute(value[key]) || inside(value[key], projectRoot) || inside(projectRoot, key === 'memoryPath' ? dirname(value[key]) : value[key])) throw new Error('Worktree and shared-memory paths must be outside the application checkout and cannot contain it.');
-  }
-  if (basename(value.memoryPath as string) !== 'MEMORY.md') throw new Error('Shared memory path must end in MEMORY.md.');
-  if (inside(value.memoryPath as string, value.worktreeDirectory as string)) throw new Error('Shared memory must not be inside the worktree directory.');
+/** Computed defaults are suggestions for setup and update only; they never take effect on their own. */
+export function defaultLocations(root: string, parents: LocationParents = {}, home = homedir()): SharedLocations {
+  return locationsFor(projectId(root), parents, home);
 }
 
-export function validatePathsSettings(projectRoot: string, value: unknown): PathsSettings {
+/** Locations under this worktree's old path-derived ID, when a MEMORY.md still exists there. */
+export function legacyWorktreeLocations(root: string, parents: LocationParents = {}, home = homedir()): SharedLocations | undefined {
+  if (canonicalPath(mainCheckoutRoot(root)) === canonicalPath(root)) return undefined;
+  const locations = locationsFor(legacyProjectId(root), parents, home);
+  return existsSync(locations.memoryPath) ? locations : undefined;
+}
+
+/** `$HOME/...` is the portable form: it names the same place on every machine. */
+export function isPortablePath(path: string): boolean {
+  return /^\$HOME[/\\]/.test(path) && !path.split(/[/\\]/).includes('..');
+}
+
+export function expandStoredPath(path: string, home = homedir()): string {
+  return isPortablePath(path) ? join(home, path.slice('$HOME/'.length)) : path;
+}
+
+export function expandLocations(locations: SharedLocations, home = homedir()): SharedLocations {
+  return { worktreeDirectory: expandStoredPath(locations.worktreeDirectory, home), memoryPath: expandStoredPath(locations.memoryPath, home) };
+}
+
+/** Paths under the home directory are stored portably; anything else stays absolute. */
+export function toStoredPath(path: string, home = homedir()): string {
+  const absolute = resolve(path);
+  if (resolve(home) === absolute || !inside(absolute, home)) return absolute;
+  return `$HOME/${relative(resolve(home), absolute).split(sep).join('/')}`;
+}
+
+/** Recognizes Windows absolute paths on every platform, so a committed one is reported as foreign, not as relative. */
+export function isAbsoluteOnAnyPlatform(path: string): boolean {
+  return isAbsolute(path) || win32.isAbsolute(path);
+}
+
+/** Checks that do not depend on which checkout is asking. */
+export function validateLocationShape(value: Record<string, unknown>, home = homedir()): void {
+  for (const key of ['worktreeDirectory', 'memoryPath'] as const) {
+    const path = value[key];
+    if (typeof path !== 'string' || !(isPortablePath(path) || isAbsoluteOnAnyPlatform(path))) throw new Error('Worktree and shared-memory paths must be absolute or start with $HOME/.');
+  }
+  const { worktreeDirectory, memoryPath } = expandLocations(value as SharedLocations, home);
+  if (basename(memoryPath) !== 'MEMORY.md') throw new Error('Shared memory path must end in MEMORY.md.');
+  if (inside(memoryPath, worktreeDirectory)) throw new Error('Shared memory must not be inside the worktree directory.');
+}
+
+export function validateLocations(projectRoot: string, value: Record<string, unknown>, home = homedir()): void {
+  validateLocationShape(value, home);
+  const { worktreeDirectory, memoryPath } = expandLocations(value as SharedLocations, home);
+  if (inside(worktreeDirectory, projectRoot) || inside(projectRoot, worktreeDirectory) || inside(memoryPath, projectRoot) || inside(projectRoot, dirname(memoryPath))) throw new Error('Worktree and shared-memory paths must be outside the application checkout and cannot contain it.');
+}
+
+export function validatePathsSettings(projectRoot: string, value: unknown, home = homedir()): PathsSettings {
   if (!object(value) || !Object.keys(value).every(key => ['version', 'worktreeDirectory', 'memoryPath'].includes(key)) || value.version !== 1) throw new Error('Invalid or unsupported shared paths settings; unknown fields are not silently discarded.');
-  validateLocations(projectRoot, value);
+  validateLocations(mainCheckoutRoot(projectRoot), value, home);
   return value as PathsSettings;
 }
 
 export const pathsInstructions = [
   'Shared locations for this project, recorded before full project settings exist. Run harness:setup to confirm the remaining settings.',
   'worktreeDirectory is the parent for future task worktrees; memoryPath is the shared Operator MEMORY.md. Both are outside this checkout by design: read them from here, never search the workspace for MEMORY.md or create one inside it.',
+  '$HOME/ means the current user\'s home directory on this machine. Stop and ask if a location is missing or invalid, or is an absolute path that does not exist on this machine.',
 ];
+
+export type LocationResolution =
+  | { status: 'resolved'; source: 'project' | 'paths'; stored: SharedLocations; locations: SharedLocations; portable: boolean; plan: LocationPlan }
+  | { status: 'missing'; reason: string }
+  | { status: 'conflict' | 'invalid'; source?: 'project' | 'paths'; reason: string };
+
+/**
+ * The one resolution order: `project` section, then `paths` section, then stop and ask.
+ * Computed defaults are deliberately absent, so nothing silently starts a new, empty MEMORY.md.
+ */
+export function resolveLocationSettings(root: string, settings: { project?: (SharedLocations & { projectRoot?: string }) | undefined; paths?: SharedLocations | undefined }, home = homedir()): LocationResolution {
+  const { project, paths } = settings;
+  const stored = project ?? paths;
+  if (!stored) return { status: 'missing', reason: 'No shared locations are recorded in project context.' };
+  const source = project ? 'project' : 'paths';
+  const locations = expandLocations(stored, home);
+  if (project && paths) {
+    const other = expandLocations(paths, home);
+    if (resolve(other.worktreeDirectory) !== resolve(locations.worktreeDirectory) || resolve(other.memoryPath) !== resolve(locations.memoryPath)) return { status: 'conflict', source, reason: 'The project and paths sections record different shared locations.' };
+  }
+  const absolute = [stored.worktreeDirectory, stored.memoryPath].filter(path => !isPortablePath(path));
+  if (absolute.length) {
+    if (project?.projectRoot !== undefined) {
+      if (!sameProject(root, project.projectRoot)) return { status: 'conflict', source, reason: `Absolute shared locations were saved for ${project.projectRoot}, which is not this repository on this machine.` };
+    } else if (absolute.some(path => !lstatSync(path, { throwIfNoEntry: false }))) {
+      return { status: 'conflict', source, reason: 'An absolute shared location does not exist on this machine, so it may belong to another machine.' };
+    }
+  }
+  try {
+    return { status: 'resolved', source, stored: { worktreeDirectory: stored.worktreeDirectory, memoryPath: stored.memoryPath }, locations, portable: absolute.length === 0, plan: planSharedLocations(root, locations) };
+  } catch (error) {
+    return { status: 'invalid', source, reason: (error as Error).message };
+  }
+}
 
 /** Resolves the nearest existing ancestor through symlinks/junctions, then appends the missing tail. */
 export function physicalPath(path: string): string {
@@ -65,10 +191,18 @@ export function physicalPath(path: string): string {
   return join(real, ...missing);
 }
 
-/** Lexical checks can be bypassed by a linked ancestor, so compare where the paths really land. */
+/**
+ * Lexical checks can be bypassed by a linked ancestor, so compare where the paths really land.
+ * A task worktree legitimately sits under the worktree parent, so containment is judged against the
+ * main checkout; the current worktree must still not hold either location.
+ */
 export function validatePhysicalLocations(projectRoot: string, locations: SharedLocations): void {
   try {
-    validateLocations(physicalPath(projectRoot), { worktreeDirectory: physicalPath(locations.worktreeDirectory), memoryPath: physicalPath(locations.memoryPath) });
+    const worktreeDirectory = physicalPath(locations.worktreeDirectory);
+    const memoryPath = physicalPath(locations.memoryPath);
+    validateLocations(physicalPath(mainCheckoutRoot(projectRoot)), { worktreeDirectory, memoryPath });
+    const own = physicalPath(projectRoot);
+    if (inside(worktreeDirectory, own) || inside(memoryPath, own) || inside(own, dirname(memoryPath))) throw new Error('Worktree and shared-memory paths must be outside the application checkout and cannot contain it.');
   } catch (error) {
     throw new Error(`${(error as Error).message.replace(/\.$/, '')} once symlinks/junctions are resolved. No files changed.`);
   }

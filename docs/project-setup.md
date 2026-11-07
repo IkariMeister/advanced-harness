@@ -29,13 +29,42 @@ The new file always wins when it exists. If it is invalid, setup warns and gives
 - **Additional project gates**: optional extra required checks, such as `spotless` or `detekt`, each with a lowercase name and a single command line. They are saved as `additionalChecks` and run by Reviewer alongside the standard checks; they never replace `lint`. Gates detected in Gradle files are offered first (Enter accepts, `-` leaves them out); then enter more names, or press Enter to finish. On repeat setup, saved gates are reconfirmed (`-` removes one) and a detected gate you left out earlier is offered with `-` as the default, so it is not silently re-enabled.
 - **Device preference**: for Android/Gradle projects, `physical-first` (default), `emulator`, or `ask`, plus an optional serial. This records a preference, not a device connection/validation. `-` removes the serial so QA can select at runtime. Non-Android projects default device preference to `ask` without prompting.
 - **Worktree parent**: defaults to `$HOME/Projects/advanced-harness-worktrees/<project-id>`.
-- **Shared memory**: defaults to `$HOME/Projects/advanced-harness-data/<project-id>/MEMORY.md`. The ID includes a short canonical-path hash to avoid collisions between different checkouts with the same name. Clones intended to share memory can explicitly select the same agreed path.
+- **Shared memory**: defaults to `$HOME/Projects/advanced-harness-data/<project-id>/MEMORY.md`. The project ID includes a short hash of the main checkout's path, so all worktrees of a repository get the same defaults and different repositories with the same name do not collide. Separate clones are separate projects by default; clones intended to share memory can explicitly select the same path.
 
-Worktree and memory paths must be outside the app checkout, must not contain it, and shared memory must not sit within the worktree parent. These are the defined shared locations: every host reads `worktreeDirectory` and `memoryPath` from the saved settings rather than searching the workspace. On `save`, setup also creates whatever is missing: the worktree parent directory, the memory directory, and a header-only `MEMORY.md`. Each appears in the preview first. An existing `MEMORY.md` is never overwritten, and cancelling creates nothing. Setup creates no Git worktrees, branches, devices, or other operational directories. Task bootstrap later creates the feature worktree under the parent without blocking on existing worktrees unless target branch or worktree names collide.
+Worktree and memory paths must be outside the app checkout, must not contain it, and shared memory must not sit within the worktree parent. A task worktree may sit under the worktree parent. These are the defined shared locations: every host reads `worktreeDirectory` and `memoryPath` from the saved settings rather than searching the workspace.
+
+Paths under your home directory are saved as `$HOME/...`, which every machine resolves to its own home directory. The preview shows both forms. When a saved location is absolute, setup keeps the absolute form on Enter and also records `projectRoot`, the main checkout those paths belong to. Portable settings record no `projectRoot`. Harness checkouts older than this change reject settings without `projectRoot`, so update them before committing portable settings.
+
+On `save`, setup also creates whatever is missing: the worktree parent directory, the memory directory, and a header-only `MEMORY.md`. Each appears in the preview first. An existing `MEMORY.md` is never overwritten, and cancelling creates nothing. Setup creates no Git worktrees, branches, devices, or other operational directories. Task bootstrap later creates the feature worktree under the parent without blocking on existing worktrees unless target branch or worktree names collide.
+
+### How shared locations resolve
+
+Every role, host, and tool uses the same order, from any worktree of the project:
+
+1. The `project` section of project context.
+2. The interim `paths` section.
+3. Otherwise stop and ask. Computed defaults are only suggestions in setup and update, and never take effect on their own, so nothing silently starts a new, empty `MEMORY.md`.
+
+Agents do not ask about a valid value. They stop and ask when a value is missing or invalid, or when it conflicts:
+
+- The `project` and `paths` sections record different locations.
+- An absolute path was saved for a `projectRoot` that is not this repository on this machine.
+- A `paths` section holds an absolute path that does not exist on this machine. That section records no `projectRoot`, so nothing else shows the path belongs here.
+
+Every location is checked after symlinks and junctions are resolved, and must stay outside the checkout. `harness:doctor` reports each resolved path and its source, and fails on invalid or conflicting settings. Missing settings show as `not-configured` with a hint to run `harness:setup`, but don't fail, because agents stop and ask rather than guess.
+
+**Existing settings.** Absolute settings keep working where they apply and are never rewritten without your consent. To make one portable, enter a `$HOME/...` path through `harness:update --change-shared-locations`. If a `MEMORY.md` exists under a worktree's previous path-derived project ID, setup and update report it and offer its locations as suggestions only after you type `migrate`. Nothing is moved, and cancelling leaves no writes or backups.
+
+**Host-managed locations are a documented exception.** Some hosts keep their own worktrees or memory, which may be inside the checkout. The harness's `memoryPath` remains the shared record, and host-native memory is out of scope: the harness neither reads nor reconfigures it.
+
+| Host | Host-managed location | Evidence |
+| --- | --- | --- |
+| Claude Code | Desktop-app worktrees under `.claude/worktrees` in the checkout; auto-memory under `~/.claude/projects` | Observed in one session on this repository; not checked across versions |
+| OpenCode, Antigravity, Codex, Cursor | Not characterized | Unverified |
 
 ### Shared locations during `harness:update`
 
-Project-scope `harness:update` settles shared locations once, before any host update. With saved settings, it asks you to confirm both paths (Enter keeps each) and offers to create any missing location. If AGENTS.md has a harness project section without saved paths, such as an older instructions-only section or a legacy `.opencode/harness.project.json`, it asks for both paths with default suggestions. It uses the legacy file's paths as suggestions only after you type `migrate`, and never edits or deletes that file. The chosen paths are saved in an interim `paths` section of the same context file; a later `harness:setup` uses them as suggestions and replaces that section with the full project section. Changes are previewed, and only `paths` applies them; Enter skips this step without blocking the host update. Projects with no harness settings are told to run `harness:setup` instead of being prompted.
+Project-scope `harness:update` settles shared locations once, before any host update. With valid saved settings, it prints them and does not ask again; it only offers to create a location that is missing. Run it with `--change-shared-locations` to choose different paths (Enter keeps each). Missing, invalid, or conflicting settings still prompt, and another machine's paths are not offered back as suggestions. If AGENTS.md has a harness project section without saved paths, such as an older instructions-only section or a legacy `.opencode/harness.project.json`, it asks for both paths with default suggestions. It uses the legacy file's paths as suggestions only after you type `migrate`, and never edits or deletes that file. The chosen paths are saved in an interim `paths` section of the same context file; a later `harness:setup` uses them as suggestions and replaces that section with the full project section. Changes are previewed, and only `paths` applies them; Enter skips this step without blocking the host update. Projects with no harness settings are told to run `harness:setup` instead of being prompted.
 
 ## Project inspection and suggestions
 
@@ -60,9 +89,9 @@ Cancellation changes no files/directories. Setup preserves OpenCode config, mode
 
 ## Git and worktrees
 
-Context may contain machine-specific paths. **Review before publishing**; setup does not stage, commit, or push. Its only ignore rules are the previewed harness scratch patterns, written to the local, untracked `info/exclude` file shared by all worktrees, never to `.gitignore`. See [local Git exclude](installation.md#local-git-exclude-for-harness-scratch-state-bh-038). Use environment-based instructions or deliberate per-machine adjustments where portability is needed. Never put credentials in project context.
+Absolute paths in context are machine-specific; `$HOME/...` paths are not. **Review before publishing**; setup does not stage, commit, or push. Its only ignore rules are the previewed harness scratch patterns, written to the local, untracked `info/exclude` file shared by all worktrees, never to `.gitignore`. See [local Git exclude](installation.md#local-git-exclude-for-harness-scratch-state-bh-038). Use environment-based instructions or deliberate per-machine adjustments where portability is needed. Never put credentials in project context.
 
-Reviewed context files follow ordinary Git/worktree behavior. Untracked context changes do not automatically appear in another worktree; confirm availability through Operator rather than guessing settings. Run commands in the active feature worktree, not the canonical checkout merely because it appears in context. Shared memory remains at the agreed external location.
+Reviewed context files follow ordinary Git/worktree behavior. Untracked context changes do not automatically appear in another worktree, so a worktree without them stops and asks rather than guessing settings. Commit settings when every worktree should resolve them. Run commands in the active feature worktree, not the canonical checkout merely because it appears in context. Shared memory remains at the configured external location.
 
 ## After setup
 

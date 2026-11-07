@@ -97,7 +97,7 @@ Android commands/device/path settings use the same context model:
 npm run harness:setup -- --project "$HOME/Projects/MarsRoverIA"
 ```
 
-`--context` is supported there too. Settings and integrations use independent marked sections and preserve each other. Do not store secrets; review machine-specific paths before committing. Context must be Markdown inside the project; malformed markers/JSON, unknown fields, symlinks, and concurrent changes are refused. Multi-file writes are preflighted and individually atomic, not a transaction; partial-write failures disclose completed writes/backups without discarding newer work.
+`--context` is supported there too. Settings and integrations use independent marked sections and preserve each other. Worktree and memory paths under your home directory are saved as `$HOME/...` so they can be committed; agents read them from context and ask only when they are missing, invalid, or conflicting ([how shared locations resolve](project-setup.md#how-shared-locations-resolve)). Do not store secrets; review any absolute, machine-specific paths before committing. Context must be Markdown inside the project; malformed markers/JSON, unknown fields, symlinks, and concurrent changes are refused. Multi-file writes are preflighted and individually atomic, not a transaction; partial-write failures disclose completed writes/backups without discarding newer work.
 
 ## 3. Optional checks and authentication
 
