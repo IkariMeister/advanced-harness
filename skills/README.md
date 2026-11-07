@@ -10,10 +10,10 @@ Example:
 ---
 schemaVersion: 1
 name: documentation-impact
-description: Assess documentation impact.
-intendedRoles: [lead, planner, implementer, reviewer]
+description: Assess change impact on documentation and list artifacts needing updates.
+intendedRoles: [planner, implementer]
 ---
-Explain affected docs and the reason when no change is needed.
+List affected docs, their owners, and the reason when no change is needed.
 ```
 
 Optional supporting files are retained recursively with their relative paths and exact bytes. Links, symlinks, junctions and other non-regular entries are rejected; traversal/absolute paths, unsafe Windows path components and case-insensitive collisions are not accepted. Skills are never executed. `npm run docs:check` separately checks bounded Markdown forms across root/docs/agents/commands/skills for local destinations, reference links, supported heading fragments, repository paths, package script names (inline and supported text/shell command fences), and native workflow-command names against the canonical registry. It also checks simple native `npm run` workflow steps. It is offline and does not execute documented commands. External URLs, machine-local paths, placeholders, illustrative Markdown/JSON fixtures, and arbitrary shell syntax are excluded; unsupported Markdown link forms are not guaranteed checked. The tool cannot perform semantic glossary review.

@@ -144,7 +144,7 @@ export const pathsInstructions = [
 export type LocationResolution =
   | { status: 'resolved'; source: 'project' | 'paths'; stored: SharedLocations; locations: SharedLocations; portable: boolean; plan: LocationPlan }
   | { status: 'missing'; reason: string }
-  | { status: 'conflict' | 'invalid'; source?: 'project' | 'paths'; reason: string };
+  | { status: 'conflict' | 'invalid'; source?: 'project' | 'paths'; reason: string; unverifiedAbsolute?: true };
 
 /**
  * The one resolution order: `project` section, then `paths` section, then stop and ask.
@@ -165,7 +165,8 @@ export function resolveLocationSettings(root: string, settings: { project?: (Sha
     if (project?.projectRoot !== undefined) {
       if (!sameProject(root, project.projectRoot)) return { status: 'conflict', source, reason: `Absolute shared locations were saved for ${project.projectRoot}, which is not this repository on this machine.` };
     } else if (absolute.some(path => !lstatSync(path, { throwIfNoEntry: false }))) {
-      return { status: 'conflict', source, reason: 'An absolute shared location does not exist on this machine, so it may belong to another machine.' };
+      // Without projectRoot provenance a missing absolute path cannot be told apart from another machine's path.
+      return { status: 'conflict', source, reason: 'An absolute shared location does not exist on this machine, so it may belong to another machine.', unverifiedAbsolute: true };
     }
   }
   try {

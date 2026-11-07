@@ -349,9 +349,16 @@ test('another machine\'s absolute settings never take effect and are never creat
   const project_ = resolveLocationSettings(project, { project: { ...foreign, projectRoot: join(root, 'teammate', 'app') } }, home);
   assert.equal(project_.status, 'conflict');
   assert.match((project_ as { reason: string }).reason, /not this repository on this machine/);
+  // A projectRoot mismatch is identified by provenance, so it is not flagged as unverified.
+  assert.equal((project_ as { unverifiedAbsolute?: true }).unverifiedAbsolute, undefined);
   const paths = resolveLocationSettings(project, { paths: foreign }, home);
   assert.equal(paths.status, 'conflict');
   assert.match((paths as { reason: string }).reason, /does not exist on this machine/);
+  assert.equal((paths as { unverifiedAbsolute?: true }).unverifiedAbsolute, true);
+  // A project/paths disagreement is a conflict too, but not an unverified machine path.
+  const mismatch = resolveLocationSettings(project, { project: { ...foreign, projectRoot: project }, paths: { ...foreign, memoryPath: join(root, 'other', 'MEMORY.md') } }, home);
+  assert.equal(mismatch.status, 'conflict');
+  assert.equal((mismatch as { unverifiedAbsolute?: true }).unverifiedAbsolute, undefined);
   assert.equal(existsSync(join(root, 'teammate')), false);
   // A Windows path committed to a repository opened elsewhere is foreign, not a relative path.
   const windows = { worktreeDirectory: 'C:/Users/teammate/trees', memoryPath: 'C:/Users/teammate/data/MEMORY.md' };
