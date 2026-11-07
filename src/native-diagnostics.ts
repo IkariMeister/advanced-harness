@@ -251,6 +251,7 @@ export function printHostDiagnosticReport(report: HostDiagnosticReport): void {
   if (report.procedureSkills) {
     console.log(`Procedure skills: ${report.procedureSkills.status} (static validation only)`);
     for (const note of report.procedureSkills.notes) console.log(`  ℹ ${note}`);
+    console.log('Procedure skill intended-role guidance is advisory only; doctor does not enforce role discovery or grant permissions.');
   }
   if (report.sourcePolicy) {
     console.log(`Source-policy compatibility: ${report.sourcePolicy.status.toUpperCase()} (runtime verified: no; separate from installation footprint)`);

@@ -63,7 +63,15 @@ test('installer flow in project scope deploys commands and records managedFiles 
   assert.equal(receipt.version, 2);
   assert.ok(Array.isArray(receipt.managedFiles));
   assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 6);
-  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills').length, 5);
+  const skillFiles = receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills');
+  assert.equal(skillFiles.length, 9);
+  assert.deepEqual(skillFiles.map((f: { path: string }) => f.path.split(/[\\/]/).at(-2)).sort(), [
+    'harness-procedure-adr-authoring', 'harness-procedure-documentation-impact',
+    'harness-procedure-documentation-review', 'harness-procedure-documentation-validation',
+    'harness-procedure-evidence-collection', 'harness-procedure-meeting-task-extraction',
+    'harness-procedure-static-analysis', 'harness-procedure-technical-documentation',
+    'harness-procedure-unit-tests',
+  ]);
   for (const f of receipt.managedFiles.filter((item: {kind: string}) => item.kind === 'commands')) {
     assert.equal(f.kind, 'commands');
     assert.equal(f.before.absent, true);
@@ -146,7 +154,15 @@ test('answering no to workflow commands prompt leaves commands folder untouched 
   assert.equal(receipts.length, 1);
   const receipt = JSON.parse(readFileSync(join(recovery, receipts[0]!), 'utf8'));
   assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 0);
-  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills').length, 5);
+  const skillFiles = receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills');
+  assert.equal(skillFiles.length, 9);
+  assert.deepEqual(skillFiles.map((f: { path: string }) => f.path.split(/[\\/]/).at(-2)).sort(), [
+    'harness-procedure-adr-authoring', 'harness-procedure-documentation-impact',
+    'harness-procedure-documentation-review', 'harness-procedure-documentation-validation',
+    'harness-procedure-evidence-collection', 'harness-procedure-meeting-task-extraction',
+    'harness-procedure-static-analysis', 'harness-procedure-technical-documentation',
+    'harness-procedure-unit-tests',
+  ]);
 });
 
 test('cancellation at final confirmation creates no commands files, backups, or receipts', async t => {

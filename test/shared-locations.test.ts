@@ -110,7 +110,7 @@ test('setup and update refuse linked memory paths that land inside the checkout'
 
   writeFileSync(join(project, 'AGENTS.md'), updateContext(original, 'paths', { version: 1, worktreeDirectory: join(root, 'trees'), memoryPath: join(root, 'data', 'MEMORY.md') }, ['interim']));
   const outputs: string[] = [];
-  const steps = script([['Parent directory', ''], ['Shared MEMORY.md', inside], ['Parent directory', ''], ['Shared MEMORY.md', ''], ['Type paths', 'paths']]);
+  const steps = script([['Parent directory', join(root, 'trees')], ['Shared MEMORY.md', inside], ['Parent directory', join(root, 'trees')], ['Shared MEMORY.md', join(root, 'data', 'MEMORY.md')], ['Type paths', 'paths']]);
   assert.equal(await runSharedLocationStep(project, { ask: steps.ask, output: message => outputs.push(message), home, backupParent: backups }), 'saved');
   assert.match(outputs.join('\n'), /symlinks\/junctions are resolved\. No files changed\. Enter different paths\./);
   assert.equal(existsSync(join(project, 'data')), false);
@@ -209,7 +209,7 @@ test('harness:update settles shared locations before the host update, independen
   writeFileSync(join(project, 'opencode.json'), JSON.stringify({ agents: Object.fromEntries(nativeRoles.map(role => [role, { description: 'd', mode: role === 'lead' ? 'primary' : 'subagent', model: 'custom/model#low', permissions: [], system: 'old' }])) }));
   const recorded = { worktreeDirectory: join(root, 'trees'), memoryPath: join(root, 'data', 'MEMORY.md') };
   writeFileSync(join(project, 'AGENTS.md'), updateContext('# App\n', 'paths', { version: 1, ...recorded }, ['interim']));
-  const steps = script([['Parent directory', ''], ['Shared MEMORY.md', ''], ['Type paths', 'paths']]);
+  const steps = script([['Parent directory', recorded.worktreeDirectory], ['Shared MEMORY.md', recorded.memoryPath], ['Type paths', 'paths']]);
   const status = await runUpdateFlow({ scope: 'project', project, checkRemote: false }, {
     ask: async question => steps.remaining.length ? steps.ask(question) : question.includes('system prompt to latest') ? 'no' : question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'cancel' : assert.fail(question),
     output: () => {}, error: () => {}, home, xdgConfigHome: join(root, 'xdg'), recoveryDirectory: join(root, 'recovery'), runCommand: () => '',
@@ -349,9 +349,16 @@ test('another machine\'s absolute settings never take effect and are never creat
   const project_ = resolveLocationSettings(project, { project: { ...foreign, projectRoot: join(root, 'teammate', 'app') } }, home);
   assert.equal(project_.status, 'conflict');
   assert.match((project_ as { reason: string }).reason, /not this repository on this machine/);
+  // A projectRoot mismatch is identified by provenance, so it is not flagged as unverified.
+  assert.equal((project_ as { unverifiedAbsolute?: true }).unverifiedAbsolute, undefined);
   const paths = resolveLocationSettings(project, { paths: foreign }, home);
   assert.equal(paths.status, 'conflict');
   assert.match((paths as { reason: string }).reason, /does not exist on this machine/);
+  assert.equal((paths as { unverifiedAbsolute?: true }).unverifiedAbsolute, true);
+  // A project/paths disagreement is a conflict too, but not an unverified machine path.
+  const mismatch = resolveLocationSettings(project, { project: { ...foreign, projectRoot: project }, paths: { ...foreign, memoryPath: join(root, 'other', 'MEMORY.md') } }, home);
+  assert.equal(mismatch.status, 'conflict');
+  assert.equal((mismatch as { unverifiedAbsolute?: true }).unverifiedAbsolute, undefined);
   assert.equal(existsSync(join(root, 'teammate')), false);
   // A Windows path committed to a repository opened elsewhere is foreign, not a relative path.
   const windows = { worktreeDirectory: 'C:/Users/teammate/trees', memoryPath: 'C:/Users/teammate/data/MEMORY.md' };
@@ -452,6 +459,44 @@ test('update flow: a foreign profile asks, suggests this machine\'s defaults, an
   assert.ok(isPortablePath(saved.memoryPath) && isPortablePath(saved.worktreeDirectory));
   assert.equal(existsSync(defaults.memoryPath), true);
   assert.equal(existsSync(join(root, 'teammate')), false);
+});
+
+test('update flow: unverified absolute interim paths are not suggested or retained; cancellation writes nothing', async t => {
+  const { root, project, home, backups } = fixture(t);
+  const foreign = { worktreeDirectory: join(root, 'teammate', 'trees'), memoryPath: join(root, 'teammate', 'data', 'MEMORY.md') };
+  const original = updateContext('# App\n', 'paths', { version: 1, ...foreign }, ['note']);
+  writeFileSync(join(project, 'AGENTS.md'), original);
+
+  const defaults = defaultLocations(project, {}, home);
+  const suggestions: (string | undefined)[] = [];
+  const choices = script([['Parent directory', ''], ['Shared MEMORY.md', ''], ['Type paths', '']]);
+  const ask = async (question: string, suggested?: string) => { suggestions.push(suggested); return choices.ask(question); };
+  const outputs: string[] = [];
+  assert.equal(await runSharedLocationStep(project, { ask, output: message => outputs.push(message), home, backupParent: backups }), 'skipped');
+  assert.deepEqual(choices.remaining, []);
+  assert.deepEqual(suggestions.slice(0, 2), [defaults.worktreeDirectory, defaults.memoryPath]);
+  assert.match(outputs.join('\n'), /does not exist on this machine/);
+  assert.deepEqual(choices.prompts.length, 3);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), original);
+  assert.equal(existsSync(join(root, 'teammate')) || existsSync(defaults.worktreeDirectory) || existsSync(backups), false);
+});
+
+test('update flow: unverified interim paths are replaced only after explicit confirmation', async t => {
+  const { root, project, home, backups } = fixture(t);
+  const foreign = { worktreeDirectory: join(root, 'teammate', 'trees'), memoryPath: join(root, 'teammate', 'data', 'MEMORY.md') };
+  const original = updateContext('# App\n', 'paths', { version: 1, ...foreign }, ['note']);
+  writeFileSync(join(project, 'AGENTS.md'), original);
+
+  const defaults = defaultLocations(project, {}, home);
+  const choices = script([['Parent directory', ''], ['Shared MEMORY.md', ''], ['Type paths', 'paths']]);
+  assert.equal(await runSharedLocationStep(project, { ask: choices.ask, output: () => {}, home, backupParent: backups }), 'saved');
+  const saved = contextData(readFileSync(join(project, 'AGENTS.md'), 'utf8'), 'paths') as { worktreeDirectory: string; memoryPath: string };
+  assert.equal(saved.worktreeDirectory, toStoredPath(defaults.worktreeDirectory, home));
+  assert.equal(saved.memoryPath, toStoredPath(defaults.memoryPath, home));
+  assert.equal(existsSync(join(root, 'teammate')), false);
+  assert.equal(existsSync(backups), true);
+  assert.equal(existsSync(defaults.worktreeDirectory), true);
+  assert.equal(readFileSync(defaults.memoryPath, 'utf8'), '# Shared Operator memory\n\n');
 });
 
 test('setup from a worktree saves portable settings without machine paths and works from a sibling', async t => {

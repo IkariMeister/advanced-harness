@@ -1,15 +1,13 @@
 ---
 schemaVersion: 1
 name: documentation-impact
-description: Assess documentation changes and explain when no documentation change is needed.
-intendedRoles:
-  - lead
-  - planner
-  - implementer
-  - reviewer
+description: Assess change impact on documentation and list artifacts needing updates.
+intendedRoles: [planner, implementer]
 ---
 # Documentation impact
 
-When changing behavior, identify user-facing documentation, examples, configuration references, and ADRs that may need updates. Check whether an ADR needs a status or decision update, and make ownership of each documentation change explicit in the plan.
+Identify material changes to APIs, integration contracts, installation/configuration, user-visible behavior, developer workflows, architecture, supported hosts, agent responsibilities, permissions, commands, and relied-upon repository instructions.
 
-Verify documentation links and examples relevant to the change where practical. If no documentation change is warranted, state the rationale rather than silently omitting the assessment. Treat this skill's intended-role metadata as advisory: it grants no permissions, approval, or decision authority and does not establish enforced role discovery.
+List each affected artifact, why it needs an update, and who owns that update; make ownership of each documentation change explicit in the plan, following the responsibilities in ADR-001. Check whether an existing ADR needs a status or decision update, and flag it rather than changing it: only the human decision and project process may change ADR status. If no update is warranted, record the reason; do not invent documentation work for trivial changes. When uncertain, make the uncertainty explicit and consult `docs/adr/0001-documentation-ownership-through-shared-skills.md`.
+
+Use the project [glossary](../../docs/glossary.md) for project terms.

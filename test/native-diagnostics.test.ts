@@ -340,6 +340,7 @@ test('non-OpenCode CLI prints procedure-skill errors once and exits nonzero', t 
   assert.equal(result.status, 1, combined);
   assert.match(combined, /Procedure skills: installed \(static validation only\)/);
   const missing: string[] = combined.match(/Expected installed project procedure skill is missing: [\w-]+\./g) ?? [];
+  assert.equal(missing.length, 9, combined);
   assert.ok(missing.includes('Expected installed project procedure skill is missing: harness-procedure-documentation-impact.'), combined);
   assert.equal(new Set(missing).size, missing.length, combined);
 });

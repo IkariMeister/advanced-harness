@@ -1,5 +1,9 @@
 # Smoke test plan
 
+Documentation is checked separately with `npm run docs:check`; it is an offline
+static check and is not part of this CLI lifecycle sandbox. It does not execute
+commands quoted in Markdown or establish semantic glossary consistency.
+
 Fast, automated end-to-end checks that the real `harness:*` CLIs still work
 together on a clean machine. The smoke suite complements `npm test` (unit and
 flow tests with injected dependencies) by spawning the actual scripts in

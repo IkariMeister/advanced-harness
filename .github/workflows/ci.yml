@@ -76,6 +76,9 @@ jobs:
       - name: Run automated tests
         run: npm test
 
+      - name: Check documentation links and commands
+        run: npm run docs:check
+
   smoke:
     name: Smoke (${{ matrix.os }} / Node 24)
     runs-on: ${{ matrix.os }}

@@ -124,7 +124,7 @@ entries do not authorize implementation or replace current human approvals.
 4. **Real Android pilot:** one issue through plan approval, changes, review/QA, approved fixes, PR creation, human merge, and cleanup. Test an interruption and ask-to-resume behavior.
 5. **Optional improvements:** evidence capture/publication and practical artifact reuse, driven by pilot needs.
 
-This instruction-driven workflow does not provide an independent approval-enforcement layer.
+This instruction-driven workflow does not provide an independent approval-enforcement layer. Documentation ownership follows the accepted [documentation ownership ADR](docs/adr/0001-documentation-ownership-through-shared-skills.md): Planner owns ADRs, Implementer owns implementation documentation, and Reviewer independently reviews it using shared procedures. Role guidance is advisory, not enforced role discovery or permission.
 
 Projects that use the harness should run a checkout pinned to a release tag; development continues on `main`, which carries a `-dev` version between releases. See [releasing](docs/releasing.md) and the [changelog](CHANGELOG.md).
 
@@ -136,6 +136,7 @@ Prerequisites: Git, OpenCode V2, Node.js 24.x, and the required model connection
 npm ci
 npm run typecheck
 npm test
+npm run docs:check
 npm run smoke
 ```
 

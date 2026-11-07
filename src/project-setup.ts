@@ -505,7 +505,10 @@ export async function runSharedLocationStep(root: string, deps: SharedLocationSt
     plan = resolution.plan;
   } else {
     if (resolution.status === 'conflict' || resolution.status === 'invalid') output(`Shared locations need a decision: ${resolution.reason}`);
-    const foreign = savedForAnotherCheckout(root, profile);
+    // Interim `paths` settings have no projectRoot provenance. If their absolute paths
+    // cannot be verified on this machine, do not carry them forward as defaults.
+    const foreign = savedForAnotherCheckout(root, profile)
+      || (!profile && recorded !== undefined && resolution.status !== 'resolved' && resolution.status !== 'missing' && resolution.unverifiedAbsolute === true);
     const current: SharedLocations | undefined = profile ?? recorded;
     let suggestion = foreign ? undefined : current;
     if (!current && legacy) {
