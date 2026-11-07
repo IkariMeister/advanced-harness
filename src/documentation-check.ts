@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { workflowCommandIds } from './workflow-commands.ts';
 
 export interface DocumentationDiagnostic { file: string; line: number; message: string }
@@ -115,7 +115,9 @@ function repositoryPath(raw: string): string | undefined {
   return raw.replace(/[.,;:)]+$/, '').replace(/#.*$/, '').replace(/:\d+(?::\d+)?(?:-\d+)?$/, '');
 }
 
-export function checkDocumentation(root = process.cwd()): DocumentationDiagnostic[] {
+export function checkDocumentation(rootPath = process.cwd()): DocumentationDiagnostic[] {
+  // Absolute and without a trailing separator, so file paths, link targets and content keys agree.
+  const root = resolve(rootPath);
   const diagnostics: DocumentationDiagnostic[] = [];
   const files = markdownFiles(root);
   const content = new Map(files.map(file => [file, readFileSync(file, 'utf8')]));
@@ -132,7 +134,7 @@ export function checkDocumentation(root = process.cwd()): DocumentationDiagnosti
       if (states[index]!.delimiter || states[index]!.fence) return;
       for (const match of line.matchAll(/^\s{0,3}\[([^\]]+)\]:\s*(\S+)/g)) definitions.set(match[1]!.toLowerCase(), match[2]!);
     });
-    const report = (line: number, message: string) => diagnostics.push({ file: normalize(file.slice(root.length + 1)).replaceAll(sep, '/'), line: line + 1, message });
+    const report = (line: number, message: string) => diagnostics.push({ file: relative(root, file).replaceAll(sep, '/'), line: line + 1, message });
     const destination = (raw: string, index: number) => checkDestination(raw, index, report, file, root, content, headings);
     lines.forEach((line, index) => {
       const { delimiter, fence } = states[index]!;

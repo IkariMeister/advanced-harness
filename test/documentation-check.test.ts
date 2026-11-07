@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { checkDocumentation } from '../src/documentation-check.ts';
 
 test('documentation checker accepts local links, fragments, paths, references, scripts, and workflow commands', async t => {
@@ -129,6 +129,19 @@ test('setext headings, linked heading text, and HTML anchors are valid fragment 
     'README.md:5: Missing heading fragment: docs/guide.md#list-item',
     'README.md:5: Missing heading fragment: docs/guide.md#title-front-matter-is-not-a-heading',
   ]);
+});
+
+test('relative and trailing-separator roots report the same repository-relative paths and resolve root anchors', async t => {
+  const root = await docsFixture(t);
+  await writeFile(join(root, 'README.md'), '# Root\n\n[ok](docs/target.md#target-heading) [bad](docs/target.md#nope)\n');
+  await writeFile(join(root, 'docs', 'guide.md'), '# Guide\n\n[up](../README.md#root) [missing](../README.md#absent)\n');
+  const expected = [
+    'docs/guide.md:3: Missing heading fragment: ../README.md#absent',
+    'README.md:3: Missing heading fragment: docs/target.md#nope',
+  ];
+  assert.deepEqual(summary(root), expected);
+  assert.deepEqual(summary(root + sep), expected);
+  assert.deepEqual(summary(relative(process.cwd(), root) || '.'), expected);
 });
 
 test('npm options before the script name are not read as script names', async t => {
