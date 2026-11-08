@@ -101,23 +101,18 @@ test('unstaged deletion and staged rename are reported', () => {
 
 test('staged deletion and multi-origin modifications are tracked per origin', () => {
   const root = repo();
-  // staged deletion of gone.txt (which was committed in base)
-  git(root, 'rm', '-q', 'gone.txt');
-
   // committed edit on task branch
   writeFileSync(join(root, 'edit.txt'), 'v2-committed\n');
-  git(root, 'commit', '-q', '-m', 'commit staged rm and edit', 'gone.txt', 'edit.txt');
+  git(root, 'commit', '-q', '-m', 'edit edit.txt on task', 'edit.txt');
 
-  // But we want gone.txt to be staged deleted, not committed deleted!
-  // Let's commit an edit on edit.txt:
-  // v2-committed is already committed.
-  // Now stage v3-staged:
+  // staged edit on top of that
   writeFileSync(join(root, 'edit.txt'), 'v3-staged\n');
   git(root, 'add', 'edit.txt');
-  // unstaged edit on top of that:
+
+  // unstaged edit on top of that
   writeFileSync(join(root, 'edit.txt'), 'v4-working\n');
 
-  // and stage a deletion of keep.txt (which was committed in base):
+  // stage deletion of keep.txt
   git(root, 'rm', '-q', 'keep.txt');
 
   const { entries } = collectChangeset(root, 'main');
@@ -161,7 +156,7 @@ test('empty check list, unknown status, and duplicate check ids are inconclusive
   assert.equal(emptyRes.approved, false);
   assert.equal(exitCodeFor(emptyRes), 2);
 
-  const unknownRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'u', run: () => ({ status: 'weird' as any, evidence: ['weird'] }) }] });
+  const unknownRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'u', run: () => ({ status: 'weird' as unknown as any, evidence: ['weird'] }) }] });
   assert.equal(unknownRes.approved, false);
   assert.equal(exitCodeFor(unknownRes), 2);
   assert.equal(unknownRes.checks[0]?.status, 'inconclusive');
@@ -195,7 +190,7 @@ test('missing base, missing ref, non-git directories, and unborn HEAD are inconc
   }
 });
 
-test('base ref defaults to baseBranch from project context, and base-context warns on modification', async () => {
+test('base ref defaults to baseBranch from project context, and base-context fails closed on context changes without explicit base', async () => {
   const root = makeTempRoot('preflight-base-ctx-');
   git(root, 'init', '-q', '-b', 'main');
   git(root, 'config', 'user.email', 'test@example.com');
@@ -216,18 +211,25 @@ test('base ref defaults to baseBranch from project context, and base-context war
   const baseCheck = result.checks.find((c) => c.id === 'base-context');
   assert.equal(baseCheck?.status, 'pass');
 
-  // Modify baseBranch in working tree
-  const modifiedProfile = { ...profile, baseBranch: 'other-branch' };
+  // Modify project context in working tree without explicit --base -> BLOCKS (exit 1)
+  const modifiedProfile = { ...profile, shell: 'cmd' };
   writeFileSync(join(root, 'AGENTS.md'), updateContext('', 'project', modifiedProfile, []));
-  const warnResult = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(warnResult), 0);
-  const warnedBaseCheck = warnResult.checks.find((c) => c.id === 'base-context');
-  assert.equal(warnedBaseCheck?.status, 'warn');
-  assert.match(warnedBaseCheck!.evidence[0]!, /baseBranch was changed from 'main' to 'other-branch'/);
-  assert.equal(warnResult.warnings.length, 1);
+  const blockedResult = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(blockedResult), 1);
+  const blockedBaseCheck = blockedResult.checks.find((c) => c.id === 'base-context');
+  assert.equal(blockedBaseCheck?.status, 'block');
+  assert.match(blockedBaseCheck!.evidence[0]!, /pass explicit --base <ref>/);
+  assert.equal(blockedResult.blocking.length, 1);
+
+  // When explicit --base is provided, base-context passes even with modified context
+  const overrideResult = await runPreflight({ worktree: root, base: 'main' });
+  assert.equal(exitCodeFor(overrideResult), 0);
+  const overrideBaseCheck = overrideResult.checks.find((c) => c.id === 'base-context');
+  assert.equal(overrideBaseCheck?.status, 'pass');
+  assert.match(overrideBaseCheck!.evidence[0]!, /explicitly provided/);
 });
 
-test('submodule entries are reported with kind submodule and no content', () => {
+test('submodule entries are reported with kind submodule and no content for committed, unstaged, and untracked', () => {
   const root = repo();
   const sub = makeTempRoot('preflight-sub-');
   git(sub, 'init', '-q', '-b', 'main');
@@ -237,13 +239,32 @@ test('submodule entries are reported with kind submodule and no content', () => 
   git(sub, 'add', '.');
   git(sub, 'commit', '-q', '-m', 'sub commit');
 
+  // Committed submodule
   git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'mysub');
   git(root, 'commit', '-q', '-m', 'add submodule');
 
+  // Unstaged modification in submodule
+  writeFileSync(join(root, 'mysub', 'sub.txt'), 'sub modified\n');
+  git(join(root, 'mysub'), 'commit', '-q', '-a', '-m', 'sub inner commit');
+
+  // Untracked nested repo
+  const untrackedNested = join(root, 'nested-repo');
+  mkdirSync(untrackedNested);
+  git(untrackedNested, 'init', '-q', '-b', 'main');
+  writeFileSync(join(untrackedNested, 'file.txt'), 'nested\n');
+
   const { entries } = collectChangeset(root, 'main');
-  const subEntry = entries.find((e) => e.path === 'mysub');
+  const subEntry = entries.find((e) => e.path === 'mysub' && e.origin === 'committed');
   assert.equal(subEntry?.kind, 'submodule');
   assert.equal(subEntry?.content, undefined);
+
+  const unstagedSub = entries.find((e) => e.path === 'mysub' && e.origin === 'unstaged');
+  assert.equal(unstagedSub?.kind, 'submodule');
+  assert.equal(unstagedSub?.content, undefined);
+
+  const untrackedRepo = entries.find((e) => (e.path === 'nested-repo' || e.path === 'nested-repo/'));
+  assert.equal(untrackedRepo?.kind, 'submodule');
+  assert.equal(untrackedRepo?.content, undefined);
 });
 
 test('CLI exit codes and JSON contract', () => {
@@ -272,4 +293,26 @@ test('CLI exit codes and JSON contract', () => {
   const shortHelp = cli('-h');
   assert.equal(shortHelp.status, 0);
   assert.match(shortHelp.stdout, /Usage: npm run harness:preflight/);
+
+  // CLI exit 1 (blocked) when project context is modified without explicit --base
+  const blockRepo = makeTempRoot('preflight-block-cli-');
+  git(blockRepo, 'init', '-q', '-b', 'main');
+  git(blockRepo, 'config', 'user.email', 'test@example.com');
+  git(blockRepo, 'config', 'user.name', 'Test');
+  git(blockRepo, 'config', 'core.autocrlf', 'false');
+  const unconfigured = { status: 'unconfigured' };
+  const checks = Object.fromEntries(['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'].map((name) => [name, unconfigured]));
+  const profile = { version: 1, baseBranch: 'main', shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: join(blockRepo, '..', 'wt'), memoryPath: join(blockRepo, '..', 'mem', 'MEMORY.md') };
+  writeFileSync(join(blockRepo, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  git(blockRepo, 'add', 'AGENTS.md');
+  git(blockRepo, 'commit', '-q', '-m', 'add project context on main');
+  git(blockRepo, 'checkout', '-q', '-b', 'task');
+  writeFileSync(join(blockRepo, 'AGENTS.md'), updateContext('', 'project', { ...profile, shell: 'cmd' }, []));
+  const blockedCli = cli('--worktree', blockRepo);
+  assert.equal(blockedCli.status, 1);
+  assert.match(blockedCli.stdout, /Preflight: BLOCKED/);
+
+  // CLI exit 2 on unhandled failure
+  const exit2Cli = cli('--worktree', blockRepo, '--base', 'does-not-exist');
+  assert.equal(exit2Cli.status, 2);
 });

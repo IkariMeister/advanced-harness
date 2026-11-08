@@ -1,58 +1,62 @@
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
-import { contextData } from '../project-context.ts';
-import { locateProjectContext, validateProfile } from '../project-setup.ts';
+import { locateProjectContext } from '../project-setup.ts';
 import type { ChangeOrigin, PreflightCheck } from './types.ts';
 
-/** Warns if the project context baseBranch was changed compared to the merge-base. */
+function gitTop(worktree: string): string {
+  const res = spawnSync('git', ['-C', worktree, '--literal-pathspecs', 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+  if (res.error) throw new Error(`git rev-parse could not be started: ${res.error.message}`);
+  if (res.status !== 0) throw new Error(res.stderr.trim() || `git rev-parse exit ${res.status}`);
+  return res.stdout.trim();
+}
+
+/**
+ * Checks that the project context file was not modified when the base ref was derived
+ * from project context. Fails closed (blocks) on unverified changes when --base is omitted.
+ */
 export const baseContextCheck: PreflightCheck = {
   id: 'base-context',
   run({ worktree, changeset }) {
-    let contextRel: string;
-    let targetAbs: string;
+    let contextRelToTop: string;
     try {
+      const top = gitTop(worktree);
       const { target } = locateProjectContext(worktree);
-      targetAbs = target;
-      contextRel = relative(resolve(worktree), target).replaceAll('\\', '/');
+      contextRelToTop = relative(resolve(top), target).replaceAll('\\', '/');
     } catch (error) {
       return { status: 'inconclusive', evidence: [`Project context resolution failed: ${error instanceof Error ? error.message : String(error)}`] };
     }
 
-    const modified = changeset.entries.some((entry) => entry.path.replaceAll('\\', '/') === contextRel);
-    if (!modified) {
-      return { status: 'pass', evidence: [`Base context unmodified (${contextRel})`] };
-    }
+    // Check if the project context file was modified, renamed, or deleted in the changeset
+    const modified = changeset.entries.some((entry) => {
+      const p = entry.path.replaceAll('\\', '/');
+      const op = entry.oldPath?.replaceAll('\\', '/');
+      return p === contextRelToTop || op === contextRelToTop;
+    });
 
-    try {
-      const res = spawnSync('git', ['-C', worktree, '--literal-pathspecs', 'cat-file', '-e', `${changeset.mergeBase}:${contextRel}`]);
-      if (res.status !== 0) {
-        // Did not exist in merge-base (newly added context file in task branch)
-        return { status: 'pass', evidence: [`Project context newly added in task branch (${contextRel})`] };
-      }
-      const showRes = spawnSync('git', ['-C', worktree, '--literal-pathspecs', 'cat-file', 'blob', `${changeset.mergeBase}:${contextRel}`], { encoding: 'utf8' });
-      if (showRes.status !== 0) throw new Error(showRes.stderr.trim() || `git exit ${showRes.status}`);
-      const oldText = showRes.stdout;
-      const oldProfile = validateProfile(contextData(oldText, 'project'));
-      const oldBaseBranch = oldProfile.baseBranch;
-
-      const newText = readFileSync(targetAbs, 'utf8');
-      const newProfile = validateProfile(contextData(newText, 'project'));
-      const newBaseBranch = newProfile.baseBranch;
-
-      if (oldBaseBranch !== newBaseBranch) {
-        return {
-          status: 'warn',
-          evidence: [`Project context baseBranch was changed from '${oldBaseBranch}' to '${newBaseBranch}' in this worktree`],
-        };
-      }
-      return { status: 'pass', evidence: [`Project context modified (${contextRel}) but baseBranch '${oldBaseBranch}' unchanged`] };
-    } catch (error) {
+    if (changeset.baseSource === 'option') {
       return {
-        status: 'warn',
-        evidence: [`Project context modified (${contextRel}) and merge-base comparison was inconclusive: ${error instanceof Error ? error.message : String(error)}`],
+        status: 'pass',
+        evidence: [
+          `Base ref '${changeset.base}' explicitly provided via option`,
+          modified ? `Project context file (${contextRelToTop}) modified, but overridden by explicit --base` : `Project context file (${contextRelToTop}) unmodified`,
+        ],
       };
     }
+
+    // baseSource is 'project-context': must not be modified in the changeset
+    if (modified) {
+      return {
+        status: 'block',
+        evidence: [
+          `Project context (${contextRelToTop}) was modified in this changeset; pass explicit --base <ref> for authoritative base ref.`,
+        ],
+      };
+    }
+
+    return {
+      status: 'pass',
+      evidence: [`Project context (${contextRelToTop}) unmodified; using baseBranch from project context`],
+    };
   },
 };
 

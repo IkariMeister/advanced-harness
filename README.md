@@ -156,7 +156,7 @@ Collect pre-publish evidence for a task worktree:
 npm run harness:preflight -- --worktree "path/to/task-worktree" [--base <ref>] [--json]
 ```
 
-It inspects the changeset (`merge-base(base, HEAD)...HEAD` plus staged, unstaged, and untracked files) and exits 0 pass, 1 blocked, or 2 inconclusive; a tooling error is never a pass. The base ref defaults to `baseBranch` in project context. Preflight reports evidence only; the human approves. See [preflight](docs/preflight.md).
+It inspects the changeset (`merge-base(base, HEAD)...HEAD` plus staged, unstaged, and untracked files) and runs built-in checks (`changeset`, `base-context`). It exits 0 pass, 1 blocked, or 2 inconclusive; a tooling error is never a pass. The base ref defaults to `baseBranch` in project context. Preflight reports evidence only; the human approves. See [preflight](docs/preflight.md).
 
 Check for updates and preview changes to installed prompts and permissions:
 
