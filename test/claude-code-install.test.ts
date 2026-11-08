@@ -65,7 +65,7 @@ test('typing yes installs the full project footprint, and a repeated run writes 
   assert.equal(await install(h), 0);
   assert.ok(existsSync(join(h.project, 'CLAUDE.md')));
   for (const role of nativeRoles) assert.ok(existsSync(join(h.project, '.claude', 'agents', `${role}.md`)), role);
-  for (const id of ['start-issue', 'review-pr', 'address-pr-feedback', 'report-defect', 'assess-debt', 'grill-me']) {
+  for (const id of ['start-issue', 'review-pr', 'address-pr-feedback', 'report-defect', 'assess-debt', 'grill-me', 'document-agents']) {
     assert.ok(existsSync(join(h.project, '.claude', 'commands', `${id}.md`)), id);
   }
   assert.ok(existsSync(join(h.project, '.claude', 'settings.json')));

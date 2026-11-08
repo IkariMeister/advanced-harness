@@ -14,6 +14,7 @@ commands with the same names.
 | `/report-defect` | Draft/report defect and optionally investigate | `$1` parent; `$2` description (last positional consumes remainder) |
 | `/assess-debt` | Assess debt and propose issues | `$ARGUMENTS` (full input) |
 | `/grill-me` | Clarify an idea and offer an explicit handoff | Optional `$ARGUMENTS` topic |
+| `/document-agents` | Generate or update scoped `AGENTS.md` documentation | `$ARGUMENTS` (full input) |
 
 ## Shared roles and controls
 
@@ -309,3 +310,74 @@ assessment limitations. No fixes are made.
 Jira parent and GitHub repository, Researcher prioritizes findings, and Lead presents
 two proposals. Human approves one and discards one; External creates only the approved
 issue(s) in the approved destination(s).
+
+## Scoped AGENTS.md documentation
+
+`/document-agents` is the on-demand workflow allowed by the Exceptions section of
+[ADR-001](adr/0001-documentation-ownership-through-shared-skills.md#exceptions). It adds
+no Documentation agent or role on any host; each step belongs to the role that owns
+that responsibility.
+
+**Inputs:** Repository and target scope: the repository root or a module path. The mode
+is greenfield (no `AGENTS.md` in the scope yet) or update (revise an existing one). Update
+mode also needs a human-confirmed delta source: a commit range, base ref, or list of PRs.
+
+**Ordered steps and approvals:**
+
+1. Lead confirms repository, scope, mode, and (for update mode) the delta source. Lead may
+   suggest candidate scopes from the repository structure or recent commits/PRs; the human
+   selects. Missing or conflicting scope, mode, or delta source blocks.
+2. Operator prepares an isolated task worktree, reading `worktreeDirectory` and
+   `memoryPath` from project context.
+3. Researcher inspects the scope read-only: build and package scripts, directory
+   structure, architectural patterns, test and verification commands, and every parent
+   and sibling `AGENTS.md` that applies. In update mode it summarizes the confirmed delta
+   from the actual history. Rules a parent `AGENTS.md` already states are not repeated;
+   conflicts are flagged, not silently resolved. Every proposed statement is labeled
+   verified (with its source), inferred, or unknown. Unknown commands or paths are flagged,
+   never invented.
+4. Planner applies the `documentation-impact` procedure skill and proposes the outline and
+   exact diff. Existing human-authored rules and comments are preserved: a minimal diff,
+   never a blind overwrite. Lead presents the diff with its labels and waits for explicit
+   human approval. Cancelling or declining before approval leaves no disk writes and no
+   Git mutations.
+5. Implementer writes only the approved diff using the `technical-documentation` and
+   `documentation-validation` procedure skills and records the checks it ran. A material
+   change from the approved diff returns to the human.
+6. Reviewer independently checks the changes against the repository with the
+   `documentation-review` procedure skill, re-verifying commands, paths, and claims; the
+   author's explanation alone is not evidence. The human accepts or discards each finding
+   individually or in an explicitly enumerated batch; only accepted findings are fixed.
+7. Lead obtains final human approval before any push or PR. External publishes through the
+   standard branch and PR flow. Agents never merge.
+
+The procedure skills supply procedures only; the workflow does not copy them, and they
+make no decisions and grant no permissions.
+
+**Outputs/checks:** Confirmed scope, mode and delta source; labeled analysis; approved
+diff; validation evidence; Reviewer findings and decisions; PR reference if publication was
+approved.
+
+### Manual document-agents smoke
+
+Prerequisites: a fixture repository with a root `AGENTS.md`, a module without one, and a
+few recent commits; an interactive TTY; no live-write authorization.
+
+1. Run with no arguments. Expect Lead to ask for scope and mode, possibly suggesting
+   candidates, and not to pick one itself.
+2. Select the module in greenfield mode. Expect parent rules not repeated, every
+   statement labeled verified/inferred/unknown, and no invented commands.
+3. Select the root in update mode with a confirmed commit range. Expect a minimal diff
+   that keeps existing human-written text and summarizes the actual commits.
+4. Decline the proposed diff. Expect no file changes, commits, branches, or pushes.
+5. Approve a diff containing a deliberately wrong command. Expect Reviewer to flag it
+   from the repository, and no fix until the human accepts the finding.
+6. Withhold final publication approval. Expect no push or PR.
+
+Record each case as passed, failed, blocked, or unrun with evidence; static prompt tests
+do not prove runtime behavior.
+
+**Example:** “/document-agents update the root AGENTS.md for PRs 188 and 189.” Lead confirms
+the root scope, update mode, and those PRs; Researcher summarizes what they changed; Lead
+presents the labeled diff; the human approves; Reviewer re-checks it; External opens a PR
+after final approval.

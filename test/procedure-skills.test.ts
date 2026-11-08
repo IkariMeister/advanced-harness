@@ -411,7 +411,7 @@ test('artifacts coalesce identical shared files deterministically and reject con
 
 test('workflow compilation retains unchanged behavior and command output excludes the reserved skill namespace', async () => {
   const result = compileWorkflowArtifacts(fileURLToPath(new URL('../commands/', import.meta.url)), ['opencode']);
-  assert.equal(result.artifacts.length, 6);
+  assert.equal(result.artifacts.length, 7);
   assert.equal(result.artifacts[0]!.relativePath, '.opencode/commands/start-issue.md');
   const canonical = await readFile(new URL('../.opencode/commands/start-issue.md', import.meta.url), 'utf8');
   assert.equal(result.artifacts[0]!.content, canonical);

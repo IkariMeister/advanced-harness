@@ -13,7 +13,7 @@ const commandsDir = new URL('../commands/', import.meta.url);
 const openCodeDir = new URL('../.opencode/commands/', import.meta.url);
 const file = (dir: URL, name: string) => readFileSync(new URL(`${name}.md`, dir), 'utf8');
 
-test('canonical workflow definitions strictly load six commands and match generated OpenCode outputs', () => {
+test('canonical workflow definitions strictly load seven commands and match generated OpenCode outputs', () => {
   const commands = loadWorkflowCommands(fileURLToPath(commandsDir));
   assert.deepEqual(Object.keys(commands), [...workflowCommandIds]);
   for (const id of workflowCommandIds) assert.equal(emitOpenCodeCommand(commands[id]), file(openCodeDir, id));
@@ -23,7 +23,7 @@ test('canonical workflow definitions strictly load six commands and match genera
   try {
     for (const id of workflowCommandIds) writeFileSync(join(temp, `${id}.md`), file(commandsDir, id));
     writeFileSync(join(temp, 'unexpected.md'), 'not a command');
-    assert.throws(() => loadWorkflowCommands(temp), /exactly the six canonical/);
+    assert.throws(() => loadWorkflowCommands(temp), /exactly the seven canonical/);
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
 
@@ -49,7 +49,7 @@ test('full arguments bind as one opaque string and inserted placeholders are not
   assert.equal(bindWorkflowArguments(command, userText), command.body.replace('$ARGUMENTS', userText));
 });
 
-test('all five full-mode commands bind literal #61 multiword input once without placeholder recursion', () => {
+test('all six full-mode commands bind literal #61 multiword input once without placeholder recursion', () => {
   const commands = loadWorkflowCommands(fileURLToPath(commandsDir));
   const input = 'literal #61 multiword $ARGUMENTS and $1 stays opaque';
   const intros = {
@@ -58,6 +58,7 @@ test('all five full-mode commands bind literal #61 multiword input once without 
     'address-pr-feedback': 'Address pull request feedback: ',
     'assess-debt': 'Assess technical debt: ',
     'grill-me': 'Grill me about: ',
+    'document-agents': 'Document agents: ',
   };
   for (const [id, intro] of Object.entries(intros)) {
     const command = commands[id as keyof typeof intros];

@@ -4,7 +4,7 @@ import test from 'node:test';
 import { extractReviewRubric } from '../src/workflow-commands.ts';
 
 const root = new URL('../.opencode/commands/', import.meta.url);
-const commands = ['start-issue', 'review-pr', 'address-pr-feedback', 'report-defect', 'assess-debt', 'grill-me'];
+const commands = ['start-issue', 'review-pr', 'address-pr-feedback', 'report-defect', 'assess-debt', 'grill-me', 'document-agents'];
 
 for (const name of commands) {
   test(`${name} has constrained frontmatter and safety rules`, async () => {
@@ -57,6 +57,41 @@ test('BH-030: PR feedback workflow retrieves complete threads and gates scoped f
   assert.match(feedback, /Never merge, force-push, delete branches, or clean up as an implied step/i);
   assert.match(feedback, /interactive TTY/i);
   assert.match(feedback, /Prompt safeguards guide behavior but are not a deterministic security boundary/i);
+});
+
+test('BH-042: document-agents scopes, analyzes, gates writes, and reuses shared documentation skills', async () => {
+  const doc = await readFile(new URL('document-agents.md', root), 'utf8');
+  // Scope selection and modes
+  assert.match(doc, /arguments as scoping context, not authorization/i);
+  assert.match(doc, /either the repository root or a specific module path/i);
+  assert.match(doc, /suggest candidate scopes from the repository structure or recent commit\/PR activity, but the human selects the scope; never guess/i);
+  assert.match(doc, /greenfield \(no `AGENTS\.md` exists in the scope yet\) or update/i);
+  assert.match(doc, /In update mode, the human confirms the delta source/i);
+  assert.match(doc, /Missing or conflicting scope, mode, or delta source blocks the workflow/i);
+  // Analysis: hierarchy, delta, verified vs inferred
+  assert.match(doc, /Researcher inspects the scope read-only/i);
+  assert.match(doc, /every parent and sibling `AGENTS\.md`/i);
+  assert.match(doc, /summarizes the confirmed delta \(commits, PRs, architectural changes\) from the actual history/i);
+  assert.match(doc, /do not duplicate rules a parent `AGENTS\.md` already states/i);
+  assert.match(doc, /verified \(with the file, script, or command output it comes from\), inferred, or unknown/i);
+  assert.match(doc, /Never invent commands, paths, or conventions; flag unknowns/i);
+  // Update/merge logic and approval
+  assert.match(doc, /Preserve existing human-authored rules and comments; propose a clean minimal diff, never a blind overwrite/i);
+  assert.match(doc, /waits for explicit conversational human approval of that diff/i);
+  // Cancellation
+  assert.match(doc, /cancels or declines at any point before approval, stop with no disk writes and no Git mutations/i);
+  // Shared skills, independent review, no new role
+  for (const skill of ['documentation-impact', 'technical-documentation', 'documentation-validation', 'documentation-review']) {
+    assert.match(doc, new RegExp(`\`${skill}\``), skill);
+  }
+  assert.match(doc, /Do not copy their procedures into this workflow/i);
+  assert.match(doc, /Reviewer independently checks the proposed `AGENTS\.md` changes against the repository/i);
+  assert.match(doc, /the author's explanation alone is not evidence/i);
+  assert.match(doc, /adds no Documentation agent or role on any host/i);
+  assert.match(doc, /accepts or discards each individually or in an explicitly enumerated batch/i);
+  // Publication
+  assert.match(doc, /final human approval before any push or PR/i);
+  assert.match(doc, /Never merge/i);
 });
 
 test('PR review templates keep untrusted-context safeguards without directing placeholder processing', async () => {

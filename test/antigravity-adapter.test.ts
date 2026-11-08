@@ -21,8 +21,8 @@ test('planAntigravityDeployment produces expected project footprint', () => {
   try {
     const plan = planAntigravityDeployment('project', tempProject, tempHome, rolesDir, commandsDir);
     assert.equal(plan.targetConfig, join(tempProject, '.agents', 'hooks.json'));
-    // 1 lead rule + 6 skills + merge-guard script + hooks.json + mcp_config.json = 10 files
-    assert.equal(plan.filesToDeploy.length, 10);
+    // 1 lead rule + 7 skills + merge-guard script + hooks.json + mcp_config.json = 11 files
+    assert.equal(plan.filesToDeploy.length, 11);
 
     const leadRule = plan.filesToDeploy.find(f => f.relativePath === '.agents/rules/advanced-harness-lead.md');
     assert.ok(leadRule);
@@ -48,8 +48,8 @@ test('planAntigravityDeployment produces expected global footprint including wor
   try {
     const plan = planAntigravityDeployment('global', undefined, tempHome, rolesDir, commandsDir);
     assert.equal(plan.targetConfig, join(tempHome, '.gemini', 'config', 'hooks.json'));
-    // 1 lead rule + 6 skills + merge-guard script + hooks.json + mcp_config.json = 10 files
-    assert.equal(plan.filesToDeploy.length, 10);
+    // 1 lead rule + 7 skills + merge-guard script + hooks.json + mcp_config.json = 11 files
+    assert.equal(plan.filesToDeploy.length, 11);
 
     const leadRule = plan.filesToDeploy.find(f => f.relativePath === 'rules/advanced-harness-lead.md');
     assert.ok(leadRule);

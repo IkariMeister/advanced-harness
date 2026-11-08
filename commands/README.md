@@ -1,6 +1,6 @@
 # Canonical workflow command sources
 
-The six `*.md` files in this directory are the canonical command definitions. Their
+The seven `*.md` files in this directory are the canonical command definitions. Their
 versioned YAML frontmatter records schema and argument-binding metadata; Markdown bodies
 are the source prompt text. `.opencode/commands/*.md` are generated OpenCode outputs and
 must match the OpenCode emitter exactly. Edit the canonical sources, then regenerate
@@ -13,7 +13,7 @@ remainder. This records host bindings only: it does not tokenize, quote, validat
 execute user input. Missing or unclear information is handled by the command's
 clarification instructions. Inserted argument text is not recursively substituted.
 
-These six task workflows remain workflow commands even on hosts that represent them
+These seven task workflows remain workflow commands even on hosts that represent them
 with `SKILL.md`. Reusable procedures are a separate source namespace in `skills/`;
 their emitted names use the reserved `harness-procedure-` prefix. See
 [`skills/README.md`](../skills/README.md).

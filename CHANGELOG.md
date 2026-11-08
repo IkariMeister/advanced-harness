@@ -8,6 +8,11 @@ version between releases.
 
 ### Added
 
+- `/document-agents` workflow command: generates or updates root or module-scoped
+  `AGENTS.md` files. The human picks the scope and mode, every proposed statement is
+  labeled verified, inferred or unknown, and nothing is written before the exact diff is
+  approved. It uses the shared documentation procedure skills and Reviewer's independent
+  check, and adds no Documentation role (#76).
 - OpenAI Codex install, update, doctor and uninstall at global scope: each child
   role runs as its own `codex exec` process with a source-derived profile, started
   by Lead through a launcher that re-applies the role settings on every launch and
