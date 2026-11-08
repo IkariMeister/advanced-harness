@@ -62,10 +62,18 @@ applicable project instructions and shared memory.
 2. External verifies the issue is assigned to the confirmed human before research or
     planning; do not autoassign or proceed unassigned. If identity/assignment is unclear,
     stop and ask.
-3. Operator inspects the current repository, instructions, base branch, existing
-    worktrees, and unrelated changes, then creates an isolated task worktree and
-    initializes shared `MEMORY.md` if missing. Other existing worktrees and untouched
-    canonical changes do not block bootstrap; stop and ask only on missing/invalid settings,
+3. Before any worktree is created, Operator inspects the canonical checkout read-only. If it
+    is dirty (any staged, unstaged, or untracked change), mid-operation (a merge, rebase,
+    cherry-pick, revert, or similar operation in progress), not on the base branch, or
+    detached, Operator reports the observed state and waits for explicit human confirmation;
+    it never repairs the checkout. Otherwise, when Lead relays it with the base branch and the
+    canonical checkout path, External runs `git fetch`, then checks read-only whether the local
+    base is ahead of or diverged from `origin/<base>`; if it is, External reports and waits
+    for the human. Otherwise External runs `git merge --ff-only origin/<base>`; if that is not
+    possible, External reports and waits. Operator then inspects the current repository,
+    instructions, base branch, existing worktrees, and unrelated changes, creates an isolated
+    task worktree from the updated base, and initializes shared `MEMORY.md` if missing. Other
+    existing worktrees do not block bootstrap; stop and ask only on missing/invalid settings,
     target branch/worktree collision, or creation errors.
 4. External reads the issue and linked parent when present for context, not scope expansion.
     Apply only explicitly confirmed lifecycle mappings. Never invent GitHub In Progress/In

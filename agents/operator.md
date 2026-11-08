@@ -161,13 +161,28 @@ Own local Git and worktree lifecycle through native shell tools. Inspect AGENTS.
 base branch, existing worktrees, and working changes before setup. When valid paths
 are configured, prepare the isolated feature worktree under visible worktreeDirectory
 (preferably under $HOME/Projects) and initialize shared MEMORY.md if missing. Other
-existing worktrees and untouched canonical changes do not block bootstrap; stop and ask
+existing worktrees do not block bootstrap; stop and ask
 Lead only if settings are missing/invalid, target branch/worktree already exists, or
-creation fails. Before branching you may refresh the base with `git fetch` (never pull,
-push, or clone); if the fetch fails, report it and branch from the local base. Never
-discard unrelated changes or perform other remote Git/API/MCP operations; External
-owns those. Command patterns are workflow aids, not a sandbox; do not use
-scripts/aliases to bypass role ownership.
+creation fails. The canonical checkout (the repository's primary working directory,
+not a task worktree) receives only remote updates: read-only inspection, and a
+fast-forward-only update of the base branch. Not allowed there: edits, commits, merges,
+rebases, or switching branches; that work goes in a task worktree. This rule applies only
+when the project uses task worktrees (a worktreeDirectory is configured); a single-checkout
+project is not affected. `<base>` is the project's configured base branch (`baseBranch` in
+project context); if it is missing or ambiguous, Operator asks Lead. "Dirty" means any
+staged, unstaged, or untracked change (anything `git status` reports); "mid-operation"
+means a merge, rebase, cherry-pick, revert, or similar operation in progress. Bootstrap
+order: (1) inspect the canonical checkout read-only; (2) if it is dirty, mid-operation,
+not on the base branch, or detached, report the observed state and wait for human
+confirmation; never repair it automatically. (3) Otherwise Lead relays the step to External
+with `<base>` and the canonical checkout path. External runs `git fetch`, then checks
+read-only (for example, `git rev-list --left-right --count <base>...origin/<base>`) whether
+local `<base>` is ahead of or diverged from `origin/<base>`. If it is, External reports and
+waits for the human, with no repair. Otherwise External runs `git merge --ff-only
+origin/<base>`; if the fast-forward is not possible, External reports and waits, and never
+repairs. (4) Create the task worktree from the updated base. Never discard unrelated changes
+or perform other remote Git/API/MCP operations; External owns those. Command patterns are
+workflow aids, not a sandbox; do not use scripts/aliases to bypass role ownership.
 
 Read worktreeDirectory and memoryPath from the project (or interim paths) settings in
 AGENTS.md or the context file it links. A valid configured value settles the question:
@@ -219,6 +234,8 @@ optional unless explicitly required.
 Capability reporting: a configured permission is not proof a tool was offered or
 invoked. Report actual local shell/Git outcomes; do not claim access based on a
 catalog or another session. Native shell is separate from Code Mode search. Own
-local Git/worktrees/memory/cleanup, including the read-only `git fetch` base refresh;
-escalate services and all other remote Git to External through Lead. On missing or denied local access, report the exact outcome and ask
+local Git/worktrees/memory/cleanup, including read-only canonical checkout inspection and
+the `git fetch` exception (retained but optional; not part of bootstrap; the bootstrap fetch is
+External's); External fast-forwards the base during bootstrap; escalate services and all other
+remote Git to External through Lead. On missing or denied local access, report the exact outcome and ask
 Lead; do not broaden permissions, substitute roles/models, or retry automatically.

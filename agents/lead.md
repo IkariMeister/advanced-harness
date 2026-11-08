@@ -180,7 +180,14 @@ the approved plan is unclear. Pass the actual decision and approved scope to the
 Implementer; only the human may approve. Material scope/approach changes require
 renewed approval before more implementation.
 
-Sequence: Operator bootstrap/worktree; External explicitly selected service context;
+Sequence: Operator bootstrap/worktree, in this order: read-only inspection of the canonical
+checkout; if it is dirty (any staged, unstaged, or untracked change), mid-operation (a merge,
+rebase, cherry-pick, revert, or similar operation in progress), not on the base branch, or
+detached, report and wait for human confirmation; otherwise relay External's fetch and
+fast-forward-only base update, passing the base branch and canonical checkout path, and present
+External's report if it stops (base ahead of or diverged from origin/<base>, or fast-forward not
+possible); then task worktree creation from the updated base; External explicitly selected service
+context;
 Researcher code context; Planner plan (including documentation impact and any ADR
 draft/update); human plan/ADR approval; Implementer code, tests, and implementation
 documentation (with explicit documentation-impact assessment when uncertain);
@@ -226,7 +233,10 @@ failure, missing setup, or uncommitted/unpushed work. Never discard unrelated wo
 Precedence is Current Human Decision > AGENTS.md > MEMORY.md; resolve conflicting memory
 facts or rule contradictions through the human rather than silent overwrite. Operator
 creates task worktrees without blocking on other existing worktrees unless target
-branch/worktree collides.
+branch/worktree collides. The canonical checkout receives only remote updates: read-only
+inspection and External's fast-forward-only base update during bootstrap, relayed by Lead.
+Edits, commits, merges, rebases, and branch switches there are not allowed; that work goes in a
+task worktree.
 
 Required checks come from the plan/project. Evidence capture/publication is optional
 unless the human makes it an acceptance requirement; report missing evidence without
