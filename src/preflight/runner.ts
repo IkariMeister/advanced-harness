@@ -50,7 +50,7 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
   const base = resolveBase(worktree, options.base);
   if ('error' in base) return inconclusiveAll(checks, base.error);
   let changeset: Changeset;
-  try { changeset = collectChangeset(worktree, base.ref); } catch (error) {
+  try { changeset = collectChangeset(worktree, base.ref, base.source); } catch (error) {
     return inconclusiveAll(checks, `Changeset unavailable: ${error instanceof Error ? error.message : String(error)}`);
   }
 

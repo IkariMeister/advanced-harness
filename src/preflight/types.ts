@@ -19,8 +19,11 @@ export type ChangeEntry = {
   content: Buffer | undefined;
 };
 
+export type BaseSource = 'option' | 'project-context';
+
 export type Changeset = {
   base: string;
+  baseSource: BaseSource;
   mergeBase: string;
   head: string;
   entries: ChangeEntry[];

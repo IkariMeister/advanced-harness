@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, readlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { PreflightToolError, type ChangeEntry, type ChangeOrigin, type ChangeStatus, type Changeset } from './types.ts';
+import { PreflightToolError, type BaseSource, type ChangeEntry, type ChangeOrigin, type ChangeStatus, type Changeset } from './types.ts';
 
 function git(worktree: string, args: string[]): Buffer {
   const result = spawnSync('git', ['-C', worktree, '-c', 'core.quotepath=false', '--literal-pathspecs', ...args], { maxBuffer: 256 * 1024 * 1024 });
@@ -39,13 +39,17 @@ function parseNameStatus(output: Buffer, origin: ChangeOrigin): Omit<ChangeEntry
 
 type WorkingFile = Pick<ChangeEntry, 'content' | 'kind'>;
 
-/** Absent → no content; symlink → its target as content; other non-regular entries → no content. */
+/** Absent → no content; symlink → its target as content; submodule → no content; other non-regular entries → no content. */
 function readWorkingFile(worktree: string, path: string): WorkingFile {
   try {
     const full = join(worktree, path);
     const entry = lstatSync(full, { throwIfNoEntry: false });
     if (!entry) return { content: undefined };
     if (entry.isSymbolicLink()) return { kind: 'symlink', content: Buffer.from(readlinkSync(full), 'utf8') };
+    if (entry.isDirectory()) {
+      if (existsSync(join(full, '.git'))) return { kind: 'submodule', content: undefined };
+      return { kind: 'other', content: undefined };
+    }
     if (!entry.isFile()) return { kind: 'other', content: undefined };
     return { kind: 'file', content: readFileSync(full) };
   } catch (error) {
@@ -67,7 +71,7 @@ function modeOf(worktree: string, args: string[], path: string): string | undefi
  * Collects `merge-base(base, HEAD)...HEAD` plus staged, unstaged, and untracked
  * files, with contents. Any git failure throws {@link PreflightToolError}.
  */
-export function collectChangeset(worktree: string, base: string): Changeset {
+export function collectChangeset(worktree: string, base: string, baseSource: BaseSource = 'option'): Changeset {
   const top = text(worktree, ['rev-parse', '--show-toplevel']);
   const head = text(top, ['rev-parse', '--verify', 'HEAD^{commit}']);
   let baseCommit: string;
@@ -82,10 +86,15 @@ export function collectChangeset(worktree: string, base: string): Changeset {
     entries.push({ ...entry, ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `:${entry.path}`, modeOf(top, ['ls-files', '-s'], entry.path))) });
   }
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-z']), 'unstaged')) {
-    entries.push({ ...entry, ...(entry.status === 'deleted' ? { content: undefined } : readWorkingFile(top, entry.path)) });
+    if (entry.status === 'deleted') {
+      entries.push({ ...entry, content: undefined });
+    } else {
+      const mode = modeOf(top, ['ls-files', '-s'], entry.path);
+      entries.push({ ...entry, ...(mode === '160000' ? { kind: 'submodule', content: undefined } : readWorkingFile(top, entry.path)) });
+    }
   }
   const untracked = git(top, ['ls-files', '--others', '--exclude-standard', '-z']).toString('utf8').split('\0').filter(Boolean);
   for (const path of untracked) entries.push({ path, status: 'added', origin: 'untracked', ...readWorkingFile(top, path) });
 
-  return { base, mergeBase, head, entries };
+  return { base, baseSource, mergeBase, head, entries };
 }
