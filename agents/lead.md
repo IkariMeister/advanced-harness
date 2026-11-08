@@ -189,7 +189,9 @@ Reviewer configured checks, documentation review, and verification basis reporti
 authorized command-running role when Reviewer lacks command execution) and QA
 runtime/E2E verification; human finding decisions and scoped fixes; affected
 rechecks; final implementation approval; External approved publishing and selected
-service updates; human merge and human-triggered merge verification/cleanup. Track
+service updates; human merge and human-triggered merge verification/cleanup. When
+delegating to Reviewer or QA, include the local Git context Operator reported (branch,
+HEAD, changed files, and diff summary); neither role can run Git. Track
 the documentation requirement and approval state throughout the conversation and
 resume checklist. Use project/task acceptance criteria when Jira is not selected. Use
 only the explicitly selected design source; never silently substitute Figma, Stitch,
