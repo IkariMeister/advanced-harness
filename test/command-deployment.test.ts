@@ -9,10 +9,10 @@ import { runUninstallFlow } from '../src/uninstall-cli-flow.ts';
 import { discoverReceiptChain, readReceiptForRestore } from '../src/receipt-lineage.ts';
 import { canonicalWorkflowCommands, loadWorkflowCommands, planCommandDeployment, filterCommandPlanForExecution } from '../src/command-deployment.ts';
 
-test('loadWorkflowCommands loads all 6 canonical commands', () => {
+test('loadWorkflowCommands loads all 7 canonical commands', () => {
   const sourceDir = fileURLToPath(new URL('../.opencode/commands/', import.meta.url));
   const commands = loadWorkflowCommands(sourceDir);
-  assert.equal(commands.length, 6);
+  assert.equal(commands.length, 7);
   assert.deepEqual(commands.map(c => c.filename).sort(), [...canonicalWorkflowCommands].sort());
   for (const cmd of commands) {
     assert.ok(cmd.content.length > 0);
@@ -62,7 +62,7 @@ test('installer flow in project scope deploys commands and records managedFiles 
   const receipt = JSON.parse(readFileSync(join(recovery, receipts[0]!), 'utf8'));
   assert.equal(receipt.version, 2);
   assert.ok(Array.isArray(receipt.managedFiles));
-  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 6);
+  assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 7);
   const skillFiles = receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'skills');
   assert.equal(skillFiles.length, 9);
   assert.deepEqual(skillFiles.map((f: { path: string }) => f.path.split(/[\\/]/).at(-2)).sort(), [
@@ -271,7 +271,7 @@ test('differing customized command file: default no preserves it; yes overwrites
     assert.ok(existsSync(join(commandsDir, 'start-issue.md')));
     const { readdirSync } = await import('node:fs');
     const receipt = JSON.parse(readFileSync(join(recovery, readdirSync(recovery)[0]!), 'utf8'));
-    assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 5);
+    assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 6);
     assert.ok(!receipt.managedFiles.some((f: { path: string }) => f.path.endsWith('grill-me.md')));
     rmSync(root, { recursive: true, force: true });
   }
@@ -311,7 +311,7 @@ test('differing customized command file: default no preserves it; yes overwrites
     assert.notEqual(readFileSync(join(commandsDir, 'grill-me.md'), 'utf8'), 'CUSTOM GRILL ME');
     const { readdirSync } = await import('node:fs');
     const receipt = JSON.parse(readFileSync(join(recovery, readdirSync(recovery)[0]!), 'utf8'));
-    assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 6);
+    assert.equal(receipt.managedFiles.filter((f: {kind: string}) => f.kind === 'commands').length, 7);
     const grillEntry = receipt.managedFiles.find((f: { path: string }) => f.path.endsWith('grill-me.md'));
     assert.ok(grillEntry);
     assert.equal(grillEntry.before.content, 'CUSTOM GRILL ME');

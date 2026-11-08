@@ -7,6 +7,7 @@ import type { ManagedFileEvidence } from './receipt-lineage.ts';
 export const canonicalWorkflowCommands = [
   'address-pr-feedback.md',
   'assess-debt.md',
+  'document-agents.md',
   'grill-me.md',
   'report-defect.md',
   'review-pr.md',

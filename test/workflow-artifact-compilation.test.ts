@@ -14,9 +14,9 @@ const bindings = Object.fromEntries(workflowCommandIds.map(id => [id, id === 're
   : `whole input for ${id}: $ARGUMENTS must remain literal`
 ])) as Parameters<typeof compileWorkflowArtifacts>[2];
 
-test('compiler emits deterministic documented artifact formats for six commands across all hosts', () => {
+test('compiler emits deterministic documented artifact formats for seven commands across all hosts', () => {
   const result = compileWorkflowArtifacts(commandsDirectory, hosts, bindings);
-  assert.equal(result.artifacts.length, 30);
+  assert.equal(result.artifacts.length, 35);
   assert.equal(result.runtimeVerified, false);
   assert.equal(result.deploymentReady, false);
   assert.ok(result.diagnostics.some(item => item.includes('issue #43')));
@@ -26,7 +26,7 @@ test('compiler emits deterministic documented artifact formats for six commands 
   assert.deepEqual(compileWorkflowArtifacts(commandsDirectory, hosts, bindings), result);
   for (const host of hosts) {
     const artifacts = result.artifacts.filter(item => item.host === host);
-    assert.equal(artifacts.length, 6, host);
+    assert.equal(artifacts.length, 7, host);
     for (const artifact of artifacts) {
       if (host === 'opencode') {
         assert.equal(artifact.format, 'command-markdown');
@@ -100,7 +100,7 @@ test('non-OpenCode YAML metadata safely roundtrips adversarial descriptions whil
 
 test('OpenCode-only compilation retains native argument templates and is deployment-ready but runtime-unverified', () => {
   const result = compileWorkflowArtifacts(commandsDirectory, ['opencode']);
-  assert.equal(result.artifacts.length, 6);
+  assert.equal(result.artifacts.length, 7);
   assert.deepEqual(result.diagnostics, []);
   assert.equal(result.deploymentReady, true);
   assert.equal(result.runtimeVerified, false);

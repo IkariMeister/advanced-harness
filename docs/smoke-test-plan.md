@@ -103,7 +103,7 @@ otherwise remains compile-only and is covered by `npm test`.
 | ID | Case | Expected |
 | --- | --- | --- |
 | CC-01 | Enter at `Type yes to install` (default `no`) | Exit 1, "No files written", tree unchanged |
-| CC-02 | `yes` | `CLAUDE.md` Lead block, `.claude/settings.json` (`agent: lead`, `gh pr merge` denied), 8 agents, 6 commands, canonical procedure skill under `.claude/skills/`, `AGENTS.md` untouched, no OpenCode calls; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
+| CC-02 | `yes` | `CLAUDE.md` Lead block, `.claude/settings.json` (`agent: lead`, `gh pr merge` denied), 8 agents, 7 commands, canonical procedure skill under `.claude/skills/`, `AGENTS.md` untouched, no OpenCode calls; prints `Harness version:` and the install receipt's `harnessVersion.commit` equals `HEAD` |
 | CC-03 | `harness:doctor --host claude-code` | Exit 0, `HEALTHY (Installed: Yes)` |
 | CC-04 | Receipt-backed uninstall (`--host claude-code --scope project`) | Exit 0; agents, commands, procedure skills, `settings.json`, and `CLAUDE.md` removed; `AGENTS.md` equals its pristine content |
 | CC-05 | Install, edit `CLAUDE.md` outside the harness block, Enter at `Type uninstall to continue`, then `uninstall` | Cancel leaves the project tree unchanged; uninstall exits 0, previews the block-only removal, and leaves only the edit in `CLAUDE.md` |

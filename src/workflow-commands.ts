@@ -7,7 +7,7 @@ import { saveInstallation } from './native-installer.ts';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import type { ManagedFileEvidence } from './receipt-lineage.ts';
 
-export const workflowCommandIds = ['start-issue', 'review-pr', 'address-pr-feedback', 'report-defect', 'assess-debt', 'grill-me'] as const;
+export const workflowCommandIds = ['start-issue', 'review-pr', 'address-pr-feedback', 'report-defect', 'assess-debt', 'grill-me', 'document-agents'] as const;
 export type WorkflowCommandId = typeof workflowCommandIds[number];
 export type WorkflowArguments = { mode: 'full' } | { mode: 'positional'; names: ['parent', 'description']; remainder: 2 };
 export interface WorkflowCommand { schemaVersion: 1; description: string; arguments: WorkflowArguments; body: string }
@@ -19,7 +19,7 @@ export interface WorkflowCompilation { artifacts: WorkflowArtifact[]; diagnostic
 
 const placeholders: Record<WorkflowCommandId, readonly string[]> = {
   'start-issue': ['$ARGUMENTS'], 'review-pr': ['$ARGUMENTS'], 'address-pr-feedback': ['$ARGUMENTS'],
-  'report-defect': ['$1', '$2'], 'assess-debt': ['$ARGUMENTS'], 'grill-me': ['$ARGUMENTS']
+  'report-defect': ['$1', '$2'], 'assess-debt': ['$ARGUMENTS'], 'grill-me': ['$ARGUMENTS'], 'document-agents': ['$ARGUMENTS']
 };
 
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
@@ -83,7 +83,7 @@ export function loadWorkflowCommand(text: string, id: WorkflowCommandId, source 
 export function loadWorkflowCommands(directory: string): Record<WorkflowCommandId, WorkflowCommand> {
   const names = readdirSync(directory).filter(name => name.endsWith('.md') && name !== 'README.md').sort();
   const expected = [...workflowCommandIds].map(id => `${id}.md`).sort();
-  if (JSON.stringify(names) !== JSON.stringify(expected)) throw new Error('Workflow command source directory must contain exactly the six canonical command files.');
+  if (JSON.stringify(names) !== JSON.stringify(expected)) throw new Error('Workflow command source directory must contain exactly the seven canonical command files.');
   return Object.fromEntries(workflowCommandIds.map(id => [id, loadWorkflowCommand(readFileSync(join(directory, `${id}.md`), 'utf8'), id)])) as Record<WorkflowCommandId, WorkflowCommand>;
 }
 

@@ -7,7 +7,7 @@ import { parse } from 'jsonc-parser';
 import { createSandbox, realHomeFingerprintOf, tree, type Sandbox } from './support/sandbox.ts';
 import { ask, openCodeInstall, roles } from './support/steps.ts';
 
-const commands = ['address-pr-feedback', 'assess-debt', 'grill-me', 'report-defect', 'review-pr', 'start-issue'];
+const commands = ['address-pr-feedback', 'assess-debt', 'document-agents', 'grill-me', 'report-defect', 'review-pr', 'start-issue'];
 
 describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
   let box: Sandbox;

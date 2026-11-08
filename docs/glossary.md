@@ -32,7 +32,7 @@ To add or change a term, edit this file in the same change that first uses the n
 
 | Term | Meaning in this project | Not to be confused with |
 | --- | --- | --- |
-| **workflow command** | One of the human-invoked task workflows in [`commands/`](../commands/README.md) (`/start-issue`, `/review-pr`, `/address-pr-feedback`, `/report-defect`, `/assess-debt`, `/grill-me`). Some hosts emit them as `SKILL.md` files; they are still workflow commands. | Procedure skill. |
+| **workflow command** | One of the human-invoked task workflows in [`commands/`](../commands/README.md) (`/start-issue`, `/review-pr`, `/address-pr-feedback`, `/report-defect`, `/assess-debt`, `/grill-me`, `/document-agents`). Some hosts emit them as `SKILL.md` files; they are still workflow commands. | Procedure skill. |
 | **procedure skill** | A reusable, host-neutral procedure (from canonical `skills/`, BH-045) that roles invoke, such as `documentation-impact` or a validation skill. It grants no permissions and makes no decisions. | Workflow command emitted as `SKILL.md`. |
 | **validation skill** | A procedure skill describing a reproducible check (tests, static analysis, builds) and where its evidence goes. It does not decide whether results are acceptable. | QA role. |
 

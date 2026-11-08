@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createSandbox, repoRoot, tree, type Sandbox } from './support/sandbox.ts';
 import { antigravityInstall, ask, claudeCodeInstall, roles } from './support/steps.ts';
 
-const commands = ['address-pr-feedback', 'assess-debt', 'grill-me', 'report-defect', 'review-pr', 'start-issue'];
+const commands = ['address-pr-feedback', 'assess-debt', 'document-agents', 'grill-me', 'report-defect', 'review-pr', 'start-issue'];
 const headCommit = () => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
 
 // Recursively collects native-install receipts for one host from the recovery directory.
@@ -40,7 +40,7 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
     assert.equal(existsSync(box.recoveryDirectory), false);
   });
 
-  it('SMK-CC-02 install deploys CLAUDE.md, settings, eight agents, and six commands; AGENTS.md preserved', async () => {
+  it('SMK-CC-02 install deploys CLAUDE.md, settings, eight agents, and seven commands; AGENTS.md preserved', async () => {
     const result = await box.run('install-native-harness.ts', args(), { steps: claudeCodeInstall('yes') });
     assert.equal(result.code, 0, result.transcript);
     assert.match(result.stdout, /Harness version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)? \([0-9a-f]{40}\)/);
