@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { updateContext } from '../src/project-context.ts';
 import { collectChangeset } from '../src/preflight/changeset.ts';
 import { exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
 import type { PreflightCheck } from '../src/preflight/types.ts';
@@ -49,6 +50,9 @@ test('changeset covers committed, staged, unstaged, untracked, renamed, and dele
   writeFileSync(join(root, 'empty.txt'), '');
   mkdirSync(join(root, 'dir'));
   writeFileSync(join(root, 'dir', 'untracked.txt'), 'u\n');
+  writeFileSync(join(root, 'file with spaces.txt'), 'space\n');
+  writeFileSync(join(root, 'file-[1].txt'), 'bracket\n');
+  writeFileSync(join(root, 'café.txt'), 'accent\n');
 
   const { entries } = collectChangeset(root, 'main');
   const find = (path: string) => entries.find((entry) => entry.path === path);
@@ -62,6 +66,9 @@ test('changeset covers committed, staged, unstaged, untracked, renamed, and dele
   assert.equal(find('edit.txt')?.origin, 'unstaged');
   assert.equal(find('edit.txt')?.content?.toString(), 'v2\n');
   assert.equal(find('dir/untracked.txt')?.origin, 'untracked');
+  assert.equal(find('file with spaces.txt')?.content?.toString(), 'space\n');
+  assert.equal(find('file-[1].txt')?.content?.toString(), 'bracket\n');
+  assert.equal(find('café.txt')?.content?.toString(), 'accent\n');
   // A present zero-byte file is distinct from an absent (deleted) file.
   assert.equal(find('empty.txt')?.content?.length, 0);
   assert.equal(find('empty.txt')?.kind, 'file');
@@ -92,6 +99,40 @@ test('unstaged deletion and staged rename are reported', () => {
   ]);
 });
 
+test('staged deletion and multi-origin modifications are tracked per origin', () => {
+  const root = repo();
+  // staged deletion of gone.txt (which was committed in base)
+  git(root, 'rm', '-q', 'gone.txt');
+
+  // committed edit on task branch
+  writeFileSync(join(root, 'edit.txt'), 'v2-committed\n');
+  git(root, 'commit', '-q', '-m', 'commit staged rm and edit', 'gone.txt', 'edit.txt');
+
+  // But we want gone.txt to be staged deleted, not committed deleted!
+  // Let's commit an edit on edit.txt:
+  // v2-committed is already committed.
+  // Now stage v3-staged:
+  writeFileSync(join(root, 'edit.txt'), 'v3-staged\n');
+  git(root, 'add', 'edit.txt');
+  // unstaged edit on top of that:
+  writeFileSync(join(root, 'edit.txt'), 'v4-working\n');
+
+  // and stage a deletion of keep.txt (which was committed in base):
+  git(root, 'rm', '-q', 'keep.txt');
+
+  const { entries } = collectChangeset(root, 'main');
+  const edits = entries.filter((e) => e.path === 'edit.txt');
+  assert.equal(edits.length, 3);
+  assert.equal(edits.find((e) => e.origin === 'committed')?.content?.toString(), 'v2-committed\n');
+  assert.equal(edits.find((e) => e.origin === 'staged')?.content?.toString(), 'v3-staged\n');
+  assert.equal(edits.find((e) => e.origin === 'unstaged')?.content?.toString(), 'v4-working\n');
+
+  const stagedDel = entries.find((e) => e.path === 'keep.txt' && e.origin === 'staged');
+  assert.equal(stagedDel?.status, 'deleted');
+  assert.equal(stagedDel?.origin, 'staged');
+  assert.equal(stagedDel?.content, undefined);
+});
+
 test('checks run in deterministic id order and aggregate block/warn', async () => {
   const root = repo();
   const order: string[] = [];
@@ -106,6 +147,30 @@ test('checks run in deterministic id order and aggregate block/warn', async () =
   assert.equal(exitCodeFor(result), 1);
 });
 
+test('inconclusive takes precedence over block in exit codes', async () => {
+  const root = repo();
+  const make = (id: string, status: 'block' | 'inconclusive'): PreflightCheck => ({ id, run: () => ({ status, evidence: [`${id} evidence`] }) });
+  const result = await runPreflight({ worktree: root, base: 'main', checks: [make('b', 'block'), make('a', 'inconclusive')] });
+  assert.equal(result.approved, false);
+  assert.equal(exitCodeFor(result), 2);
+});
+
+test('empty check list, unknown status, and duplicate check ids are inconclusive', async () => {
+  const root = repo();
+  const emptyRes = await runPreflight({ worktree: root, base: 'main', checks: [] });
+  assert.equal(emptyRes.approved, false);
+  assert.equal(exitCodeFor(emptyRes), 2);
+
+  const unknownRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'u', run: () => ({ status: 'weird' as any, evidence: ['weird'] }) }] });
+  assert.equal(unknownRes.approved, false);
+  assert.equal(exitCodeFor(unknownRes), 2);
+  assert.equal(unknownRes.checks[0]?.status, 'inconclusive');
+
+  const dupRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'dup', run: () => ({ status: 'pass', evidence: [] }) }, { id: 'dup', run: () => ({ status: 'pass', evidence: [] }) }] });
+  assert.equal(dupRes.approved, false);
+  assert.equal(exitCodeFor(dupRes), 2);
+});
+
 test('a throwing check is inconclusive, not a pass', async () => {
   const root = repo();
   const result = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'x', run: () => { throw new Error('boom'); } }] });
@@ -114,24 +179,71 @@ test('a throwing check is inconclusive, not a pass', async () => {
   assert.equal(exitCodeFor(result), 2);
 });
 
-test('missing base, missing ref, and non-git directories are inconclusive', async () => {
+test('missing base, missing ref, non-git directories, and unborn HEAD are inconclusive', async () => {
   const root = repo();
-  for (const options of [{ worktree: root }, { worktree: root, base: 'does-not-exist' }, { worktree: makeTempRoot('preflight-nogit-'), base: 'main' }]) {
+  const unborn = makeTempRoot('preflight-unborn-');
+  git(unborn, 'init', '-q', '-b', 'main');
+  for (const options of [
+    { worktree: root },
+    { worktree: root, base: 'does-not-exist' },
+    { worktree: makeTempRoot('preflight-nogit-'), base: 'main' },
+    { worktree: unborn, base: 'main' },
+  ]) {
     const result = await runPreflight(options);
     assert.equal(result.approved, false);
     assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
   }
 });
 
-test('base ref defaults to baseBranch from project context', async () => {
-  const root = repo();
+test('base ref defaults to baseBranch from project context, and base-context warns on modification', async () => {
+  const root = makeTempRoot('preflight-base-ctx-');
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 'test@example.com');
+  git(root, 'config', 'user.name', 'Test');
+  git(root, 'config', 'core.autocrlf', 'false');
+
   const unconfigured = { status: 'unconfigured' };
   const checks = Object.fromEntries(['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'].map((name) => [name, unconfigured]));
-  const profile = { version: 1, baseBranch: 'main', shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: '$HOME/wt', memoryPath: '$HOME/mem/MEMORY.md' };
-  writeFileSync(join(root, 'AGENTS.md'), ['<!-- advanced-harness:project:start -->', '```json', JSON.stringify(profile), '```', '<!-- advanced-harness:project:end -->', ''].join('\n'));
+  const profile = { version: 1, baseBranch: 'main', shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: join(root, '..', 'wt'), memoryPath: join(root, '..', 'mem', 'MEMORY.md') };
+  writeFileSync(join(root, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  git(root, 'add', 'AGENTS.md');
+  git(root, 'commit', '-q', '-m', 'add project context on main');
+  git(root, 'checkout', '-q', '-b', 'task');
+
+  // Baseline: unmodified baseBranch
   const result = await runPreflight({ worktree: root });
   assert.equal(exitCodeFor(result), 0, JSON.stringify(result));
-  assert.match(result.checks[0]!.evidence[0]!, /^Base main /);
+  const baseCheck = result.checks.find((c) => c.id === 'base-context');
+  assert.equal(baseCheck?.status, 'pass');
+
+  // Modify baseBranch in working tree
+  const modifiedProfile = { ...profile, baseBranch: 'other-branch' };
+  writeFileSync(join(root, 'AGENTS.md'), updateContext('', 'project', modifiedProfile, []));
+  const warnResult = await runPreflight({ worktree: root, base: 'main' });
+  assert.equal(exitCodeFor(warnResult), 0);
+  const warnedBaseCheck = warnResult.checks.find((c) => c.id === 'base-context');
+  assert.equal(warnedBaseCheck?.status, 'warn');
+  assert.match(warnedBaseCheck!.evidence[0]!, /baseBranch was changed from 'main' to 'other-branch'/);
+  assert.equal(warnResult.warnings.length, 1);
+});
+
+test('submodule entries are reported with kind submodule and no content', () => {
+  const root = repo();
+  const sub = makeTempRoot('preflight-sub-');
+  git(sub, 'init', '-q', '-b', 'main');
+  git(sub, 'config', 'user.email', 'sub@example.com');
+  git(sub, 'config', 'user.name', 'Sub');
+  writeFileSync(join(sub, 'sub.txt'), 'sub\n');
+  git(sub, 'add', '.');
+  git(sub, 'commit', '-q', '-m', 'sub commit');
+
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'mysub');
+  git(root, 'commit', '-q', '-m', 'add submodule');
+
+  const { entries } = collectChangeset(root, 'main');
+  const subEntry = entries.find((e) => e.path === 'mysub');
+  assert.equal(subEntry?.kind, 'submodule');
+  assert.equal(subEntry?.content, undefined);
 });
 
 test('CLI exit codes and JSON contract', () => {
@@ -150,7 +262,14 @@ test('CLI exit codes and JSON contract', () => {
   assert.equal(cli('--worktree', root, '--base', 'nope').status, 2);
   assert.equal(cli('--bogus').status, 2);
   assert.equal(cli().status, 2);
+  assert.equal(cli('--worktree', '--json').status, 2);
+  assert.equal(cli('--worktree', root, '--base', 'a', '--base', 'b').status, 2);
+
   const help = cli('--help');
   assert.equal(help.status, 0);
   assert.match(help.stdout, /Usage: npm run harness:preflight/);
+
+  const shortHelp = cli('-h');
+  assert.equal(shortHelp.status, 0);
+  assert.match(shortHelp.stdout, /Usage: npm run harness:preflight/);
 });

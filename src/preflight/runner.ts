@@ -2,8 +2,8 @@ import { realpathSync } from 'node:fs';
 import { contextData } from '../project-context.ts';
 import { locateProjectContext, validateProfile } from '../project-setup.ts';
 import { collectChangeset } from './changeset.ts';
-import { changesetCheck } from './checks.ts';
-import type { CheckResult, Changeset, PreflightCheck, PreflightExitCode, PreflightResult } from './types.ts';
+import { baseContextCheck, changesetCheck } from './checks.ts';
+import type { CheckResult, CheckStatus, Changeset, PreflightCheck, PreflightExitCode, PreflightResult } from './types.ts';
 
 export type BaseResolution = { ref: string; source: 'option' | 'project-context' } | { error: string };
 
@@ -20,21 +20,29 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
   }
 }
 
-export const defaultChecks: readonly PreflightCheck[] = [changesetCheck];
+export const defaultChecks: readonly PreflightCheck[] = [changesetCheck, baseContextCheck];
 
 export type PreflightOptions = { worktree: string; base?: string | undefined; checks?: readonly PreflightCheck[] };
 
 function inconclusiveAll(checks: readonly PreflightCheck[], reason: string): PreflightResult {
-  const results = checks.map((check) => ({ id: check.id, status: 'inconclusive' as const, evidence: [reason] }));
+  const list = checks.length ? checks : [{ id: 'preflight' } as PreflightCheck];
+  const results = list.map((check) => ({ id: check.id, status: 'inconclusive' as const, evidence: [reason] }));
   return { approved: false, blocking: [], warnings: [], metrics: {}, checks: results };
 }
 
 /** Runs checks in `id` order. A thrown check or failed tool call is `inconclusive`, never a pass. */
 export async function runPreflight(options: PreflightOptions): Promise<PreflightResult> {
-  const checks = [...(options.checks ?? defaultChecks)].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const rawChecks = options.checks ?? defaultChecks;
+  if (!rawChecks.length) {
+    return inconclusiveAll([], 'No checks configured to run.');
+  }
+
+  const checks = [...rawChecks].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const ids = new Set<string>();
   for (const check of checks) {
-    if (ids.has(check.id)) throw new Error(`Duplicate preflight check id: ${check.id}`);
+    if (ids.has(check.id)) {
+      return inconclusiveAll(checks, `Duplicate preflight check id: ${check.id}`);
+    }
     ids.add(check.id);
   }
   let worktree: string;
@@ -53,15 +61,21 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
   for (const check of checks) {
     try {
       const outcome = await check.run({ worktree, changeset });
-      results.push({ id: check.id, status: outcome.status, evidence: [...outcome.evidence] });
+      const validStatuses: CheckStatus[] = ['pass', 'warn', 'block', 'inconclusive'];
+      const status: CheckStatus = validStatuses.includes(outcome.status) ? outcome.status : 'inconclusive';
+      const evidence = [...outcome.evidence];
+      if (status !== outcome.status) {
+        evidence.push(`Invalid check status returned: ${String(outcome.status)}`);
+      }
+      results.push({ id: check.id, status, evidence });
       for (const [key, value] of Object.entries(outcome.metrics ?? {})) metrics[`${check.id}.${key}`] = value;
-      if (outcome.status === 'block') blocking.push(...outcome.evidence.map((line) => `${check.id}: ${line}`));
-      if (outcome.status === 'warn') warnings.push(...outcome.evidence.map((line) => `${check.id}: ${line}`));
+      if (status === 'block') blocking.push(...evidence.map((line) => `${check.id}: ${line}`));
+      if (status === 'warn') warnings.push(...evidence.map((line) => `${check.id}: ${line}`));
     } catch (error) {
       results.push({ id: check.id, status: 'inconclusive', evidence: [`Check failed: ${error instanceof Error ? error.message : String(error)}`] });
     }
   }
-  const approved = results.every((result) => result.status === 'pass' || result.status === 'warn');
+  const approved = results.length > 0 && results.every((result) => result.status === 'pass' || result.status === 'warn');
   return { approved, blocking, warnings, metrics, checks: results };
 }
 

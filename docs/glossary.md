@@ -88,7 +88,6 @@ To add or change a term, edit this file in the same change that first uses the n
 | **Backlog ID** | Stable `BH-NNN` identifier of a backlog item, kept across issue edits. | GitHub issue number. |
 | **milestone** | A GitHub milestone grouping planned work. Milestones are re-planned after each one closes, so issues reference work by Backlog ID or issue number, not milestone name. | Release. |
 | **release** | A tagged version (`vX.Y.Z`) published through the [release process](releasing.md). | Milestone. |
-
 | **preflight** | The pre-publish evidence run of `harness:preflight` over a task worktree (see [preflight](preflight.md)). It reports evidence only and never counts as approval. | Approval; Claude permission preflight; multi-file write preflight. |
 | **changeset** | The files preflight inspects: `merge-base(base, HEAD)...HEAD` plus staged, unstaged, and untracked files, with contents. | A single commit; a PR diff. |
 | **inconclusive** | A preflight check status (exit code 2) meaning a git/tool call or check failed. Never counted as a pass. | Blocked (exit 1); unverified. |

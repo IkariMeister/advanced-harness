@@ -15,7 +15,7 @@ export type ChangeEntry = {
   oldPath?: string;
   status: ChangeStatus;
   origin: ChangeOrigin;
-  kind?: 'file' | 'symlink' | 'other';
+  kind?: 'file' | 'symlink' | 'submodule' | 'other';
   content: Buffer | undefined;
 };
 
