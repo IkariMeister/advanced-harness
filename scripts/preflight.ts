@@ -1,11 +1,15 @@
 import { exitCodeFor, formatHuman, runPreflight } from '../src/preflight/runner.ts';
 
 const usage = `Usage: npm run harness:preflight -- --worktree <path> [--base <ref>] [--json]
+       npm run harness:preflight -- -h | --help
 
 Reports pre-publish evidence for a task worktree. It never records approval.
   --worktree <path>  Task worktree to inspect (required)
-  --base <ref>       Base ref; defaults to baseBranch in project context
+  --base <ref>       Base ref; defaults to baseBranch in project context.
+                     Required if the project context has no baseBranch.
   --json             Print the result contract as JSON
+  -h, --help         Show this help message
+
 Exit codes: 0 pass (or --help), 1 blocked, 2 inconclusive or usage error.`;
 
 function fail(message: string): void {
@@ -33,4 +37,9 @@ async function main(args: string[]): Promise<void> {
   process.exitCode = exitCodeFor(result);
 }
 
-await main(process.argv.slice(2));
+try {
+  await main(process.argv.slice(2));
+} catch (error) {
+  console.error(`Unexpected preflight error: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 2;
+}

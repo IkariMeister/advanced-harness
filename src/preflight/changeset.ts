@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { PreflightToolError, type ChangeEntry, type ChangeOrigin, type ChangeStatus, type Changeset } from './types.ts';
 
 function git(worktree: string, args: string[]): Buffer {
-  const result = spawnSync('git', ['-C', worktree, '-c', 'core.quotepath=false', ...args], { maxBuffer: 256 * 1024 * 1024 });
+  const result = spawnSync('git', ['-C', worktree, '-c', 'core.quotepath=false', '--literal-pathspecs', ...args], { maxBuffer: 256 * 1024 * 1024 });
   if (result.error) throw new PreflightToolError(`git could not be started: ${result.error.message}`);
   if (result.status !== 0) {
     const detail = result.stderr.toString('utf8').trim().split(/\r?\n/)[0] ?? '';
@@ -53,8 +53,9 @@ function readWorkingFile(worktree: string, path: string): WorkingFile {
   }
 }
 
-/** Git blob mode 120000 is a symlink whose blob content is the link target. */
+/** Git blob mode 120000 is a symlink whose blob content is the link target. Mode 160000 is a submodule commit gitlink. */
 function blob(worktree: string, spec: string, mode: string | undefined): WorkingFile {
+  if (mode === '160000') return { kind: 'submodule', content: undefined };
   return { kind: mode === '120000' ? 'symlink' : 'file', content: git(worktree, ['cat-file', 'blob', spec]) };
 }
 
