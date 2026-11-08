@@ -56,7 +56,7 @@ and [troubleshooting guide](../docs/tool-troubleshooting.md).
 | Planner | Read/search only | Planning only; request missing context through Lead |
 | Implementer | Read/search/edit, ASK shell | Approved source/tests; request Git from Operator and services from External |
 | Reviewer | Read/search, ASK shell | Independent review/configured checks; report findings and missing prerequisites |
-| QA | Read/search, ASK shell | Runtime/design/E2E verification; report findings and missing setup |
+| QA | Read/search, ASK shell; Git/GitHub commands denied | Runtime/design/E2E verification; report findings and missing setup; request Git from Operator through Lead |
 
 ## Installation
 

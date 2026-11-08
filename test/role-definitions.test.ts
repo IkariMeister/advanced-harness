@@ -53,7 +53,16 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
   operator.system = operator.system.replace(agreed, 'Read worktreeDirectory and memoryPath from the project (or interim paths) settings in\nAGENTS.md or the context file it links. A valid configured value settles the question:\ndo not ask about it. $$HOME/ means the current user\'s home directory on this machine.\nStop and ask Lead only if a value is missing or invalid, the two sections disagree, or\nan absolute path was saved for a projectRoot that is not this repository on this\nmachine (in a paths section, an absolute path that does not exist here). Never search\nthe workspace for MEMORY.md or create one there.\n\nMaintain the one shared MEMORY.md at memoryPath, outside application worktrees. Write serialized');
   return definitions;
 }
-const currentNormalizedDefinitions = () => withOperatorFetch(structuredClone(legacyNormalizedDefinitions()));
+
+// #169: QA spells out that Git/GitHub shell commands are denied and Git context comes from Operator through Lead.
+function withQaGitContext(definitions: Record<typeof nativeRoles[number], NativeDefinition>): Record<typeof nativeRoles[number], NativeDefinition> {
+  const qa = definitions.qa;
+  const previous = 'publish, merge, approve work, delegate, or change models. Request Git information from\nOperator and design/service context from External through Lead. Do not use shell/scripts\nto bypass role ownership. Test/device outputs are expected, not authorization for\nsource edits.';
+  assert.ok(qa.system.includes(previous));
+  qa.system = qa.system.replace(previous, 'publish, merge, approve work, delegate, or change models. Operator owns local Git: shell\ncommands that run `git` or `gh` are denied for QA, including read-only ones such as\nstatus, diff, log, or rev-parse, and any compound command that contains one. Use the\nbranch, HEAD, and changed-file context Lead supplies; if it is missing, ask Lead to get\nit from Operator. Do not retry a denied command in another form. Request design/service\ncontext from External through Lead. Do not use shell/scripts to bypass role ownership.\nTest/device outputs are expected, not authorization for source edits.');
+  return definitions;
+}
+const currentNormalizedDefinitions = () => withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions())));
 
 test('strict role source compiler preserves current normalized OpenCode definitions for all roles', () => {
   const baseline = legacyNormalizedDefinitions();

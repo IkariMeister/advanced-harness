@@ -124,6 +124,17 @@ test('native implementation and verification templates require human scope and t
   for (const role of ['operator', 'implementer', 'reviewer', 'qa'] as const) assert.ok(hasRule(role, 'shell', 'gh *', 'deny'), role);
 });
 
+test('QA keeps Git with Operator: Git/GitHub shell is denied and Lead supplies the Git context', () => {
+  for (const resource of ['git *', 'gh *']) assert.ok(hasRule('qa', 'shell', resource, 'deny'), resource);
+  assert.ok(hasRule('qa', 'shell', '*', 'ask'));
+  const qa = template('qa').replace(/\s+/g, ' ');
+  assert.match(qa, /shell commands that run `git` or `gh` are denied for QA, including read-only ones/);
+  assert.match(qa, /any compound command that contains one/);
+  assert.match(qa, /ask Lead to get it from Operator/);
+  assert.match(qa, /Do not retry a denied command in another form/);
+  assert.match(template('lead').replace(/\s+/g, ' '), /When delegating to Reviewer or QA, include the local Git context Operator reported/);
+});
+
 test('all native roles distinguish offered tools, configured policy, invocation, and ownership', () => {
   const docs = readFileSync(new URL('../docs/opencode-native-workflow.md', import.meta.url), 'utf8');
   const guide = readFileSync(new URL('../agents/README.md', import.meta.url), 'utf8');

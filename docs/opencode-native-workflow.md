@@ -57,7 +57,7 @@ does not establish all four. Record missing evidence as unverified.
 | Planner | Local read/search; no shell/edit/MCP configured in source template | Propose plans only; request missing context through Lead, never approve or implement. |
 | Implementer | Local read/search/edit; shell ASK in source template | Approved source/tests/fixes. Request Git/worktree operations from Operator and services from External through Lead. |
 | Reviewer | Local read/search; shell ASK in source template | Review and configured checks; report findings, do not fix source. Ask Lead about missing commands/prerequisites. |
-| QA | Local read/search; shell ASK in source template | Runtime/design/E2E checks; report findings, do not edit. Ask Lead about missing device/test setup. |
+| QA | Local read/search; shell ASK in source template; `git *` and `gh *` DENY | Runtime/design/E2E checks; report findings, do not edit. Use the Git context Lead supplies from Operator; ask Lead about missing device/test setup. |
 
 These are source-template policy intentions only. Project overrides, host version,
 session overlays, model request construction, plugins, and permission ordering can
