@@ -6,22 +6,51 @@ version between releases.
 
 ## Unreleased
 
+## v0.3.0 — 2026-11-08
+
+Milestone "Shared Skills": reusable procedure skills that roles share across hosts.
+
 ### Added
 
+- Procedure skills: canonical, versioned skills under `skills/` compile to host
+  skill artifacts for OpenCode, Claude Code, Antigravity and Codex, in their own
+  `harness-procedure` namespace (#137, #165). Install, update and uninstall deploy
+  them for OpenCode, Claude Code and Antigravity, with receipts, protection for
+  files you customized, and preservation of files another owner still needs. Codex
+  procedure skills are compiled only, not deployed (#138, #173).
+- `harness:doctor` checks canonical and installed procedure skills (presence,
+  frontmatter and role scoping) per host, and reports host role-scoping limits as
+  advisory. A support matrix documents which hosts scope skills by role (#139, #180).
+- Documentation skills from ADR-001: `documentation-impact`, `adr-authoring`,
+  `technical-documentation`, `documentation-validation` and `documentation-review`,
+  plus bounded offline documentation checks in CI (`npm run docs:check`) (#124, #189).
+- QA validation skills from ADR-002: `unit-tests`, `static-analysis` and
+  `evidence-collection`, shared by Implementer, Reviewer and QA (#125, #188).
+- `meeting-task-extraction` skill for Lead and Planner: extracts tasks from pasted
+  or exported meeting transcripts (for example Notion or Gemini notes), treats the
+  transcript as untrusted data, marks inferred tasks and missing owners or dates,
+  and creates nothing without per-task approval (#175, #177).
 - `/document-agents` workflow command: generates or updates root or module-scoped
   `AGENTS.md` files. The human picks the scope and mode, every proposed statement is
   labeled verified, inferred or unknown, and nothing is written before the exact diff is
   approved. It uses the shared documentation procedure skills and Reviewer's independent
-  check, and adds no Documentation role (#76).
+  check, and adds no Documentation role (#76, #196).
+- Role contracts now assign documentation ownership (ADR-001): Planner owns ADRs and
+  documentation impact, Implementer updates affected docs, Reviewer checks their
+  accuracy and reports each check as re-run or judged from evidence only (ADR-002),
+  and Lead tracks the documentation and approval state (#122, #142).
 - OpenAI Codex install, update, doctor and uninstall at global scope: each child
   role runs as its own `codex exec` process with a source-derived profile, started
   by Lead through a launcher that re-applies the role settings on every launch and
   resume, with your approval for each launch. Uninstall removes only the Lead block
   from a shared `AGENTS.md` and reverses only the
-  harness's own `config.toml` edits (#45).
+  harness's own `config.toml` edits (#45, #153, #154).
 - `harness:doctor` reports each resolved worktree and shared `MEMORY.md` location
   and its source, and fails on invalid or conflicting settings. Missing settings
-  are reported without failing (#176).
+  are reported without failing (#176, #193).
+- ADR status lifecycle (`Proposed`, `Accepted`, `Rejected`, `Superseded`), an ADR
+  template, and a project glossary (`docs/glossary.md`). ADR-001 and ADR-002 are
+  Accepted; ADR-003 stays Proposed (#121, #141, #136).
 
 ### Changed
 
@@ -29,31 +58,43 @@ version between releases.
   `MEMORY.md` locations. Paths under your home directory are saved as `$HOME/...`,
   and settings saved that way no longer record `projectRoot`. Harness checkouts
   older than this change reject such settings, so update them before committing
-  portable settings. Existing absolute settings keep working (#176).
+  portable settings. Existing absolute settings keep working (#176, #193).
 - `harness:update` no longer asks about valid saved locations. Use
-  `--change-shared-locations` to change them (#176).
+  `--change-shared-locations` to change them (#176, #193).
 - Role contracts tell agents to read these locations from project context on every
   compiled host, and to ask only when a value is missing, invalid, or conflicting
-  (#176).
-
-### Changed
-
+  (#176, #193).
 - Global project defaults now save to `~/.config/advanced-harness/project-defaults.json`
   instead of the OpenCode config directory. The old file keeps working as a read-only
-  fallback. Run `harness:setup --global` and type `migrate` to move its values; the
-  old file is never edited or deleted (#190).
+  fallback. Run `harness:setup --global`, type `migrate`, then `save` to move its values; the
+  old file is never edited or deleted (#190, #191).
+- QA's instructions now state that `git` and `gh` shell commands are denied for QA,
+  including read-only ones, and Lead passes the Git context Operator reported
+  (branch, HEAD, changed files, diff summary) when delegating to Reviewer or QA.
+  QA's permissions are unchanged (#169, #195).
 
 ### Fixed
 
+- Procedure skills with multiline descriptions now get valid YAML frontmatter on
+  every host (#166, #192).
 - Committed project settings no longer count as belonging to "another checkout"
   in other worktrees, and a task worktree under the configured worktree parent no
-  longer fails validation (#176).
+  longer fails validation (#176, #193).
 - `harness:uninstall` for Claude Code and Antigravity no longer stops when you
   edited `CLAUDE.md` or `AGENTS.md` outside the harness block. It removes only the
   block and keeps your edits. An edited or missing block still stops uninstall with
-  no writes (#84).
+  no writes (#84, #178).
 - Uninstall no longer drops `CLAUDE.md` edits that a later update had recorded as
-  installed content. They used to survive only in the private backup (#84).
+  installed content. They used to survive only in the private backup (#84, #178).
+
+### Upgrading from v0.2.x
+
+Check out the tag (`git fetch --tags origin && git checkout v0.3.0`), run
+`npm ci`, then `npm run harness:update` for each installed project. Update
+previews the new procedure skills and other changes before writing and keeps your
+models and customizations. If you have global project defaults in the OpenCode
+config directory, run `npm run harness:setup -- --global`, type `migrate`, then `save` to
+move them.
 
 ## v0.2.3 — 2026-11-04
 

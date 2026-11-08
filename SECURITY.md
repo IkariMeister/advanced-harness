@@ -4,12 +4,13 @@
 
 | Version | Security maintenance |
 | --- | --- |
-| Latest `0.2.x` release | Best-effort security fixes |
-| Older `0.2.x` releases | Upgrade to the latest `0.2.x` release; no backports promised |
-| `0.1.x` releases | No longer maintained; upgrade to the latest `0.2.x` release |
+| Latest `0.3.x` release | Best-effort security fixes |
+| Older `0.3.x` releases | Upgrade to the latest `0.3.x` release; no backports promised |
+| `0.2.x` releases | No longer maintained; upgrade to the latest `0.3.x` release |
+| `0.1.x` releases | No longer maintained; upgrade to the latest `0.3.x` release |
 | Other versions and development snapshots (`-dev` versions from `main`) | No security maintenance commitment |
 
-Advanced Harness is pre-1.0 software. Security fixes target the latest `0.2.x`
+Advanced Harness is pre-1.0 software. Security fixes target the latest `0.3.x`
 release; a fix may require upgrading. There is no long-term support window,
 guaranteed patch deadline, or guarantee that every reported issue can be fixed.
 Reports affecting development snapshots are welcome; include the exact commit.
