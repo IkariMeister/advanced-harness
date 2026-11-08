@@ -22,6 +22,8 @@ export type ChangeEntry = {
 export type BaseSource = 'option' | 'project-context';
 
 export type Changeset = {
+  /** Absolute repository top-level (`git rev-parse --show-toplevel`); repo-relative paths are relative to it. */
+  top: string;
   base: string;
   baseSource: BaseSource;
   mergeBase: string;

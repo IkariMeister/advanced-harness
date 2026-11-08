@@ -15,11 +15,26 @@ context (`AGENTS.md` or the context file it links to) is used. There is no
 hardcoded fallback; a missing or unreadable base is [inconclusive](glossary.md#workflow-and-tracking).
 
 **Trust model:** When `--base` is omitted, `baseBranch` is read from the project
-context in the worktree being inspected. If a task modifies, renames, or deletes
-the project context file in its changeset, the built-in `base-context` check
-blocks the run (`exit 1`) to fail closed against self-selected or tampered base
-references. Callers that require an authoritative base reference can pass
-`--base <ref>` explicitly, which bypasses the check restriction.
+context in the worktree being inspected. The built-in `base-context` check compares
+that context with the project context at the [trusted ref](glossary.md#workflow-and-tracking)
+`refs/remotes/origin/HEAD`, read from the local repository without fetching:
+
+- The linked context target (or `AGENTS.md` itself) and `baseBranch` must match the
+  trusted ref. A difference blocks the run (`exit 1`).
+- If the task modifies the project context file or the root `AGENTS.md` in its
+  changeset, the check blocks the run (`exit 1`). This also covers other context
+  modifications that leave the target and `baseBranch` unchanged.
+- Deleting or renaming the root `AGENTS.md`, or deleting or renaming the linked
+  context file, leaves no readable project context in the worktree. Base resolution
+  then fails when `--base` is omitted, which is inconclusive (`exit 2`), not a block.
+- If the trusted ref is missing, or the project context at the trusted ref is
+  absent or unreadable, the result is inconclusive (`exit 2`). The evidence names the
+  fix: pass `--base <ref>` or run `git remote set-head origin --auto`.
+
+The check trusts the local `refs/remotes/origin/HEAD` as configured; it does not verify
+that ref against the remote. Callers that need an authoritative base reference can pass
+`--base <ref>` explicitly. With `--base`, the trusted-ref comparison is skipped and
+context modifications are reported as informational.
 
 ## Changeset
 
