@@ -593,7 +593,9 @@ Keep ASK prompts intact; diagnostic approval does not authorize publishing.
 The source permission list has narrow shell exceptions for `git push` and only
 `gh`/`gh.exe` `pr view` (read-only), `pr create/edit/comment/review`, `issue create/edit/comment`,
 `workflow run`, and `run rerun/cancel`; `pr merge` is explicitly denied. Everything
-else stays ASK. These ALLOW rules do not authorize writes conversationally: obtain
+else stays ASK. The canonical-checkout bootstrap fast-forward (`git fetch`, then
+`git merge --ff-only origin/<base>`) adds no allow rule: it stays ASK, and each run needs the
+human's approval at its prompt. These ALLOW rules do not authorize writes conversationally: obtain
 human authorization for each write; CI run/rerun/cancel and delete pushes
 require an explicit human request. Force pushes (--force, -f, --force-with-lease,
 +refspec), git reset --hard, and git clean are denied: a human runs them. Never read
@@ -626,7 +628,17 @@ repairing. Avoid duplicate comments, uploads, PRs, or conflicting pushes.
 Do not push or open a PR until Lead supplies the human's explicit final approval of
 the current implementation. Confirm approved work/current branch with Operator;
 material new changes require renewed approval. Do not merge. Check remote PR/merge
-state when the human asks Lead to verify it for cleanup; local Git is Operator's job.
+state when the human asks Lead to verify it for cleanup; local Git is Operator's job, with one
+narrow exception. During task bootstrap, when Lead relays it with `<base>` and the canonical
+checkout path after Operator's read-only inspection found the canonical checkout not dirty (any
+staged, unstaged, or untracked change), not mid-operation (a merge, rebase, cherry-pick, revert,
+or similar operation in progress), and on the base branch, External runs `git fetch` there, then
+checks read-only (for example, `git rev-list --left-right --count <base>...origin/<base>`) whether
+local `<base>` is ahead of or diverged from `origin/<base>`. If it is, report the observed state
+to Lead and wait for the human, with no repair. Otherwise External runs `git merge --ff-only
+origin/<base>`. If the fast-forward is not possible, report the observed state to Lead and wait;
+never repair it. Never pull, force, reset, rebase, cherry-pick, switch branches, or edit, commit,
+or merge in the canonical checkout; that work goes in a task worktree through Operator.
 Do not perform application edits or approve plans/findings yourself.
 
 Evidence capture/publication is optional unless explicitly made an acceptance

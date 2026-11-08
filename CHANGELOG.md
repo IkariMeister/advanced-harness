@@ -6,6 +6,18 @@ version between releases.
 
 ## Unreleased
 
+### Changed
+
+- The canonical checkout of an application repository receives only remote updates
+  (#172, [ADR-004](docs/adr/0004-canonical-checkout-remote-updates-only.md)). Operator
+  inspects it read-only before task bootstrap and reports and waits for a human decision
+  if it is dirty, mid-operation, off the base branch, or detached. When Lead relays the
+  step, External runs `git fetch` and then `git merge --ff-only` (still ASK; no new allow
+  rule), and reports and waits instead if the base is ahead of or diverged from origin.
+  Untouched canonical changes no longer let bootstrap proceed, and a failed fetch no
+  longer falls back to branching from the local base. The rule applies only to projects that
+  use task worktrees; pinned consumer harness checkouts are unchanged.
+
 ## v0.3.0 — 2026-11-08
 
 Milestone "Shared Skills": reusable procedure skills that roles share across hosts.

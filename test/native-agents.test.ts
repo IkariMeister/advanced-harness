@@ -257,7 +257,9 @@ test('BH-012: Lead and Operator enforce bootstrap rules, conflict precedence, an
 
   // Non-blocking bootstrap
   assert.match(lead, /Operator creates task worktrees without blocking on other existing worktrees unless target branch\/worktree collides/);
-  assert.match(operator, /Other existing worktrees and untouched canonical changes do not block bootstrap/);
+  assert.match(operator, /Other existing worktrees do not block bootstrap/);
+  assert.doesNotMatch(operator, /untouched canonical changes do not block bootstrap/);
+  assert.doesNotMatch(operator, /branch from the local base/);
   assert.match(operator, /stop and ask Lead only if settings are missing\/invalid, target branch\/worktree already exists, or creation fails/);
 
   // Serialized memory updates and rejection of secrets/logs

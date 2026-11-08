@@ -62,7 +62,7 @@ test('validateBootstrapContext validates valid paths and rejects violations', (t
   assert.throws(() => validateBootstrapContext({ ...valid, memoryPath: join(worktreeDirectory, 'MEMORY.md') }), /must not be inside the worktree parent/);
 });
 
-test('checkBootstrapReadiness permits existing worktrees and canonical edits but flags target collisions', (t) => {
+test('checkBootstrapReadiness permits existing worktrees but flags target collisions', (t) => {
   const { projectRoot, worktreeDirectory, memoryPath } = createFixture(t);
   const context: BootstrapContext = {
     projectRoot,

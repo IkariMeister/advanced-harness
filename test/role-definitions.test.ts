@@ -41,12 +41,41 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
     { action: 'shell', resource: 'git fetch *--upl*', effect: 'deny' },
     { action: 'shell', resource: 'git fetch -u*', effect: 'deny' },
     { action: 'shell', resource: 'git fetch * -u*', effect: 'deny' });
-  const previous = 'creation fails. Never discard unrelated changes or perform remote Git/API/MCP\noperations; External owns those. Command patterns are workflow aids, not a sandbox;\ndo not use scripts/aliases to bypass role ownership.';
+  // #172: the canonical checkout receives only remote updates; External fast-forwards the base during bootstrap.
+  const previous = 'existing worktrees and untouched canonical changes do not block bootstrap; stop and ask\nLead only if settings are missing/invalid, target branch/worktree already exists, or\ncreation fails. Never discard unrelated changes or perform remote Git/API/MCP\noperations; External owns those. Command patterns are workflow aids, not a sandbox;\ndo not use scripts/aliases to bypass role ownership.';
   assert.ok(operator.system.includes(previous));
-  operator.system = operator.system.replace(previous, 'creation fails. Before branching you may refresh the base with `git fetch` (never pull,\npush, or clone); if the fetch fails, report it and branch from the local base. Never\ndiscard unrelated changes or perform other remote Git/API/MCP operations; External\nowns those. Command patterns are workflow aids, not a sandbox; do not use\nscripts/aliases to bypass role ownership.');
+  operator.system = operator.system.replace(previous, [
+    'existing worktrees do not block bootstrap; stop and ask',
+    'Lead only if settings are missing/invalid, target branch/worktree already exists, or',
+    "creation fails. The canonical checkout (the repository's primary working directory,",
+    'not a task worktree) receives only remote updates: read-only inspection, and a',
+    'fast-forward-only update of the base branch. Not allowed there: edits, commits, merges,',
+    'rebases, or switching branches; that work goes in a task worktree. This rule applies only',
+    'when the project uses task worktrees (a worktreeDirectory is configured); a single-checkout',
+    "project is not affected. `<base>` is the project's configured base branch (`baseBranch` in",
+    'project context); if it is missing or ambiguous, Operator asks Lead. "Dirty" means any',
+    'staged, unstaged, or untracked change (anything `git status` reports); "mid-operation"',
+    'means a merge, rebase, cherry-pick, revert, or similar operation in progress. Bootstrap',
+    'order: (1) inspect the canonical checkout read-only; (2) if it is dirty, mid-operation,',
+    'not on the base branch, or detached, report the observed state and wait for human',
+    'confirmation; never repair it automatically. (3) Otherwise Lead relays the step to External',
+    'with `<base>` and the canonical checkout path. External runs `git fetch`, then checks',
+    'read-only (for example, `git rev-list --left-right --count <base>...origin/<base>`) whether',
+    'local `<base>` is ahead of or diverged from `origin/<base>`. If it is, External reports and',
+    'waits for the human, with no repair. Otherwise External runs `git merge --ff-only',
+    'origin/<base>`; if the fast-forward is not possible, External reports and waits, and never',
+    'repairs. (4) Create the task worktree from the updated base. Never discard unrelated changes',
+    'or perform other remote Git/API/MCP operations; External owns those. Command patterns are',
+    'workflow aids, not a sandbox; do not use scripts/aliases to bypass role ownership.',
+  ].join('\n'));
   const closing = 'local Git/worktrees/memory/cleanup; escalate services and remote Git to External\nthrough Lead.';
   assert.ok(operator.system.includes(closing));
-  operator.system = operator.system.replace(closing, 'local Git/worktrees/memory/cleanup, including the read-only `git fetch` base refresh;\nescalate services and all other remote Git to External through Lead.');
+  operator.system = operator.system.replace(closing, [
+    'local Git/worktrees/memory/cleanup, including read-only canonical checkout inspection and',
+    'the `git fetch` exception (retained but optional; not part of bootstrap; the bootstrap fetch is',
+    "External's); External fast-forwards the base during bootstrap; escalate services and all other",
+    'remote Git to External through Lead.',
+  ].join('\n'));
   // #176: Operator reads the shared locations from project context instead of an "agreed" path.
   const agreed = 'Maintain one agreed shared MEMORY.md outside application worktrees. Write serialized';
   assert.ok(operator.system.includes(agreed));
@@ -62,7 +91,36 @@ function withQaGitContext(definitions: Record<typeof nativeRoles[number], Native
   qa.system = qa.system.replace(previous, 'publish, merge, approve work, delegate, or change models. Operator owns local Git: shell\ncommands that run `git` or `gh` are denied for QA, including read-only ones such as\nstatus, diff, log, or rev-parse, and any compound command that contains one. Use the\nbranch, HEAD, and changed-file context Lead supplies; if it is missing, ask Lead to get\nit from Operator. Do not retry a denied command in another form. Request design/service\ncontext from External through Lead. Do not use shell/scripts to bypass role ownership.\nTest/device outputs are expected, not authorization for source edits.');
   return definitions;
 }
-const currentNormalizedDefinitions = () => withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions())));
+// #172: External's narrow bootstrap fast-forward of the canonical checkout's base, written out independently of the sources.
+function withExternalBootstrap(definitions: Record<typeof nativeRoles[number], NativeDefinition>): Record<typeof nativeRoles[number], NativeDefinition> {
+  const external = definitions.external;
+  const shellNote = 'else stays ASK. These ALLOW rules do not authorize writes conversationally: obtain';
+  assert.ok(external.system.includes(shellNote));
+  external.system = external.system.replace(shellNote, [
+    'else stays ASK. The canonical-checkout bootstrap fast-forward (`git fetch`, then',
+    '`git merge --ff-only origin/<base>`) adds no allow rule: it stays ASK, and each run needs the',
+    "human's approval at its prompt. These ALLOW rules do not authorize writes conversationally: obtain",
+  ].join('\n'));
+  const previous = 'state when the human asks Lead to verify it for cleanup; local Git is Operator\'s job.\nDo not perform application edits or approve plans/findings yourself.';
+  assert.ok(external.system.includes(previous));
+  external.system = external.system.replace(previous, [
+    "state when the human asks Lead to verify it for cleanup; local Git is Operator's job, with one",
+    'narrow exception. During task bootstrap, when Lead relays it with `<base>` and the canonical',
+    "checkout path after Operator's read-only inspection found the canonical checkout not dirty (any",
+    'staged, unstaged, or untracked change), not mid-operation (a merge, rebase, cherry-pick, revert,',
+    'or similar operation in progress), and on the base branch, External runs `git fetch` there, then',
+    'checks read-only (for example, `git rev-list --left-right --count <base>...origin/<base>`) whether',
+    'local `<base>` is ahead of or diverged from `origin/<base>`. If it is, report the observed state',
+    'to Lead and wait for the human, with no repair. Otherwise External runs `git merge --ff-only',
+    'origin/<base>`. If the fast-forward is not possible, report the observed state to Lead and wait;',
+    'never repair it. Never pull, force, reset, rebase, cherry-pick, switch branches, or edit, commit,',
+    'or merge in the canonical checkout; that work goes in a task worktree through Operator.',
+    'Do not perform application edits or approve plans/findings yourself.',
+  ].join('\n'));
+  return definitions;
+}
+
+const currentNormalizedDefinitions = () => withExternalBootstrap(withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions()))));
 
 test('strict role source compiler preserves current normalized OpenCode definitions for all roles', () => {
   const baseline = legacyNormalizedDefinitions();
