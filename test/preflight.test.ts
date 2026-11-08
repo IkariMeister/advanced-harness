@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { updateContext } from '../src/project-context.ts';
+import { baseContextCheck } from '../src/preflight/checks.ts';
 import { collectChangeset } from '../src/preflight/changeset.ts';
 import { exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
-import type { PreflightCheck } from '../src/preflight/types.ts';
+import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
+import { entryDecision, runCli } from '../scripts/preflight.ts';
 import { makeTempRoot } from './temp-directory.ts';
 
 const script = resolve(import.meta.dirname, '../scripts/preflight.ts');
+const contextSections = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'];
 
 function git(cwd: string, ...args: string[]): string {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -35,6 +39,44 @@ function repo(): string {
 
 function cli(...args: string[]) {
   return spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
+}
+
+/** Simulates a clone's origin/HEAD locally (no network): origin/HEAD -> origin/main at the current main. */
+function simulateOriginHead(root: string): void {
+  git(root, 'update-ref', 'refs/remotes/origin/main', 'main');
+  git(root, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+}
+
+function projectProfile(root: string, baseBranch = 'main') {
+  const checks = Object.fromEntries(contextSections.map((name) => [name, { status: 'unconfigured' }]));
+  return { version: 1, baseBranch, shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: join(root, '..', 'wt'), memoryPath: join(root, '..', 'mem', 'MEMORY.md') };
+}
+
+/**
+ * Repo on `main` with committed context (AGENTS.md, or AGENTS.md linking to `ctx.md`) and
+ * checked out on `task`. Simulates origin/HEAD unless `originHead` is false.
+ */
+function projectRepo(options: { originHead?: boolean; link?: boolean } = {}): string {
+  const root = makeTempRoot('preflight-ctx-');
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 'test@example.com');
+  git(root, 'config', 'user.name', 'Test');
+  git(root, 'config', 'core.autocrlf', 'false');
+  if (options.link) {
+    writeFileSync(join(root, 'ctx.md'), updateContext('', 'project', projectProfile(root), []));
+    writeFileSync(join(root, 'AGENTS.md'), 'Read `ctx.md` for Advanced Harness project settings before planning.\n');
+  } else {
+    writeFileSync(join(root, 'AGENTS.md'), updateContext('', 'project', projectProfile(root), []));
+  }
+  git(root, 'add', '.');
+  git(root, 'commit', '-q', '-m', 'add project context on main');
+  if (options.originHead !== false) simulateOriginHead(root);
+  git(root, 'checkout', '-q', '-b', 'task');
+  return root;
+}
+
+function baseContextOf(result: { checks: { id: string; status: CheckStatus; evidence: string[] }[] }) {
+  return result.checks.find((check) => check.id === 'base-context');
 }
 
 test('changeset covers committed, staged, unstaged, untracked, renamed, and deleted files with contents', () => {
@@ -156,7 +198,7 @@ test('empty check list, unknown status, and duplicate check ids are inconclusive
   assert.equal(emptyRes.approved, false);
   assert.equal(exitCodeFor(emptyRes), 2);
 
-  const unknownRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'u', run: () => ({ status: 'weird' as unknown as any, evidence: ['weird'] }) }] });
+  const unknownRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'u', run: () => ({ status: 'weird' as unknown as CheckStatus, evidence: ['weird'] }) }] });
   assert.equal(unknownRes.approved, false);
   assert.equal(exitCodeFor(unknownRes), 2);
   assert.equal(unknownRes.checks[0]?.status, 'inconclusive');
@@ -203,6 +245,7 @@ test('base ref defaults to baseBranch from project context, and base-context fai
   writeFileSync(join(root, 'AGENTS.md'), updateContext('', 'project', profile, []));
   git(root, 'add', 'AGENTS.md');
   git(root, 'commit', '-q', '-m', 'add project context on main');
+  simulateOriginHead(root);
   git(root, 'checkout', '-q', '-b', 'task');
 
   // Baseline: unmodified baseBranch
@@ -306,13 +349,270 @@ test('CLI exit codes and JSON contract', () => {
   writeFileSync(join(blockRepo, 'AGENTS.md'), updateContext('', 'project', profile, []));
   git(blockRepo, 'add', 'AGENTS.md');
   git(blockRepo, 'commit', '-q', '-m', 'add project context on main');
+  simulateOriginHead(blockRepo);
   git(blockRepo, 'checkout', '-q', '-b', 'task');
   writeFileSync(join(blockRepo, 'AGENTS.md'), updateContext('', 'project', { ...profile, shell: 'cmd' }, []));
   const blockedCli = cli('--worktree', blockRepo);
   assert.equal(blockedCli.status, 1);
   assert.match(blockedCli.stdout, /Preflight: BLOCKED/);
 
-  // CLI exit 2 on unhandled failure
+  // CLI exit 2 when the --base ref does not exist (missing-base case)
   const exit2Cli = cli('--worktree', blockRepo, '--base', 'does-not-exist');
   assert.equal(exit2Cli.status, 2);
+});
+
+test('runCli maps an unexpected runner failure to exit 2 with the unexpected-error message', async () => {
+  const output: string[] = [];
+  const errors: string[] = [];
+  const code = await runCli(['--worktree', '/unused', '--base', 'main'], {
+    runPreflight: async () => { throw new Error('boom'); },
+    output: (message) => output.push(message),
+    error: (message) => errors.push(message),
+  });
+  assert.equal(code, 2);
+  assert.match(errors.join('\n'), /Unexpected preflight error: boom/);
+  assert.deepEqual(output, []);
+});
+
+test('committed baseBranch tampering is blocked against the trusted ref when --base is omitted', async () => {
+  const root = projectRepo();
+  git(root, 'branch', 'loose', 'main');
+  writeFileSync(join(root, 'AGENTS.md'), updateContext('', 'project', projectProfile(root, 'loose'), []));
+  git(root, 'add', 'AGENTS.md');
+  git(root, 'commit', '-q', '-m', 'tamper baseBranch on task');
+
+  const result = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(result), 1, JSON.stringify(result));
+  const check = baseContextOf(result);
+  assert.equal(check?.status, 'block');
+  assert.match(check!.evidence[0]!, /baseBranch main \(trusted\) vs loose \(worktree\)/);
+});
+
+test('repointing AGENTS.md to another tracked context file with a different baseBranch is blocked', async () => {
+  const root = makeTempRoot('preflight-repoint-');
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 'test@example.com');
+  git(root, 'config', 'user.name', 'Test');
+  git(root, 'config', 'core.autocrlf', 'false');
+  writeFileSync(join(root, 'ctx.md'), updateContext('', 'project', projectProfile(root, 'main'), []));
+  writeFileSync(join(root, 'other.md'), updateContext('', 'project', projectProfile(root, 'loose'), []));
+  writeFileSync(join(root, 'AGENTS.md'), 'Read `ctx.md` for Advanced Harness project settings before planning.\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-q', '-m', 'linked context on main');
+  git(root, 'branch', 'loose', 'main');
+  simulateOriginHead(root);
+  git(root, 'checkout', '-q', '-b', 'task');
+  writeFileSync(join(root, 'AGENTS.md'), 'Read `other.md` for Advanced Harness project settings before planning.\n');
+  git(root, 'add', 'AGENTS.md');
+  git(root, 'commit', '-q', '-m', 'repoint link on task');
+
+  const result = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(result), 1, JSON.stringify(result));
+  const check = baseContextOf(result);
+  assert.equal(check?.status, 'block');
+  assert.match(check!.evidence[0]!, /linked context target ctx\.md \(trusted\) vs other\.md \(worktree\)/);
+});
+
+// Covers the earlier resolution failure: contextPath rejects the escaping link during base resolution,
+// so the run is inconclusive before base-context's defensive leavesRepo guards are reached.
+test('a linked context file outside the repository is inconclusive', async () => {
+  const root = makeTempRoot('preflight-outside-');
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 'test@example.com');
+  git(root, 'config', 'user.name', 'Test');
+  git(root, 'config', 'core.autocrlf', 'false');
+  writeFileSync(join(root, 'AGENTS.md'), 'Read `../outside.md` for Advanced Harness project settings before planning.\n');
+  git(root, 'add', 'AGENTS.md');
+  git(root, 'commit', '-q', '-m', 'escaping link on main');
+  simulateOriginHead(root);
+  git(root, 'checkout', '-q', '-b', 'task');
+
+  const result = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
+  assert.equal(baseContextOf(result)?.status, 'inconclusive');
+});
+
+test('a missing origin/HEAD is inconclusive with the --base or set-head hint', async () => {
+  const root = projectRepo({ originHead: false });
+  const result = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
+  const check = baseContextOf(result);
+  assert.equal(check?.status, 'inconclusive');
+  assert.match(check!.evidence[0]!, /pass --base <ref> or run `git remote set-head origin --auto`/);
+});
+
+test('an untouched project context matching origin/HEAD passes, including through a linked context file', async () => {
+  const root = projectRepo({ link: true });
+  const result = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(result), 0, JSON.stringify(result));
+  assert.equal(baseContextOf(result)?.status, 'pass');
+  assert.match(baseContextOf(result)!.evidence[0]!, /matches trusted ref/);
+});
+
+test('R-01: the CLI runs when spawned through a relative path from another cwd', () => {
+  const elsewhere = makeTempRoot('preflight-entry-cwd-');
+  const relativeScript = relative(elsewhere, script);
+  const viaRelative = spawnSync(process.execPath, [relativeScript, '--help'], { cwd: elsewhere, encoding: 'utf8' });
+  assert.equal(viaRelative.status, 0, viaRelative.stderr);
+  assert.match(viaRelative.stdout, /Usage: npm run harness:preflight/);
+  const missingViaRelative = spawnSync(process.execPath, [relativeScript], { cwd: elsewhere, encoding: 'utf8' });
+  assert.equal(missingViaRelative.status, 2, missingViaRelative.stderr);
+  assert.match(missingViaRelative.stderr, /Missing required --worktree/);
+});
+
+test('R-01: the CLI runs when spawned through a renamed symlink (skips only when symlinks are unavailable)', (t) => {
+  // A file name that does not end in preflight.ts must still run: the entry check compares real module URLs.
+  const linkDir = makeTempRoot('preflight-entry-link-');
+  const link = join(linkDir, 'renamed-check.ts');
+  try { symlinkSync(script, link, 'file'); } catch { t.skip('file symlinks unavailable on this machine'); return; }
+  const viaLink = spawnSync(process.execPath, [link, '-h'], { encoding: 'utf8' });
+  assert.equal(viaLink.status, 0, viaLink.stderr);
+  assert.match(viaLink.stdout, /Usage: npm run harness:preflight/);
+  const missingViaLink = spawnSync(process.execPath, [link], { encoding: 'utf8' });
+  assert.equal(missingViaLink.status, 2, missingViaLink.stderr);
+  assert.match(missingViaLink.stderr, /Missing required --worktree/);
+});
+
+test('R-06: entryDecision runs on a matching module URL', () => {
+  const moduleUrl = pathToFileURL(script).href;
+  assert.equal(entryDecision(script, moduleUrl, false, () => script), 'run');
+  assert.equal(entryDecision(join(makeTempRoot('preflight-decide-'), 'renamed.ts'), moduleUrl, false, () => script), 'run');
+});
+
+test('R-06: entryDecision skips an unrelated argv1 and an undefined argv1', () => {
+  const moduleUrl = pathToFileURL(script).href;
+  const other = join(makeTempRoot('preflight-decide-other-'), 'other.ts');
+  assert.equal(entryDecision(other, moduleUrl, false, () => other), 'skip');
+  assert.equal(entryDecision(undefined, moduleUrl, false), 'skip');
+  // The node test runner executes test/preflight.test.ts, whose basename must not look like this module.
+  const testFile = join(makeTempRoot('preflight-decide-test-'), 'preflight.test.ts');
+  assert.equal(entryDecision(testFile, moduleUrl, false, () => testFile), 'skip');
+});
+
+test('R-06: entryDecision is ambiguous for the same basename at a different URL, by argv1 or realpath', () => {
+  const moduleUrl = pathToFileURL(script).href;
+  const impostor = join(makeTempRoot('preflight-decide-impostor-'), 'preflight.ts');
+  assert.equal(entryDecision(impostor, moduleUrl, false, () => impostor), 'ambiguous');
+  assert.equal(entryDecision(impostor, moduleUrl, false, () => { throw new Error('ENOENT'); }), 'ambiguous');
+  const renamedToImpostor = join(makeTempRoot('preflight-decide-renamed-'), 'renamed.ts');
+  assert.equal(entryDecision(renamedToImpostor, moduleUrl, false, () => impostor), 'ambiguous');
+});
+
+test('R-06: entryDecision runs when import.meta.main is true', () => {
+  const moduleUrl = pathToFileURL(script).href;
+  assert.equal(entryDecision(undefined, moduleUrl, true), 'run');
+  assert.equal(entryDecision('/some/other.ts', moduleUrl, true, () => '/some/other.ts'), 'run');
+});
+
+test('R-08: entryDecision matches a win32 module URL case-insensitively', (t) => {
+  if (process.platform !== 'win32') { t.skip('case-insensitive URL matching applies only on win32'); return; }
+  const modulePath = join(makeTempRoot('preflight-decide-case-'), 'case-check.ts');
+  const argv1 = modulePath.toUpperCase();
+  const moduleUrl = pathToFileURL(modulePath).href.toLowerCase();
+  // The two URLs differ only by case, so only sameUrl's win32 case folding can make this 'run'.
+  assert.equal(pathToFileURL(argv1).href.toLowerCase(), moduleUrl);
+  assert.notEqual(pathToFileURL(argv1).href, moduleUrl);
+  assert.equal(entryDecision(argv1, moduleUrl, false, () => argv1), 'run');
+});
+
+test('R-02: deleting the linked context file without --base is inconclusive, not a block', async () => {
+  const root = projectRepo({ link: true });
+  rmSync(join(root, 'ctx.md'));
+  const result = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
+  assert.equal(baseContextOf(result)?.status, 'inconclusive');
+  assert.match(baseContextOf(result)!.evidence[0]!, /No base ref/);
+});
+
+test('R-03: base-context leavesRepo guard fires for a linked target outside the changeset top (direct call with a hand-built changeset)', async () => {
+  // Defensive guard: real runs reject escaping links earlier (contextPath), so this exercises the check directly.
+  const worktree = makeTempRoot('preflight-guard-wt-');
+  writeFileSync(join(worktree, 'AGENTS.md'), 'Read `ctx.md` for Advanced Harness project settings before planning.\n');
+  writeFileSync(join(worktree, 'ctx.md'), updateContext('', 'project', projectProfile(worktree), []));
+  const changeset: Changeset = { top: makeTempRoot('preflight-guard-top-'), base: 'main', baseSource: 'project-context', mergeBase: '', head: '', entries: [] };
+  const outcome = await baseContextCheck.run({ worktree, changeset });
+  assert.equal(outcome.status, 'inconclusive');
+  assert.match(outcome.evidence[0]!, /resolves outside the repository/);
+});
+
+test('R-04(a): a modified linked context file with the same baseBranch and link is blocked without --base', async () => {
+  const root = projectRepo({ link: true });
+  writeFileSync(join(root, 'ctx.md'), updateContext('', 'project', { ...projectProfile(root), shell: 'cmd' }, []));
+  git(root, 'add', 'ctx.md');
+  git(root, 'commit', '-q', '-m', 'change shell in linked context on task');
+  const result = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(result), 1, JSON.stringify(result));
+  assert.equal(baseContextOf(result)?.status, 'block');
+  assert.match(baseContextOf(result)!.evidence[0]!, /Project context \(ctx\.md\) was modified/);
+});
+
+test('R-04(b): a staged rename of the linked context file without --base is inconclusive (base resolution fails first, not block)', async () => {
+  const root = projectRepo({ link: true });
+  git(root, 'mv', 'ctx.md', 'ctx2.md');
+  const result = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
+  assert.equal(baseContextOf(result)?.status, 'inconclusive');
+  assert.match(baseContextOf(result)!.evidence[0]!, /No base ref/);
+});
+
+/** Repo whose `main` is built by `commitMain` (trusted ref via simulated origin/HEAD); task branch carries a valid worktree AGENTS.md. */
+function trustedRefRepo(commitMain: (root: string) => void): string {
+  const root = makeTempRoot('preflight-trusted-');
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 'test@example.com');
+  git(root, 'config', 'user.name', 'Test');
+  git(root, 'config', 'core.autocrlf', 'false');
+  commitMain(root);
+  simulateOriginHead(root);
+  git(root, 'checkout', '-q', '-b', 'task');
+  writeFileSync(join(root, 'AGENTS.md'), updateContext('', 'project', projectProfile(root), []));
+  git(root, 'add', 'AGENTS.md');
+  git(root, 'commit', '-q', '-m', 'valid worktree context on task');
+  return root;
+}
+
+test('R-05: unverifiable trusted project context at the trusted ref is inconclusive', async (t) => {
+  const commitMain = (root: string, content: string) => {
+    writeFileSync(join(root, 'AGENTS.md'), content);
+    git(root, 'add', 'AGENTS.md');
+    git(root, 'commit', '-q', '-m', 'trusted context on main');
+  };
+  const scenarios: { name: string; commitMain: (root: string) => void; evidence: RegExp }[] = [
+    {
+      name: 'trusted AGENTS.md has no project settings section',
+      commitMain: (root) => commitMain(root, 'Plain instructions without settings.\n'),
+      evidence: /no project settings in AGENTS\.md at trusted ref/,
+    },
+    {
+      name: 'trusted project profile is invalid',
+      commitMain: (root) => commitMain(root, updateContext('', 'project', { version: 1 }, [])),
+      evidence: /Trusted project context could not be verified: /,
+    },
+    {
+      name: 'trusted AGENTS.md exceeds 1 MiB',
+      commitMain: (root) => commitMain(root, updateContext('', 'project', projectProfile(root), []) + 'x'.repeat(1024 * 1024)),
+      evidence: /exceeds 1 MiB/,
+    },
+    {
+      name: 'trusted AGENTS.md is a non-regular blob (symlink mode 120000)',
+      commitMain: (root) => {
+        commitMain(root, updateContext('', 'project', projectProfile(root), []));
+        const hash = spawnSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], { input: 'ctx.md', encoding: 'utf8' });
+        assert.equal(hash.status, 0, hash.stderr);
+        git(root, 'update-index', '--cacheinfo', `120000,${hash.stdout.trim()},AGENTS.md`);
+        git(root, 'commit', '-q', '-m', 'AGENTS.md as symlink blob on main');
+      },
+      evidence: /is not a regular file/,
+    },
+  ];
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const root = trustedRefRepo(scenario.commitMain);
+      const result = await runPreflight({ worktree: root });
+      assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
+      const check = baseContextOf(result);
+      assert.equal(check?.status, 'inconclusive');
+      assert.match(check!.evidence[0]!, scenario.evidence);
+    });
+  }
 });

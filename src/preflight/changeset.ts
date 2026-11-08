@@ -96,5 +96,5 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
   const untracked = git(top, ['ls-files', '--others', '--exclude-standard', '-z']).toString('utf8').split('\0').filter(Boolean);
   for (const path of untracked) entries.push({ path, status: 'added', origin: 'untracked', ...readWorkingFile(top, path) });
 
-  return { base, baseSource, mergeBase, head, entries };
+  return { top, base, baseSource, mergeBase, head, entries };
 }

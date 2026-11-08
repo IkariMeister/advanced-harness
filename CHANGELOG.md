@@ -10,7 +10,9 @@ version between releases.
 
 - `harness:preflight` (BH-066, #181): a pluggable preflight check runner over the task
   worktree changeset (including `changeset` and `base-context` checks), with JSON and human output
-  and exit codes 0 pass, 1 blocked, 2 inconclusive. See [docs/preflight.md](docs/preflight.md).
+  and exit codes 0 pass, 1 blocked, 2 inconclusive. When `--base` is omitted, `base-context` verifies
+  the project context and `baseBranch` against the local trusted ref `refs/remotes/origin/HEAD`
+  (no fetch); a missing trusted ref or unreadable context is inconclusive. See [docs/preflight.md](docs/preflight.md).
 
 ### Changed
 
