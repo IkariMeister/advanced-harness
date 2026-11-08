@@ -430,3 +430,7 @@ Adoption records the selected baseline as provenance only and does not write the
 configuration. Keep recovery receipts private and use disposable configs when testing.
 This workflow remains under BH-021 validation; do not use it for live cleanup until
 the documented acceptance and isolated QA are complete.
+
+## Recorded host permission boundaries
+
+Doctor prints the selected host’s [permission capability row](host-permission-capabilities.md), including scope and evidence references. OpenCode and non-OpenCode paths share this evidence registry. Installation health and model catalogs never upgrade unverified enforcement to enforced; existing readiness checks and exit codes remain unchanged. Pi’s future row belongs to #75.

@@ -194,3 +194,7 @@ These commands check repository code and template contracts; they do not install
 ## License
 
 This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
+
+## Host permission evidence
+
+The [host permission capability matrix](docs/host-permission-capabilities.md) records evidence for same-role approval transitions, local/remote isolation, per-role commands, skills/MCP exposure, and model routing. `harness:doctor` prints the selected host’s row separately from installation health. Static configuration and passing catalog checks do not establish runtime enforcement.
