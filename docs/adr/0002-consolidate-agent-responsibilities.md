@@ -130,3 +130,7 @@ Reconsider if evaluation finds material quality regression, handoff savings do n
 - Backlog issue BH-042, “Workflow to generate and update AGENTS.md documentation.”
 - Backlog issue BH-043, “Per-agent model selection and live model discovery across hosts.”
 - ADR: *Documentation Ownership Through Shared Skills*.
+
+## Host capability evidence
+
+The [host permission capability matrix](../host-permission-capabilities.md) records BH-048 evidence and limitations for each consolidation prerequisite. Doctor reports those recorded statuses separately from installation health. This reference does not change this ADR’s decision or authorize a rollout.

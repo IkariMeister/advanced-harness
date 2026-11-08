@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assessRuntime, cliQuery, decodeRows, diagnoseHost, expectedAgents, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
+import { hostPermissionMatrix, permissionCapabilities } from '../src/host-permission-capabilities.ts';
 import { nativeRoles } from '../src/native-installer.ts';
 import { clearRegisteredAdapters, getHostAdapter, registerHostAdapter, supportedHosts, type HostAdapter } from '../src/host-registry.ts';
 
@@ -347,4 +348,54 @@ test('non-OpenCode CLI prints procedure-skill errors once and exits nonzero', t 
 
 function requireDirectoryEntries(directory: string): string {
   return readdirSync(directory).sort().join('|');
+}
+
+
+test('doctor prints exactly the selected host permission rows, without writes or status promotion', t => {
+  const { home, project, run } = sandboxedDoctor(t);
+  writeFileSync(join(project, 'keep.txt'), 'project sentinel');
+  writeFileSync(join(home, 'keep.txt'), 'home sentinel');
+  const before = snapshotDirectory(project) + ':' + snapshotDirectory(home);
+  for (const host of supportedHosts) {
+    const result = run(['--host', host, '--scope', 'project', '--project', project]);
+    assert.equal((result.stdout.match(/Host permission capability matrix \[/g) ?? []).length, 1, result.stdout + result.stderr);
+    assert.ok(result.stdout.includes('Host permission capability matrix [' + host + ']'), result.stdout);
+    for (const [key, label] of Object.entries(permissionCapabilities)) {
+      const cell = hostPermissionMatrix[host].capabilities[key as keyof typeof permissionCapabilities];
+      assert.ok(result.stdout.includes(label + ': ' + cell.status), host + '/' + key);
+      assert.ok(result.stdout.includes(cell.scope));
+      for (const evidence of cell.evidence) {
+        assert.ok(result.stdout.includes(evidence.source));
+        if (evidence.kind === 'live-run') assert.ok(result.stdout.includes('runner: ' + evidence.runner));
+      }
+    }
+    assert.equal(snapshotDirectory(project) + ':' + snapshotDirectory(home), before);
+  }
+  const all = run(['--host', 'all', '--scope', 'project', '--project', project]);
+  assert.equal((all.stdout.match(/Host permission capability matrix \[/g) ?? []).length, supportedHosts.length, all.stdout + all.stderr);
+  for (const host of supportedHosts) assert.ok(all.stdout.includes('Host permission capability matrix [' + host + ']'));
+  assert.equal(snapshotDirectory(project) + ':' + snapshotDirectory(home), before);
+});
+
+test('doctor detected host uses the same evidence row and OpenCode failures retain it', t => {
+  const { xdg, project, run } = sandboxedDoctor(t);
+  mkdirSync(join(project, '.cursor'));
+  const detected = run(['--scope', 'project', '--project', project]);
+  assert.equal(detected.status, 0, detected.stdout + detected.stderr);
+  assert.match(detected.stdout, /Inspecting host\(s\): cursor/);
+  assert.match(detected.stdout, /Host permission capability matrix \[cursor\]/);
+  writeFileSync(join(xdg, 'opencode', 'opencode.json'), '{}');
+  const failed = run(['--host', 'opencode', '--scope', 'global', '--project', project, '--opencode', join(project, 'absent-cli')]);
+  assert.equal(failed.status, 1, failed.stdout + failed.stderr);
+  assert.match(failed.stderr, /runtime check inconclusive/);
+  assert.match(failed.stdout, /Host permission capability matrix \[opencode\]/);
+  assert.ok(failed.stdout.includes(permissionCapabilities.roleCommands + ': unverified'));
+});
+
+
+function snapshotDirectory(directory: string): string {
+  return JSON.stringify(readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).map(entry => [
+    entry.name,
+    entry.isDirectory() ? snapshotDirectory(join(directory, entry.name)) : readFileSync(join(directory, entry.name)).toString('base64'),
+  ]));
 }

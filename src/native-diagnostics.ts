@@ -132,9 +132,12 @@ export function printReport(report: Report): void {
   console.log('If the UI disagrees with this server, check its project/server connection. Restarting the shared service may interrupt work; do it deliberately, not automatically.');
 }
 
+import { hostPermissionMatrix, formatHostPermissionRow, type HostPermissionRow } from './host-permission-capabilities.ts';
+
 import { HOST_CAPABILITIES, HOST_MODEL_PRESETS, describeModelSupport, getHostAdapter, type HostId, type HostRolePreset } from './host-registry.ts';
 
 export interface HostDiagnosticReport {
+  permissionCapabilities: HostPermissionRow;
   host: HostId;
   displayName: string;
   ok: boolean;
@@ -178,7 +181,7 @@ export async function diagnoseHost(
       const res = await adapter.doctor({ project, ...(options.scope ? { scope: options.scope } : {}) });
       issues.push(...res.issues);
       notes.push(...res.notes);
-        return { host, displayName: cap.displayName, ok: res.ok && procedureSkills.issues.length === 0 && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, procedureSkills, ...(sourcePolicy ? { sourcePolicy } : {}) };
+        return { host, displayName: cap.displayName, ok: res.ok && procedureSkills.issues.length === 0 && sourcePolicy?.status !== 'blocked', installed, issues, notes, disclosures: cap.disclosures, permissionCapabilities: hostPermissionMatrix[host], rolePresets: presets, procedureSkills, ...(sourcePolicy ? { sourcePolicy } : {}) };
     }
     return {
       host,
@@ -188,6 +191,7 @@ export async function diagnoseHost(
       issues,
       notes,
       disclosures: cap.disclosures,
+      permissionCapabilities: hostPermissionMatrix[host],
       rolePresets: presets,
       procedureSkills,
       ...(sourcePolicy ? { sourcePolicy } : {}),
@@ -220,7 +224,7 @@ export async function diagnoseHost(
     const res = await adapter.doctor({ project, home, globalDirectory: options.globalDirectory, ...(options.scope ? { scope: options.scope } : {}) });
     issues.push(...res.issues);
     notes.push(...res.notes);
-    return { host, displayName: cap.displayName, ok: res.ok && procedureSkills.issues.length === 0, installed, issues, notes, disclosures: cap.disclosures, rolePresets: presets, procedureSkills, ...(sourcePolicy ? { sourcePolicy } : {}) };
+    return { host, displayName: cap.displayName, ok: res.ok && procedureSkills.issues.length === 0, installed, issues, notes, disclosures: cap.disclosures, permissionCapabilities: hostPermissionMatrix[host], rolePresets: presets, procedureSkills, ...(sourcePolicy ? { sourcePolicy } : {}) };
   }
 
   return {
@@ -231,6 +235,7 @@ export async function diagnoseHost(
     issues,
     notes,
     disclosures: cap.disclosures,
+    permissionCapabilities: hostPermissionMatrix[host],
     rolePresets: presets,
     procedureSkills,
     ...(sourcePolicy ? { sourcePolicy } : {}),
@@ -260,6 +265,7 @@ export function printHostDiagnosticReport(report: HostDiagnosticReport): void {
       for (const url of finding.referenceUrls) console.log(`    Reference: ${url}`);
     }
   }
+  for (const line of formatHostPermissionRow(report.permissionCapabilities)) console.log(line);
   console.log('Model Selection & Discovery:');
   for (const line of describeModelSupport(report.host)) console.log(`  ${line}`);
   console.log('Fixed Role / Model Presets:');

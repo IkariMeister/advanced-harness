@@ -1,3 +1,4 @@
+import { hostPermissionMatrix, formatHostPermissionRow } from '../src/host-permission-capabilities.ts';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -72,6 +73,7 @@ if (args.includes('--help')) {
 
       for (const host of hosts) {
         if (host === 'opencode') {
+          for (const line of formatHostPermissionRow(hostPermissionMatrix[host])) console.log(line);
           const skillCheck = diagnoseProcedureSkills({ host, ...(scope === 'global' ? {} : { project: directory }), ...(scope ? { scope } : {}), globalDirectory: global });
           console.log(`Procedure skills: ${skillCheck.status} (static validation only)`);
           for (const note of skillCheck.notes) console.log(`  ℹ ${note}`);
