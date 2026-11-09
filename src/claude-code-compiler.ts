@@ -22,8 +22,27 @@ export const claudeMarkers = {
 } as const;
 
 export const claudeMergeDeny = ['Bash(gh pr merge)', 'Bash(gh pr merge *)', 'Bash(gh.exe pr merge)', 'Bash(gh.exe pr merge *)'] as const;
-/** Project-level deny rules apply to every session and subagent, so they are safe to share: merge guard plus security guardrails. */
-export const claudeSettingsDeny: readonly string[] = [...claudeMergeDeny, ...claudeGuardrailDenyRules()];
+/**
+ * #200 / ADR-005: the only per-role exception to withholding Bash. Operator's shell deny patterns,
+ * keyed by how Claude Code can represent them. 'project-settings' patterns become project deny rules,
+ * which are safe for every role. 'advisory' patterns are instruction only and are not enforced.
+ * The exception applies only while Operator's shell denies exactly match this set, with a base shell
+ * effect of ask: any missing or extra deny pattern, another role, or another base effect withholds Bash.
+ */
+export const claudeOperatorShellDenies = {
+  'git fetch *--upl*': 'project-settings',
+  'git fetch -u*': 'project-settings',
+  'git fetch * -u*': 'project-settings',
+  'git push *': 'advisory',
+  'git pull *': 'advisory',
+  'git clone *': 'advisory',
+  'gh *': 'advisory',
+} as const;
+export const claudeOperatorPromotedDeny: readonly string[] = Object.entries(claudeOperatorShellDenies)
+  .filter(([, mode]) => mode === 'project-settings')
+  .map(([pattern]) => `Bash(${pattern})`);
+/** Project-level deny rules apply to every session and subagent, so they are safe to share: merge guard, security guardrails, and the promoted Operator fetch denies. */
+export const claudeSettingsDeny: readonly string[] = [...claudeMergeDeny, ...claudeGuardrailDenyRules(), ...claudeOperatorPromotedDeny];
 /** Prompt (never allow) for reads of environment files, matching the source *.env / *.env.* ask rules. */
 export const claudeSettingsAsk = ['Read(./.env)', 'Read(./.env.*)', 'Read(**/.env)', 'Read(**/.env.*)'] as const;
 
@@ -48,6 +67,8 @@ export interface ClaudeRoleMapping {
   mapped: string[];
   /** Source rules with no verified Claude equivalent; the affected tool or identity is withheld. */
   unsupported: string[];
+  /** Source deny rules that Claude Code cannot enforce for this role; instruction only, disclosed rather than enforced. */
+  advisory: string[];
 }
 
 const capabilityTools: Partial<Record<Capability, readonly string[]>> = {
@@ -81,6 +102,7 @@ export function mapClaudeRolePolicy(role: NativeRole, policy: CapabilityPolicy):
   const granted = new Set<string>();
   const mapped: string[] = [];
   const unsupported: string[] = [];
+  const advisory: string[] = [];
   const deniedPatterns = new Map<Capability, string[]>();
   const unrepresentedGrants = new Map<Capability, string[]>();
   const addPatternValue = (target: Map<Capability, string[]>, capability: Capability, value: string) => {
@@ -92,6 +114,10 @@ export function mapClaudeRolePolicy(role: NativeRole, policy: CapabilityPolicy):
     const base = baseEffect(rules, capability);
     const patterns = rules.filter(rule => rule.capability === capability && rule.resource.kind === 'native-pattern');
     let withheld = false;
+    // ADR-005 exception lines are held until Bash is known to be granted, so a withheld Bash never discloses them.
+    const exceptionMapped: string[] = [];
+    const exceptionAdvisory: string[] = [];
+    const matchedOperatorDenies = new Set<string>();
     for (const pattern of patterns) {
       const value = pattern.resource.kind === 'native-pattern' ? pattern.resource.value : '';
       if (capability === 'shell.run' && pattern.effect === 'deny' && mergePattern.test(value)) {
@@ -100,6 +126,14 @@ export function mapClaudeRolePolicy(role: NativeRole, policy: CapabilityPolicy):
       }
       if (capability === 'file.read' && pattern.effect === 'ask' && /^\*\.env(\.\*)?$/.test(value)) {
         mapped.push(`${role}: read "${value}" ask is enforced by project settings (prompt on Read).`);
+        continue;
+      }
+      // ADR-005: Operator's listed shell denies, and only while its base shell effect is ask. Anything else falls through and withholds Bash.
+      if (role === 'operator' && capability === 'shell.run' && pattern.effect === 'deny' && base === 'ask' && Object.prototype.hasOwnProperty.call(claudeOperatorShellDenies, value)) {
+        matchedOperatorDenies.add(value);
+        const mode = claudeOperatorShellDenies[value as keyof typeof claudeOperatorShellDenies];
+        if (mode === 'project-settings') exceptionMapped.push(`${role}: shell "${value}" deny is enforced by project settings (Bash(${value})).`);
+        else exceptionAdvisory.push(`${role}: shell "${value}" deny is instruction only; Claude Code does not enforce it.`);
         continue;
       }
       if (pattern.effect === 'deny') {
@@ -117,7 +151,19 @@ export function mapClaudeRolePolicy(role: NativeRole, policy: CapabilityPolicy):
         addPatternValue(unrepresentedGrants, capability, value);
       }
     }
-    if (isGranted(base) && !withheld) for (const tool of tools) granted.add(tool);
+    // ADR-005 fail closed: the exception needs every listed deny present; a missing listed deny withholds Bash.
+    if (role === 'operator' && capability === 'shell.run' && base === 'ask') {
+      const missing = Object.keys(claudeOperatorShellDenies).filter(key => !matchedOperatorDenies.has(key));
+      if (missing.length) {
+        withheld = true;
+        unsupported.push(`${role}: shell.run deny patterns no longer match the ADR-005 exception list (missing: ${missing.join(', ')}); Bash withheld.`);
+      }
+    }
+    if (isGranted(base) && !withheld) {
+      for (const tool of tools) granted.add(tool);
+      mapped.push(...exceptionMapped);
+      advisory.push(...exceptionAdvisory);
+    }
   }
   for (const [capability, values] of deniedPatterns) {
     unsupported.push(`${role}: ${capability} deny patterns (${values.join(', ')}) cannot be scoped per role in Claude Code; ${capabilityTools[capability]!.join('/')} withheld.`);
@@ -149,7 +195,7 @@ export function mapClaudeRolePolicy(role: NativeRole, policy: CapabilityPolicy):
   const tools = [...ordered, ...(delegateSpec ? [delegateSpec] : [])];
   const allowedNames = new Set(tools.map(tool => tool.replace(/\(.*$/, '')));
   const disallowedTools = claudeManagedTools.filter(tool => !allowedNames.has(tool));
-  return { role, tools, disallowedTools, mapped, unsupported };
+  return { role, tools, disallowedTools, mapped, unsupported, advisory };
 }
 
 export function compileClaudeSubagentFile(
@@ -193,7 +239,7 @@ export function compileClaudeLeadBlock(mappings: Record<NativeRole, ClaudeRoleMa
     ...(scope === 'global' ? ["- Read the current project's `AGENTS.md` and its referenced context before bootstrap or planning; this user-level file cannot import it."] : []),
     `- Never merge pull requests. \`gh pr merge\` is denied in \`${dir}settings.json\`.`,
     '- Do not substitute agents or models silently. Ask the human when a required child capability is missing.',
-    '- Not mapped to Claude Code (withheld, not verified): MCP service aliases (Jira, GitHub, Figma, Stitch), Code Mode, and per-role shell scoping. Operator, Implementer, Reviewer, and QA have no Bash tool.',
+    '- Not mapped to Claude Code (withheld, not verified): MCP service aliases (Jira, GitHub, Figma, Stitch), Code Mode, and per-role shell scoping. Implementer, Reviewer, and QA have no Bash tool. Operator has Bash for local Git and worktrees; its `git push`, `git pull`, `git clone`, and `gh` denies are advisory, not enforced: route remote Git and GitHub work to External.',
     '- Claude Code runtime behavior (agent discovery, `agent: lead`, `Agent(...)` delegation, model aliases) is not runtime-verified by this harness.',
   ];
   return lines.join('\n');
@@ -259,4 +305,10 @@ export function mappingsFor(definitions: Record<NativeRole, RoleDefinition>): Re
 export function claudeDisclosures(mappings: Record<NativeRole, ClaudeRoleMapping>): string[] {
   const unsupported = nativeRoles.flatMap(role => mappings[role].unsupported);
   return [...new Set(unsupported)];
+}
+
+/** Advisory lines: source deny rules expressed as instructions only. They are never presented as enforced. */
+export function claudeAdvisories(mappings: Record<NativeRole, ClaudeRoleMapping>): string[] {
+  const advisory = nativeRoles.flatMap(role => mappings[role].advisory);
+  return [...new Set(advisory)];
 }

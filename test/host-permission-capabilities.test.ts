@@ -33,6 +33,12 @@ test('every selectable host has all five boundaries with scoped, traceable evide
   }
 });
 
+test('Claude Code local/remote isolation is recorded as advisory, and no Claude Code cell claims enforcement (ADR-005)', () => {
+  const claude = hostPermissionMatrix['claude-code'].capabilities;
+  assert.equal(claude.localRemoteIsolation.status, 'advisory');
+  assert.ok(Object.values(claude).every(cell => cell.status !== 'enforced'));
+});
+
 for (const status of permissionBoundaryStatuses) {
   test('formatting preserves recorded ' + status + ' with scope and evidence', () => {
     // Synthetic evidence tests the formatter, never promotes a production host row.

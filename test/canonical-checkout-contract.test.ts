@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadNativeDefinitions } from '../src/native-installer.ts';
 import type { PermissionRule } from '../src/permission-reconciliation.ts';
+import { operatorAdvisoryText, operatorFallbackText } from './operator-claude-wording.ts';
 
 // #172 / ADR-004: the canonical checkout receives only remote updates. These checks pin the
 // wording in the role contracts, workflow command, and docs, and confirm that no permission changed.
@@ -59,6 +60,9 @@ test('Operator contract states the canonical checkout rule, read-only pre-check,
     // Operator's git fetch is retained but optional; the bootstrap fetch belongs to External.
     assert.ok(text.includes('retained but optional; not part of bootstrap'), 'Operator fetch is retained but not part of bootstrap');
     assert.ok(text.includes("the bootstrap fetch is External's"), 'bootstrap fetch is External\'s');
+    // #200 / ADR-005: Claude Code advisory denies and the fallback when Operator's shell is unavailable or declined.
+    assert.ok(text.includes(operatorAdvisoryText), 'Operator advisory paragraph (remote Git and gh forbidden, prompt is not authorization)');
+    assert.ok(text.includes(operatorFallbackText), 'Operator fallback paragraph');
   }
 });
 
@@ -108,6 +112,10 @@ test('start-issue workflow command states the canonical inspection and fast-forw
     assert.ok(text.includes('ahead of or diverged from `origin/<base>`'));
     assert.ok(text.includes('Otherwise External runs `git merge --ff-only origin/<base>`'));
     assert.ok(text.includes('prepares an isolated task worktree from the updated base'));
+    // #200 / ADR-005: fallback when Operator's shell is not offered, or its worktree command is denied or declined.
+    assert.ok(text.includes("If Operator's shell tool is not offered, or the worktree command is denied or its permission prompt is declined, Operator creates nothing and reports the exact outcome."), 'Operator outcome');
+    assert.ok(text.includes('Lead stops bootstrap with Needs your decision and presents the fallback: the human creates the task worktree from the updated base'), 'Lead fallback');
+    assert.ok(text.includes('Lead does not route local Git to another role, broaden permissions, or retry automatically.'), 'no substitution or retry');
     for (const phrase of retiredPhrases) assert.ok(!text.includes(phrase), phrase);
   }
   // The generated OpenCode output must match the canonical body exactly (see commands/README.md).
@@ -146,6 +154,8 @@ test('glossary defines canonical checkout and the ADR index lists ADR-004', () =
   const index = read('../docs/adr/README.md');
   assert.match(index, /\[ADR-004\]\(0004-canonical-checkout-remote-updates-only\.md\)/);
   assert.ok(existsSync(new URL('../docs/adr/0004-canonical-checkout-remote-updates-only.md', import.meta.url)), 'ADR-004 file exists');
+  assert.match(index, /\[ADR-005\]\(0005-claude-code-operator-bash\.md\)/);
+  assert.ok(existsSync(new URL('../docs/adr/0005-claude-code-operator-bash.md', import.meta.url)), 'ADR-005 file exists');
 });
 
 test('workflow docs repeat the ahead-or-diverged stop and the retained Operator fetch note', () => {

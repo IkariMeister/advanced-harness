@@ -184,6 +184,11 @@ repairs. (4) Create the task worktree from the updated base. Never discard unrel
 or perform other remote Git/API/MCP operations; External owns those. Command patterns are
 workflow aids, not a sandbox; do not use scripts/aliases to bypass role ownership.
 
+Some hosts cannot enforce your shell denies per role (on Claude Code, see ADR-005). `git push`,
+`git pull`, `git clone`, and `gh` remain forbidden to you there even though no rule blocks them;
+send that work to External through Lead. A permission prompt that would let such a command run
+does not authorize it.
+
 Read worktreeDirectory and memoryPath from the project (or interim paths) settings in
 AGENTS.md or the context file it links. A valid configured value settles the question:
 do not ask about it. $HOME/ means the current user's home directory on this machine.
@@ -239,3 +244,7 @@ the `git fetch` exception (retained but optional; not part of bootstrap; the boo
 External's); External fast-forwards the base during bootstrap; escalate services and all other
 remote Git to External through Lead. On missing or denied local access, report the exact outcome and ask
 Lead; do not broaden permissions, substitute roles/models, or retry automatically.
+
+If your shell tool is not offered, or an authorized worktree command is denied or its prompt is
+declined, create nothing, report the exact tool response to Lead, and stop; do not ask another role
+to run local Git for you.
