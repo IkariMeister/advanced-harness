@@ -5,15 +5,56 @@ import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { updateContext } from '../src/project-context.ts';
-import { baseContextCheck } from '../src/preflight/checks.ts';
+import { baseContextCheck, pathPolicyCheck, secretScanCheck } from '../src/preflight/checks.ts';
 import { collectChangeset } from '../src/preflight/changeset.ts';
 import { exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
 import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
 import { entryDecision, runCli } from '../scripts/preflight.ts';
+import { safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
 import { makeTempRoot } from './temp-directory.ts';
 
 const script = resolve(import.meta.dirname, '../scripts/preflight.ts');
 const contextSections = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'];
+
+test('path policy normalizes case and separators, skips deletions, and supports project glob replacement', async () => {
+  const changeset = (entries: Changeset['entries']): Changeset => ({ top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries });
+  const entry = (path: string, status: 'added' | 'deleted' = 'added') => ({ path, status, origin: 'untracked' as const, content: Buffer.from('x') });
+  const run = (entries: Changeset['entries'], globs?: readonly string[]) => pathPolicyCheck(globs).run({ worktree: '/', changeset: changeset(entries) });
+  assert.equal((await run([entry('Secrets\\ID_RSA.pub')])).status, 'block');
+  assert.equal((await run([{ ...entry('safe.txt'), oldPath: 'secret.pem', status: 'renamed' }])).status, 'pass');
+  assert.equal((await run([entry('foo/old.pem', 'deleted')])).status, 'pass');
+  assert.equal((await run([entry('artifact/custom.bin')], ['**/*.bin'])).status, 'block');
+  assert.equal((await run([entry('artifact/custom.bin')], ['**/*.pem'])).status, 'pass');
+});
+
+test('secret scan reports only a redacted rule and location and validates exact exceptions', async () => {
+  const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [{ path: 'src/token.ts', status: 'added', origin: 'untracked', kind: 'file', content: Buffer.from('token'), addedText: 'const api_key = "THIS_IS_A_FAKE_SECRET_VALUE_0123456789"', targetLines: [7] }] };
+  const scanner = (changes: Parameters<typeof scanAddedText>[0]) => scanAddedText(changes, { probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
+  const outcome = await secretScanCheck([], scanner).run({ worktree: '/', changeset });
+  assert.equal(outcome.status, 'block');
+  assert.ok(!outcome.evidence.join('').includes('THIS_IS_A_FAKE_SECRET_VALUE_0123456789'));
+  if (outcome.status === 'block') assert.ok(outcome.evidence.some(line => line === 'high-entropy-assignment at src/token.ts:7 [REDACTED]'));
+  const exception = secretScanCheck([{ path: 'src/token.ts', rule: 'high-entropy-assignment', justification: ' Reviewed placeholder only ' }], scanner);
+  assert.equal((await exception.run({ worktree: '/', changeset })).status, 'pass');
+  const gitleaksScanner = () => ({ backend: 'gitleaks', complete: true, findings: [{ rule: safeGitleaksRuleId('custom-rule'), path: 'src/token.ts', line: 7, redacted: true as const }] });
+  const gitleaksException = secretScanCheck([{ path: 'src/token.ts', rule: 'custom-rule', justification: ' Reviewed exact rule ' }], gitleaksScanner);
+  assert.equal((await gitleaksException.run({ worktree: '/', changeset })).status, 'pass');
+  const { addedText: _addedText, ...binaryEntry } = changeset.entries[0]!;
+  const binaryChangeset: Changeset = { ...changeset, entries: [{ ...binaryEntry, addedTextComplete: false }] };
+  let binaryScannerCalled = false;
+  const binaryOutcome = await secretScanCheck([], () => { binaryScannerCalled = true; return { backend: 'builtin', complete: true, findings: [] }; }).run({ worktree: '/', changeset: binaryChangeset });
+  assert.equal(binaryOutcome.status, 'inconclusive');
+  assert.equal(binaryScannerCalled, false);
+});
+
+test('built-in secret detector returns sanitized locations only', () => {
+  const result = scanAddedText([{ path: 'a.txt', line: 3, text: '-----BEGIN PRIVATE KEY-----' }], { probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
+  assert.equal(result.complete, true);
+  assert.equal(result.findings[0]?.path, 'a.txt');
+  assert.equal(result.findings[0]?.line, 3);
+  assert.equal(result.findings[0]?.redacted, true);
+  assert.ok(!JSON.stringify(result).includes('BEGIN PRIVATE KEY'));
+});
 
 function git(cwd: string, ...args: string[]): string {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -98,16 +139,27 @@ test('changeset covers committed, staged, unstaged, untracked, renamed, and dele
 
   const { entries } = collectChangeset(root, 'main');
   const find = (path: string) => entries.find((entry) => entry.path === path);
-  assert.deepEqual({ ...find('committed.txt'), content: find('committed.txt')?.content?.toString() }, { path: 'committed.txt', status: 'added', origin: 'committed', kind: 'file', content: 'new\n' });
+  assert.deepEqual({ ...find('committed.txt'), content: find('committed.txt')?.content?.toString() }, { path: 'committed.txt', status: 'added', origin: 'committed', kind: 'file', content: 'new\n', addedText: 'new\n', targetLines: [1], addedTextComplete: true });
+  assert.equal(find('committed.txt')?.addedText, 'new\n');
+  assert.deepEqual(find('committed.txt')?.targetLines, [1]);
   assert.equal(find('new.txt')?.status, 'renamed');
   assert.equal(find('new.txt')?.oldPath, 'old.txt');
   assert.equal(find('gone.txt')?.status, 'deleted');
   assert.equal(find('gone.txt')?.content, undefined);
   assert.equal(find('staged.txt')?.origin, 'staged');
   assert.equal(find('staged.txt')?.content?.toString(), 'staged\n');
+  assert.equal(find('staged.txt')?.addedText, 'staged\n');
+  assert.deepEqual(find('staged.txt')?.targetLines, [1]);
+  assert.equal(find('staged.txt')?.addedTextComplete, true);
   assert.equal(find('edit.txt')?.origin, 'unstaged');
   assert.equal(find('edit.txt')?.content?.toString(), 'v2\n');
+  assert.equal(find('edit.txt')?.addedText, 'v2\n');
+  assert.deepEqual(find('edit.txt')?.targetLines, [1]);
+  assert.equal(find('edit.txt')?.addedTextComplete, true);
   assert.equal(find('dir/untracked.txt')?.origin, 'untracked');
+  assert.equal(find('dir/untracked.txt')?.addedText, 'u\n');
+  assert.deepEqual(find('dir/untracked.txt')?.targetLines, [1]);
+  assert.equal(find('dir/untracked.txt')?.addedTextComplete, true);
   assert.equal(find('file with spaces.txt')?.content?.toString(), 'space\n');
   assert.equal(find('file-[1].txt')?.content?.toString(), 'bracket\n');
   assert.equal(find('café.txt')?.content?.toString(), 'accent\n');

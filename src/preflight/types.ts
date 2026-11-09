@@ -17,6 +17,11 @@ export type ChangeEntry = {
   origin: ChangeOrigin;
   kind?: 'file' | 'symlink' | 'submodule' | 'other';
   content: Buffer | undefined;
+  /** Added text and new-side line numbers for this origin; binary/non-text entries are omitted. */
+  addedText?: string;
+  targetLines?: number[];
+  /** False when changed bytes cannot be safely represented as added text. */
+  addedTextComplete?: boolean;
 };
 
 export type BaseSource = 'option' | 'project-context';

@@ -8,6 +8,7 @@ This directory contains proposed and accepted architecture decisions for Advance
 | [ADR-002](0002-consolidate-agent-responsibilities.md) | Consolidate Agent Responsibilities While Preserving Specialized Reasoning and Independent Review | Accepted | Agent architecture and workflow orchestration |
 | [ADR-003](0003-multi-methodology-development-architecture.md) | Multi-Methodology Development Architecture | Proposed | Methodology selection, scope, and governance |
 | [ADR-004](0004-canonical-checkout-remote-updates-only.md) | Keep the Canonical Checkout Read-Only Except for Remote Updates | Proposed | Git ownership of the canonical checkout during task bootstrap |
+| [ADR-005](0005-preflight-scope-and-redaction.md) | Preflight Scope, Redaction, and Secret Scanning | Proposed | Changeset scope, secret scanning, and sanitized findings |
 
 ## Status lifecycle
 

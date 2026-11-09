@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs';
 import { contextData } from '../project-context.ts';
 import { locateProjectContext, validateProfile } from '../project-setup.ts';
 import { collectChangeset } from './changeset.ts';
-import { baseContextCheck, changesetCheck } from './checks.ts';
+import { baseContextCheck, changesetCheck, pathPolicyCheck, secretScanCheck, type SecretException } from './checks.ts';
 import type { CheckResult, CheckStatus, Changeset, PreflightCheck, PreflightExitCode, PreflightResult } from './types.ts';
 
 export type BaseResolution = { ref: string; source: 'option' | 'project-context' } | { error: string };
@@ -20,9 +20,9 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
   }
 }
 
-export const defaultChecks: readonly PreflightCheck[] = [changesetCheck, baseContextCheck];
+export const defaultChecks: readonly PreflightCheck[] = [changesetCheck, baseContextCheck, pathPolicyCheck(), secretScanCheck()];
 
-export type PreflightOptions = { worktree: string; base?: string | undefined; checks?: readonly PreflightCheck[] };
+export type PreflightOptions = { worktree: string; base?: string | undefined; checks?: readonly PreflightCheck[]; sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[] };
 
 function inconclusiveAll(checks: readonly PreflightCheck[], reason: string): PreflightResult {
   const list = checks.length ? checks : [{ id: 'preflight' } as PreflightCheck];
@@ -32,7 +32,7 @@ function inconclusiveAll(checks: readonly PreflightCheck[], reason: string): Pre
 
 /** Runs checks in `id` order. A thrown check or failed tool call is `inconclusive`, never a pass. */
 export async function runPreflight(options: PreflightOptions): Promise<PreflightResult> {
-  const rawChecks = options.checks ?? defaultChecks;
+  const rawChecks = options.checks ?? [changesetCheck, baseContextCheck, pathPolicyCheck(options.sensitivePathGlobs), secretScanCheck(options.secretExceptions)];
   if (!rawChecks.length) {
     return inconclusiveAll([], 'No checks configured to run.');
   }

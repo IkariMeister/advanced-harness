@@ -3,6 +3,8 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { contextData, contextPath } from '../project-context.ts';
 import { linkedContextSelection, locateProjectContext, validateProfile } from '../project-setup.ts';
 import type { ChangeOrigin, CheckOutcome, PreflightCheck } from './types.ts';
+import { safeGitleaksRuleId, scanAddedText } from './secret-scanner.ts';
+export { DEFAULT_SENSITIVE_PATH_GLOBS, pathPolicyCheck } from './path-policy.ts';
 
 const TRUSTED_REF = 'refs/remotes/origin/HEAD';
 const TRUSTED_HINT = 'pass --base <ref> or run `git remote set-head origin --auto`';
@@ -157,3 +159,31 @@ export const changesetCheck: PreflightCheck = {
     };
   },
 };
+
+export type SecretException = { path: string; rule: string; justification: string };
+export function validateSecretExceptions(exceptions: readonly SecretException[]): void {
+  for (const exception of exceptions) {
+    if (!exception || typeof exception.path !== 'string' || !exception.path || typeof exception.rule !== 'string' || !exception.rule || typeof exception.justification !== 'string' || !exception.justification.trim()) throw new Error('Secret exceptions require an exact path, rule, and nonblank justification.');
+  }
+}
+export function secretScanCheck(exceptions: readonly SecretException[] = [], scanner: typeof scanAddedText = scanAddedText): PreflightCheck {
+  return { id: 'secret-scan', run({ changeset }) {
+    validateSecretExceptions(exceptions);
+    const payload = changeset.entries.flatMap(entry => {
+      if (entry.status === 'deleted' || !entry.addedText || entry.addedTextComplete === false) return [];
+      const lines = entry.addedText.split(/\r?\n/);
+      return lines.flatMap((text, index) => text ? [{ path: entry.path.replaceAll('\\', '/'), line: entry.targetLines?.[index] ?? index + 1, text }] : []);
+    });
+    if (changeset.entries.some(entry => entry.status !== 'deleted' && entry.addedTextComplete === false)) {
+      return { status: 'inconclusive', evidence: ['Secret scan could not extract added text from one or more binary changes.'], metrics: { backendGitleaks: 0, complete: 0, findings: 0 } };
+    }
+    const scanned = scanner(payload);
+    if (!scanned.complete) return { status: 'inconclusive', evidence: [`Secret scan backend: ${scanned.backend}.`, scanned.reason ?? 'Secret scanner did not complete.'], metrics: { backendGitleaks: scanned.backend === 'gitleaks' ? 1 : 0, complete: 0, findings: 0 } };
+    const actionable = scanned.findings.filter(finding => !exceptions.some(exception => exception.path === finding.path && canonicalExceptionRule(exception.rule, scanned.backend) === finding.rule && !!exception.justification.trim()));
+    return { status: actionable.length ? 'block' : 'pass', evidence: [`Secret scan backend: ${scanned.backend} (complete).`, ...(actionable.length ? actionable.map(finding => `${finding.rule} at ${finding.path}:${finding.line} [REDACTED]`) : ['No high-confidence secrets found in added text.'])], metrics: { backendGitleaks: scanned.backend === 'gitleaks' ? 1 : 0, complete: 1, findings: actionable.length } };
+  } };
+}
+
+function canonicalExceptionRule(rule: string, backend: string): string {
+  return backend === 'gitleaks' ? safeGitleaksRuleId(rule) : rule;
+}
