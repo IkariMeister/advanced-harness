@@ -61,8 +61,9 @@ in the canonical checkout:
 
 - Compares `--git-dir` and `--git-common-dir` from `git rev-parse`. If they resolve to
   the same directory, the target is the canonical checkout and is blocked (`exit 1`).
-- Verifies that project context (`AGENTS.md` or the linked context file) was not modified
-  in this changeset; a task branch cannot alter its own `worktreeDirectory` boundary (`exit 1`).
+- When project context (`AGENTS.md` or the linked context file) is modified in the changeset,
+  verifies that the configured `worktreeDirectory` matches the trusted ref (`refs/remotes/origin/HEAD`);
+  altering the `worktreeDirectory` boundary or failing to verify against the trusted ref blocks (`exit 1`).
 - Reads `worktreeDirectory` from project context. A missing `worktreeDirectory` or
   one that does not exist on disk blocks (`exit 1`). Shared-location resolution
   errors (such as conflict or invalid shape) are inconclusive (`exit 2`).
