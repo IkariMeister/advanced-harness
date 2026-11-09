@@ -284,6 +284,8 @@ test('submodule entries are reported with kind submodule and no content for comm
 
   // Committed submodule
   git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'mysub');
+  git(join(root, 'mysub'), 'config', 'user.email', 'sub@example.com');
+  git(join(root, 'mysub'), 'config', 'user.name', 'Sub');
   git(root, 'commit', '-q', '-m', 'add submodule');
 
   // Unstaged modification in submodule
