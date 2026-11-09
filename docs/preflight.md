@@ -61,18 +61,19 @@ in the canonical checkout:
 
 - Compares `--git-dir` and `--git-common-dir` from `git rev-parse`. If they resolve to
   the same directory, the target is the canonical checkout and is blocked (`exit 1`).
-- Reads `worktreeDirectory` from project context. If no `worktreeDirectory` is
-  configured, the check blocks (`exit 1`); if project context is invalid or
-  conflicting, the check is inconclusive (`exit 2`).
+- Verifies that project context (`AGENTS.md` or the linked context file) was not modified
+  in this changeset; a task branch cannot alter its own `worktreeDirectory` boundary (`exit 1`).
+- Reads `worktreeDirectory` from project context. A missing `worktreeDirectory` or
+  one that does not exist on disk blocks (`exit 1`). Shared-location resolution
+  errors (such as conflict or invalid shape) are inconclusive (`exit 2`).
 - Verifies that the resolved physical worktree path is strictly inside the resolved
   `worktreeDirectory` (realpath comparison, platform-aware). Any worktree outside the
-  configured directory is blocked (`exit 1`).
-- Traverses the worktree path from `worktreeDirectory` to detect and block symlink
-  escapes (`exit 1`).
+  configured directory (or attempting directory traversal) is blocked (`exit 1`).
 - **Optional task branch verification:** When `--task <key>` is passed (e.g. `--task 182`,
   `--task #182`, `--task BH-067`), the check inspects the checked-out branch. If `HEAD`
-  is detached or the branch does not match `<key>` as a word-boundary token, the check
-  blocks (`exit 1`).
+  is detached or the branch does not contain `<key>` as a case-insensitive, word-boundary
+  token delimited by non-alphanumeric characters, the check blocks (`exit 1`). For example,
+  `182` matches `issue/182`, `issue-182`, or `feat/182-worktree`, but does not match `1820`.
 
 ## Result contract
 

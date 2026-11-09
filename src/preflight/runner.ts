@@ -20,7 +20,7 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
   }
 }
 
-export const defaultChecks: readonly PreflightCheck[] = [baseContextCheck, changesetCheck, worktreeBoundaryCheck];
+export const defaultChecks: readonly PreflightCheck[] = [changesetCheck, baseContextCheck, worktreeBoundaryCheck];
 
 export type PreflightOptions = {
   worktree: string;

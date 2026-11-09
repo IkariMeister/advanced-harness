@@ -652,6 +652,33 @@ function worktreeBoundaryOf(result: { checks: { id: string; status: CheckStatus;
   return result.checks.find((check) => check.id === 'worktree-boundary');
 }
 
+function makeBoundaryFixture(baseDir: string) {
+  const repoRoot = join(baseDir, 'repo');
+  const configuredWtDir = join(baseDir, 'configured-worktrees');
+  mkdirSync(repoRoot, { recursive: true });
+  mkdirSync(configuredWtDir, { recursive: true });
+
+  git(repoRoot, 'init', '-q', '-b', 'main');
+  git(repoRoot, 'config', 'user.email', 'test@example.com');
+  git(repoRoot, 'config', 'user.name', 'Test');
+  git(repoRoot, 'config', 'core.autocrlf', 'false');
+
+  const profile = {
+    version: 1,
+    projectRoot: repoRoot,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: configuredWtDir,
+    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
+  };
+  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  git(repoRoot, 'add', '.');
+  git(repoRoot, 'commit', '-q', '-m', 'init');
+  return { repoRoot, configuredWtDir };
+}
+
 test('worktree-boundary: canonical checkout is blocked', async () => {
   const root = projectRepo();
   const outcome = await worktreeBoundaryCheck.run({
@@ -660,6 +687,16 @@ test('worktree-boundary: canonical checkout is blocked', async () => {
   });
   assert.equal(outcome.status, 'block');
   assert.match(outcome.evidence[0]!, /canonical repository checkout, not an isolated task worktree/);
+});
+
+test('worktree-boundary: defaultChecks pipeline blocks canonical checkout', async () => {
+  const root = projectRepo();
+  const result = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(result), 1);
+  assert.equal(result.approved, false);
+  const boundaryCheck = worktreeBoundaryOf(result);
+  assert.equal(boundaryCheck?.status, 'block');
+  assert.match(boundaryCheck!.evidence[0]!, /canonical repository checkout/);
 });
 
 test('worktree-boundary: missing worktreeDirectory in project context is blocked', async () => {
@@ -683,32 +720,36 @@ test('worktree-boundary: missing worktreeDirectory in project context is blocked
   assert.match(outcome.evidence[0]!, /No shared worktreeDirectory is configured/);
 });
 
-test('worktree-boundary: linked worktree outside configured worktreeDirectory is blocked', async () => {
-  const baseDir = makeTempRoot('preflight-wt-outside-');
-  const repoRoot = join(baseDir, 'repo');
-  const configuredWtDir = join(baseDir, 'configured-worktrees');
-  const actualWt = join(baseDir, 'unauthorized-worktree');
-  mkdirSync(repoRoot);
-  mkdirSync(configuredWtDir);
+test('worktree-boundary: modified project context / worktreeDirectory in changeset is blocked', async () => {
+  const baseDir = makeTempRoot('preflight-wt-mod-');
+  const { repoRoot, configuredWtDir } = makeBoundaryFixture(baseDir);
+  const taskWt = join(configuredWtDir, 'task');
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', taskWt);
 
-  git(repoRoot, 'init', '-q', '-b', 'main');
-  git(repoRoot, 'config', 'user.email', 'test@example.com');
-  git(repoRoot, 'config', 'user.name', 'Test');
-  git(repoRoot, 'config', 'core.autocrlf', 'false');
-
-  const profile = {
+  const modifiedProfile = {
     version: 1,
     projectRoot: repoRoot,
     baseBranch: 'main',
     shell: 'bash',
     checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
     device: { preference: 'ask' },
-    worktreeDirectory: configuredWtDir,
+    worktreeDirectory: join(baseDir, 'other-worktrees'),
     memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
   };
-  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
-  git(repoRoot, 'add', '.');
-  git(repoRoot, 'commit', '-q', '-m', 'init');
+  writeFileSync(join(taskWt, 'AGENTS.md'), updateContext('', 'project', modifiedProfile, []));
+  const { entries } = collectChangeset(taskWt, 'main');
+  const outcome = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries },
+  });
+  assert.equal(outcome.status, 'block');
+  assert.match(outcome.evidence[0]!, /Project context .* was modified in this changeset/);
+});
+
+test('worktree-boundary: linked worktree outside configured worktreeDirectory is blocked', async () => {
+  const baseDir = makeTempRoot('preflight-wt-outside-');
+  const { repoRoot } = makeBoundaryFixture(baseDir);
+  const actualWt = join(baseDir, 'unauthorized-worktree');
 
   git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', actualWt);
   const outcome = await worktreeBoundaryCheck.run({
@@ -721,30 +762,8 @@ test('worktree-boundary: linked worktree outside configured worktreeDirectory is
 
 test('worktree-boundary: valid linked worktree under configured worktreeDirectory passes, and checks task branch matching', async () => {
   const baseDir = makeTempRoot('preflight-wt-valid-');
-  const repoRoot = join(baseDir, 'repo');
-  const configuredWtDir = join(baseDir, 'configured-worktrees');
+  const { repoRoot, configuredWtDir } = makeBoundaryFixture(baseDir);
   const taskWt = join(configuredWtDir, 'issue-182');
-  mkdirSync(repoRoot);
-  mkdirSync(configuredWtDir);
-
-  git(repoRoot, 'init', '-q', '-b', 'main');
-  git(repoRoot, 'config', 'user.email', 'test@example.com');
-  git(repoRoot, 'config', 'user.name', 'Test');
-  git(repoRoot, 'config', 'core.autocrlf', 'false');
-
-  const profile = {
-    version: 1,
-    projectRoot: repoRoot,
-    baseBranch: 'main',
-    shell: 'bash',
-    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
-    device: { preference: 'ask' },
-    worktreeDirectory: configuredWtDir,
-    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
-  };
-  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
-  git(repoRoot, 'add', '.');
-  git(repoRoot, 'commit', '-q', '-m', 'init');
 
   git(repoRoot, 'worktree', 'add', '-q', '-b', 'issue/182', taskWt);
 
@@ -772,6 +791,16 @@ test('worktree-boundary: valid linked worktree under configured worktreeDirector
   });
   assert.equal(resMatchingNum.status, 'pass');
 
+  // Matching BH-067 key -> passes
+  const bhWt = join(configuredWtDir, 'bh-067-task');
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'feature/bh-067-check', bhWt);
+  const resBh = await worktreeBoundaryCheck.run({
+    worktree: bhWt,
+    changeset: { top: bhWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+    task: 'BH-067',
+  });
+  assert.equal(resBh.status, 'pass');
+
   // 3. With non-matching task (e.g. 1820 or 999) -> blocks
   const resMismatchSuffix = await worktreeBoundaryCheck.run({
     worktree: taskWt,
@@ -780,6 +809,13 @@ test('worktree-boundary: valid linked worktree under configured worktreeDirector
   });
   assert.equal(resMismatchSuffix.status, 'block');
   assert.match(resMismatchSuffix.evidence[0]!, /does not match task key '18'/);
+
+  const resMismatch1820 = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+    task: '1820',
+  });
+  assert.equal(resMismatch1820.status, 'block');
 
   const resMismatchOther = await worktreeBoundaryCheck.run({
     worktree: taskWt,
@@ -800,48 +836,35 @@ test('worktree-boundary: valid linked worktree under configured worktreeDirector
   assert.match(resDetached.evidence[0]!, /Worktree HEAD is detached/);
 });
 
-test('worktree-boundary: symlink escape inside worktreeDirectory is blocked', async (t) => {
+test('worktree-boundary: symlink escape and linked worktreeDirectory handling', async (t) => {
   const baseDir = makeTempRoot('preflight-wt-symlink-');
-  const repoRoot = join(baseDir, 'repo');
-  const configuredWtDir = join(baseDir, 'configured-worktrees');
+  const { repoRoot, configuredWtDir } = makeBoundaryFixture(baseDir);
   const outsideDir = join(baseDir, 'outside-target');
-  mkdirSync(repoRoot);
-  mkdirSync(configuredWtDir);
   mkdirSync(outsideDir);
-
-  git(repoRoot, 'init', '-q', '-b', 'main');
-  git(repoRoot, 'config', 'user.email', 'test@example.com');
-  git(repoRoot, 'config', 'user.name', 'Test');
-  git(repoRoot, 'config', 'core.autocrlf', 'false');
-
-  const profile = {
-    version: 1,
-    projectRoot: repoRoot,
-    baseBranch: 'main',
-    shell: 'bash',
-    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
-    device: { preference: 'ask' },
-    worktreeDirectory: configuredWtDir,
-    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
-  };
-  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
-  git(repoRoot, 'add', '.');
-  git(repoRoot, 'commit', '-q', '-m', 'init');
 
   const actualOutsideWt = join(outsideDir, 'worktree-1');
   git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', actualOutsideWt);
 
-  // Link inside configuredWtDir pointing to actualOutsideWt
+  // 1. Escaping link inside configuredWtDir pointing outside
   const linkInside = join(configuredWtDir, 'escaped-link');
+  let canLink = false;
   try {
     symlinkSync(actualOutsideWt, linkInside, 'junction');
-  } catch {
-    try {
-      symlinkSync(actualOutsideWt, linkInside, 'dir');
-    } catch {
-      t.skip('Directory symlinks unavailable');
-      return;
+    canLink = true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EPERM') {
+      try {
+        symlinkSync(actualOutsideWt, linkInside, 'dir');
+        canLink = true;
+      } catch (err2) {
+        if ((err2 as NodeJS.ErrnoException).code !== 'EPERM') throw err2;
+      }
     }
+  }
+
+  if (!canLink) {
+    t.skip('Directory symlinks unavailable on this platform');
+    return;
   }
 
   const outcome = await worktreeBoundaryCheck.run({
@@ -849,34 +872,28 @@ test('worktree-boundary: symlink escape inside worktreeDirectory is blocked', as
     changeset: { top: linkInside, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
   });
   assert.equal(outcome.status, 'block');
+  assert.match(outcome.evidence[0]!, /outside the configured worktreeDirectory/);
+
+  // 2. Legitimate worktreeDirectory reached through a symlink
+  const linkedWtParent = join(baseDir, 'linked-wt-parent');
+  try {
+    symlinkSync(configuredWtDir, linkedWtParent, process.platform === 'win32' ? 'junction' : 'dir');
+    const legitWt = join(configuredWtDir, 'legit-task');
+    git(repoRoot, 'worktree', 'add', '-q', '-b', 'legit', legitWt);
+    const legitOutcome = await worktreeBoundaryCheck.run({
+      worktree: legitWt,
+      changeset: { top: legitWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+    });
+    assert.equal(legitOutcome.status, 'pass');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EPERM') throw err;
+  }
 });
 
 test('CLI supports --task <key> and reports usage or blocks on mismatch', () => {
   const baseDir = makeTempRoot('preflight-cli-task-');
-  const repoRoot = join(baseDir, 'repo');
-  const configuredWtDir = join(baseDir, 'configured-worktrees');
+  const { repoRoot, configuredWtDir } = makeBoundaryFixture(baseDir);
   const taskWt = join(configuredWtDir, 'issue-182');
-  mkdirSync(repoRoot);
-  mkdirSync(configuredWtDir);
-
-  git(repoRoot, 'init', '-q', '-b', 'main');
-  git(repoRoot, 'config', 'user.email', 'test@example.com');
-  git(repoRoot, 'config', 'user.name', 'Test');
-  git(repoRoot, 'config', 'core.autocrlf', 'false');
-
-  const profile = {
-    version: 1,
-    projectRoot: repoRoot,
-    baseBranch: 'main',
-    shell: 'bash',
-    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
-    device: { preference: 'ask' },
-    worktreeDirectory: configuredWtDir,
-    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
-  };
-  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
-  git(repoRoot, 'add', '.');
-  git(repoRoot, 'commit', '-q', '-m', 'init');
   simulateOriginHead(repoRoot);
 
   git(repoRoot, 'worktree', 'add', '-q', '-b', 'issue/182', taskWt);
@@ -895,4 +912,3 @@ test('CLI supports --task <key> and reports usage or blocks on mismatch', () => 
   assert.equal(cli('--worktree', taskWt, '--task').status, 2);
   assert.equal(cli('--worktree', taskWt, '--task', '182', '--task', '183').status, 2);
 });
-
