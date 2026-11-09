@@ -146,7 +146,7 @@ export const hostPermissionMatrix: Readonly<Record<HostId, HostPermissionRow>> =
       },
       roleExposure: {
         status: 'advisory',
-        scope: 'MCP selections are launcher-controlled but runtime isolation is unverified; workflow skills are shared and procedure-skill deployment is not implemented (#45).',
+        scope: 'MCP selections are launcher-controlled, and child role processes run with Codex plugins disabled so plugin-provided servers are not selectable (#209), but runtime isolation is unverified; workflow skills are shared and procedure-skill deployment is not implemented (#45).',
         evidence: [doc('skills/README.md'), regression('test/codex-role-processes.test.ts')],
       },
       modelRouting: {

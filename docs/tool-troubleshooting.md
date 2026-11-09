@@ -82,6 +82,33 @@ settings, and unrelated fields. Run `npm run harness:deploy-prompts` to apply pr
 updates without reinstalling or resetting model/permission configuration.
 No live prompt update is performed by tests or by reading this document.
 
+## Codex role exits with "invalid transport in `mcp_servers.<name>`"
+
+**Symptom.** Every launch of a Codex child role through the installed launcher
+(`~/.codex/advanced-harness/codex-role.mjs`) exits 1, and Codex reports
+`invalid transport in mcp_servers.<name>` while loading config. The name is usually
+a plugin server such as `codex_app` or `cua_repl`.
+
+**Cause.** The server comes from a Codex plugin and has no `[mcp_servers.<name>]`
+table in `config.toml`. Earlier launcher versions listed servers with plugins enabled
+and wrote a `-c mcp_servers.<name>.enabled=...` override for each one. For a plugin
+server that override created a partial table, which Codex rejects at config load.
+
+**Fix.** The launcher now runs its listing, launch and resume with `--disable plugins`,
+so plugin-provided servers are not listed and get no override. The harness does not
+change your plugins or your own Codex sessions; the flag applies only to child role
+processes. To pick up the fix, run `harness:update --host codex` (global scope), then
+`harness:doctor --host codex`. Doctor reports the launcher as drifted until the
+installed copy matches this version.
+
+**If it still fails.** A failed listing now stops the launch with
+`Codex could not list the MCP servers for role <role>; no role was launched. Codex said: ...`.
+Use the reason Codex gives. Plugin-only servers cannot be selected for External. To use
+a server there, define it in `config.toml` as a complete `[mcp_servers.<name>]` table,
+then select it at install. The `--disable plugins` form was checked against
+`mcp list` only; an actual `codex exec` launch or resume with that flag has not been
+verified by this harness.
+
 ## Regression scope
 
 Default tests check prompt/guidance contracts without inference or live tool calls.

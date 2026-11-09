@@ -14,6 +14,7 @@ export function buildRoleInvocation(options: {
   schemaPath: string;
   resultPath: string;
 }): string[];
+export function listMcpServers(role: string, run: (args: string[]) => string): string[];
 export function readSelectedMcpServers(home: string): string[];
 export function threadBindingsPath(home: string): string;
 export function readThreadBindings(dir: string): Record<string, string>;
