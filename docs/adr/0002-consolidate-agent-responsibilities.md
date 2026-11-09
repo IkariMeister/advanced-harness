@@ -133,4 +133,4 @@ Reconsider if evaluation finds material quality regression, handoff savings do n
 
 ## Host capability evidence
 
-The [host permission capability matrix](../host-permission-capabilities.md) records BH-048 evidence and limitations for each consolidation prerequisite. Doctor reports those recorded statuses separately from installation health. This reference does not change this ADR’s decision or authorize a rollout.
+The [host permission capability matrix](../host-permission-capabilities.md) records BH-048 evidence and limitations for each consolidation prerequisite. Doctor reports those recorded statuses separately from installation health. This reference does not change this ADR’s decision or authorize a rollout. For Claude Code, the Operator Bash mapping with advisory remote-Git denies is proposed in [ADR-005](0005-claude-code-operator-bash.md); it does not change this decision.

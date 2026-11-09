@@ -75,13 +75,13 @@ export const hostPermissionMatrix: Readonly<Record<HostId, HostPermissionRow>> =
         evidence: [doc('docs/adr/0002-consolidate-agent-responsibilities.md'), regression('test/claude-code-compiler.test.ts')],
       },
       localRemoteIsolation: {
-        status: 'unsupported',
-        scope: 'The current mapping cannot express exact per-role Bash resource policies; Operator has no Bash and cannot perform local Git bootstrap (#200).',
-        evidence: [doc('README.md#agents-and-fixed-per-host-model-presets'), regression('test/claude-permission-preflight.test.ts'), doc('https://github.com/IkariMeister/advanced-harness/issues/200')],
+        status: 'advisory',
+        scope: 'Operator has whole-tool Bash for local Git bootstrap (ADR-005, #200); its git push/pull/clone and gh denies are instruction-only and its Bash calls use Claude default prompts. Project settings deny destructive Git and git fetch --upload-pack/-u for every role. Not a sandbox.',
+        evidence: [doc('docs/adr/0005-claude-code-operator-bash.md'), regression('test/claude-code-compiler.test.ts'), doc('README.md#agents-and-fixed-per-host-model-presets')],
       },
       roleCommands: {
         status: 'unsupported',
-        scope: 'Operator, Implementer, Reviewer and QA have no Bash. Reviewer/QA cannot re-run shell checks; request an authorized command-running context through Lead.',
+        scope: 'Per-role Bash patterns cannot be expressed; Operator and External receive whole-tool prompted Bash. Implementer, Reviewer and QA have no Bash; Reviewer/QA cannot re-run shell checks; request an authorized command-running context through Lead.',
         evidence: [regression('test/claude-code-compiler.test.ts'), doc('docs/adr/0002-consolidate-agent-responsibilities.md')],
       },
       roleExposure: {

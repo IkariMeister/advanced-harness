@@ -11,6 +11,7 @@ import { compileOpenCodeRole, compileOpenCodeRoles } from '../src/opencode-role-
 import { isOpenCodeGuardrailRule, openCodeGuardrailRules } from '../src/security-guardrails.ts';
 import { lowerOpenCodePolicy, type CapabilityPolicy } from '../src/capability-policy.ts';
 import type { PermissionRule } from '../src/permission-reconciliation.ts';
+import { operatorAdvisoryLines, operatorFallbackLines } from './operator-claude-wording.ts';
 
 const agents = new URL('../agents/', import.meta.url);
 const source = (role: typeof nativeRoles[number]) => readFileSync(new URL(`${role}.md`, agents), 'utf8');
@@ -67,6 +68,8 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
     'repairs. (4) Create the task worktree from the updated base. Never discard unrelated changes',
     'or perform other remote Git/API/MCP operations; External owns those. Command patterns are',
     'workflow aids, not a sandbox; do not use scripts/aliases to bypass role ownership.',
+    '',
+    ...operatorAdvisoryLines,
   ].join('\n'));
   const closing = 'local Git/worktrees/memory/cleanup; escalate services and remote Git to External\nthrough Lead.';
   assert.ok(operator.system.includes(closing));
@@ -75,6 +78,14 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
     'the `git fetch` exception (retained but optional; not part of bootstrap; the bootstrap fetch is',
     "External's); External fast-forwards the base during bootstrap; escalate services and all other",
     'remote Git to External through Lead.',
+  ].join('\n'));
+  // #200 / ADR-005: the Claude Code fallback paragraph appended after the closing paragraph.
+  const lastLine = 'Lead; do not broaden permissions, substitute roles/models, or retry automatically.';
+  assert.ok(operator.system.includes(lastLine));
+  operator.system = operator.system.replace(lastLine, [
+    lastLine,
+    '',
+    ...operatorFallbackLines,
   ].join('\n'));
   // #176: Operator reads the shared locations from project context instead of an "agreed" path.
   const agreed = 'Maintain one agreed shared MEMORY.md outside application worktrees. Write serialized';

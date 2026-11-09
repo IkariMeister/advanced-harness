@@ -40,7 +40,7 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
     assert.equal(existsSync(box.recoveryDirectory), false);
   });
 
-  it('SMK-CC-02 install deploys CLAUDE.md, settings, eight agents, and seven commands; AGENTS.md preserved', async () => {
+  it('SMK-CC-02 install deploys CLAUDE.md, settings, eight agents, and seven commands; Operator Bash and advisory denies (ADR-005); AGENTS.md preserved', async () => {
     const result = await box.run('install-native-harness.ts', args(), { steps: claudeCodeInstall('yes') });
     assert.equal(result.code, 0, result.transcript);
     assert.match(result.stdout, /Harness version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)? \([0-9a-f]{40}\)/);
@@ -52,6 +52,15 @@ describe('SMK-CC Claude Code project lifecycle (non-TTY piped answers)', () => {
     for (const role of roles) assert.ok(existsSync(join(box.project, '.claude', 'agents', `${role}.md`)), role);
     for (const command of commands) assert.ok(existsSync(join(box.project, '.claude', 'commands', `${command}.md`)), command);
     assert.ok(existsSync(join(box.project, '.claude', 'skills', 'harness-procedure-documentation-impact', 'SKILL.md')), 'canonical procedure skill installed separately from workflow commands');
+    // ADR-005: Operator alone has Bash; its fetch upload-pack/-u denies are project settings, and its remote Git and gh denies are instruction only.
+    const toolsOf = (role: string) => (/^tools: (.*)$/m.exec(readFileSync(join(box.project, '.claude', 'agents', `${role}.md`), 'utf8'))?.[1] ?? '').split(', ');
+    assert.ok(toolsOf('operator').includes('Bash'), 'Operator tools include Bash');
+    for (const role of ['implementer', 'reviewer', 'qa']) assert.ok(!toolsOf(role).includes('Bash'), `${role} tools exclude Bash`);
+    for (const rule of ['Bash(git fetch *--upl*)', 'Bash(git fetch -u*)', 'Bash(git fetch * -u*)']) assert.ok(settings.permissions.deny.includes(rule), rule);
+    for (const rule of ['Bash(gh *)', 'Bash(git push *)', 'Bash(git pull *)', 'Bash(git clone *)']) assert.ok(!settings.permissions.deny.includes(rule), `${rule} is advisory, not a settings rule`);
+    const advisoryAt = result.stdout.indexOf('Advisory on Claude Code (instruction only, not enforced):');
+    assert.ok(advisoryAt >= 0, 'advisory header printed');
+    assert.ok(result.stdout.indexOf('Type yes to install') > advisoryAt, 'advisory printed before the Type yes prompt');
     assert.equal(readFileSync(join(box.project, 'AGENTS.md'), 'utf8'), pristine.get('AGENTS.md'));
     assert.deepEqual(box.openCodeCalls(), []);
   });
