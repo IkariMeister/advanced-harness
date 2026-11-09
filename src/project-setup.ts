@@ -434,11 +434,16 @@ export function prepareSetup(root: string, profile: ProjectProfile, original: st
   return prepareContextFiles(root, target, original, removeContext(updateProjectInstructions(original, profile), 'paths'));
 }
 
+/** The context file AGENTS.md links to (raw path as written), or undefined when AGENTS.md holds the settings itself. */
+export function linkedContextSelection(agents: string | undefined): string | undefined {
+  return /Read `([^`\r\n]+)` for Advanced Harness project settings/.exec(agents ?? '')?.[1];
+}
+
 /** Settings live in AGENTS.md or the context file it links to. */
 export function locateProjectContext(root: string): { target: string; original: string | undefined } {
   const agentsPath = join(root, 'AGENTS.md');
   const agents = readContext(agentsPath);
-  const linked = /Read `([^`\r\n]+)` for Advanced Harness project settings/.exec(agents ?? '')?.[1];
+  const linked = linkedContextSelection(agents);
   if (!linked) return { target: agentsPath, original: agents };
   const target = contextPath(root, linked);
   return { target, original: readContext(target) };

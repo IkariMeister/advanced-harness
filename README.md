@@ -150,6 +150,14 @@ npm run harness:doctor -- --project "path/to/android-project"
 
 It prints the harness checkout version and whether it is on a release tag (no network access). This verifies agent visibility/modes and model/variant catalog availability, not account entitlement. It also statically validates canonical procedure-skill metadata and expected installed skills; role guidance is advisory and does not grant permissions. Missing installed skills fail only when an installation footprint is detected. Codex and Cursor native procedure-skill deployment are unsupported. Static skill checks remain available when OpenCode runtime verification is inconclusive. Doctor may start OpenCode's service but never restarts it or sends model requests. See [installation troubleshooting](docs/installation.md#after-installation).
 
+Collect pre-publish evidence for a task worktree:
+
+```text
+npm run harness:preflight -- --worktree "path/to/task-worktree" [--base <ref>] [--json]
+```
+
+It inspects the changeset (`merge-base(base, HEAD)...HEAD` plus staged, unstaged, and untracked files) and runs built-in checks (`changeset`, `base-context`). It exits 0 pass, 1 blocked, or 2 inconclusive; a tooling error is never a pass. The base ref defaults to `baseBranch` in project context; when `--base` is omitted, that context is verified against the local `refs/remotes/origin/HEAD` (no fetch), and a missing trusted ref or unreadable context is inconclusive (exit 2) unless `--base <ref>` is passed. Preflight reports evidence only; the human approves. See [preflight](docs/preflight.md).
+
 Check for updates and preview changes to installed prompts and permissions:
 
 ```text
