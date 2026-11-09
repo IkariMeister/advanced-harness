@@ -34,6 +34,7 @@ export type Changeset = {
 export type PreflightContext = {
   worktree: string;
   changeset: Changeset;
+  task?: string | undefined;
 };
 
 export type CheckOutcome = {

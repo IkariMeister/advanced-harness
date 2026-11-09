@@ -8,6 +8,10 @@ version between releases.
 
 ### Added
 
+- `worktree-boundary` preflight check (BH-067, #182): enforces that preflight is run in an
+  isolated task worktree under `worktreeDirectory` (blocking canonical checkout `--git-dir` ===
+  `--git-common-dir`, worktrees outside `worktreeDirectory`, and symlink escapes). Supports
+  optional `--task <key>` to block on branch mismatches or detached `HEAD`.
 - `harness:preflight` (BH-066, #181): a pluggable preflight check runner over the task
   worktree changeset (including `changeset` and `base-context` checks), with JSON and human output
   and exit codes 0 pass, 1 blocked, 2 inconclusive. When `--base` is omitted, `base-context` verifies

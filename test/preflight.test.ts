@@ -5,7 +5,7 @@ import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { updateContext } from '../src/project-context.ts';
-import { baseContextCheck } from '../src/preflight/checks.ts';
+import { baseContextCheck, worktreeBoundaryCheck } from '../src/preflight/checks.ts';
 import { collectChangeset } from '../src/preflight/changeset.ts';
 import { exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
 import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
@@ -49,7 +49,7 @@ function simulateOriginHead(root: string): void {
 
 function projectProfile(root: string, baseBranch = 'main') {
   const checks = Object.fromEntries(contextSections.map((name) => [name, { status: 'unconfigured' }]));
-  return { version: 1, baseBranch, shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: join(root, '..', 'wt'), memoryPath: join(root, '..', 'mem', 'MEMORY.md') };
+  return { version: 1, projectRoot: root, baseBranch, shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: join(root, '..', 'wt'), memoryPath: join(root, '..', 'mem', 'MEMORY.md') };
 }
 
 /**
@@ -249,7 +249,7 @@ test('base ref defaults to baseBranch from project context, and base-context fai
   git(root, 'checkout', '-q', '-b', 'task');
 
   // Baseline: unmodified baseBranch
-  const result = await runPreflight({ worktree: root });
+  const result = await runPreflight({ worktree: root, checks: [baseContextCheck] });
   assert.equal(exitCodeFor(result), 0, JSON.stringify(result));
   const baseCheck = result.checks.find((c) => c.id === 'base-context');
   assert.equal(baseCheck?.status, 'pass');
@@ -257,7 +257,7 @@ test('base ref defaults to baseBranch from project context, and base-context fai
   // Modify project context in working tree without explicit --base -> BLOCKS (exit 1)
   const modifiedProfile = { ...profile, shell: 'cmd' };
   writeFileSync(join(root, 'AGENTS.md'), updateContext('', 'project', modifiedProfile, []));
-  const blockedResult = await runPreflight({ worktree: root });
+  const blockedResult = await runPreflight({ worktree: root, checks: [baseContextCheck] });
   assert.equal(exitCodeFor(blockedResult), 1);
   const blockedBaseCheck = blockedResult.checks.find((c) => c.id === 'base-context');
   assert.equal(blockedBaseCheck?.status, 'block');
@@ -265,7 +265,7 @@ test('base ref defaults to baseBranch from project context, and base-context fai
   assert.equal(blockedResult.blocking.length, 1);
 
   // When explicit --base is provided, base-context passes even with modified context
-  const overrideResult = await runPreflight({ worktree: root, base: 'main' });
+  const overrideResult = await runPreflight({ worktree: root, base: 'main', checks: [baseContextCheck] });
   assert.equal(exitCodeFor(overrideResult), 0);
   const overrideBaseCheck = overrideResult.checks.find((c) => c.id === 'base-context');
   assert.equal(overrideBaseCheck?.status, 'pass');
@@ -313,23 +313,52 @@ test('submodule entries are reported with kind submodule and no content for comm
 });
 
 test('CLI exit codes and JSON contract', () => {
-  const root = repo();
-  writeFileSync(join(root, 'u.txt'), 'u');
-  const pass = cli('--worktree', root, '--base', 'main', '--json');
+  const baseDir = makeTempRoot('preflight-cli-contract-');
+  const repoRoot = join(baseDir, 'repo');
+  const configuredWtDir = join(baseDir, 'configured-worktrees');
+  const taskWt = join(configuredWtDir, 'task');
+  mkdirSync(repoRoot);
+  mkdirSync(configuredWtDir);
+
+  git(repoRoot, 'init', '-q', '-b', 'main');
+  git(repoRoot, 'config', 'user.email', 'test@example.com');
+  git(repoRoot, 'config', 'user.name', 'Test');
+  git(repoRoot, 'config', 'core.autocrlf', 'false');
+
+  const profile = {
+    version: 1,
+    projectRoot: repoRoot,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: configuredWtDir,
+    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
+  };
+  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  writeFileSync(join(repoRoot, 'u.txt'), 'u');
+  git(repoRoot, 'add', '.');
+  git(repoRoot, 'commit', '-q', '-m', 'init');
+  simulateOriginHead(repoRoot);
+
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', taskWt);
+  writeFileSync(join(taskWt, 'new-file.txt'), 'content');
+
+  const pass = cli('--worktree', taskWt, '--base', 'main', '--json');
   assert.equal(pass.status, 0, pass.stderr);
   const parsed = JSON.parse(pass.stdout) as Record<string, unknown>;
   assert.deepEqual(Object.keys(parsed), ['approved', 'blocking', 'warnings', 'metrics', 'checks']);
   assert.equal(parsed.approved, true);
 
-  const human = cli('--worktree', root, '--base', 'main');
+  const human = cli('--worktree', taskWt, '--base', 'main');
   assert.equal(human.status, 0);
   assert.match(human.stdout, /Preflight: PASS/);
 
-  assert.equal(cli('--worktree', root, '--base', 'nope').status, 2);
+  assert.equal(cli('--worktree', taskWt, '--base', 'nope').status, 2);
   assert.equal(cli('--bogus').status, 2);
   assert.equal(cli().status, 2);
   assert.equal(cli('--worktree', '--json').status, 2);
-  assert.equal(cli('--worktree', root, '--base', 'a', '--base', 'b').status, 2);
+  assert.equal(cli('--worktree', taskWt, '--base', 'a', '--base', 'b').status, 2);
 
   const help = cli('--help');
   assert.equal(help.status, 0);
@@ -347,13 +376,13 @@ test('CLI exit codes and JSON contract', () => {
   git(blockRepo, 'config', 'core.autocrlf', 'false');
   const unconfigured = { status: 'unconfigured' };
   const checks = Object.fromEntries(['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'].map((name) => [name, unconfigured]));
-  const profile = { version: 1, baseBranch: 'main', shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: join(blockRepo, '..', 'wt'), memoryPath: join(blockRepo, '..', 'mem', 'MEMORY.md') };
-  writeFileSync(join(blockRepo, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  const blockProfile = { version: 1, projectRoot: blockRepo, baseBranch: 'main', shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: join(blockRepo, '..', 'wt'), memoryPath: join(blockRepo, '..', 'mem', 'MEMORY.md') };
+  writeFileSync(join(blockRepo, 'AGENTS.md'), updateContext('', 'project', blockProfile, []));
   git(blockRepo, 'add', 'AGENTS.md');
   git(blockRepo, 'commit', '-q', '-m', 'add project context on main');
   simulateOriginHead(blockRepo);
   git(blockRepo, 'checkout', '-q', '-b', 'task');
-  writeFileSync(join(blockRepo, 'AGENTS.md'), updateContext('', 'project', { ...profile, shell: 'cmd' }, []));
+  writeFileSync(join(blockRepo, 'AGENTS.md'), updateContext('', 'project', { ...blockProfile, shell: 'cmd' }, []));
   const blockedCli = cli('--worktree', blockRepo);
   assert.equal(blockedCli.status, 1);
   assert.match(blockedCli.stdout, /Preflight: BLOCKED/);
@@ -445,7 +474,7 @@ test('a missing origin/HEAD is inconclusive with the --base or set-head hint', a
 
 test('an untouched project context matching origin/HEAD passes, including through a linked context file', async () => {
   const root = projectRepo({ link: true });
-  const result = await runPreflight({ worktree: root });
+  const result = await runPreflight({ worktree: root, checks: [baseContextCheck] });
   assert.equal(exitCodeFor(result), 0, JSON.stringify(result));
   assert.equal(baseContextOf(result)?.status, 'pass');
   assert.match(baseContextOf(result)!.evidence[0]!, /matches trusted ref/);
@@ -618,3 +647,252 @@ test('R-05: unverifiable trusted project context at the trusted ref is inconclus
     });
   }
 });
+
+function worktreeBoundaryOf(result: { checks: { id: string; status: CheckStatus; evidence: string[] }[] }) {
+  return result.checks.find((check) => check.id === 'worktree-boundary');
+}
+
+test('worktree-boundary: canonical checkout is blocked', async () => {
+  const root = projectRepo();
+  const outcome = await worktreeBoundaryCheck.run({
+    worktree: root,
+    changeset: { top: root, base: 'main', baseSource: 'project-context', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(outcome.status, 'block');
+  assert.match(outcome.evidence[0]!, /canonical repository checkout, not an isolated task worktree/);
+});
+
+test('worktree-boundary: missing worktreeDirectory in project context is blocked', async () => {
+  const root = makeTempRoot('preflight-wt-missing-');
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 'test@example.com');
+  git(root, 'config', 'user.name', 'Test');
+  git(root, 'config', 'core.autocrlf', 'false');
+  writeFileSync(join(root, 'init.txt'), 'init');
+  git(root, 'add', '.');
+  git(root, 'commit', '-q', '-m', 'init');
+
+  const wt = makeTempRoot('preflight-wt-linked-');
+  git(root, 'worktree', 'add', '-q', '-b', 'task', wt);
+  // wt has no AGENTS.md / project context configured
+  const outcome = await worktreeBoundaryCheck.run({
+    worktree: wt,
+    changeset: { top: wt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(outcome.status, 'block');
+  assert.match(outcome.evidence[0]!, /No shared worktreeDirectory is configured/);
+});
+
+test('worktree-boundary: linked worktree outside configured worktreeDirectory is blocked', async () => {
+  const baseDir = makeTempRoot('preflight-wt-outside-');
+  const repoRoot = join(baseDir, 'repo');
+  const configuredWtDir = join(baseDir, 'configured-worktrees');
+  const actualWt = join(baseDir, 'unauthorized-worktree');
+  mkdirSync(repoRoot);
+  mkdirSync(configuredWtDir);
+
+  git(repoRoot, 'init', '-q', '-b', 'main');
+  git(repoRoot, 'config', 'user.email', 'test@example.com');
+  git(repoRoot, 'config', 'user.name', 'Test');
+  git(repoRoot, 'config', 'core.autocrlf', 'false');
+
+  const profile = {
+    version: 1,
+    projectRoot: repoRoot,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: configuredWtDir,
+    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
+  };
+  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  git(repoRoot, 'add', '.');
+  git(repoRoot, 'commit', '-q', '-m', 'init');
+
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', actualWt);
+  const outcome = await worktreeBoundaryCheck.run({
+    worktree: actualWt,
+    changeset: { top: actualWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(outcome.status, 'block');
+  assert.match(outcome.evidence[0]!, /outside the configured worktreeDirectory/);
+});
+
+test('worktree-boundary: valid linked worktree under configured worktreeDirectory passes, and checks task branch matching', async () => {
+  const baseDir = makeTempRoot('preflight-wt-valid-');
+  const repoRoot = join(baseDir, 'repo');
+  const configuredWtDir = join(baseDir, 'configured-worktrees');
+  const taskWt = join(configuredWtDir, 'issue-182');
+  mkdirSync(repoRoot);
+  mkdirSync(configuredWtDir);
+
+  git(repoRoot, 'init', '-q', '-b', 'main');
+  git(repoRoot, 'config', 'user.email', 'test@example.com');
+  git(repoRoot, 'config', 'user.name', 'Test');
+  git(repoRoot, 'config', 'core.autocrlf', 'false');
+
+  const profile = {
+    version: 1,
+    projectRoot: repoRoot,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: configuredWtDir,
+    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
+  };
+  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  git(repoRoot, 'add', '.');
+  git(repoRoot, 'commit', '-q', '-m', 'init');
+
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'issue/182', taskWt);
+
+  // 1. Without task option -> passes
+  const resNoTask = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(resNoTask.status, 'pass');
+  assert.match(resNoTask.evidence[0]!, /is an isolated task worktree under/);
+
+  // 2. With matching task '#182' and '182' -> passes
+  const resMatchingHash = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+    task: '#182',
+  });
+  assert.equal(resMatchingHash.status, 'pass');
+  assert.match(resMatchingHash.evidence[1]!, /matches task key '#182'/);
+
+  const resMatchingNum = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+    task: '182',
+  });
+  assert.equal(resMatchingNum.status, 'pass');
+
+  // 3. With non-matching task (e.g. 1820 or 999) -> blocks
+  const resMismatchSuffix = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+    task: '18',
+  });
+  assert.equal(resMismatchSuffix.status, 'block');
+  assert.match(resMismatchSuffix.evidence[0]!, /does not match task key '18'/);
+
+  const resMismatchOther = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+    task: '999',
+  });
+  assert.equal(resMismatchOther.status, 'block');
+  assert.match(resMismatchOther.evidence[0]!, /does not match task key '999'/);
+
+  // 4. Detached HEAD with task -> blocks
+  git(taskWt, 'checkout', '-q', '--detach');
+  const resDetached = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+    task: '182',
+  });
+  assert.equal(resDetached.status, 'block');
+  assert.match(resDetached.evidence[0]!, /Worktree HEAD is detached/);
+});
+
+test('worktree-boundary: symlink escape inside worktreeDirectory is blocked', async (t) => {
+  const baseDir = makeTempRoot('preflight-wt-symlink-');
+  const repoRoot = join(baseDir, 'repo');
+  const configuredWtDir = join(baseDir, 'configured-worktrees');
+  const outsideDir = join(baseDir, 'outside-target');
+  mkdirSync(repoRoot);
+  mkdirSync(configuredWtDir);
+  mkdirSync(outsideDir);
+
+  git(repoRoot, 'init', '-q', '-b', 'main');
+  git(repoRoot, 'config', 'user.email', 'test@example.com');
+  git(repoRoot, 'config', 'user.name', 'Test');
+  git(repoRoot, 'config', 'core.autocrlf', 'false');
+
+  const profile = {
+    version: 1,
+    projectRoot: repoRoot,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: configuredWtDir,
+    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
+  };
+  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  git(repoRoot, 'add', '.');
+  git(repoRoot, 'commit', '-q', '-m', 'init');
+
+  const actualOutsideWt = join(outsideDir, 'worktree-1');
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', actualOutsideWt);
+
+  // Link inside configuredWtDir pointing to actualOutsideWt
+  const linkInside = join(configuredWtDir, 'escaped-link');
+  try {
+    symlinkSync(actualOutsideWt, linkInside, 'junction');
+  } catch {
+    try {
+      symlinkSync(actualOutsideWt, linkInside, 'dir');
+    } catch {
+      t.skip('Directory symlinks unavailable');
+      return;
+    }
+  }
+
+  const outcome = await worktreeBoundaryCheck.run({
+    worktree: linkInside,
+    changeset: { top: linkInside, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(outcome.status, 'block');
+});
+
+test('CLI supports --task <key> and reports usage or blocks on mismatch', () => {
+  const baseDir = makeTempRoot('preflight-cli-task-');
+  const repoRoot = join(baseDir, 'repo');
+  const configuredWtDir = join(baseDir, 'configured-worktrees');
+  const taskWt = join(configuredWtDir, 'issue-182');
+  mkdirSync(repoRoot);
+  mkdirSync(configuredWtDir);
+
+  git(repoRoot, 'init', '-q', '-b', 'main');
+  git(repoRoot, 'config', 'user.email', 'test@example.com');
+  git(repoRoot, 'config', 'user.name', 'Test');
+  git(repoRoot, 'config', 'core.autocrlf', 'false');
+
+  const profile = {
+    version: 1,
+    projectRoot: repoRoot,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: configuredWtDir,
+    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
+  };
+  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  git(repoRoot, 'add', '.');
+  git(repoRoot, 'commit', '-q', '-m', 'init');
+  simulateOriginHead(repoRoot);
+
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'issue/182', taskWt);
+
+  // CLI exit 0 with matching --task
+  const pass = cli('--worktree', taskWt, '--task', '182');
+  assert.equal(pass.status, 0, pass.stderr);
+  assert.match(pass.stdout, /Preflight: PASS/);
+
+  // CLI exit 1 with non-matching --task
+  const failMismatch = cli('--worktree', taskWt, '--task', '999');
+  assert.equal(failMismatch.status, 1);
+  assert.match(failMismatch.stdout, /Preflight: BLOCKED/);
+
+  // CLI exit 2 on duplicate or missing --task value
+  assert.equal(cli('--worktree', taskWt, '--task').status, 2);
+  assert.equal(cli('--worktree', taskWt, '--task', '182', '--task', '183').status, 2);
+});
+

@@ -5,7 +5,7 @@ evidence only: no result, file, or tracker stamp counts as plan or publish
 approval. The human approves.
 
 ```text
-npm run harness:preflight -- --worktree <path> [--base <ref>] [--json]
+npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--json]
 ```
 
 ## Base ref and trust model
@@ -53,6 +53,27 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   (no contents). Contents are read in full with no size limit; limits on large
   files are left to the guardrail checks (BH-067..BH-071) that consume them.
 
+## Worktree boundary check
+
+The built-in `worktree-boundary` check enforces that preflight is run in an
+isolated task worktree under the project's configured `worktreeDirectory` and not
+in the canonical checkout:
+
+- Compares `--git-dir` and `--git-common-dir` from `git rev-parse`. If they resolve to
+  the same directory, the target is the canonical checkout and is blocked (`exit 1`).
+- Reads `worktreeDirectory` from project context. If no `worktreeDirectory` is
+  configured, the check blocks (`exit 1`); if project context is invalid or
+  conflicting, the check is inconclusive (`exit 2`).
+- Verifies that the resolved physical worktree path is strictly inside the resolved
+  `worktreeDirectory` (realpath comparison, platform-aware). Any worktree outside the
+  configured directory is blocked (`exit 1`).
+- Traverses the worktree path from `worktreeDirectory` to detect and block symlink
+  escapes (`exit 1`).
+- **Optional task branch verification:** When `--task <key>` is passed (e.g. `--task 182`,
+  `--task #182`, `--task BH-067`), the check inspects the checked-out branch. If `HEAD`
+  is detached or the branch does not match `<key>` as a word-boundary token, the check
+  blocks (`exit 1`).
+
 ## Result contract
 
 ```json
@@ -82,6 +103,7 @@ A tooling error is never a pass.
 A check implements `PreflightCheck` from `src/preflight/types.ts`: a unique `id`
 and a `run(context)` that receives the worktree and changeset and returns a
 status, evidence lines, and optional numeric metrics. A thrown error becomes
-`inconclusive`. The built-in `changeset` and `base-context` checks summarize the
-changeset and block unverified project context modifications; guardrail checks
-(BH-067..BH-071) plug in alongside them.
+`inconclusive`. The built-in `changeset`, `base-context`, and `worktree-boundary`
+checks summarize the changeset, block unverified project context modifications,
+and ensure preflight runs within an isolated task worktree; guardrail checks
+(BH-068..BH-071) plug in alongside them.
