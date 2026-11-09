@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs';
 import { contextData } from '../project-context.ts';
 import { locateProjectContext, validateProfile } from '../project-setup.ts';
 import { collectChangeset } from './changeset.ts';
-import { baseContextCheck, changesetCheck } from './checks.ts';
+import { baseContextCheck, changesetCheck, worktreeBoundaryCheck } from './checks.ts';
 import type { CheckResult, CheckStatus, Changeset, PreflightCheck, PreflightExitCode, PreflightResult } from './types.ts';
 
 export type BaseResolution = { ref: string; source: 'option' | 'project-context' } | { error: string };
@@ -20,9 +20,14 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
   }
 }
 
-export const defaultChecks: readonly PreflightCheck[] = [changesetCheck, baseContextCheck];
+export const defaultChecks: readonly PreflightCheck[] = [baseContextCheck, changesetCheck, worktreeBoundaryCheck];
 
-export type PreflightOptions = { worktree: string; base?: string | undefined; checks?: readonly PreflightCheck[] };
+export type PreflightOptions = {
+  worktree: string;
+  base?: string | undefined;
+  task?: string | undefined;
+  checks?: readonly PreflightCheck[];
+};
 
 function inconclusiveAll(checks: readonly PreflightCheck[], reason: string): PreflightResult {
   const list = checks.length ? checks : [{ id: 'preflight' } as PreflightCheck];
@@ -60,7 +65,7 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
   const metrics: Record<string, number> = {};
   for (const check of checks) {
     try {
-      const outcome = await check.run({ worktree, changeset });
+      const outcome = await check.run({ worktree, changeset, task: options.task });
       const validStatuses: CheckStatus[] = ['pass', 'warn', 'block', 'inconclusive'];
       const status: CheckStatus = validStatuses.includes(outcome.status) ? outcome.status : 'inconclusive';
       const evidence = [...outcome.evidence];
