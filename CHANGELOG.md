@@ -38,6 +38,13 @@ version between releases.
   `operator.md` and `CLAUDE.md` as outdated and `.claude/settings.json` as missing the new
   fetch deny rules.
 
+### Fixed
+
+- Codex role processes (listing, launch and resume) now run with Codex plugins disabled,
+  so plugin-provided MCP servers no longer make every role launch fail with "invalid
+  transport" (#209). If listing the MCP servers fails, the launcher now names the role and
+  Codex's reason and starts nothing.
+
 ## v0.3.0 — 2026-11-08
 
 Milestone "Shared Skills": reusable procedure skills that roles share across hosts.
