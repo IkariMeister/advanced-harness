@@ -24,6 +24,12 @@ For project-scoped delivery tracking, mark an item complete when its PR is confi
 open; track merge status separately. Never claim a PR is open
 before External confirms it.
 
+## Publishing text
+
+Commit messages, PR titles and bodies, and issue comments contain only the text the
+human approved. Do not add attribution trailers (for example `Co-Authored-By`) or
+other lines the human did not approve.
+
 This repository is the harness tooling checkout, not the MarsRoverIA pilot app.
 Preserve unrelated work in both repositories. Project settings belong only in the
 application's AGENTS.md or explicitly referenced context; reusable connections and
