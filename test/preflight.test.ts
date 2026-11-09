@@ -5,7 +5,7 @@ import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { updateContext } from '../src/project-context.ts';
-import { baseContextCheck, worktreeBoundaryCheck } from '../src/preflight/checks.ts';
+import { baseContextCheck, isPathContained, worktreeBoundaryCheck } from '../src/preflight/checks.ts';
 import { collectChangeset } from '../src/preflight/changeset.ts';
 import { exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
 import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
@@ -699,6 +699,48 @@ test('worktree-boundary: defaultChecks pipeline blocks canonical checkout', asyn
   assert.match(boundaryCheck!.evidence[0]!, /canonical repository checkout/);
 });
 
+test('worktree-boundary: defaultChecks pipeline on linked worktree with modified AGENTS.md (with and without --base)', async () => {
+  const baseDir = makeTempRoot('preflight-pipeline-linked-mod-');
+  const { repoRoot, configuredWtDir } = makeBoundaryFixture(baseDir);
+  const taskWt = join(configuredWtDir, 'task');
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', taskWt);
+  simulateOriginHead(repoRoot);
+
+  // Modify AGENTS.md in task worktree without touching worktreeDirectory
+  const modifiedProfile = {
+    version: 1,
+    projectRoot: repoRoot,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'configured', command: 'echo ok' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: configuredWtDir,
+    memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
+  };
+  writeFileSync(join(taskWt, 'AGENTS.md'), updateContext('', 'project', modifiedProfile, []));
+
+  // Without --base: base-context check blocks because context was modified without explicit base
+  const resultNoBase = await runPreflight({ worktree: taskWt });
+  assert.equal(exitCodeFor(resultNoBase), 1);
+  assert.equal(resultNoBase.approved, false);
+  const baseCheck = resultNoBase.checks.find((c) => c.id === 'base-context');
+  assert.equal(baseCheck?.status, 'block');
+  assert.match(baseCheck!.evidence[0]!, /Project context .* was modified in this changeset; pass explicit --base/);
+  // worktreeBoundaryCheck itself passes because worktreeDirectory matches trusted ref
+  const boundaryCheckNoBase = worktreeBoundaryOf(resultNoBase);
+  assert.equal(boundaryCheckNoBase?.status, 'pass');
+
+  // With explicit --base: base-context passes (informational), and worktreeBoundaryCheck passes
+  const resultWithBase = await runPreflight({ worktree: taskWt, base: 'main' });
+  assert.equal(exitCodeFor(resultWithBase), 0);
+  assert.equal(resultWithBase.approved, true);
+  const baseCheckWithBase = resultWithBase.checks.find((c) => c.id === 'base-context');
+  assert.equal(baseCheckWithBase?.status, 'pass');
+  assert.match(baseCheckWithBase!.evidence[1]!, /Project context file .* modified \(informational; explicit --base in use\)/);
+  const boundaryCheckWithBase = worktreeBoundaryOf(resultWithBase);
+  assert.equal(boundaryCheckWithBase?.status, 'pass');
+});
+
 test('worktree-boundary: missing worktreeDirectory in project context is blocked', async () => {
   const root = makeTempRoot('preflight-wt-missing-');
   git(root, 'init', '-q', '-b', 'main');
@@ -726,6 +768,7 @@ test('worktree-boundary: modified project context / worktreeDirectory in changes
   const taskWt = join(configuredWtDir, 'task');
   git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', taskWt);
 
+  // 1. Without trusted ref origin/HEAD, modifying context blocks
   const modifiedProfile = {
     version: 1,
     projectRoot: repoRoot,
@@ -744,6 +787,28 @@ test('worktree-boundary: modified project context / worktreeDirectory in changes
   });
   assert.equal(outcome.status, 'block');
   assert.match(outcome.evidence[0]!, /Project context .* was modified in this changeset/);
+
+  // 2. With trusted ref origin/HEAD, modifying worktreeDirectory blocks explicitly
+  simulateOriginHead(repoRoot);
+  const outcomeWithTrusted = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries },
+  });
+  assert.equal(outcomeWithTrusted.status, 'block');
+  assert.match(outcomeWithTrusted.evidence[0]!, /modified worktreeDirectory/);
+
+  // 3. Modifying an unrelated section in context (e.g. checks) while preserving worktreeDirectory passes
+  const unmodifiedWtProfile = {
+    ...modifiedProfile,
+    worktreeDirectory: configuredWtDir,
+  };
+  writeFileSync(join(taskWt, 'AGENTS.md'), updateContext('', 'project', unmodifiedWtProfile, []));
+  const updatedChangeset = collectChangeset(taskWt, 'main');
+  const outcomeUnmodifiedWtDir = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: updatedChangeset.entries },
+  });
+  assert.equal(outcomeUnmodifiedWtDir.status, 'pass');
 });
 
 test('worktree-boundary: linked worktree outside configured worktreeDirectory is blocked', async () => {
@@ -876,17 +941,25 @@ test('worktree-boundary: symlink escape and linked worktreeDirectory handling', 
 
   // 2. Legitimate worktreeDirectory reached through a symlink
   const linkedWtParent = join(baseDir, 'linked-wt-parent');
+  let canLinkParent = false;
   try {
     symlinkSync(configuredWtDir, linkedWtParent, process.platform === 'win32' ? 'junction' : 'dir');
-    const legitWt = join(configuredWtDir, 'legit-task');
-    git(repoRoot, 'worktree', 'add', '-q', '-b', 'legit', legitWt);
-    const legitOutcome = await worktreeBoundaryCheck.run({
-      worktree: legitWt,
-      changeset: { top: legitWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
-    });
-    assert.equal(legitOutcome.status, 'pass');
+    canLinkParent = true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EPERM') throw err;
+  }
+
+  if (canLinkParent) {
+  // Point the worktree's project context to the symlinked worktreeDirectory
+  // Note: we test containment of legitWt (inside linkedWtParent) directly against worktreeBoundaryCheck
+  // where worktree containment resolves physical symlinks via realpath.
+  const legitWt = join(linkedWtParent, 'legit-task');
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'legit', legitWt);
+  const legitOutcome = await worktreeBoundaryCheck.run({
+    worktree: legitWt,
+    changeset: { top: legitWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(legitOutcome.status, 'pass');
   }
 });
 
@@ -911,4 +984,38 @@ test('CLI supports --task <key> and reports usage or blocks on mismatch', () => 
   // CLI exit 2 on duplicate or missing --task value
   assert.equal(cli('--worktree', taskWt, '--task').status, 2);
   assert.equal(cli('--worktree', taskWt, '--task', '182', '--task', '183').status, 2);
+});
+
+test('worktree-boundary: path containment arithmetic edge cases', () => {
+  // Parent is a base directory
+  const parent = resolve('/path/to/worktrees');
+
+  // Exact parent (rel === '') -> not contained (must be strictly inside)
+  assert.equal(isPathContained(parent, parent), false);
+
+  // Normal child -> contained
+  assert.equal(isPathContained(parent, join(parent, 'task-1')), true);
+
+  // Child starting with dots (e.g. ..foo) -> contained (it is a valid child name, not traversal)
+  assert.equal(isPathContained(parent, join(parent, '..foo')), true);
+
+  // Nested child -> contained
+  assert.equal(isPathContained(parent, join(parent, 'sub', 'task-2')), true);
+
+  // Parent traversal (rel === '..' or starting with ../) -> not contained
+  assert.equal(isPathContained(parent, resolve(parent, '..')), false);
+  assert.equal(isPathContained(parent, resolve(parent, '..', 'other')), false);
+
+  // Sibling prefix collision (e.g. /path/to/worktrees-other) -> not contained
+  const siblingWithPrefix = `${parent}-other`;
+  assert.equal(isPathContained(parent, siblingWithPrefix), false);
+
+  // Windows cross-drive or absolute relative path
+  if (process.platform === 'win32') {
+    assert.equal(isPathContained('C:\\worktrees', 'D:\\worktrees\\task-1'), false);
+    assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees'), false);
+    assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees\\task-1'), true);
+    assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees\\..foo'), true);
+    assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees-other\\task-1'), false);
+  }
 });

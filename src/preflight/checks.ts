@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { lstatSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { contextData, contextPath } from '../project-context.ts';
+import { contextData, contextPath, readContext } from '../project-context.ts';
 import { linkedContextSelection, locateProjectContext, resolveProjectLocations, validateProfile } from '../project-setup.ts';
 import type { ChangeOrigin, Changeset, CheckOutcome, PreflightCheck } from './types.ts';
 
@@ -201,23 +201,70 @@ function checkCanonicalCheckout(top: string): CheckOutcome | undefined {
   return undefined;
 }
 
-/** Checks that worktreeDirectory was not modified in this changeset. */
+/** Checks that worktreeDirectory was not modified compared to the trusted ref when project context was edited. */
 function checkUnmodifiedWorktreeDirectory(top: string, changeset: Changeset): CheckOutcome | undefined {
+  let target: string;
+  let agentsRel: string;
   try {
-    const target = toRepoPath(changeset.top, locateProjectContext(top).target);
-    const agentsRel = toRepoPath(changeset.top, join(top, 'AGENTS.md'));
-    const changed = changeset.entries.flatMap((entry) => [entry.path, entry.oldPath]).filter((p): p is string => p !== undefined).map((p) => p.replaceAll('\\', '/'));
-    const modified = [target, agentsRel].find((context) => changed.some((p) => samePath(p, context)));
-    if (modified !== undefined) {
-      return {
-        status: 'block',
-        evidence: [`Project context (${modified}) was modified in this changeset; cannot verify task worktree boundary against a modified worktreeDirectory.`],
-      };
-    }
+    target = toRepoPath(changeset.top, locateProjectContext(top).target);
+    agentsRel = toRepoPath(changeset.top, join(top, 'AGENTS.md'));
   } catch (error) {
     return { status: 'inconclusive', evidence: [`Failed to inspect project context changes: ${error instanceof Error ? error.message : String(error)}`] };
   }
+
+  const changed = changeset.entries.flatMap((entry) => [entry.path, entry.oldPath]).filter((p): p is string => p !== undefined).map((p) => p.replaceAll('\\', '/'));
+  const modified = [target, agentsRel].find((context) => changed.some((p) => samePath(p, context)));
+  if (modified === undefined) {
+    return undefined;
+  }
+
+  // Project context was modified in the changeset. Verify whether worktreeDirectory itself was changed.
+  try {
+    const commit = trustedCommit(top);
+    const trustedAgents = trustedFile(top, commit, agentsRel);
+    if (trustedAgents === undefined) throw new Error(`${agentsRel} is absent at trusted ref ${TRUSTED_REF}`);
+
+    let trustedTarget = agentsRel;
+    let trustedText: string | undefined = trustedAgents;
+    const linked = linkedContextSelection(trustedAgents);
+    if (linked !== undefined) {
+      trustedTarget = toRepoPath(top, contextPath(top, linked));
+      if (leavesRepo(trustedTarget)) throw new Error(`linked context target ${trustedTarget} at trusted ref resolves outside the repository`);
+      trustedText = trustedFile(top, commit, trustedTarget);
+      if (trustedText === undefined) throw new Error(`${trustedTarget} is absent at trusted ref ${TRUSTED_REF}`);
+    }
+    const trustedData = contextData(trustedText, 'project');
+    if (trustedData === undefined) throw new Error(`no project settings in ${trustedTarget} at trusted ref ${TRUSTED_REF}`);
+    const trustedProfile = validateProfile(trustedData);
+
+    const localText = readContext(resolve(top, target));
+    const localData = contextData(localText ?? '', 'project');
+    if (localData === undefined) throw new Error(`no project settings in ${target}`);
+    const localProfile = validateProfile(localData);
+
+    if (trustedProfile.worktreeDirectory !== localProfile.worktreeDirectory) {
+      return {
+        status: 'block',
+        evidence: [
+          `Project context (${modified}) modified worktreeDirectory from '${trustedProfile.worktreeDirectory}' to '${localProfile.worktreeDirectory}'; cannot verify task worktree boundary against a modified worktreeDirectory.`,
+        ],
+      };
+    }
+  } catch (error) {
+    return {
+      status: 'block',
+      evidence: [
+        `Project context (${modified}) was modified in this changeset and trusted worktreeDirectory could not be verified: ${error instanceof Error ? error.message : String(error)}`,
+      ],
+    };
+  }
   return undefined;
+}
+
+/** Determines whether candidate is strictly contained within parent (path containment). */
+export function isPathContained(parent: string, candidate: string): boolean {
+  const rel = relative(parent, candidate);
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 /** Validates that top is strictly contained within configuredParent. */
@@ -242,9 +289,7 @@ function checkWorktreeContainment(top: string, configuredParent: string): CheckO
     };
   }
 
-  const rel = relative(realConfiguredParent, realTop);
-  const leaves = rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
-  if (leaves) {
+  if (!isPathContained(realConfiguredParent, realTop)) {
     return {
       status: 'block',
       evidence: [
@@ -255,13 +300,20 @@ function checkWorktreeContainment(top: string, configuredParent: string): CheckO
   return undefined;
 }
 
-/** Validates optional task branch token match. */
-function checkTaskBranch(top: string, task: string): CheckOutcome | undefined {
+interface TaskBranchResult {
+  outcome?: CheckOutcome;
+  branch?: string;
+}
+
+/** Validates optional task branch token match and returns the active branch. */
+function checkTaskBranch(top: string, task: string): TaskBranchResult {
   const cleanTask = task.trim().replace(/^#/, '');
   if (!cleanTask) {
     return {
-      status: 'inconclusive',
-      evidence: ['Invalid task parameter: task key cannot be empty'],
+      outcome: {
+        status: 'inconclusive',
+        evidence: ['Invalid task parameter: task key cannot be empty'],
+      },
     };
   }
 
@@ -269,24 +321,38 @@ function checkTaskBranch(top: string, task: string): CheckOutcome | undefined {
   try {
     branchRes = spawnSync('git', ['-C', top, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { encoding: 'utf8' });
   } catch (error) {
-    return { status: 'inconclusive', evidence: [`git symbolic-ref could not be started: ${error instanceof Error ? error.message : String(error)}`] };
+    return {
+      outcome: {
+        status: 'inconclusive',
+        evidence: [`git symbolic-ref could not be started: ${error instanceof Error ? error.message : String(error)}`],
+      },
+    };
   }
 
   if (branchRes.error) {
-    return { status: 'inconclusive', evidence: [`git symbolic-ref failed: ${branchRes.error.message}`] };
+    return {
+      outcome: {
+        status: 'inconclusive',
+        evidence: [`git symbolic-ref failed: ${branchRes.error.message}`],
+      },
+    };
   }
 
   if (branchRes.status === 1) {
     return {
-      status: 'block',
-      evidence: [`Worktree HEAD is detached; expected branch matching task '${task}'`],
+      outcome: {
+        status: 'block',
+        evidence: [`Worktree HEAD is detached; expected branch matching task '${task}'`],
+      },
     };
   }
 
   if (branchRes.status !== 0) {
     return {
-      status: 'inconclusive',
-      evidence: [`git symbolic-ref exited with code ${branchRes.status}`],
+      outcome: {
+        status: 'inconclusive',
+        evidence: [`git symbolic-ref exited with code ${branchRes.status}`],
+      },
     };
   }
 
@@ -296,11 +362,14 @@ function checkTaskBranch(top: string, task: string): CheckOutcome | undefined {
 
   if (!pattern.test(branch)) {
     return {
-      status: 'block',
-      evidence: [`Branch '${branch}' does not match task key '${task}'`],
+      outcome: {
+        status: 'block',
+        evidence: [`Branch '${branch}' does not match task key '${task}'`],
+      },
+      branch,
     };
   }
-  return undefined;
+  return { branch };
 }
 
 /**
@@ -345,18 +414,13 @@ export const worktreeBoundaryCheck: PreflightCheck = {
     // 4. Optional task branch check
     if (task !== undefined) {
       const taskCheck = checkTaskBranch(top, task);
-      if (taskCheck) return taskCheck;
-
-      let branch = '';
-      try {
-        branch = String(spawnSync('git', ['-C', top, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { encoding: 'utf8' }).stdout).trim();
-      } catch { /* branch already verified */ }
+      if (taskCheck.outcome) return taskCheck.outcome;
 
       return {
         status: 'pass',
         evidence: [
           `Worktree ${top} is an isolated task worktree under ${configuredParent}`,
-          `Branch '${branch}' matches task key '${task}'`,
+          `Branch '${taskCheck.branch}' matches task key '${task}'`,
         ],
       };
     }
