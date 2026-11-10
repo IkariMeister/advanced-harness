@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
-import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, runSetupFlow, saveSetup, setupConfirmation, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
+import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, readLocalProjectContext, resolveProjectLocations, runSetupFlow, saveSetup, setupConfirmation, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
 import { contextData, updateContext } from '../src/project-context.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
@@ -508,4 +508,78 @@ test('CLI script parses --global and refuses invalid flag combinations', () => {
 
   // Conflicting options: --global and --scope project
   assert.throws(() => execFileSync(process.execPath, [script, '--global', '--scope', 'project'], { encoding: 'utf8', stdio: 'pipe' }), /Conflicting options/);
+});
+
+test('readLocalProjectContext: parses valid project section, reports missing, resolves linked context, and throws on malformed schema', t => {
+  const { root, project } = fixture(t);
+
+  // 1. Missing context file
+  const missing = readLocalProjectContext(join(root, 'nonexistent'));
+  assert.equal(missing.status, 'missing');
+  assert.match(missing.reason, /no project settings in AGENTS\.md/);
+
+  // 2. Valid project section in AGENTS.md -> status: 'ok'
+  const valid = profile(root, project);
+  writeFileSync(join(project, 'AGENTS.md'), updateContext('', 'project', valid, []));
+  const resultOk = readLocalProjectContext(project);
+  assert.equal(resultOk.status, 'ok');
+  assert.equal(resultOk.contextRel, 'AGENTS.md');
+  assert.equal(resultOk.profile.baseBranch, 'main');
+  assert.equal(resultOk.profile.worktreeDirectory, valid.worktreeDirectory);
+
+  // 3. Linked context -> resolves linked file
+  const linkedFile = join(project, 'custom-context.md');
+  writeFileSync(linkedFile, updateContext('', 'project', valid, []));
+  writeFileSync(join(project, 'AGENTS.md'), 'Read `custom-context.md` for Advanced Harness project settings before planning.\n');
+  const resultLinked = readLocalProjectContext(project);
+  assert.equal(resultLinked.status, 'ok');
+  assert.equal(resultLinked.contextRel, 'custom-context.md');
+  assert.equal(resultLinked.profile.baseBranch, 'main');
+
+  // 4. Invalid schema -> throws on malformed project schema
+  writeFileSync(join(project, 'AGENTS.md'), updateContext('', 'project', { version: 999 }, []));
+  assert.throws(() => readLocalProjectContext(project), /Invalid or unsupported project profile metadata/);
+});
+
+test('resolveProjectLocations: handles paths-only fallback and reports conflict when project and paths differ', t => {
+  const { root, project } = fixture(t);
+  const wtDir = join(root, 'worktrees');
+  const memDir = join(root, 'data');
+  mkdirSync(wtDir, { recursive: true });
+  mkdirSync(memDir, { recursive: true });
+  const memFile = join(memDir, 'MEMORY.md');
+  writeFileSync(memFile, '# Shared Memory\n');
+
+  // 1. Paths-only fallback handling
+  writeFileSync(
+    join(project, 'AGENTS.md'),
+    updateContext('', 'paths', {
+      version: 1,
+      worktreeDirectory: wtDir,
+      memoryPath: memFile,
+    }, []),
+  );
+  const pathsOnly = resolveProjectLocations(project);
+  assert.equal(pathsOnly.status, 'resolved');
+  assert.equal(pathsOnly.source, 'paths');
+  assert.equal(pathsOnly.stored.worktreeDirectory, wtDir);
+
+  // 2. Conflict case where project and paths sections exist with differing values
+  const valid = profile(root, project);
+  valid.worktreeDirectory = join(root, 'different-wt');
+  mkdirSync(valid.worktreeDirectory, { recursive: true });
+  const withBoth = updateContext(
+    updateContext('', 'paths', {
+      version: 1,
+      worktreeDirectory: wtDir,
+      memoryPath: memFile,
+    }, []),
+    'project',
+    valid,
+    [],
+  );
+  writeFileSync(join(project, 'AGENTS.md'), withBoth);
+  const conflict = resolveProjectLocations(project);
+  assert.equal(conflict.status, 'conflict');
+  assert.match(conflict.reason, /project and paths sections record different shared locations/);
 });

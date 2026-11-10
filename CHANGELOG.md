@@ -14,9 +14,9 @@ version between releases.
   `worktreeDirectory`), worktrees outside `worktreeDirectory`, and modifications that change `worktreeDirectory`
   away from the trusted ref `refs/remotes/origin/HEAD` or when the trusted ref is unavailable (check status `block`).
   Because `exitCodeFor` prioritizes `inconclusive` (`exit 2`) over `block` (`exit 1`), a missing trusted ref with
-  `--base` omitted yields overall exit 2 (due to `base-context`), while passing `--base <ref>` yields exit 1. Supports
-  optional `--task <key>` to block on branch mismatches or detached `HEAD`. Note that `defaultChecks` now includes
-  `worktreeBoundaryCheck`.
+  `--base` omitted yields overall exit 2 (due to `base-context`), while passing `--base <ref>` yields exit 1 (see
+  [docs/preflight.md](docs/preflight.md) for exit-code precedence). Supports optional `--task <key>` to block on
+  branch mismatches or detached `HEAD`. Note that `defaultChecks` now includes `worktreeBoundaryCheck`.
 - `harness:preflight` (BH-066, #181): a pluggable preflight check runner over the task
   worktree changeset (including `changeset` and `base-context` checks), with JSON and human output
   and exit codes 0 pass, 1 blocked, 2 inconclusive. When `--base` is omitted, `base-context` verifies

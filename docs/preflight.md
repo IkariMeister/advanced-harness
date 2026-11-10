@@ -112,6 +112,8 @@ configured or if a check returns an unknown status, the result is inconclusive.
 | 1 | Blocked by at least one check |
 | 2 | Inconclusive (a git/tool call or check failed) or usage error |
 
+### Exit-code precedence
+
 `exitCodeFor` evaluates `inconclusive` before `block`: an inconclusive result on any check yields overall exit code 2 even if another check reports `block`. For example, when `refs/remotes/origin/HEAD` is missing and `--base` is omitted, `base-context` is `inconclusive` while `worktree-boundary` reports `block`, resulting in overall exit code 2. Passing `--base <ref>` allows `base-context` to pass, yielding exit code 1 from the blocked `worktree-boundary` check.
 
 A tooling error is never a pass.
