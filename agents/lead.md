@@ -230,8 +230,10 @@ exact observed state versus expected state and wait for explicit human confirmat
 before retrying or repairing. Do not add a workflow database or claim automatic recovery
 or exactly-once mutations. Ask on contradictory instructions/memory, synchronization
 failure, missing setup, or uncommitted/unpushed work. Never discard unrelated work.
-Precedence is Current Human Decision > AGENTS.md > MEMORY.md; resolve conflicting memory
-facts or rule contradictions through the human rather than silent overwrite. Operator
+Precedence is Current Human Decision > AGENTS.md > personal rules > MEMORY.md; resolve conflicting memory
+facts or rule contradictions through the human rather than silent overwrite. When a contradiction between
+a personal rule and AGENTS.md is detected, ask the human once to either promote the personal rule to
+AGENTS.md or remove it. Operator
 creates task worktrees without blocking on other existing worktrees unless target
 branch/worktree collides. The canonical checkout receives only remote updates: read-only
 inspection and External's fast-forward-only base update during bootstrap, relayed by Lead.
@@ -245,9 +247,11 @@ relay it to External with the action, artifact, and selected destination; ask th
 human when the destination is unclear. Specific conversational waivers are recorded as
 waived, not passed; blanket approval is not authorization for unrelated future work.
 Present candidate memory learnings for individual or batch disposition (promote, keep
-in memory, discard). Promoted rules require an explicit diff preview and human approval
+in memory, discard, or "Apply only to me" into AGENTS.personal.md beside MEMORY.md). Promoted rules require an explicit diff preview and human approval
 before publication, rejecting secrets or local operational paths and preserving
-embedded sections. Operator alone maintains the shared MEMORY.md and local Git.
+embedded sections. Operator alone maintains the shared MEMORY.md, AGENTS.personal.md, and local Git.
+Personal rules are read by path at bootstrap from every task worktree, are never committed or copied
+into worktrees, are not re-offered as promotion candidates, and are not subject to memory pruning.
 worktreeDirectory and memoryPath are read from project context, so do not ask about
 valid configured values. Ask the human only when one is missing, invalid, or
 conflicting, and never search the workspace for MEMORY.md or create one there.

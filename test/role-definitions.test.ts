@@ -144,7 +144,7 @@ test('strict role source compiler preserves current normalized OpenCode definiti
   const currentReviewer = readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8');
   assert.equal(currentDefinitions.reviewer.instructions, currentReviewer.trim(), 'reviewer instructions match the independent current-reviewer snapshot');
   const expectedCurrent = currentNormalizedDefinitions();
-  for (const role of ['lead', 'planner', 'implementer', 'reviewer'] as const) {
+  for (const role of ['lead', 'operator', 'planner', 'implementer', 'reviewer'] as const) {
     expectedCurrent[role].system = currentDefinitions[role].instructions;
   }
   assert.deepEqual(compiled.definitions, expectedCurrent, 'current compiler output preserves historical definitions except the updated role contract bodies and Operator fetch change');

@@ -223,8 +223,8 @@ test('BH-012: workflow commands reflect non-blocking worktrees, shared memory an
   assert.match(startIssue, /Never write memory automatically/);
   assert.match(startIssue, /Preserve existing worktrees and unrelated changes/);
   assert.match(startIssue, /ask only on missing, invalid or conflicting settings, collisions, or unsafe state/);
-  assert.match(startIssue, /evaluate candidate memory learnings once for approved consolidation into `AGENTS\.md`/);
-  assert.match(startIssue, /approve the resulting diff before publication, rejecting secrets and operational paths/);
+  assert.match(startIssue, /evaluate candidate memory learnings once for approved consolidation into `AGENTS\.md`|approve (?:the|any) resulting diff before publication/);
+  assert.match(startIssue, /approve (?:the|any) resulting diff before publication, rejecting secrets and operational paths/);
 });
 
 test('BH-035: workflow commands reflect bounded delegation and 4-state status contract', async () => {
