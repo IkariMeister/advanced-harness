@@ -18,6 +18,13 @@ import {
   writeSharedMemorySerialized,
   planRulePromotion,
   applyApprovedRulePromotion,
+  resolvePersonalRulesPath,
+  parsePersonalRules,
+  validatePersonalRuleText,
+  formatPersonalRules,
+  readPersonalRules,
+  writePersonalRulesSerialized,
+  detectPersonalRuleContradictions,
   type MemoryEntry,
   type BootstrapContext,
 } from '../src/shared-memory.ts';
@@ -522,4 +529,76 @@ test('malformed legacy memory is preserved on serialized write even without a ba
   assert.equal(readFileSync(memoryPath, 'utf8'), legacy);
   assert.equal(existsSync(`${memoryPath}.lock`), false);
   assert.deepEqual(readdirSync(join(memoryPath, '..')).filter(name => name.endsWith('.tmp')), []);
+});
+
+test('personal rules: resolvePersonalRulesPath, parsing, formatting, serialized write, and validation', (t) => {
+  const { memoryPath } = createFixture(t);
+  const personalPath = resolvePersonalRulesPath(memoryPath);
+  assert.equal(personalPath, join(memoryPath, '..', 'AGENTS.personal.md'));
+
+  // Nonexistent file returns exists: false, empty rules
+  const initial = readPersonalRules(personalPath);
+  assert.equal(initial.exists, false);
+  assert.deepEqual(initial.rules, []);
+
+  // Write rules
+  const rules = ['Prefer verbose logging when debugging tests.', 'Always run npm run check before submitting.'];
+  const res = writePersonalRulesSerialized(personalPath, rules, initial.hash);
+  assert.equal(res.success, true);
+
+  const readBack = readPersonalRules(personalPath);
+  assert.equal(readBack.exists, true);
+  assert.deepEqual(readBack.rules, rules);
+  assert.equal(readBack.hash, res.hash);
+
+  // Rejects concurrent write on mismatched baseline
+  assert.throws(() => {
+    writePersonalRulesSerialized(personalPath, ['New rule'], 'outdated_hash');
+  }, /Concurrent modification detected on AGENTS.personal.md/);
+
+  // Validate personal rule text rejects secrets and machine-local worktree paths
+  assert.throws(() => validatePersonalRuleText('github_pat_11AAAAAAA0123456789_abcdefghijklmnopqrstuvwxyz'), /potential secret or credential/);
+  assert.throws(() => validatePersonalRuleText('C:\\Users\\Alice\\Projects\\advanced-harness-worktrees\\issue-1'), /machine-local worktree or operational paths/);
+  assert.throws(() => validatePersonalRuleText(''), /cannot be empty/);
+  assert.throws(() => validatePersonalRuleText('Multi\nline'), /must not contain raw newlines/);
+});
+
+test('planRulePromotion handles "personal" disposition', () => {
+  const agentsOriginal = '# Project Guidelines\n\nSome initial rules.\n';
+  const entries: MemoryEntry[] = [
+    { source: 'Pilot', scope: 'Personal Preference', confirmation: 'approved', fact: 'Use 2-space indentation for yaml.' },
+    { source: 'Pilot', scope: 'Repo Rule', confirmation: 'approved', fact: 'Check linter before PR.' },
+  ];
+
+  const plan = planRulePromotion({
+    memoryEntries: entries,
+    agentsText: agentsOriginal,
+    dispositions: [
+      { type: 'personal', entry: entries[0]! },
+      { type: 'promote', entry: entries[1]! },
+    ],
+  });
+
+  assert.equal(plan.personalCount, 1);
+  assert.equal(plan.promotedCount, 1);
+  assert.deepEqual(plan.personalRulesToAdd, ['Use 2-space indentation for yaml.']);
+  // AGENTS.md diff contains the promoted rule, not the personal rule
+  assert.ok(plan.diff.includes('Check linter before PR.'));
+  assert.ok(!plan.diff.includes('Use 2-space indentation for yaml.'));
+});
+
+test('detectPersonalRuleContradictions identifies contradictions with AGENTS.md', () => {
+  const agents = `# Instructions\n\nMerging remains human-only. Always check before commit.\n`;
+  const personal = [
+    'Merges automatically when green',
+    'Never check before commit',
+    'Prefer dark theme in IDE',
+  ];
+
+  const contradictions = detectPersonalRuleContradictions(personal, agents);
+  assert.equal(contradictions.length, 2);
+  assert.equal(contradictions[0]!.rule, 'Merges automatically when green');
+  assert.match(contradictions[0]!.contradictionReason, /human-only/);
+  assert.equal(contradictions[1]!.rule, 'Never check before commit');
+  assert.match(contradictions[1]!.contradictionReason, /forbids/);
 });

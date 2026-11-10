@@ -252,8 +252,8 @@ test('BH-012: Lead and Operator enforce bootstrap rules, conflict precedence, an
   const operator = template('operator').replace(/\s+/g, ' ');
 
   // Conflict precedence
-  assert.match(lead, /Precedence is Current Human Decision > AGENTS\.md > MEMORY\.md/);
-  assert.match(operator, /(?:Order of precedence|Precedence) is Current Human Decision > AGENTS\.md > MEMORY\.md/);
+  assert.match(lead, /Precedence is Current Human Decision > AGENTS\.md > personal rules > MEMORY\.md/);
+  assert.match(operator, /(?:Order of precedence|Precedence) is Current Human Decision > AGENTS\.md > personal rules > MEMORY\.md/);
 
   // Non-blocking bootstrap
   assert.match(lead, /Operator creates task worktrees without blocking on other existing worktrees unless target branch\/worktree collides/);
