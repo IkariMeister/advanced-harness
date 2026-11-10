@@ -3,10 +3,8 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { contextData, contextPath } from '../project-context.ts';
 import {
-  expandPath,
   linkedContextSelection,
   locateProjectContext,
-  readLocalProjectContext,
   resolveProjectLocations,
   validateProfile,
   type ProjectProfile,
@@ -221,10 +219,12 @@ function checkCanonicalCheckout(top: string): CheckOutcome | undefined {
  * An unavailable or unreadable trusted ref or trusted project context blocks (exit 1),
  * as does a modified worktreeDirectory.
  */
-function checkTrustedWorktreeDirectory(top: string): CheckOutcome | undefined {
+function checkTrustedWorktreeDirectory(top: string, localWorktreeDirectory: string): CheckOutcome | undefined {
+  let trustedTarget: string;
   let trustedProfile: ProjectProfile;
   try {
     const trusted = readTrustedProjectContext(top, top, WORKTREE_BOUNDARY_TRUSTED_HINT);
+    trustedTarget = trusted.target;
     trustedProfile = trusted.profile;
   } catch (error) {
     return {
@@ -235,31 +235,12 @@ function checkTrustedWorktreeDirectory(top: string): CheckOutcome | undefined {
     };
   }
 
-  let localTarget: string;
-  let localProfile: ProjectProfile;
-  try {
-    const local = readLocalProjectContext(top);
-    if (local.status === 'missing') {
-      throw new Error(local.reason);
-    }
-    localProfile = local.profile;
-    localTarget = local.contextRel;
-  } catch (error) {
+  // Only raw strings are compared deliberately because identical raw strings expand identically.
+  if (trustedProfile.worktreeDirectory !== localWorktreeDirectory) {
     return {
       status: 'block',
       evidence: [
-        `Local project context could not be verified: ${error instanceof Error ? error.message : String(error)}`,
-      ],
-    };
-  }
-
-  const trustedExpanded = expandPath(trustedProfile.worktreeDirectory);
-  const localExpanded = expandPath(localProfile.worktreeDirectory);
-  if (trustedProfile.worktreeDirectory !== localProfile.worktreeDirectory || trustedExpanded !== localExpanded) {
-    return {
-      status: 'block',
-      evidence: [
-        `Project context (${localTarget}) modified worktreeDirectory from '${trustedProfile.worktreeDirectory}' (at ${TRUSTED_REF}) to '${localProfile.worktreeDirectory}'; cannot verify task worktree boundary against a modified worktreeDirectory.`,
+        `Project context (${trustedTarget}) modified worktreeDirectory from '${trustedProfile.worktreeDirectory}' (at ${TRUSTED_REF}) to '${localWorktreeDirectory}'; cannot verify task worktree boundary against a modified worktreeDirectory.`,
       ],
     };
   }
@@ -422,8 +403,17 @@ export const worktreeBoundaryCheck: PreflightCheck = {
     const configuredParent = locationRes.locations.worktreeDirectory;
 
     // 3. Verify worktreeDirectory against trusted ref
-    const trustedWtDir = checkTrustedWorktreeDirectory(top);
+    const trustedWtDir = checkTrustedWorktreeDirectory(top, locationRes.stored.worktreeDirectory);
     if (trustedWtDir) return trustedWtDir;
+
+    if (locationRes.source === 'paths') {
+      return {
+        status: 'block',
+        evidence: [
+          'Project has paths configuration but no project settings. Full project settings are required before preflight.',
+        ],
+      };
+    }
 
     // 4. Check worktree containment
     const containment = checkWorktreeContainment(top, configuredParent);

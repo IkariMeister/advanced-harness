@@ -1073,7 +1073,38 @@ test('worktree-boundary: repository with only interim paths section is blocked',
     changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
   });
   assert.equal(outcome.status, 'block');
-  assert.match(outcome.evidence[0]!, /no project settings in AGENTS\.md/);
+  assert.match(
+    outcome.evidence[0]!,
+    /Trusted worktreeDirectory could not be verified against refs\/remotes\/origin\/HEAD: no project settings in AGENTS\.md at trusted ref refs\/remotes\/origin\/HEAD/,
+  );
+});
+
+test('worktree-boundary: worktree with paths-only context against valid origin/HEAD project section is blocked', async () => {
+  const baseDir = makeTempRoot('preflight-wt-local-paths-');
+  const { repoRoot, configuredWtDir } = makeBoundaryFixture(baseDir);
+  const taskWt = join(configuredWtDir, 'task');
+  git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', taskWt);
+
+  // Modify task worktree's AGENTS.md to have only interim paths settings
+  const memoryDir = join(baseDir, 'mem');
+  mkdirSync(memoryDir, { recursive: true });
+  writeFileSync(join(memoryDir, 'MEMORY.md'), '# Shared Memory\n');
+
+  writeFileSync(
+    join(taskWt, 'AGENTS.md'),
+    updateContext('', 'paths', {
+      version: 1,
+      worktreeDirectory: configuredWtDir,
+      memoryPath: join(memoryDir, 'MEMORY.md'),
+    }, []),
+  );
+
+  const outcome = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(outcome.status, 'block');
+  assert.match(outcome.evidence[0]!, /Project has paths configuration but no project settings/);
 });
 
 test('worktree-boundary: linked worktree outside configured worktreeDirectory is blocked', async () => {
