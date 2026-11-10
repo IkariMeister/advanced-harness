@@ -12,7 +12,9 @@ version between releases.
   isolated task worktree under `worktreeDirectory`. The default pipeline now blocks canonical checkouts
   (where `--git-dir` resolves to the same path as `--git-common-dir`), unconfigured projects (missing
   `worktreeDirectory`), worktrees outside `worktreeDirectory`, and modifications that change `worktreeDirectory`
-  away from the trusted ref `refs/remotes/origin/HEAD` or when the trusted ref is unavailable (exit 1). Supports
+  away from the trusted ref `refs/remotes/origin/HEAD` or when the trusted ref is unavailable (check status `block`).
+  Because `exitCodeFor` prioritizes `inconclusive` (`exit 2`) over `block` (`exit 1`), a missing trusted ref with
+  `--base` omitted yields overall exit 2 (due to `base-context`), while passing `--base <ref>` yields exit 1. Supports
   optional `--task <key>` to block on branch mismatches or detached `HEAD`. Note that `defaultChecks` now includes
   `worktreeBoundaryCheck`.
 - `harness:preflight` (BH-066, #181): a pluggable preflight check runner over the task

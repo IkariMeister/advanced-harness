@@ -32,14 +32,19 @@ hardcoded fallback; a missing or unreadable base is [inconclusive](glossary.md#w
   appear in the changeset) to verify `worktreeDirectory`. If the trusted ref or
   the project context at the trusted ref is unavailable, absent, or unreadable,
   or if `worktreeDirectory` was modified compared to the trusted ref,
-  `worktree-boundary` blocks the run (`exit 1`).
+  the `worktree-boundary` check blocks (`status: 'block'`).
 - Deleting or renaming the root `AGENTS.md`, or deleting or renaming the linked
   context file, leaves no readable project context in the worktree. Base resolution
   then fails when `--base` is omitted, which is inconclusive (`exit 2`), not a block.
 
 The checks trust the local `refs/remotes/origin/HEAD` as configured; they do not verify
 that ref against the remote. Callers that need an authoritative base reference can pass
-`--base <ref>` explicitly to satisfy `base-context`.
+`--base <ref>` explicitly to satisfy `base-context`. Note that `exitCodeFor` checks
+`inconclusive` before `block`: an inconclusive result on any check yields overall exit code 2
+even if another check reports `block`. When `refs/remotes/origin/HEAD` is missing and `--base` is
+omitted, `base-context` is `inconclusive` while `worktree-boundary` reports `block`, resulting
+in overall exit code 2. Passing `--base <ref>` satisfies `base-context`, yielding exit code 1
+from the blocked `worktree-boundary` check.
 
 ## Changeset
 
@@ -69,7 +74,10 @@ in the canonical checkout:
 - Verifies the configured `worktreeDirectory` against the trusted ref
   (`refs/remotes/origin/HEAD`) on every run (independent of the changeset and even
   when `--base` is provided); altering the `worktreeDirectory` boundary or failing to
-  verify against the trusted ref or trusted project context blocks (`exit 1`).
+  verify against the trusted ref or trusted project context blocks the check (`status: 'block'`).
+- Full project settings (`project` section in `AGENTS.md` or the linked context file; see
+  [configuration.md](configuration.md)) are required at both the worktree and `refs/remotes/origin/HEAD`.
+  Repositories with only an interim `paths` section are blocked (`status: 'block'`).
 - Reads `worktreeDirectory` from project context. A missing `worktreeDirectory` or
   one that does not exist on disk blocks (`exit 1`). Shared-location resolution
   errors (such as conflict or invalid shape) are inconclusive (`exit 2`).
@@ -103,6 +111,8 @@ configured or if a check returns an unknown status, the result is inconclusive.
 | 0 | Pass (warnings allowed), or `--help` |
 | 1 | Blocked by at least one check |
 | 2 | Inconclusive (a git/tool call or check failed) or usage error |
+
+`exitCodeFor` evaluates `inconclusive` before `block`: an inconclusive result on any check yields overall exit code 2 even if another check reports `block`. For example, when `refs/remotes/origin/HEAD` is missing and `--base` is omitted, `base-context` is `inconclusive` while `worktree-boundary` reports `block`, resulting in overall exit code 2. Passing `--base <ref>` allows `base-context` to pass, yielding exit code 1 from the blocked `worktree-boundary` check.
 
 A tooling error is never a pass.
 
