@@ -1,8 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { contextData, contextPath, readContext } from '../project-context.ts';
-import { linkedContextSelection, locateProjectContext, resolveProjectLocations, validateProfile } from '../project-setup.ts';
+import { contextData, contextPath } from '../project-context.ts';
+import {
+  expandPath,
+  linkedContextSelection,
+  locateProjectContext,
+  resolveProjectLocations,
+  validateProfile,
+  type ProjectProfile,
+} from '../project-setup.ts';
 import type { ChangeOrigin, Changeset, CheckOutcome, PreflightCheck } from './types.ts';
 
 const TRUSTED_REF = 'refs/remotes/origin/HEAD';
@@ -52,13 +59,10 @@ function trustedFile(top: string, commit: string, repoPath: string): string | un
   return bytes.toString('utf8');
 }
 
-/**
- * Compares the worktree's linked context target and baseBranch with the trusted ref's AGENTS.md.
- * Returns undefined when they match; throws when the trusted ref cannot be read (inconclusive).
- */
-function compareWithTrustedRef(top: string, worktree: string, worktreeTarget: string, worktreeBase: string): CheckOutcome | undefined {
+/** Reads and validates the project profile at the trusted ref. */
+function readTrustedProjectContext(top: string, contextRoot = top): { target: string; profile: ProjectProfile } {
   const commit = trustedCommit(top);
-  const agentsRel = toRepoPath(top, join(worktree, 'AGENTS.md'));
+  const agentsRel = toRepoPath(top, join(contextRoot, 'AGENTS.md'));
   const trustedAgents = trustedFile(top, commit, agentsRel);
   if (trustedAgents === undefined) throw new Error(`${agentsRel} is absent at trusted ref ${TRUSTED_REF}`);
 
@@ -66,7 +70,7 @@ function compareWithTrustedRef(top: string, worktree: string, worktreeTarget: st
   let trustedText: string | undefined = trustedAgents;
   const linked = linkedContextSelection(trustedAgents);
   if (linked !== undefined) {
-    trustedTarget = toRepoPath(top, contextPath(worktree, linked));
+    trustedTarget = toRepoPath(top, contextPath(contextRoot, linked));
     // Defensive: contextPath already rejects escaping links, so this guard is defense in depth only.
     if (leavesRepo(trustedTarget)) throw new Error(`linked context target ${trustedTarget} at trusted ref resolves outside the repository`);
     trustedText = trustedFile(top, commit, trustedTarget);
@@ -74,11 +78,20 @@ function compareWithTrustedRef(top: string, worktree: string, worktreeTarget: st
   }
   const data = contextData(trustedText, 'project');
   if (data === undefined) throw new Error(`no project settings in ${trustedTarget} at trusted ref ${TRUSTED_REF}`);
-  const trustedBase = validateProfile(data).baseBranch;
+  const profile = validateProfile(data);
+  return { target: trustedTarget, profile };
+}
+
+/**
+ * Compares the worktree's linked context target and baseBranch with the trusted ref's AGENTS.md.
+ * Returns undefined when they match; throws when the trusted ref cannot be read (inconclusive).
+ */
+function compareWithTrustedRef(top: string, worktree: string, worktreeTarget: string, worktreeBase: string): CheckOutcome | undefined {
+  const { target: trustedTarget, profile: trustedProfile } = readTrustedProjectContext(top, worktree);
 
   const differences: string[] = [];
   if (!samePath(trustedTarget, worktreeTarget)) differences.push(`linked context target ${trustedTarget} (trusted) vs ${worktreeTarget} (worktree)`);
-  if (trustedBase !== worktreeBase) differences.push(`baseBranch ${trustedBase} (trusted) vs ${worktreeBase} (worktree)`);
+  if (trustedProfile.baseBranch !== worktreeBase) differences.push(`baseBranch ${trustedProfile.baseBranch} (trusted) vs ${worktreeBase} (worktree)`);
   if (differences.length === 0) return undefined;
   return { status: 'block', evidence: [`Project context differs from trusted ref ${TRUSTED_REF}: ${differences.join('; ')}.`] };
 }
@@ -201,70 +214,70 @@ function checkCanonicalCheckout(top: string): CheckOutcome | undefined {
   return undefined;
 }
 
-/** Checks that worktreeDirectory was not modified compared to the trusted ref when project context was edited. */
-function checkUnmodifiedWorktreeDirectory(top: string, changeset: Changeset): CheckOutcome | undefined {
-  let target: string;
-  let agentsRel: string;
+/**
+ * Verifies that worktreeDirectory configured in the worktree matches the trusted ref.
+ * An unavailable or unreadable trusted ref or trusted project context blocks (exit 1),
+ * as does a modified worktreeDirectory.
+ */
+function checkTrustedWorktreeDirectory(top: string, configuredParent: string): CheckOutcome | undefined {
+  let trustedProfile: ProjectProfile;
   try {
-    target = toRepoPath(changeset.top, locateProjectContext(top).target);
-    agentsRel = toRepoPath(changeset.top, join(top, 'AGENTS.md'));
-  } catch (error) {
-    return { status: 'inconclusive', evidence: [`Failed to inspect project context changes: ${error instanceof Error ? error.message : String(error)}`] };
-  }
-
-  const changed = changeset.entries.flatMap((entry) => [entry.path, entry.oldPath]).filter((p): p is string => p !== undefined).map((p) => p.replaceAll('\\', '/'));
-  const modified = [target, agentsRel].find((context) => changed.some((p) => samePath(p, context)));
-  if (modified === undefined) {
-    return undefined;
-  }
-
-  // Project context was modified in the changeset. Verify whether worktreeDirectory itself was changed.
-  try {
-    const commit = trustedCommit(top);
-    const trustedAgents = trustedFile(top, commit, agentsRel);
-    if (trustedAgents === undefined) throw new Error(`${agentsRel} is absent at trusted ref ${TRUSTED_REF}`);
-
-    let trustedTarget = agentsRel;
-    let trustedText: string | undefined = trustedAgents;
-    const linked = linkedContextSelection(trustedAgents);
-    if (linked !== undefined) {
-      trustedTarget = toRepoPath(top, contextPath(top, linked));
-      if (leavesRepo(trustedTarget)) throw new Error(`linked context target ${trustedTarget} at trusted ref resolves outside the repository`);
-      trustedText = trustedFile(top, commit, trustedTarget);
-      if (trustedText === undefined) throw new Error(`${trustedTarget} is absent at trusted ref ${TRUSTED_REF}`);
-    }
-    const trustedData = contextData(trustedText, 'project');
-    if (trustedData === undefined) throw new Error(`no project settings in ${trustedTarget} at trusted ref ${TRUSTED_REF}`);
-    const trustedProfile = validateProfile(trustedData);
-
-    const localText = readContext(resolve(top, target));
-    const localData = contextData(localText ?? '', 'project');
-    if (localData === undefined) throw new Error(`no project settings in ${target}`);
-    const localProfile = validateProfile(localData);
-
-    if (trustedProfile.worktreeDirectory !== localProfile.worktreeDirectory) {
-      return {
-        status: 'block',
-        evidence: [
-          `Project context (${modified}) modified worktreeDirectory from '${trustedProfile.worktreeDirectory}' to '${localProfile.worktreeDirectory}'; cannot verify task worktree boundary against a modified worktreeDirectory.`,
-        ],
-      };
-    }
+    const trusted = readTrustedProjectContext(top);
+    trustedProfile = trusted.profile;
   } catch (error) {
     return {
       status: 'block',
       evidence: [
-        `Project context (${modified}) was modified in this changeset and trusted worktreeDirectory could not be verified: ${error instanceof Error ? error.message : String(error)}`,
+        `Trusted worktreeDirectory could not be verified against ${TRUSTED_REF}: ${error instanceof Error ? error.message : String(error)}`,
       ],
     };
   }
+
+  let localTarget: string;
+  let localProfile: ProjectProfile;
+  try {
+    const { target: absTarget, original: localText } = locateProjectContext(top);
+    localTarget = toRepoPath(top, absTarget);
+    const localData = contextData(localText ?? '', 'project');
+    if (localData === undefined) throw new Error(`no project settings in ${localTarget}`);
+    localProfile = validateProfile(localData);
+  } catch (error) {
+    return {
+      status: 'block',
+      evidence: [
+        `Local project context could not be verified: ${error instanceof Error ? error.message : String(error)}`,
+      ],
+    };
+  }
+
+  const trustedExpanded = expandPath(trustedProfile.worktreeDirectory);
+  const localExpanded = expandPath(localProfile.worktreeDirectory);
+  if (trustedProfile.worktreeDirectory !== localProfile.worktreeDirectory || trustedExpanded !== localExpanded || configuredParent !== localExpanded) {
+    return {
+      status: 'block',
+      evidence: [
+        `Project context (${localTarget}) modified worktreeDirectory from '${trustedProfile.worktreeDirectory}' (at ${TRUSTED_REF}) to '${localProfile.worktreeDirectory}'; cannot verify task worktree boundary against a modified worktreeDirectory.`,
+      ],
+    };
+  }
+
   return undefined;
 }
 
+export interface PathContainmentApi {
+  relative(from: string, to: string): string;
+  isAbsolute(path: string): boolean;
+  sep: string;
+}
+
 /** Determines whether candidate is strictly contained within parent (path containment). */
-export function isPathContained(parent: string, candidate: string): boolean {
-  const rel = relative(parent, candidate);
-  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+export function isPathContained(
+  parent: string,
+  candidate: string,
+  pathApi: PathContainmentApi = { relative, isAbsolute, sep },
+): boolean {
+  const rel = pathApi.relative(parent, candidate);
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(rel);
 }
 
 /** Validates that top is strictly contained within configuredParent. */
@@ -386,11 +399,7 @@ export const worktreeBoundaryCheck: PreflightCheck = {
     const canonical = checkCanonicalCheckout(top);
     if (canonical) return canonical;
 
-    // 2. Guard against modified project context / worktreeDirectory
-    const modifiedCtx = checkUnmodifiedWorktreeDirectory(top, changeset);
-    if (modifiedCtx) return modifiedCtx;
-
-    // 3. Check worktreeDirectory configuration and containment
+    // 2. Check worktreeDirectory configuration
     const locationRes = resolveProjectLocations(top);
     if (locationRes.status === 'missing') {
       return {
@@ -408,10 +417,16 @@ export const worktreeBoundaryCheck: PreflightCheck = {
     }
 
     const configuredParent = locationRes.locations.worktreeDirectory;
+
+    // 3. Verify worktreeDirectory against trusted ref
+    const trustedWtDir = checkTrustedWorktreeDirectory(top, configuredParent);
+    if (trustedWtDir) return trustedWtDir;
+
+    // 4. Check worktree containment
     const containment = checkWorktreeContainment(top, configuredParent);
     if (containment) return containment;
 
-    // 4. Optional task branch check
+    // 5. Optional task branch check
     if (task !== undefined) {
       const taskCheck = checkTaskBranch(top, task);
       if (taskCheck.outcome) return taskCheck.outcome;
