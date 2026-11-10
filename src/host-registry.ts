@@ -242,11 +242,11 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
     },
     disclosures: [
       "Global scope only: each child role runs as its own codex exec process from ~/.codex/harness-<role>.config.toml (issue #45); Codex subagents would share the parent session's sandbox, approval and MCP settings.",
-      'Lead is your Codex Desktop session (read-only baseline) and only launches roles through the harness launcher; you approve every launch, and the prompt shows the role and task.',
-      'Role sandboxes follow the role sources: Operator and Implementer workspace-write, External workspace-write with network and only the MCP servers you select, Researcher, Planner, Reviewer and QA read-only. features.multi_agent is set to false when unset.',
+      'Lead is your Codex Desktop session (read-only baseline) and only launches roles through the harness launcher; you grant host permission for every launch at the Codex Desktop prompt, which shows the role and task.',
+      'Role sandboxes follow the role sources: Operator and External danger-full-access (no sandbox limit on writes or network; External also has only the MCP servers you select), Implementer workspace-write, Researcher, Planner, Reviewer and QA read-only. features.multi_agent is set to false when unset.',
       'Workflow skills are installed as ~/.agents/skills/<name>/SKILL.md; invocation binding remains caller-specific.',
-      'An approved codex exec launch through the launcher, and Codex agent reload semantics, are not yet runtime-verified by this harness.',
-      'Codex rules forbid direct git reset --hard, git clean, and force-push prefixes, including bundled short flags (-uf, -vuf) and force flags right after origin/upstream; force flags after other remotes or a refspec are not matched. Sensitive-path reads are instruction-level only.',
+      'A codex exec launch through the launcher that you permit at the host prompt, and Codex agent reload semantics, are not yet runtime-verified by this harness.',
+      'Codex rules forbid direct git reset --hard, git clean, and force-push prefixes, including bundled short flags (-uf, -vuf) and force flags right after origin/upstream; force flags after other remotes, after a refspec, or as --force-with-lease=<ref>, and +refspec pushes, are not matched. Enforcement of these rules for danger-full-access roles is unverified. Operator\'s remote-Git denies (git push, git pull, git clone, gh) are instruction-only on Codex. Sensitive-path reads are instruction-level only.',
     ],
   },
   cursor: {

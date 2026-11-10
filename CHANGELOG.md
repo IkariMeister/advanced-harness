@@ -46,6 +46,12 @@ version between releases.
   Upgrade: run `harness:update --host claude-code`. Until you do, `harness:doctor` reports
   `operator.md` and `CLAUDE.md` as outdated and `.claude/settings.json` as missing the new
   fetch deny rules.
+- Codex Operator and External role profiles now run with `sandbox_mode = danger-full-access`,
+  derived from the role sources, so `git add`, `git commit` and `gh` are expected to no longer be
+  blocked by the workspace-write sandbox (motivation recorded in #218; not verified by a live run) (#218, [ADR-006](docs/adr/0006-codex-operator-external-full-access.md),
+  Proposed). Lead stays read-only and on request. The destructive-command rules remain
+  installed, but their enforcement for full-access roles is unverified. Existing installs must
+  run `harness:update --host codex`. Manual smoke was waived.
 
 ### Fixed
 
@@ -90,7 +96,7 @@ Milestone "Shared Skills": reusable procedure skills that roles share across hos
 - OpenAI Codex install, update, doctor and uninstall at global scope: each child
   role runs as its own `codex exec` process with a source-derived profile, started
   by Lead through a launcher that re-applies the role settings on every launch and
-  resume, with your approval for each launch. Uninstall removes only the Lead block
+  resume, with your host permission at the Codex Desktop prompt for each launch. Uninstall removes only the Lead block
   from a shared `AGENTS.md` and reverses only the
   harness's own `config.toml` edits (#45, #153, #154).
 - `harness:doctor` reports each resolved worktree and shared `MEMORY.md` location

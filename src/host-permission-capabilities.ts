@@ -136,7 +136,7 @@ export const hostPermissionMatrix: Readonly<Record<HostId, HostPermissionRow>> =
       },
       localRemoteIsolation: {
         status: 'unverified',
-        scope: 'Profiles configure network/MCP differences and command rules; these do not establish complete local/remote isolation across shell and tool routes.',
+        scope: 'Operator and External run with danger-full-access, so the sandbox does not restrict their writes or network; Operator\'s remote-Git and gh denies are instruction-only, and enforcement of the managed rules for those roles is unverified. Profiles configure network/MCP differences and command rules; these do not establish complete local/remote isolation across shell and tool routes.',
         evidence: [doc('SECURITY.md'), regression('test/codex-role-processes.test.ts')],
       },
       roleCommands: {

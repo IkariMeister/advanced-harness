@@ -533,7 +533,7 @@ export function reverseCodexConfigEdits(text: string, edits: CodexConfigEdits): 
 }
 
 /**
- * Why Lead's base settings do not give the human approval point role-process mode relies on (#45).
+ * Why Lead's base settings do not give the human host-permission point role-process mode relies on (#45).
  * Lead must stay read-only with on-request approvals: under `danger-full-access` or `never`, roles
  * would start with nobody approving them.
  */
@@ -896,10 +896,12 @@ export async function installCodex(options: {
   if (roleProcesses) {
     const approvalProblems = codexLeadApprovalProblems(parseCodexToml(configAfter, 'config.toml'));
     output('Each child role runs as its own codex exec process with its own sandbox, network and MCP settings; Lead (your Codex Desktop session) only launches them.');
-    if (approvalProblems.length) output(`Warning: your existing config.toml settings are kept, so you may not be asked to approve role launches: ${approvalProblems.join('; ')}. Set them in config.toml to restore the approval point; harness:doctor reports this until you do.`);
-    else output("You approve every launch: Lead's session keeps the read-only sandbox with on-request approvals.");
+    const fullAccessRoles = codexChildRoles.filter(role => policies[role].sandbox === 'danger-full-access');
+    if (fullAccessRoles.length) output(`Full-access roles (${fullAccessRoles.join(', ')}) run with danger-full-access, so their sandbox does not restrict writes or network: destructive-command rules are still installed for them (enforcement under this mode is unverified), the prefix rules do not match +refspec pushes or the --force-with-lease=<ref> form, and each launch still needs your host permission at the Codex Desktop prompt.`);
+    if (approvalProblems.length) output(`Warning: your existing config.toml settings are kept, so you may not be asked for host permission on role launches: ${approvalProblems.join('; ')}. Set them in config.toml to restore the launch prompt; harness:doctor reports this until you do.`);
+    else output("You grant host permission for every launch: Lead's session keeps the read-only sandbox with on-request approvals.");
     output(selected.length ? `External may use only these MCP servers: ${selected.join(', ')}. They stay disabled in config.toml for Lead and the other roles. Other servers are off for every child role.` : 'No MCP server is selected, so no child role can use MCP.');
-    output('In-process subagents (multi_agent) are turned off when not set. Codex runtime and Desktop approval behavior are not verified by this harness.');
+    output('In-process subagents (multi_agent) are turned off when not set. Codex runtime and Desktop host permission prompt behavior are not verified by this harness.');
   } else output('Shared baseline adds read-only sandbox and on-request approval only when absent. Codex runtime behavior and universal write gating are not verified. MCP selections remain disabled pending validation. Direct gh pr merge rules are not universal indirect/API protection.');
   if ((await ask('Type install to apply these changes', 'cancel')) !== 'install') { output('Cancelled. No files, backups, or receipts were written.'); return 0; }
   for (const file of selectedFiles) {
@@ -1041,13 +1043,13 @@ export async function installCodex(options: {
   }
   output(`Codex artifacts written with cumulative receipt ${pending.path}. Backups: ${backups.length}.`);
   if (!completed) throw new Error('Codex install did not finalize its receipt.');
-  output('Inspect Codex Desktop on Windows/macOS and run harness:doctor for static checks. Runtime/approval behavior remains unverified.');
+  output('Inspect Codex Desktop on Windows/macOS and run harness:doctor for static checks. Runtime and host permission prompt behavior remains unverified.');
   return omittedRoles.length ? 1 : 0;
 }
 
 function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): string[] {
   const issues: string[] = [];
-  for (const problem of codexLeadApprovalProblems(config)) issues.push(`Codex Lead ${problem} in ${join(root, 'config.toml')}; role launches may start without your approval.`);
+  for (const problem of codexLeadApprovalProblems(config)) issues.push(`Codex Lead ${problem} in ${join(root, 'config.toml')}; role launches may start without your host permission prompt.`);
   if (multiAgentSetting(config)?.value !== false) issues.push(`Codex features.multi_agent is not false in ${join(root, 'config.toml')}; Lead could spawn in-process subagents that share its sandbox.`);
   const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
   const policies = codexRolePolicies(definitions);
@@ -1301,7 +1303,7 @@ export async function diagnoseCodex(options: { project?: string | undefined; hom
     }
   }
   if (!found) issues.push('Codex configuration is not installed in inspected project/global scope.');
-  notes.push('Static TOML/artifact checks only. Codex Desktop load, model availability, MCP connectivity, and approval behavior are not runtime-verified.');
+  notes.push('Static TOML/artifact checks only. Codex Desktop load, model availability, MCP connectivity, and host permission prompt behavior are not runtime-verified.');
   notes.push('Shared permission settings are inherited; role files cannot override parent sandbox/approval/MCP settings.');
   notes.push('Direct gh pr merge and destructive Git prefix rules do not block indirect scripts, API routes, or force flags placed after the remote.');
   return { ok: issues.length === 0, issues, notes };
