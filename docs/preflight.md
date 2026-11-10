@@ -5,7 +5,7 @@ evidence only: no result, file, or tracker stamp counts as plan or publish
 approval. The human approves.
 
 ```text
-npm run harness:preflight -- --worktree <path> [--base <ref>] [--json]
+npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--json]
 ```
 
 ## Base ref and trust model
@@ -14,27 +14,37 @@ npm run harness:preflight -- --worktree <path> [--base <ref>] [--json]
 context (`AGENTS.md` or the context file it links to) is used. There is no
 hardcoded fallback; a missing or unreadable base is [inconclusive](glossary.md#workflow-and-tracking).
 
-**Trust model:** When `--base` is omitted, `baseBranch` is read from the project
-context in the worktree being inspected. The built-in `base-context` check compares
-that context with the project context at the [trusted ref](glossary.md#workflow-and-tracking)
+**Trust model:** Preflight uses the [trusted ref](glossary.md#workflow-and-tracking)
 `refs/remotes/origin/HEAD`, read from the local repository without fetching:
 
-- The linked context target (or `AGENTS.md` itself) and `baseBranch` must match the
-  trusted ref. A difference blocks the run (`exit 1`).
-- If the task modifies the project context file or the root `AGENTS.md` in its
-  changeset, the check blocks the run (`exit 1`). This also covers other context
-  modifications that leave the target and `baseBranch` unchanged.
+- The built-in `base-context` check uses the trusted ref when `--base` is omitted.
+  The worktree's linked context target (or `AGENTS.md` itself) and `baseBranch`
+  must match the trusted ref; a difference blocks the run (`exit 1`). If the task
+  modifies the project context file or the root `AGENTS.md` in its changeset, the
+  check blocks the run (`exit 1`). If the trusted ref is missing, or the project
+  context at the trusted ref is absent or unreadable, `base-context` is
+  inconclusive (`exit 2`), and the evidence suggests passing `--base <ref>` or
+  running `git remote set-head origin --auto`. When `--base <ref>` is passed
+  explicitly, `base-context` skips the trusted-ref comparison and reports context
+  modifications as informational.
+- The built-in `worktree-boundary` check uses the trusted ref on every run (even
+  when `--base` is passed explicitly and independent of whether context files
+  appear in the changeset) to verify `worktreeDirectory`. If the trusted ref or
+  the project context at the trusted ref is unavailable, absent, or unreadable,
+  or if `worktreeDirectory` was modified compared to the trusted ref,
+  the `worktree-boundary` check blocks (`status: 'block'`).
 - Deleting or renaming the root `AGENTS.md`, or deleting or renaming the linked
   context file, leaves no readable project context in the worktree. Base resolution
   then fails when `--base` is omitted, which is inconclusive (`exit 2`), not a block.
-- If the trusted ref is missing, or the project context at the trusted ref is
-  absent or unreadable, the result is inconclusive (`exit 2`). The evidence names the
-  fix: pass `--base <ref>` or run `git remote set-head origin --auto`.
 
-The check trusts the local `refs/remotes/origin/HEAD` as configured; it does not verify
+The checks trust the local `refs/remotes/origin/HEAD` as configured; they do not verify
 that ref against the remote. Callers that need an authoritative base reference can pass
-`--base <ref>` explicitly. With `--base`, the trusted-ref comparison is skipped and
-context modifications are reported as informational.
+`--base <ref>` explicitly to satisfy `base-context`. Note that `exitCodeFor` checks
+`inconclusive` before `block`: an inconclusive result on any check yields overall exit code 2
+even if another check reports `block`. When `refs/remotes/origin/HEAD` is missing and `--base` is
+omitted, `base-context` is `inconclusive` while `worktree-boundary` reports `block`, resulting
+in overall exit code 2. Passing `--base <ref>` satisfies `base-context`, yielding exit code 1
+from the blocked `worktree-boundary` check.
 
 ## Changeset
 
@@ -55,6 +65,9 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   files are left to the guardrail checks (BH-067..BH-071) that consume them.
 - Text entries include added lines and their target line numbers, grouped by
   committed net diff, staged, unstaged, and untracked origin.
+  These target coordinates are 1-based new-file snapshot line numbers. Line-scoped
+  allowlist entries must include both `line` and `origin`; an exception for a staged
+  line cannot suppress a committed, unstaged, or untracked finding at the same number.
 - Added-line extraction uses Git's literal path mode, disables external diff and
   textconv, and binds each diff to exact repository paths. For detected renames,
   extraction includes both old and destination paths; the regression test verifies
@@ -72,8 +85,8 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   4 MiB aggregate UTF-8 payload. The cap is checked before either scanner is
   selected or invoked; oversized input is inconclusive. Added blank lines are retained, and
   the scanner receives separate contiguous runs per file and origin. Empty input
-  skips the scanner subprocess. All Gitleaks runs share a fixed 10-second aggregate
-  deadline. Metrics distinguish an unrun scanner from an unavailable backend and
+  skips the scanner subprocess. Gitleaks capability probing and every scan run share
+  one fixed 10-second monotonic aggregate deadline. Metrics distinguish an unrun scanner from an unavailable backend and
   report bounded affected-path counts.
 - `path-policy` blocks configured sensitive paths (including rename destinations)
   and skips deletions. The default glob list is case-insensitive and project
@@ -120,8 +133,10 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   Gitleaks is absent, a documented built-in high-confidence detector runs. An
   installation must be Gitleaks 8.30.1 or newer. An installed but unsupported or
   unusable probe is inconclusive; only an absent executable selects fallback. The
-  executable is resolved from absolute `PATH` entries. Metrics
-  distinguish Gitleaks, built-in, and unavailable backend states.
+  executable is resolved from absolute `PATH` entries. On Windows, quoted and
+  unquoted absolute directories are supported and only native `gitleaks.exe` is
+  selected; the resolved executable path is invoked directly. Metrics distinguish
+  Gitleaks, built-in, and unavailable backend states.
 - Gitleaks is invoked as `<resolved-executable> stdin --report-format json --report-path
   <temporary-report> --redact=100 --no-banner` with the pinned config argument;
   JSON findings use `RuleID` and `StartLine`. Exit code 1 is accepted only when the report parses as valid
@@ -129,6 +144,57 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   report directory is removed after all runs finish or fail, including
   incomplete scans and subprocess errors. Gitleaks `RuleID` values are
   emitted as stable SHA-256 labels; exact exceptions match the upstream ID.
+
+## Project policy and revision authority
+
+The repository-specific scanner policy is stored in `.harness/preflight.json` and
+`.harness/preflight-allowlist.json`; the root [AGENTS.md](../AGENTS.md) points here
+instead of embedding scanner policy in host-neutral project instructions. Preflight
+loads these files from the explicit `--base` commit, or from the local
+`refs/remotes/origin/HEAD` when base comes from project context. That trusted revision
+is the policy authority for the run. A candidate changeset that edits, renames, or
+deletes either policy file is blocked by `policy-integrity`; land and review the
+policy change in the trusted base first, then run preflight against that revision.
+The task branch cannot grant itself a new scanner exception or weaken its path rules.
+
+An invocation may acknowledge a specific gitlink coverage gap with repeatable
+`--ack-gitlink <json>` options. Each JSON object contains `path`, `oldId`, and `newId`,
+for example `--ack-gitlink '{"path":"vendor/example","oldId":"<40-64 hex>","newId":"<40-64 hex>"}'`.
+The exact path and both commit IDs must match a changed gitlink. The acknowledgement
+is reported in output and applies only to that one gitlink's incomplete-scan gap; it
+does not suppress secret findings, acknowledge nested repositories without matching
+  gitlink IDs, or clear any other incomplete path. Dirty or untracked content inside
+  an indexed submodule is detected separately, including when its gitlink commit ID
+  is unchanged; commit-ID acknowledgements cannot clear that coverage gap. Gitlinks
+  and nested repositories remain contentless entries in the changeset. Programmatic `runPreflight` callers use
+the `gitlinkAcknowledgements` option with the same exact tuple.
+
+## Worktree boundary check
+
+The built-in `worktree-boundary` check enforces that preflight is run in an
+isolated task worktree under the project's configured `worktreeDirectory` and not
+in the canonical checkout:
+
+- Compares `--git-dir` and `--git-common-dir` from `git rev-parse`. If they resolve to
+  the same directory, the target is the canonical checkout and is blocked (`exit 1`).
+- Verifies the configured `worktreeDirectory` against the trusted ref
+  (`refs/remotes/origin/HEAD`) on every run (independent of the changeset and even
+  when `--base` is provided); altering the `worktreeDirectory` boundary or failing to
+  verify against the trusted ref or trusted project context blocks the check (`status: 'block'`).
+- Full project settings (`project` section in `AGENTS.md` or the linked context file; see
+  [configuration.md](configuration.md)) are required at both the worktree and `refs/remotes/origin/HEAD`.
+  Repositories with only an interim `paths` section are blocked (`status: 'block'`).
+- Reads `worktreeDirectory` from project context. A missing `worktreeDirectory` or
+  one that does not exist on disk blocks (`exit 1`). Shared-location resolution
+  errors (such as conflict or invalid shape) are inconclusive (`exit 2`).
+- Verifies that the resolved physical worktree path is strictly inside the resolved
+  `worktreeDirectory` (realpath comparison, platform-aware). Any worktree outside the
+  configured directory (or attempting directory traversal) is blocked (`exit 1`).
+- **Optional task branch verification:** When `--task <key>` is passed (e.g. `--task 182`,
+  `--task #182`, `--task BH-067`), the check inspects the checked-out branch. If `HEAD`
+  is detached or the branch does not contain `<key>` as a case-insensitive, word-boundary
+  token delimited by non-alphanumeric characters, the check blocks (`exit 1`). For example,
+  `182` matches `issue/182`, `issue-182`, or `feat/182-worktree`, but does not match `1820`.
 
 ## Result contract
 
@@ -152,6 +218,10 @@ configured or if a check returns an unknown status, the result is inconclusive.
 | 1 | Blocked by at least one check |
 | 2 | Inconclusive (a git/tool call or check failed) or usage error |
 
+### Exit-code precedence
+
+`exitCodeFor` evaluates `inconclusive` before `block`: an inconclusive result on any check yields overall exit code 2 even if another check reports `block`. For example, when `refs/remotes/origin/HEAD` is missing and `--base` is omitted, `base-context` is `inconclusive` while `worktree-boundary` reports `block`, resulting in overall exit code 2. Passing `--base <ref>` allows `base-context` to pass, yielding exit code 1 from the blocked `worktree-boundary` check.
+
 A tooling error is never a pass.
 
 ## Adding checks
@@ -159,6 +229,7 @@ A tooling error is never a pass.
 A check implements `PreflightCheck` from `src/preflight/types.ts`: a unique `id`
 and a `run(context)` that receives the worktree and changeset and returns a
 status, evidence lines, and optional numeric metrics. A thrown error becomes
-`inconclusive`. The built-in `changeset` and `base-context` checks summarize the
-changeset and block unverified project context modifications; guardrail checks
-(BH-067..BH-071) plug in alongside them.
+`inconclusive`. The built-in `changeset`, `base-context`, and `worktree-boundary`
+checks summarize the changeset, block unverified project context modifications,
+and ensure preflight runs within an isolated task worktree; guardrail checks
+(BH-068..BH-071) plug in alongside them.

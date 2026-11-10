@@ -79,6 +79,38 @@ jobs:
       - name: Check documentation links and commands
         run: npm run docs:check
 
+  gitleaks-preflight:
+    name: Preflight scanner (Gitleaks 8.30.1 / Node 24)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pinned Gitleaks 8.30.1
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          curl --fail --location --silent --show-error https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o "$RUNNER_TEMP/gitleaks/gitleaks.tar.gz"
+          curl --fail --location --silent --show-error https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt -o "$RUNNER_TEMP/gitleaks/checksums.txt"
+          cd "$RUNNER_TEMP/gitleaks"
+          grep 'gitleaks_8.30.1_linux_x64.tar.gz$' checksums.txt | sha256sum --check
+          tar -xzf gitleaks.tar.gz gitleaks
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+
+      - name: Verify pinned Gitleaks preflight integration
+        env:
+          REQUIRE_GITLEAKS: '1'
+        run: node --test test/preflight-gitleaks-integration.test.ts
+
   smoke:
     name: Smoke (${{ matrix.os }} / Node 24)
     runs-on: ${{ matrix.os }}

@@ -2,8 +2,8 @@ import { realpathSync } from 'node:fs';
 import { contextData } from '../project-context.ts';
 import { locateProjectContext, validateProfile } from '../project-setup.ts';
 import { collectChangeset } from './changeset.ts';
-import { baseContextCheck, changesetCheck, pathPolicyCheck, policyIntegrityCheck, secretScanCheck, validateSecretExceptions, type SecretException } from './checks.ts';
-import { loadProjectPreflightPolicy } from './policy.ts';
+import { baseContextCheck, changesetCheck, pathPolicyCheck, policyIntegrityCheck, secretScanCheck, validateSecretExceptions, worktreeBoundaryCheck, type SecretException } from './checks.ts';
+import { loadProjectPreflightPolicy, PreflightPolicyError } from './policy.ts';
 import { scanAddedText } from './secret-scanner.ts';
 import { DEFAULT_SENSITIVE_PATH_GLOBS, validateSensitivePathGlobs } from './path-policy.ts';
 import type { CheckResult, CheckStatus, Changeset, PreflightCheck, PreflightExitCode, PreflightResult } from './types.ts';
@@ -25,10 +25,10 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
   }
 }
 
-export type PreflightOptions = { worktree: string; base?: string | undefined; checks?: readonly PreflightCheck[]; sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText };
+export type PreflightOptions = { worktree: string; base?: string | undefined; task?: string | undefined; checks?: readonly PreflightCheck[]; sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText; gitlinkAcknowledgements?: readonly { path: string; oldId: string; newId: string }[] };
 export type DefaultCheckOptions = { sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText };
 export function createDefaultChecks(options: DefaultCheckOptions = {}): readonly PreflightCheck[] {
-  return [changesetCheck, baseContextCheck, policyIntegrityCheck, pathPolicyCheck(options.sensitivePathGlobs), secretScanCheck(options.secretExceptions, options.secretScanner)];
+  return [changesetCheck, baseContextCheck, policyIntegrityCheck, worktreeBoundaryCheck, pathPolicyCheck(options.sensitivePathGlobs), secretScanCheck(options.secretExceptions, options.secretScanner)];
 }
 export const defaultChecks = createDefaultChecks();
 
@@ -36,6 +36,29 @@ function inconclusiveAll(checks: readonly PreflightCheck[], reason: string): Pre
   const list = checks.length ? checks : [{ id: 'preflight' } as PreflightCheck];
   const results = list.map((check) => ({ id: check.id, status: 'inconclusive' as const, evidence: [reason] }));
   return { approved: false, blocking: [], warnings: [], metrics: {}, checks: results };
+}
+
+async function unavailablePolicyResult(worktree: string, changeset: Changeset, checks: readonly PreflightCheck[], reason: string, task?: string): Promise<PreflightResult> {
+  const results: CheckResult[] = [];
+  const blocking: string[] = [];
+  const warnings: string[] = [];
+  const metrics: Record<string, number> = {};
+  for (const check of [...checks].sort((a, b) => a.id.localeCompare(b.id))) {
+    if (check.id === 'path-policy' || check.id === 'secret-scan') {
+      results.push({ id: check.id, status: 'inconclusive', evidence: [reason] });
+      continue;
+    }
+    try {
+      const outcome = await check.run({ worktree, changeset, task });
+      results.push({ id: check.id, status: outcome.status, evidence: [...outcome.evidence] });
+      for (const [key, value] of Object.entries(outcome.metrics ?? {})) metrics[`${check.id}.${key}`] = value;
+      if (outcome.status === 'block') blocking.push(...outcome.evidence.map(line => `${check.id}: ${line}`));
+      if (outcome.status === 'warn') warnings.push(...outcome.evidence.map(line => `${check.id}: ${line}`));
+    } catch {
+      results.push({ id: check.id, status: 'inconclusive', evidence: ['Check could not run while trusted preflight policy was unavailable.'] });
+    }
+  }
+  return { approved: false, blocking, warnings, metrics, checks: results };
 }
 
 /** Runs checks in `id` order. A thrown check or failed tool call is `inconclusive`, never a pass. */
@@ -52,8 +75,12 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
   let projectPolicy;
   const policyBase = base.source === 'option' ? base.ref : TRUSTED_POLICY_REF;
   try { projectPolicy = loadProjectPreflightPolicy(changeset.top, policyBase, { forbiddenPathGlobs: options.sensitivePathGlobs !== undefined, secretExceptions: options.secretExceptions !== undefined }); } catch (error) {
-    const detail = error instanceof Error ? error.message : 'could not be read.';
-    if (base.source === 'project-context' && detail.includes('base ref could not be resolved')) return inconclusiveAll(options.checks ?? defaultChecks, `Trusted preflight policy ref ${TRUSTED_POLICY_REF} is unavailable; pass --base <ref> or run \`git remote set-head origin --auto\`.`);
+    if (base.source === 'project-context' && error instanceof PreflightPolicyError && error.code === 'base-unavailable') {
+      const reason = `Trusted preflight policy ref ${TRUSTED_POLICY_REF} is unavailable; pass --base <ref> or run \`git remote set-head origin --auto\`.`;
+      if (options.checks !== undefined) return inconclusiveAll(options.checks, reason);
+      return unavailablePolicyResult(worktree, changeset, defaultChecks, reason, options.task);
+    }
+    const detail = error instanceof PreflightPolicyError ? error.message : 'validation failed.';
     return inconclusiveAll(options.checks ?? defaultChecks, `Project preflight policy is invalid: ${detail}`);
   }
   if (options.checks !== undefined && (projectPolicy.sensitivePathGlobs !== undefined || projectPolicy.secretExceptions.length > 0)) return inconclusiveAll(options.checks, 'Custom checks cannot be combined with configured project preflight policy.');
@@ -84,7 +111,7 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
   const metrics: Record<string, number> = {};
   for (const check of checks) {
     try {
-      const outcome = await check.run({ worktree, changeset });
+      const outcome = await check.run({ worktree, changeset, task: options.task, gitlinkAcknowledgements: options.gitlinkAcknowledgements });
       const validStatuses: CheckStatus[] = ['pass', 'warn', 'block', 'inconclusive'];
       const status: CheckStatus = validStatuses.includes(outcome.status) ? outcome.status : 'inconclusive';
       const evidence = [...outcome.evidence];

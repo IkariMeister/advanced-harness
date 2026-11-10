@@ -44,7 +44,7 @@ test('trusted base policy replaces path globs, normalizes exact allowlist paths,
   assert.deepEqual(policy.sensitivePathGlobs, ['**/*.bin']);
   assert.equal(policy.secretExceptions[0]?.path, 'src/token.ts');
   assert.equal(policy.secretExceptions[0]?.justification, justification);
-  assert.equal(createDefaultChecks().length, 5);
+  assert.equal(createDefaultChecks().length, 6);
   const secretScanner: typeof scanAddedText = (changes, dependencies) => scanAddedText(changes, { ...dependencies, probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
   const result = await runPreflight({ worktree: root, base: 'main', secretScanner });
   assert.equal(result.checks.find(check => check.id === 'path-policy')?.status, 'pass', 'replacement globs do not retain the default .env rule');
@@ -54,10 +54,17 @@ test('trusted base policy replaces path globs, normalizes exact allowlist paths,
 });
 
 test('trusted allowlist preserves optional positive line and rejects unknown exception keys', () => {
-  const root = projectRepo({ allowlist: [{ path: './src/token.ts', rule: 'fixture', line: 12, justification: 'Reviewed one generated line.' }] });
-  assert.deepEqual(loadProjectPreflightPolicy(root, 'main').secretExceptions, [{ path: 'src/token.ts', rule: 'fixture', line: 12, justification: 'Reviewed one generated line.' }]);
+  const root = projectRepo({ allowlist: [{ path: './src/token.ts', rule: 'fixture', line: 12, origin: 'staged', justification: 'Reviewed one generated line.' }] });
+  assert.deepEqual(loadProjectPreflightPolicy(root, 'main').secretExceptions, [{ path: 'src/token.ts', rule: 'fixture', line: 12, origin: 'staged', justification: 'Reviewed one generated line.' }]);
   const invalid = projectRepo({ allowlist: [{ path: 'src/token.ts', rule: 'fixture', line: 12, justification: 'Reviewed.', extra: 'bad' }] });
   assert.throws(() => loadProjectPreflightPolicy(invalid, 'main'), /unknown setting/);
+});
+
+test('line-scoped exceptions require origin and normalized empty paths are rejected', () => {
+  const missingOrigin = projectRepo({ allowlist: [{ path: 'token.ts', rule: 'fixture', line: 1, justification: 'Review.' }] });
+  assert.throws(() => loadProjectPreflightPolicy(missingOrigin, 'main'), /optional positive line with scan origin/);
+  const emptyPath = projectRepo({ allowlist: [{ path: './', rule: 'fixture', justification: 'Review.' }] });
+  assert.throws(() => loadProjectPreflightPolicy(emptyPath, 'main'), /paths must be nonempty/);
 });
 
 test('branch policy edits are blocked and cannot weaken trusted checks; explicit options remain authoritative', async () => {
@@ -98,7 +105,8 @@ test('invalid trusted policy is inconclusive before checks and custom policy opt
   assert.ok(invalid.checks.every(check => check.status === 'inconclusive'));
   assert.ok(invalid.checks.every(check => check.evidence[0]?.includes('Project preflight policy is invalid')));
   const explicit = await runPreflight({ worktree: root, base: 'main', sensitivePathGlobs: [], secretExceptions: [] });
-  assert.equal(explicit.approved, true, 'explicit trusted policy options remain usable when they replace invalid base policy files');
+  assert.equal(explicit.checks.find(check => check.id === 'path-policy')?.status, 'pass', 'explicit path policy replaces invalid base policy files');
+  assert.equal(explicit.checks.find(check => check.id === 'secret-scan')?.status, 'pass', 'explicit exceptions replace invalid base policy files');
 
   const conflict = await runPreflight({ worktree: root, checks: [], sensitivePathGlobs: [] });
   assert.equal(conflict.checks[0]?.status, 'inconclusive');

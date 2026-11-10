@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, readlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readlinkSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { PreflightToolError, type BaseSource, type ChangeEntry, type ChangeOrigin, type ChangeStatus, type Changeset } from './types.ts';
 
@@ -67,6 +67,35 @@ function modeOf(worktree: string, args: string[], path: string): string | undefi
   return git(worktree, [...args, '--', path]).toString('utf8').split(/\s/)[0] || undefined;
 }
 
+function gitlinkId(worktree: string, args: string[], path: string): string | undefined {
+  const record = git(worktree, [...args, '-z', '--', path]).toString('utf8').split('\0')[0] ?? '';
+  const header = record.slice(0, record.indexOf('\t'));
+  const [mode, , object] = header.split(' ');
+  return mode === '160000' && /^[0-9a-f]{40,64}$/i.test(object ?? '') ? object : undefined;
+}
+
+/** Resolves the staged gitlink commit; for an unstaged gitlink change, this is the before-state. */
+function indexGitlinkId(worktree: string, path: string): string | undefined {
+  const record = git(worktree, ['ls-files', '-s', '-z', '--', path]).toString('utf8').split('\0')[0] ?? '';
+  const [mode, object] = record.split(/[ \t]/, 3);
+  return mode === '160000' && /^[0-9a-f]{40,64}$/i.test(object ?? '') ? object : undefined;
+}
+
+/** Dirty or untracked nested content is never covered by acknowledging commit IDs. */
+function nestedContentDirty(worktree: string, path: string): boolean {
+  const nested = join(worktree, path);
+  try {
+    if (!existsSync(nested)) return false;
+    if (!existsSync(join(nested, '.git'))) {
+      // An empty, deinitialized submodule has no available content to scan.
+      // Populated directories without repository metadata are uninspectable.
+      return readdirSync(nested).length > 0;
+    }
+    const result = spawnSync('git', ['-C', nested, 'status', '--porcelain', '--untracked-files=all'], { maxBuffer: 16 *  1024 * 1024 });
+    return result.error !== undefined || result.status !== 0 || result.stdout.length > 0;
+  } catch { return true; }
+}
+
 function addedLinesForPath(worktree: string, args: string[], path: string, oldPath?: string): { text: string; lines: number[]; complete: boolean } {
   const paths = oldPath === undefined ? [path] : [oldPath, path];
   const bytes = git(worktree, [...args, '--no-ext-diff', '--no-textconv', '--no-color', '--unified=0', '--', ...paths]);
@@ -102,13 +131,17 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
   const entries: ChangeEntry[] = [];
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-M', '-z', mergeBase, head]), 'committed')) {
     const kind = entry.status === 'deleted' ? undefined : modeOf(top, ['ls-tree', head], entry.path);
+    const oldId = gitlinkId(top, ['ls-tree', mergeBase], entry.oldPath ?? entry.path);
+    const newId = gitlinkId(top, ['ls-tree', head], entry.path);
     const added = entry.status === 'deleted' ? undefined : kind === '160000' ? { text: '', lines: [], complete: false } : addedLinesForPath(top, ['diff', mergeBase, head], entry.path, entry.oldPath);
-    entries.push({ ...entry, ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `${head}:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
+    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `${head}:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
   }
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--cached', '--name-status', '-M', '-z']), 'staged')) {
     const kind = entry.status === 'deleted' ? undefined : modeOf(top, ['ls-files', '-s'], entry.path);
+    const oldId = gitlinkId(top, ['ls-tree', 'HEAD'], entry.oldPath ?? entry.path);
+    const newId = kind === '160000' ? (git(top, ['ls-files', '-s', '-z', '--', entry.path]).toString('utf8').split('\0')[0]?.split(' ')[1]) : undefined;
     const added = entry.status === 'deleted' ? undefined : kind === '160000' ? { text: '', lines: [], complete: false } : addedLinesForPath(top, ['diff', '--cached'], entry.path, entry.oldPath);
-    entries.push({ ...entry, ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
+    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
   }
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-M', '-z']), 'unstaged')) {
     if (entry.status === 'deleted') {
@@ -116,7 +149,10 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
     } else {
       const added = addedLinesForPath(top, ['diff'], entry.path);
       const mode = modeOf(top, ['ls-files', '-s'], entry.path);
-      entries.push({ ...entry, ...(mode === '160000' ? { kind: 'submodule', content: undefined } : readWorkingFile(top, entry.path)), addedText: added.text, targetLines: added.lines, addedTextComplete: mode === '160000' ? false : added.complete });
+      const oldId = mode === '160000' ? indexGitlinkId(top, entry.path) : undefined;
+      let newId: string | undefined;
+      if (mode === '160000') { try { newId = text(join(top, entry.path), ['rev-parse', '--verify', 'HEAD^{commit}']); } catch { /* uninitialized or unavailable gitlink stays incomplete */ } }
+      entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(mode === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path) } : {}) } } : {}), ...(mode === '160000' ? { kind: 'submodule', content: undefined } : readWorkingFile(top, entry.path)), addedText: added.text, targetLines: added.lines, addedTextComplete: mode === '160000' ? false : added.complete });
     }
   }
   const untracked = git(top, ['ls-files', '--others', '--exclude-standard', '-z']).toString('utf8').split('\0').filter(Boolean);
@@ -127,6 +163,23 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
     const lines = decoded ? decoded.split(/\r?\n/) : [];
     if (decoded?.endsWith('\n')) lines.pop();
     entries.push({ path, status: 'added', origin: 'untracked', ...file, ...(decoded !== undefined ? { addedText: decoded, targetLines: lines.length ? lines.map((_, i) => i + 1) : [], addedTextComplete: true } : { addedTextComplete: false }) });
+  }
+
+  // Git does not report untracked files inside a submodule when its commit ID is
+  // unchanged. Surface every dirty indexed gitlink as a separate coverage gap.
+  for (const record of git(top, ['ls-files', '-s', '-z']).toString('utf8').split('\0').filter(Boolean)) {
+    const tab = record.indexOf('\t');
+    if (tab < 0) continue;
+    const [mode, id] = record.slice(0, tab).split(' ');
+    const path = record.slice(tab + 1);
+    if (mode !== '160000' || !/^[0-9a-f]{40,64}$/i.test(id ?? '') || !nestedContentDirty(top, path)) continue;
+    const existing = entries.find(entry => entry.path === path && entry.origin === 'unstaged');
+    if (existing) {
+      existing.gitlink = { ...(existing.gitlink ?? {}), oldId: existing.gitlink?.oldId ?? id!, newId: existing.gitlink?.newId ?? id!, nestedContentDirty: true };
+      existing.addedTextComplete = false;
+    } else {
+      entries.push({ path, status: 'modified', origin: 'unstaged', kind: 'submodule', content: undefined, addedTextComplete: false, gitlink: { oldId: id!, newId: id!, nestedContentDirty: true } });
+    }
   }
 
   return { top, base, baseSource, mergeBase, head, entries };

@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { formatScannerProbe, isSupportedGitleaksVersion, MAX_SECRET_SCAN_BYTES, probeGitleaks, safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
+import { formatScannerProbe, isSupportedGitleaksVersion, MAX_SECRET_SCAN_BYTES, probeGitleaks, resolveGitleaksExecutable, safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
 
 test('scanner probe does not expose command output or scanned content', () => {
   const probe = probeGitleaks();
@@ -27,11 +27,37 @@ test('scanner probe does not expose command output or scanned content', () => {
   assert.equal(isSupportedGitleaksVersion('8.30.1-rc.01'), false, 'invalid numeric prerelease identifiers are rejected');
 });
 
+test('Windows Gitleaks resolution accepts quoted and unquoted absolute PATH entries and only the native executable', () => {
+  const found: string[] = [];
+  const quoted = resolveGitleaksExecutable('"C:\\Program Files\\Gitleaks";relative', 'win32', candidate => { found.push(candidate); return candidate.toLowerCase() === 'c:\\program files\\gitleaks\\gitleaks.exe'; });
+  assert.equal(quoted, 'C:\\Program Files\\Gitleaks\\gitleaks.exe');
+  assert.deepEqual(found, ['C:\\Program Files\\Gitleaks\\gitleaks.exe']);
+  const unquoted = resolveGitleaksExecutable('C:\\Program Files\\Gitleaks;D:\\Tools', 'win32', candidate => candidate === 'C:\\Program Files\\Gitleaks\\gitleaks.exe');
+  assert.equal(unquoted, 'C:\\Program Files\\Gitleaks\\gitleaks.exe');
+  assert.equal(resolveGitleaksExecutable('relative;C:\\Tools', 'win32', candidate => candidate.endsWith('.cmd')), undefined);
+});
+
 test('present but unusable Gitleaks does not select the built-in fallback', () => {
   const result = scanAddedText([{ path: 'key.txt', line: 1, text: '-----BEGIN PRIVATE KEY-----' }], { probe: () => ({ available: false, backend: 'unavailable', reason: 'Gitleaks version is too old.' }) });
   assert.equal(result.backend, 'unavailable');
   assert.equal(result.complete, false);
   assert.deepEqual(result.findings, []);
+});
+
+test('probe and scan temporary-directory creation failures are bounded and sanitized', () => {
+  const installed = probeGitleaks();
+  const failedProbe = installed.available ? probeGitleaks(undefined, () => { throw new Error('private temp path detail'); }) : installed;
+  if (installed.available) {
+    assert.equal(failedProbe.available, false);
+    if (!failedProbe.available) assert.equal(failedProbe.reason, 'Gitleaks probe temporary directory could not be created.');
+  }
+  const scan = scanAddedText([{ path: 'sample.txt', line: 1, text: 'plain text' }], {
+    probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }),
+    createTempDirectory: () => { throw new Error('private temp path detail'); },
+  });
+  assert.equal(scan.complete, false);
+  assert.equal(scan.reason, 'Gitleaks scan temporary directory could not be created.');
+  assert.ok(!JSON.stringify({ failedProbe, scan }).includes('private temp path detail'));
 });
 
 test('doctor CLI prints the scanner availability line from its real probe path', () => {
@@ -87,7 +113,7 @@ test('Gitleaks backend maps JSON findings to sanitized added-line locations', ()
   };
   process.env.GITLEAKS_TEST_MUST_NOT_ESCAPE = 'ambient';
   let result;
-  try { result = scanAddedText([{ path: 'src/key.ts', line: 12, text: 'fake test payload' }], { probe: () => ({ available: true, backend: 'gitleaks' }), run: run as never }); }
+  try { result = scanAddedText([{ path: 'src/key.ts', line: 12, text: 'fake test payload' }], { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: run as never }); }
   finally { delete process.env.GITLEAKS_TEST_MUST_NOT_ESCAPE; }
   assert.equal(result.complete, true);
   assert.deepEqual(result.findings, [{ rule: safeGitleaksRuleId('generic-api-key'), path: 'src/key.ts', line: 12, redacted: true }]);
@@ -114,7 +140,7 @@ test('empty, oversized, and contiguous run inputs have bounded isolated invocati
     writeFileSync(report, '[]');
     return { status: 0, error: undefined };
   };
-  const probe = () => { probeCalls += 1; return { available: true as const, backend: 'gitleaks' as const }; };
+  const probe = () => { probeCalls += 1; return { available: true as const, backend: 'gitleaks' as const, executable: process.execPath }; };
   assert.equal(scanAddedText([], { probe, run: run as never }).complete, true);
   assert.equal(calls, 0, 'empty input skips the scan subprocess');
   assert.equal(probeCalls, 0, 'empty input also skips the capability probe');
@@ -135,9 +161,7 @@ test('empty, oversized, and contiguous run inputs have bounded isolated invocati
 });
 
 test('Gitleaks runs share one deterministic deadline and do not spawn after expiry', () => {
-  const originalNow = Date.now;
   let now = 1_000;
-  Object.defineProperty(Date, 'now', { configurable: true, value: () => now });
   const timeouts: number[] = [];
   const reports: string[] = [];
   let calls = 0;
@@ -150,14 +174,11 @@ test('Gitleaks runs share one deterministic deadline and do not spawn after expi
     now += calls === 1 ? 4_000 : 6_000;
     return { status: 0, error: undefined };
   };
-  let result;
-  try {
-    result = scanAddedText([
+  const result = scanAddedText([
       { path: 'a.txt', line: 1, text: 'one' },
       { path: 'b.txt', line: 1, text: 'two' },
       { path: 'c.txt', line: 1, text: 'three' },
-    ], { probe: () => ({ available: true, backend: 'gitleaks' }), run: run as never });
-  } finally { Object.defineProperty(Date, 'now', { configurable: true, value: originalNow }); }
+    ], { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: run as never, now: () => now });
   assert.equal(result.complete, false);
   assert.match(result.reason ?? '', /aggregate scan deadline exceeded/);
   assert.equal(calls, 2, 'the third run is never spawned after the shared deadline expires');
@@ -172,7 +193,7 @@ test('aggregate scanner payload at exactly 4 MiB is accepted', () => {
     writeFileSync(args[args.indexOf('--report-path') + 1]!, '[]');
     return { status: 0, error: undefined };
   };
-  const result = scanAddedText([{ path: 'exact-cap.txt', line: 1, text: 'x'.repeat(MAX_SECRET_SCAN_BYTES) }], { probe: () => ({ available: true, backend: 'gitleaks' }), run: run as never });
+  const result = scanAddedText([{ path: 'exact-cap.txt', line: 1, text: 'x'.repeat(MAX_SECRET_SCAN_BYTES) }], { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: run as never });
   assert.equal(result.complete, true);
   assert.equal(calls, 1);
 });
@@ -183,7 +204,7 @@ test('Gitleaks finding locations retain their complete path for exact exception 
     writeFileSync(args[args.indexOf('--report-path') + 1]!, JSON.stringify([{ RuleID: 'long-path-rule', StartLine: 1 }]));
     return { status: 1, error: undefined };
   };
-  const result = scanAddedText([{ path, line: 42, text: 'payload' }], { probe: () => ({ available: true, backend: 'gitleaks' }), run: run as never });
+  const result = scanAddedText([{ path, line: 42, text: 'payload' }], { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: run as never });
   assert.equal(result.complete, true);
   assert.equal(result.findings[0]?.path, path);
   assert.ok(result.findings[0]!.path.length > 300);
@@ -193,13 +214,31 @@ test('Gitleaks finding locations retain their complete path for exact exception 
 test('Gitleaks failures and malformed reports are inconclusive without raw diagnostics', () => {
   const change = [{ path: 'src/key.ts', line: 2, text: 'RAW_SECRET_MUST_NOT_ESCAPE' }];
   let failureTemp = '';
-  const failed = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks' }), run: ((_command: string, args: string[]) => { failureTemp = args[args.indexOf('--report-path') + 1]!.replace(/report-\d+\.json$/, ''); return { status: 3, error: undefined }; }) as never });
+  const failed = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: ((_command: string, args: string[]) => { failureTemp = args[args.indexOf('--report-path') + 1]!.replace(/report-\d+\.json$/, ''); return { status: 3, error: undefined }; }) as never });
   assert.equal(failed.complete, false);
   assert.ok(!JSON.stringify(failed).includes('RAW_SECRET_MUST_NOT_ESCAPE'));
   assert.equal(existsSync(failureTemp), false, 'temporary reports are removed after scanner failure');
-  const malformed = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks' }), run: ((_command: string, args: string[]) => { writeFileSync(args[args.indexOf('--report-path') + 1]!, '{not json'); return { status: 0, error: undefined }; }) as never });
+  const malformed = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: ((_command: string, args: string[]) => { writeFileSync(args[args.indexOf('--report-path') + 1]!, '{not json'); return { status: 0, error: undefined }; }) as never });
   assert.equal(malformed.complete, false);
   assert.ok(!JSON.stringify(malformed).includes('RAW_SECRET_MUST_NOT_ESCAPE'));
+});
+
+test('findings from completed scan runs survive a later failed run', () => {
+  let invocation = 0;
+  const result = scanAddedText([
+    { path: 'first.txt', origin: 'committed', line: 3, text: 'first' },
+    { path: 'second.txt', origin: 'staged', line: 8, text: 'second' },
+  ], {
+    probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }),
+    run: ((_command: string, args: string[]) => {
+      invocation += 1;
+      if (invocation === 1) writeFileSync(args[args.indexOf('--report-path') + 1]!, JSON.stringify([{ RuleID: 'safe-id', StartLine: 1 }]));
+      return { status: invocation === 1 ? 1 : 3, error: undefined };
+    }) as never,
+  });
+  assert.equal(result.complete, false);
+  assert.deepEqual(result.findings, [{ rule: safeGitleaksRuleId('safe-id'), path: 'first.txt', line: 3, origin: 'committed', redacted: true }]);
+  assert.ok(result.reason && !/secret|token|key/i.test(result.reason));
 });
 
 test('Gitleaks exit status must agree with a valid nonempty or empty JSON report', () => {
@@ -208,11 +247,11 @@ test('Gitleaks exit status must agree with a valid nonempty or empty JSON report
     writeFileSync(args[args.indexOf('--report-path') + 1]!, JSON.stringify(body));
     return { status, error: undefined };
   };
-  const emptyWithLeakStatus = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks' }), run: execute(1, []) as never });
+  const emptyWithLeakStatus = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: execute(1, []) as never });
   assert.equal(emptyWithLeakStatus.complete, false);
-  const findingWithCleanStatus = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks' }), run: execute(0, [{ RuleID: 'safe-rule', StartLine: 1 }]) as never });
+  const findingWithCleanStatus = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: execute(0, [{ RuleID: 'safe-rule', StartLine: 1 }]) as never });
   assert.equal(findingWithCleanStatus.complete, false);
-  const clean = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks' }), run: execute(0, []) as never });
+  const clean = scanAddedText(change, { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: execute(0, []) as never });
   assert.equal(clean.complete, true);
 });
 
@@ -231,7 +270,7 @@ test('hostile report RuleID is sanitized before a finding is returned', () => {
     writeFileSync(args[args.indexOf('--report-path') + 1]!, JSON.stringify([{ RuleID: hostile, StartLine: 1, Secret: 'NEVER_OUTPUT_SECRET' }]));
     return { status: 1, error: undefined };
   };
-  const result = scanAddedText([{ path: 'safe.txt', line: 9, text: 'payload' }], { probe: () => ({ available: true, backend: 'gitleaks' }), run: run as never });
+  const result = scanAddedText([{ path: 'safe.txt', line: 9, text: 'payload' }], { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: run as never });
   assert.equal(result.complete, true);
   assert.equal(result.findings[0]?.rule, safeGitleaksRuleId(hostile));
   assert.ok(!JSON.stringify(result).includes(hostile));

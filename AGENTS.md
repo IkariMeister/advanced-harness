@@ -50,6 +50,13 @@ Qualify ambiguous terms as the glossary does (for example "review tier", not "ti
 Add or change a term in the glossary in the same change that first uses it; meanings
 from other projects do not apply unless the glossary adopts them.
 
+## Preflight policy
+
+Preflight's repository-specific scanner policy lives in `.harness/preflight.json`
+and `.harness/preflight-allowlist.json`, not in this host-neutral instruction file.
+These policy files are read from the selected trusted base revision; candidate edits
+are review blockers. See [the preflight policy and revision authority](docs/preflight.md#project-policy-and-revision-authority).
+
 ## Testing interactive CLI flows
 
 - Redirected stdin is not interactive CLI QA. If no usable TTY is available, report

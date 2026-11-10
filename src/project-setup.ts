@@ -439,14 +439,32 @@ export function linkedContextSelection(agents: string | undefined): string | und
   return /Read `([^`\r\n]+)` for Advanced Harness project settings/.exec(agents ?? '')?.[1];
 }
 
+export type LocatedContext = { target: string; original: string | undefined };
+
 /** Settings live in AGENTS.md or the context file it links to. */
-export function locateProjectContext(root: string): { target: string; original: string | undefined } {
+export function locateProjectContext(root: string): LocatedContext {
   const agentsPath = join(root, 'AGENTS.md');
   const agents = readContext(agentsPath);
   const linked = linkedContextSelection(agents);
   if (!linked) return { target: agentsPath, original: agents };
   const target = contextPath(root, linked);
   return { target, original: readContext(target) };
+}
+
+export type LocalProjectContextResult =
+  | { status: 'ok'; profile: ProjectProfile; contextRel: string; located: LocatedContext }
+  | { status: 'missing'; reason: string; located: LocatedContext };
+
+/** Reads and parses the project context for a local repository root. */
+export function readLocalProjectContext(root: string, home = homedir()): LocalProjectContextResult {
+  const located = locateProjectContext(root);
+  const contextRel = relative(resolve(root), located.target).replaceAll('\\', '/');
+  const data = contextData(located.original, 'project');
+  if (data === undefined) {
+    return { status: 'missing', reason: `no project settings in ${contextRel}`, located };
+  }
+  const profile = validateProfile(data, home);
+  return { status: 'ok', profile, contextRel, located };
 }
 
 export function recordedLocations(root: string, original: string | undefined, home = homedir()): SharedLocations | undefined {
@@ -457,9 +475,10 @@ export function recordedLocations(root: string, original: string | undefined, ho
 /** Reads this checkout's context and applies the one resolution order. Malformed settings are reported, not thrown. */
 export function resolveProjectLocations(root: string, home = homedir()): LocationResolution {
   try {
-    const { original } = locateProjectContext(root);
-    const data = contextData(original, 'project');
-    return resolveLocationSettings(root, { project: data === undefined ? undefined : validateProfile(data, home), paths: recordedLocations(root, original, home) }, home);
+    const local = readLocalProjectContext(root, home);
+    const project = local.status === 'ok' ? local.profile : undefined;
+    const paths = recordedLocations(root, local.located.original, home);
+    return resolveLocationSettings(root, { project, paths }, home);
   } catch (error) {
     return { status: 'invalid', reason: (error as Error).message };
   }

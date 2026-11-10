@@ -38,12 +38,15 @@ sanitized rule/location fields and a redaction marker only.
 
 Project preflight policy is stored in `.harness/preflight.json` with a replacement
 `forbiddenPathGlobs` array and `.harness/preflight-allowlist.json` with a JSON array
-of justified exact `path`/`rule` exceptions. Preflight reads these files from the
+of justified exact `path`/`rule` exceptions. A line-scoped exception also requires a
+1-based `line` and a `committed`, `staged`, `unstaged`, or `untracked` `origin`.
+Preflight reads these files from the
 explicit `--base` commit, or from `refs/remotes/origin/HEAD` when base comes from
 project context; candidate edits block pending review and cannot change the policy
 used for that run. Both files are optional; malformed trusted
 policy makes preflight inconclusive before secret scanning. See
-[preflight](preflight.md) and [ADR-006](adr/0006-preflight-scope-and-redaction.md).
+[preflight](preflight.md#project-policy-and-revision-authority) and
+[ADR-006](adr/0006-preflight-scope-and-redaction.md).
 
 | Host | Canonical compilation | Native procedure-skill deployment | Doctor static validation | Runtime / exposure and permissions |
 | --- | --- | --- | --- | --- |

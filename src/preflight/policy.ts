@@ -8,16 +8,21 @@ const ALLOWLIST_PATH = '.harness/preflight-allowlist.json';
 const MAX_POLICY_BYTES = 1024 * 1024;
 const POLICY_PATHS = [CONFIG_PATH, ALLOWLIST_PATH] as const;
 export type ProjectPreflightPolicy = { sensitivePathGlobs?: readonly string[]; secretExceptions: SecretException[] };
+export class PreflightPolicyError extends Error {
+  override name = 'PreflightPolicyError';
+  readonly code: 'base-unavailable' | 'invalid';
+  constructor(code: 'base-unavailable' | 'invalid', message: string) { super(message); this.code = code; }
+}
 
 function gitBuffer(root: string, args: string[], maxBuffer = MAX_POLICY_BYTES + 1): Buffer {
   const result = spawnSync('git', ['-C', root, '--literal-pathspecs', ...args], { maxBuffer });
-  if (result.error || result.status !== 0) throw new Error('Trusted preflight policy could not be read from the selected base ref.');
+  if (result.error || result.status !== 0) throw new PreflightPolicyError('invalid', 'Trusted preflight policy could not be read from the selected base ref.');
   return result.stdout;
 }
 
 function resolveCommit(root: string, baseRef: string): string {
   const result = spawnSync('git', ['-C', root, 'rev-parse', '--verify', '--end-of-options', `${baseRef}^{commit}`], { encoding: 'utf8', maxBuffer: 32 * 1024 });
-  if (result.error || result.status !== 0 || !/^[0-9a-f]{40,64}$/i.test(result.stdout.trim())) throw new Error('Trusted preflight policy base ref could not be resolved.');
+  if (result.error || result.status !== 0 || !/^[0-9a-f]{40,64}$/i.test(result.stdout.trim())) throw new PreflightPolicyError('base-unavailable', 'Trusted preflight policy base ref could not be resolved.');
   return result.stdout.trim();
 }
 
@@ -44,7 +49,7 @@ function validateExceptions(value: unknown): SecretException[] {
   const entries = value.map(item => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Secret allowlist entries require path, rule, and justification strings.');
     const candidate = item as Record<string, unknown>;
-    if (Object.keys(candidate).some(key => !['path', 'rule', 'justification', 'line'].includes(key))) throw new Error('Secret allowlist entry contains an unknown setting.');
+    if (Object.keys(candidate).some(key => !['path', 'rule', 'justification', 'line', 'origin'].includes(key))) throw new Error('Secret allowlist entry contains an unknown setting.');
     return candidate as unknown as SecretException;
   });
   validateSecretExceptions(entries);
@@ -52,7 +57,7 @@ function validateExceptions(value: unknown): SecretException[] {
 }
 
 /** Loads validated project policy only from the commit named by the caller's trusted base ref. */
-export function loadProjectPreflightPolicy(root: string, baseRef: string, overrides: { forbiddenPathGlobs?: boolean; secretExceptions?: boolean } = {}): ProjectPreflightPolicy {
+function loadProjectPreflightPolicyUnchecked(root: string, baseRef: string, overrides: { forbiddenPathGlobs?: boolean; secretExceptions?: boolean } = {}): ProjectPreflightPolicy {
   const resolvedRoot = resolve(root);
   const commit = resolveCommit(resolvedRoot, baseRef);
   const config = overrides.forbiddenPathGlobs ? undefined : parseJson(readTrustedFile(resolvedRoot, commit, CONFIG_PATH));
@@ -68,6 +73,14 @@ export function loadProjectPreflightPolicy(root: string, baseRef: string, overri
   }
   const allowlist = overrides.secretExceptions ? undefined : parseJson(readTrustedFile(resolvedRoot, commit, ALLOWLIST_PATH));
   return { ...(sensitivePathGlobs === undefined ? {} : { sensitivePathGlobs }), secretExceptions: allowlist === undefined ? [] : validateExceptions(allowlist) };
+}
+
+export function loadProjectPreflightPolicy(root: string, baseRef: string, overrides: { forbiddenPathGlobs?: boolean; secretExceptions?: boolean } = {}): ProjectPreflightPolicy {
+  try { return loadProjectPreflightPolicyUnchecked(root, baseRef, overrides); }
+  catch (error) {
+    if (error instanceof PreflightPolicyError) throw error;
+    throw new PreflightPolicyError('invalid', error instanceof Error ? error.message : 'Trusted preflight policy validation failed.');
+  }
 }
 
 /** True for either project policy file or an ancestor that could replace its directory. */

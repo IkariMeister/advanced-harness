@@ -22,6 +22,8 @@ export type ChangeEntry = {
   targetLines?: number[];
   /** False when changed bytes cannot be safely represented as added text. */
   addedTextComplete?: boolean;
+  /** Exact old/new commit IDs when this change is a Git gitlink. */
+  gitlink?: { oldId?: string; newId?: string; nestedContentDirty?: boolean };
 };
 
 export type BaseSource = 'option' | 'project-context';
@@ -39,6 +41,8 @@ export type Changeset = {
 export type PreflightContext = {
   worktree: string;
   changeset: Changeset;
+  task?: string | undefined;
+  gitlinkAcknowledgements?: readonly { path: string; oldId: string; newId: string }[] | undefined;
 };
 
 export type CheckOutcome = {
