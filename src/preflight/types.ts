@@ -1,5 +1,10 @@
+import type { EffectivePolicy } from './policy.ts';
+
 /** Status of one preflight check. `inconclusive` means a tool or git call failed; it never counts as a pass. */
 export type CheckStatus = 'pass' | 'warn' | 'block' | 'inconclusive';
+
+/** Policy keys a check can consume. Keys no installed check consumes are reported as recorded but not enforced. */
+export type PolicyKey = 'forbiddenGlobs' | 'prodGlobs' | 'testGlobs' | 'allowlistPath';
 
 export type ChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed';
 export type ChangeOrigin = 'committed' | 'staged' | 'unstaged' | 'untracked';
@@ -39,6 +44,8 @@ export type Changeset = {
 export type PreflightContext = {
   worktree: string;
   changeset: Changeset;
+  /** Effective policy read from the trusted ref. Read-only: worktree edits to the policy never reach checks. */
+  readonly policy: EffectivePolicy;
 };
 
 export type CheckOutcome = {
@@ -47,9 +54,14 @@ export type CheckOutcome = {
   metrics?: Record<string, number>;
 };
 
-/** A pluggable check. Checks report evidence only; they never record approval. */
+/**
+ * A pluggable check. Checks report evidence only; they never record approval.
+ * `policy.configurable` marks ids a project policy may name (enable/disable, severity).
+ * `policy.consumes` lists the policy keys the check enforces.
+ */
 export type PreflightCheck = {
   id: string;
+  policy?: { configurable?: boolean; consumes?: readonly PolicyKey[] };
   run(context: PreflightContext): Promise<CheckOutcome> | CheckOutcome;
 };
 

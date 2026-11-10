@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
 import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, runSetupFlow, saveSetup, setupConfirmation, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
-import { contextData, updateContext } from '../src/project-context.ts';
+import { contextData, contextSectionBlock, updateContext } from '../src/project-context.ts';
+import { DEFAULT_PREFLIGHT_POLICY } from '../src/preflight/policy.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const root = makeTempRoot('harness-project-setup-');
@@ -479,7 +480,8 @@ test('runSetupFlow in project scope supports non-Git and non-Android directory, 
   const code = await runSetupFlow(
     { scope: 'project' },
     {
-      ask: async () => responses.shift()!,
+      // The preflight policy question is answered by its text, so the positional queue below is unchanged.
+      ask: async question => (question.startsWith('Type policy') ? '' : responses.shift()!),
       output: msg => outputs.push(msg),
       error: msg => outputs.push(`ERROR: ${msg}`),
       home,
@@ -508,4 +510,135 @@ test('CLI script parses --global and refuses invalid flag combinations', () => {
 
   // Conflicting options: --global and --scope project
   assert.throws(() => execFileSync(process.execPath, [script, '--global', '--scope', 'project'], { encoding: 'utf8', stdio: 'pipe' }), /Conflicting options/);
+});
+
+// --- Preflight policy in harness:setup (production runSetupFlow path) -------
+
+const policyPrompt = 'Type policy to add the suggested preflight policy; Enter skips';
+
+/** A project checkout with its own AGENTS.md (or the given --context file) and scripted answers keyed by question prefix. */
+function policySetup(t: { after: (fn: () => void) => void }) {
+  const root = makeTempRoot('harness-policy-setup-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'app');
+  mkdirSync(join(project, '.git'), { recursive: true });
+  const home = join(root, 'home');
+  mkdirSync(home);
+  const outputs: string[] = [];
+  const asked: string[] = [];
+  const run = (options: { context?: string; policy?: string; confirm?: string; backups?: string }) => runSetupFlow(
+    { project, ...(options.context ? { context: options.context } : {}) },
+    {
+      ask: async (question, suggested) => {
+        asked.push(question);
+        if (question.startsWith('Command shell')) return 'bash';
+        if (question.startsWith('Base branch')) return 'main';
+        if (question.startsWith('Parent directory')) return join(root, 'trees');
+        if (question.startsWith('Shared MEMORY.md')) return join(root, 'memory', 'MEMORY.md');
+        if (question.startsWith('Full preview')) return options.confirm ?? 'cancel';
+        if (question === policyPrompt) return options.policy ?? '';
+        return suggested ?? '';
+      },
+      output: message => outputs.push(message),
+      error: message => outputs.push(`ERROR: ${message}`),
+      home,
+      xdgConfigHome: join(root, 'xdg'),
+      recoveryDirectory: options.backups ?? join(root, 'backups'),
+      cwd: root,
+    },
+  );
+  return { root, project, outputs, asked, run };
+}
+
+const sectionOf = (text: string | undefined) => (text === undefined ? undefined : contextSectionBlock(text, 'preflight'));
+
+test('preflight opt-in: one notice and one question, then save writes the suggested section with instructions', async t => {
+  const { project, outputs, asked, run } = policySetup(t);
+  writeFileSync(join(project, 'AGENTS.md'), '# Existing rules\n');
+  assert.equal(await run({ policy: 'policy', confirm: 'save' }), 0);
+  assert.equal(asked.filter(question => question === policyPrompt).length, 1);
+  assert.equal(outputs.filter(message => message.startsWith('No preflight policy is recorded')).length, 1);
+  const text = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+  assert.ok(text.startsWith('# Existing rules\n'));
+  assert.deepEqual(contextData(text, 'preflight'), DEFAULT_PREFLIGHT_POLICY);
+  assert.ok(text.includes('evidence configuration for harness:preflight. It is not approval'));
+  assert.deepEqual(validateProfile(contextData(text, 'project')).baseBranch, 'main');
+  assert.ok(outputs.some(message => message.startsWith('Proposed preflight policy section')));
+});
+
+test('preflight opt-in then cancel: files are byte-identical and no backup directory is created', async t => {
+  const { root, project, outputs, run } = policySetup(t);
+  const original = '# Existing rules\n';
+  writeFileSync(join(project, 'AGENTS.md'), original);
+  assert.equal(await run({ policy: 'policy', confirm: '' }), 0);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), original);
+  assert.equal(existsSync(join(root, 'backups')), false);
+  assert.ok(outputs.some(message => message.startsWith('Cancelled. Nothing changed')));
+});
+
+test('preflight skip via Enter or a non-token answer records nothing', async t => {
+  const { project, run } = policySetup(t);
+  const original = '# Existing rules\n';
+  for (const [index, policy] of ['', 'yes', 'Policy', 'policy please'].entries()) {
+    writeFileSync(join(project, 'AGENTS.md'), original);
+    assert.equal(await run({ policy, confirm: 'save', backups: join(project, '..', `backups-${index}`) }), 0);
+    const text = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+    assert.equal(sectionOf(text), undefined, `answer ${JSON.stringify(policy)} must not add a preflight section`);
+    assert.ok(text.startsWith(original));
+  }
+});
+
+test('an existing valid preflight policy is kept byte-for-byte and is not prompted, including with CRLF line endings', async t => {
+  const { project, outputs, asked, run } = policySetup(t);
+  const section = updateContext('', 'preflight', { version: 1, checks: { 'path-policy': { severity: 'warn' } } }, ['Keep this instruction.']);
+  const original = ('# Rules\n\n' + section).replaceAll('\n', '\r\n');
+  writeFileSync(join(project, 'AGENTS.md'), original);
+  assert.equal(await run({ confirm: 'save' }), 0);
+  assert.equal(asked.some(question => question.startsWith('Type policy')), false);
+  assert.ok(outputs.includes('Existing preflight policy kept unchanged.'));
+  const text = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+  assert.equal(sectionOf(text), sectionOf(original));
+  assert.ok(text.startsWith(original), 'the existing bytes, including the preflight section, are preserved');
+  assert.deepEqual(contextData(text, 'preflight'), { version: 1, checks: { 'path-policy': { severity: 'warn' } } });
+});
+
+test('an existing preflight section with replace mode is flagged in the preview and kept', async t => {
+  const { project, outputs, asked, run } = policySetup(t);
+  writeFileSync(join(project, 'AGENTS.md'), updateContext('', 'preflight', { version: 1, forbiddenGlobs: { mode: 'replace', globs: ['**/*.x'] } }, []));
+  assert.equal(await run({ confirm: 'cancel' }), 0);
+  assert.equal(asked.some(question => question.startsWith('Type policy')), false);
+  assert.ok(outputs.some(message => message.startsWith('Warning: preflight policy forbiddenGlobs.mode is "replace"')));
+});
+
+test('an invalid existing preflight policy aborts before any prompt or write', async t => {
+  const { root, project, asked, run } = policySetup(t);
+  const invalid = '# Rules\n\n<!-- advanced-harness:preflight:start -->\n## Advanced Harness preflight settings\n\n```json\n{\n  "version": 1,\n  "forbidenGlobs": { "mode": "add", "globs": ["**/*.x"] }\n}\n```\n<!-- advanced-harness:preflight:end -->\n';
+  writeFileSync(join(project, 'AGENTS.md'), invalid);
+  await assert.rejects(run({ policy: 'policy', confirm: 'save' }), /AGENTS\.md preflight policy: unknown key "forbidenGlobs"; allowed: version, checks, forbiddenGlobs, prodGlobs, testGlobs, allowlistPath\. No files changed\./);
+  assert.equal(asked.length, 0);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), invalid);
+  assert.equal(existsSync(join(root, 'backups')), false);
+});
+
+test('an alternate --context receives the preflight section; save and cancel both behave', async t => {
+  const { root, project, outputs, run } = policySetup(t);
+  mkdirSync(join(project, 'docs'));
+  const context = join(project, 'docs', 'HARNESS.md');
+  const agents = '# Project guidance\n';
+  const original = '# Original context\n';
+  writeFileSync(join(project, 'AGENTS.md'), agents);
+  writeFileSync(context, original);
+
+  assert.equal(await run({ context: 'docs/HARNESS.md', policy: 'policy', confirm: '' }), 0);
+  assert.equal(readFileSync(context, 'utf8'), original);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents);
+  assert.equal(existsSync(join(root, 'backups')), false);
+  assert.ok(outputs.some(message => message.startsWith('Cancelled. Nothing changed')));
+
+  assert.equal(await run({ context: 'docs/HARNESS.md', policy: 'policy', confirm: 'save' }), 0);
+  const saved = readFileSync(context, 'utf8');
+  assert.deepEqual(contextData(saved, 'preflight'), DEFAULT_PREFLIGHT_POLICY);
+  assert.ok(saved.startsWith(original));
+  assert.equal(sectionOf(readFileSync(join(project, 'AGENTS.md'), 'utf8')), undefined, 'AGENTS.md holds only the reference');
+  assert.ok(readFileSync(join(project, 'AGENTS.md'), 'utf8').includes('docs/HARNESS.md'));
 });

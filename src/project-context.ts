@@ -3,7 +3,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { SetupFile } from './project-setup.ts';
 import { parseConfiguration } from './native-installer.ts';
 
-export type ContextSection = 'project' | 'integrations' | 'model-preferences' | 'paths';
+export type ContextSection = 'project' | 'integrations' | 'model-preferences' | 'paths' | 'preflight';
 const marker = (section: ContextSection, edge: string) => `<!-- advanced-harness:${section}:${edge} -->`;
 
 export function readContext(path: string): string | undefined {
@@ -54,6 +54,12 @@ export function updateContext(text: string | undefined, section: ContextSection,
 /** Detects any harness section, including legacy instructions-only blocks without JSON. */
 export function hasContextSection(text: string | undefined, section: ContextSection): boolean {
   return !!text && bounds(text, section) !== undefined;
+}
+
+/** The marked section exactly as stored, markers included; undefined when the section is absent. */
+export function contextSectionBlock(text: string, section: ContextSection): string | undefined {
+  const range = bounds(text, section);
+  return range ? text.slice(...range) : undefined;
 }
 
 /** Removes a section and the blank line that updateContext placed before it. */

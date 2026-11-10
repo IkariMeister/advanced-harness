@@ -9,40 +9,42 @@ import { baseContextCheck, pathPolicyCheck, secretScanCheck } from '../src/prefl
 import { collectChangeset } from '../src/preflight/changeset.ts';
 import { exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
 import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
+import type { EffectivePolicy, ForbiddenGlobs } from '../src/preflight/policy.ts';
 import { entryDecision, runCli } from '../scripts/preflight.ts';
 import { safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
 import { makeTempRoot } from './temp-directory.ts';
 
 const script = resolve(import.meta.dirname, '../scripts/preflight.ts');
 const contextSections = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'];
+const noPolicy: EffectivePolicy = { source: 'none', disabled: [], severity: {}, inert: [] };
 
 test('path policy normalizes case and separators, skips deletions, and supports project glob replacement', async () => {
   const changeset = (entries: Changeset['entries']): Changeset => ({ top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries });
   const entry = (path: string, status: 'added' | 'deleted' = 'added') => ({ path, status, origin: 'untracked' as const, content: Buffer.from('x') });
-  const run = (entries: Changeset['entries'], globs?: readonly string[]) => pathPolicyCheck(globs).run({ worktree: '/', changeset: changeset(entries) });
+  const run = (entries: Changeset['entries'], forbidden?: ForbiddenGlobs) => pathPolicyCheck().run({ worktree: '/', changeset: changeset(entries), policy: { ...noPolicy, ...(forbidden ? { forbiddenGlobs: forbidden } : {}) } });
   assert.equal((await run([entry('Secrets\\ID_RSA.pub')])).status, 'block');
   assert.equal((await run([{ ...entry('safe.txt'), oldPath: 'secret.pem', status: 'renamed' }])).status, 'pass');
   assert.equal((await run([entry('foo/old.pem', 'deleted')])).status, 'pass');
-  assert.equal((await run([entry('artifact/custom.bin')], ['**/*.bin'])).status, 'block');
-  assert.equal((await run([entry('artifact/custom.bin')], ['**/*.pem'])).status, 'pass');
+  assert.equal((await run([entry('artifact/custom.bin')], { mode: 'replace', globs: ['**/*.bin'] })).status, 'block');
+  assert.equal((await run([entry('artifact/custom.bin')], { mode: 'replace', globs: ['**/*.pem'] })).status, 'pass');
 });
 
 test('secret scan reports only a redacted rule and location and validates exact exceptions', async () => {
   const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [{ path: 'src/token.ts', status: 'added', origin: 'untracked', kind: 'file', content: Buffer.from('token'), addedText: 'const api_key = "THIS_IS_A_FAKE_SECRET_VALUE_0123456789"', targetLines: [7] }] };
   const scanner = (changes: Parameters<typeof scanAddedText>[0]) => scanAddedText(changes, { probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
-  const outcome = await secretScanCheck([], scanner).run({ worktree: '/', changeset });
+  const outcome = await secretScanCheck([], scanner).run({ worktree: '/', changeset, policy: noPolicy });
   assert.equal(outcome.status, 'block');
   assert.ok(!outcome.evidence.join('').includes('THIS_IS_A_FAKE_SECRET_VALUE_0123456789'));
   if (outcome.status === 'block') assert.ok(outcome.evidence.some(line => line === 'high-entropy-assignment at src/token.ts:7 [REDACTED]'));
   const exception = secretScanCheck([{ path: 'src/token.ts', rule: 'high-entropy-assignment', justification: ' Reviewed placeholder only ' }], scanner);
-  assert.equal((await exception.run({ worktree: '/', changeset })).status, 'pass');
+  assert.equal((await exception.run({ worktree: '/', changeset, policy: noPolicy })).status, 'pass');
   const gitleaksScanner = () => ({ backend: 'gitleaks', complete: true, findings: [{ rule: safeGitleaksRuleId('custom-rule'), path: 'src/token.ts', line: 7, redacted: true as const }] });
   const gitleaksException = secretScanCheck([{ path: 'src/token.ts', rule: 'custom-rule', justification: ' Reviewed exact rule ' }], gitleaksScanner);
-  assert.equal((await gitleaksException.run({ worktree: '/', changeset })).status, 'pass');
+  assert.equal((await gitleaksException.run({ worktree: '/', changeset, policy: noPolicy })).status, 'pass');
   const { addedText: _addedText, ...binaryEntry } = changeset.entries[0]!;
   const binaryChangeset: Changeset = { ...changeset, entries: [{ ...binaryEntry, addedTextComplete: false }] };
   let binaryScannerCalled = false;
-  const binaryOutcome = await secretScanCheck([], () => { binaryScannerCalled = true; return { backend: 'builtin', complete: true, findings: [] }; }).run({ worktree: '/', changeset: binaryChangeset });
+  const binaryOutcome = await secretScanCheck([], () => { binaryScannerCalled = true; return { backend: 'builtin', complete: true, findings: [] }; }).run({ worktree: '/', changeset: binaryChangeset, policy: noPolicy });
   assert.equal(binaryOutcome.status, 'inconclusive');
   assert.equal(binaryScannerCalled, false);
 });
@@ -228,7 +230,7 @@ test('checks run in deterministic id order and aggregate block/warn', async () =
   const make = (id: string, status: 'pass' | 'warn' | 'block'): PreflightCheck => ({ id, run: () => { order.push(id); return { status, evidence: [`${id} evidence`], metrics: { n: 1 } }; } });
   const result = await runPreflight({ worktree: root, base: 'main', checks: [make('c', 'block'), make('a', 'pass'), make('b', 'warn')] });
   assert.deepEqual(order, ['a', 'b', 'c']);
-  assert.deepEqual(result.checks.map((check) => check.id), ['a', 'b', 'c']);
+  assert.deepEqual(result.checks.map((check) => check.id), ['a', 'b', 'c', 'policy']);
   assert.equal(result.approved, false);
   assert.deepEqual(result.blocking, ['c: c evidence']);
   assert.deepEqual(result.warnings, ['b: b evidence']);
@@ -253,17 +255,39 @@ test('empty check list, unknown status, and duplicate check ids are inconclusive
   const unknownRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'u', run: () => ({ status: 'weird' as unknown as CheckStatus, evidence: ['weird'] }) }] });
   assert.equal(unknownRes.approved, false);
   assert.equal(exitCodeFor(unknownRes), 2);
-  assert.equal(unknownRes.checks[0]?.status, 'inconclusive');
+  assert.equal(unknownRes.checks.find((check) => check.id === 'u')?.status, 'inconclusive');
 
   const dupRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'dup', run: () => ({ status: 'pass', evidence: [] }) }, { id: 'dup', run: () => ({ status: 'pass', evidence: [] }) }] });
   assert.equal(dupRes.approved, false);
   assert.equal(exitCodeFor(dupRes), 2);
 });
 
+test('early inconclusive results keep the built-in policy row with the same reason', async () => {
+  const root = repo();
+  const policyRow = (result: { checks: { id: string; status: CheckStatus; evidence: string[] }[] }) => result.checks.find((check) => check.id === 'policy');
+
+  const noBase = await runPreflight({ worktree: root });
+  assert.equal(exitCodeFor(noBase), 2);
+  assert.equal(policyRow(noBase)?.status, 'inconclusive');
+  assert.match(policyRow(noBase)!.evidence[0]!, /No base ref/);
+
+  const missingWorktree = await runPreflight({ worktree: join(root, 'missing-worktree'), base: 'main' });
+  assert.equal(exitCodeFor(missingWorktree), 2);
+  assert.equal(policyRow(missingWorktree)?.status, 'inconclusive');
+  assert.match(policyRow(missingWorktree)!.evidence[0]!, /Worktree not found/);
+
+  const emptyChecks = await runPreflight({ worktree: root, base: 'main', checks: [] });
+  assert.equal(policyRow(emptyChecks)?.status, 'inconclusive');
+
+  const duplicate = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'dup', run: () => ({ status: 'pass', evidence: [] }) }, { id: 'dup', run: () => ({ status: 'pass', evidence: [] }) }] });
+  assert.equal(policyRow(duplicate)?.status, 'inconclusive');
+  assert.match(policyRow(duplicate)!.evidence[0]!, /Duplicate preflight check id: dup/);
+});
+
 test('a throwing check is inconclusive, not a pass', async () => {
   const root = repo();
   const result = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'x', run: () => { throw new Error('boom'); } }] });
-  assert.equal(result.checks[0]?.status, 'inconclusive');
+  assert.equal(result.checks.find((check) => check.id === 'x')?.status, 'inconclusive');
   assert.equal(result.approved, false);
   assert.equal(exitCodeFor(result), 2);
 });
@@ -413,6 +437,42 @@ test('CLI exit codes and JSON contract', () => {
   // CLI exit 2 when the --base ref does not exist (missing-base case)
   const exit2Cli = cli('--worktree', blockRepo, '--base', 'does-not-exist');
   assert.equal(exit2Cli.status, 2);
+});
+
+/** Repo on `main` whose committed AGENTS.md holds project settings and a `preflight` section; checked out on `task`. */
+function policyCliRepo(): string {
+  const root = makeTempRoot('preflight-cli-policy-');
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 'test@example.com');
+  git(root, 'config', 'user.name', 'Test');
+  git(root, 'config', 'core.autocrlf', 'false');
+  writeFileSync(join(root, 'AGENTS.md'), updateContext(updateContext('', 'project', projectProfile(root), []), 'preflight', { version: 1 }, []));
+  git(root, 'add', 'AGENTS.md');
+  git(root, 'commit', '-q', '-m', 'project context with preflight policy on main');
+  simulateOriginHead(root);
+  git(root, 'checkout', '-q', '-b', 'task');
+  return root;
+}
+
+test('CLI --json lists the built-in policy check when a trusted policy is present', () => {
+  const root = policyCliRepo();
+  const run = cli('--worktree', root, '--base', 'main', '--json');
+  assert.equal(run.status, 0, run.stderr);
+  const parsed = JSON.parse(run.stdout) as { checks: { id: string; status: CheckStatus; evidence: string[] }[] };
+  const policy = parsed.checks.find((check) => check.id === 'policy');
+  assert.equal(policy?.status, 'pass', run.stdout);
+  assert.match(policy!.evidence.join('\n'), /Policy source: AGENTS\.md at trusted ref refs\/remotes\/origin\/HEAD\./);
+});
+
+test('CLI --json makes every check inconclusive with exit 2 when the trusted policy cannot be loaded', () => {
+  const root = policyCliRepo();
+  git(root, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  const run = cli('--worktree', root, '--base', 'main', '--json');
+  assert.equal(run.status, 2, run.stderr);
+  const parsed = JSON.parse(run.stdout) as { checks: { id: string; status: CheckStatus; evidence: string[] }[] };
+  assert.ok(parsed.checks.length > 0, run.stdout);
+  assert.ok(parsed.checks.every((check) => check.status === 'inconclusive'), run.stdout);
+  assert.match(parsed.checks.find((check) => check.id === 'policy')!.evidence.join('\n'), /git remote set-head origin --auto/);
 });
 
 test('runCli maps an unexpected runner failure to exit 2 with the unexpected-error message', async () => {
@@ -584,7 +644,7 @@ test('R-03: base-context leavesRepo guard fires for a linked target outside the 
   writeFileSync(join(worktree, 'AGENTS.md'), 'Read `ctx.md` for Advanced Harness project settings before planning.\n');
   writeFileSync(join(worktree, 'ctx.md'), updateContext('', 'project', projectProfile(worktree), []));
   const changeset: Changeset = { top: makeTempRoot('preflight-guard-top-'), base: 'main', baseSource: 'project-context', mergeBase: '', head: '', entries: [] };
-  const outcome = await baseContextCheck.run({ worktree, changeset });
+  const outcome = await baseContextCheck.run({ worktree, changeset, policy: noPolicy });
   assert.equal(outcome.status, 'inconclusive');
   assert.match(outcome.evidence[0]!, /resolves outside the repository/);
 });

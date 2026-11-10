@@ -9,6 +9,7 @@ This directory contains proposed and accepted architecture decisions for Advance
 | [ADR-003](0003-multi-methodology-development-architecture.md) | Multi-Methodology Development Architecture | Proposed | Methodology selection, scope, and governance |
 | [ADR-004](0004-canonical-checkout-remote-updates-only.md) | Keep the Canonical Checkout Read-Only Except for Remote Updates | Proposed | Git ownership of the canonical checkout during task bootstrap |
 | [ADR-005](0005-preflight-scope-and-redaction.md) | Preflight Scope, Redaction, and Secret Scanning | Proposed | Changeset scope, secret scanning, and sanitized findings |
+| [ADR-006](0006-project-guardrail-policy-trusted-ref.md) | Project Guardrail Policy Lives in Project Context and Is Read From the Trusted Ref | Proposed | Project-configurable preflight guardrails and their trust anchor |
 
 ## Status lifecycle
 

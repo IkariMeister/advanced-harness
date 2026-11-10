@@ -13,6 +13,14 @@ version between releases.
   and exit codes 0 pass, 1 blocked, 2 inconclusive. When `--base` is omitted, `base-context` verifies
   the project context and `baseBranch` against the local trusted ref `refs/remotes/origin/HEAD`
   (no fetch); a missing trusted ref or unreadable context is inconclusive. See [docs/preflight.md](docs/preflight.md).
+- Project-configurable preflight guardrail policy (BH-069, #184): an optional marked `preflight` section in project
+  context sets enablement and severity for `path-policy`, forbidden globs, and the allowlist path. Preflight reads it
+  only from the trusted ref `refs/remotes/origin/HEAD`; worktree edits are reported as warnings until they reach it.
+  `harness:setup` offers the suggested policy on request. Evidence configuration, not approval. See
+  [docs/configuration.md](docs/configuration.md#preflight-policy) and [docs/preflight.md](docs/preflight.md#project-policy).
+  Preflight results now always include a built-in `policy` check row, including early inconclusive results such as a
+  missing worktree, an unresolvable base, an unavailable changeset, or no checks configured, so consumers that match
+  exact check ids will see this extra row.
 
 ### Changed
 

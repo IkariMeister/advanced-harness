@@ -2,7 +2,10 @@ import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { parseConfiguration, saveInstallation, type Ask } from './native-installer.ts';
-import { contextData, contextPath, hasContextSection, prepareContextFiles, readContext, removeContext, updateContext } from './project-context.ts';
+import { contextData, contextPath, contextSectionBlock, hasContextSection, prepareContextFiles, readContext, removeContext, updateContext } from './project-context.ts';
+// project-setup.ts and preflight/policy.ts import each other: top-level code here must not call imported functions at module evaluation time.
+import { configurableCheckIds, DEFAULT_PREFLIGHT_POLICY, PREFLIGHT_POLICY_INSTRUCTIONS, readPreflightSection, type PreflightPolicy } from './preflight/policy.ts';
+import { pathPolicyCheck } from './preflight/path-policy.ts';
 import { createSharedLocations, defaultLocations, describeLocationPlan, emptyLocationPlan, expandLocations, isAbsoluteOnAnyPlatform, isPortablePath, legacyWorktreeLocations, mainCheckoutRoot, pathsInstructions, planSharedLocations, resolveLocationSettings, sameProject, toStoredPath, validateLocationShape, validateLocations, validatePathsSettings, type LocationPlan, type LocationResolution, type PathsSettings, type SharedLocations } from './shared-locations.ts';
 import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
 
@@ -556,6 +559,18 @@ export async function runSharedLocationStep(root: string, deps: SharedLocationSt
   return 'saved';
 }
 
+/**
+ * Reads an existing preflight section before any setup prompt. An invalid section stops setup with an
+ * actionable error and writes nothing. The configurable ids are the built-in registry's marked checks.
+ */
+export function readSetupPreflightPolicy(original: string | undefined, file: string): { present: boolean; policy?: PreflightPolicy | undefined } {
+  try {
+    return readPreflightSection(original, { configurableIds: configurableCheckIds([pathPolicyCheck()]), file, contextFile: file });
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)} No files changed.`);
+  }
+}
+
 export function saveSetup(files: readonly SetupFile[], backupParent: string): (string | undefined)[] {
   // Preflight the whole set before the first write. Each write rechecks too.
   for (const file of files) {
@@ -691,6 +706,8 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
 
   const target = contextPath(root, options.context);
   const original = readContext(target);
+  // Validated before any prompt: an invalid preflight section stops setup with no writes.
+  const existingPolicy = readSetupPreflightPolicy(original, relative(root, target).replaceAll('\\', '/'));
   const data = contextData(original, 'project');
   let previous: ProjectProfile | undefined = data === undefined ? undefined : validateProfile(data);
   const legacyPath = join(root, '.opencode', 'harness.project.json');
@@ -721,7 +738,15 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   if (!previous && !recorded) recorded = await askLegacyWorktreeLocations(root, { ask, output, home, globalDefaults });
   const profile = await askProfile(root, inspection, previous, ask, shell, globalDefaults, home, recorded);
   if (profile.shell !== shell) throw new Error('Collected shell differs from the selected shell. No files changed.');
+  let proposedPolicy: PreflightPolicy | undefined;
+  if (existingPolicy.present) {
+    output('Existing preflight policy kept unchanged.');
+  } else {
+    output('No preflight policy is recorded in this context file. Preflight uses built-in check behavior until one is saved.');
+    if ((await ask('Type policy to add the suggested preflight policy; Enter skips', '')).trim() === 'policy') proposedPolicy = DEFAULT_PREFLIGHT_POLICY;
+  }
   const files = prepareSetup(root, profile, original, target);
+  if (proposedPolicy) files[0] = { ...files[0]!, updated: updateContext(files[0]!.updated, 'preflight', proposedPolicy, [...PREFLIGHT_POLICY_INSTRUCTIONS]) };
   const updated = files[0]!.updated;
   const locations = planSharedLocations(root, expandLocations(profile, home));
 
@@ -740,6 +765,13 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   const exclude = previewGitExclude(root, 'setup', output);
   output('Proposed context section:');
   output(updated.slice(updated.indexOf('<!-- advanced-harness:project:start -->'), updated.indexOf('<!-- advanced-harness:project:end -->') + '<!-- advanced-harness:project:end -->'.length));
+  if (proposedPolicy) {
+    output('Proposed preflight policy section (evidence configuration, not approval; it takes effect only after this change reaches origin/HEAD):');
+    output(contextSectionBlock(updated, 'preflight') ?? '');
+  }
+  if ((proposedPolicy ?? existingPolicy.policy)?.forbiddenGlobs?.mode === 'replace') {
+    output('Warning: preflight policy forbiddenGlobs.mode is "replace". path-policy will check only the listed globs and drop the built-in sensitive path defaults. Review before saving.');
+  }
   output('Only context files and missing shared locations are written; no separate project profile, Git worktrees, or branches. An existing MEMORY.md is never overwritten. $HOME/ paths are portable; absolute paths are machine-specific: review before committing. No models/MCP or tracked .gitignore files are changed. Legacy files remain untouched.');
 
   const confirm = await ask('Full preview: type save (or legacy setup) to save; Enter or anything else cancels', 'cancel');

@@ -8,6 +8,7 @@
 | Default GitHub backend/host or MCP alias; optional Jira/design aliases | Global `harness.integrations.json` |
 | Global project defaults: suggested base branch, shell, checks, device preference, and worktree/memory parent directories | `~/.config/advanced-harness/project-defaults.json`, or under `$XDG_CONFIG_HOME` when set (host-neutral) |
 | Repository, chosen optional services, Jira project/status mapping, build/test/device/worktree/memory settings | Project `AGENTS.md` (host-neutral project context, shared across all installed hosts) |
+| Project preflight policy: check enablement and severity, forbidden globs, allowlist path | Marked `preflight` section of the same project context file, read from the trusted ref (see [preflight policy](#preflight-policy)) |
 
 Global preferences contain **no repository names, Jira project keys/status mappings, or credentials**. Credentials stay in host/GitHub CLI stores or environment references. Project settings live in the host-neutral `AGENTS.md` and are preserved without modification across multiple hosts in the same workspace. Each host operates with its own scoped receipts, backups, and configurations without clobbering other hosts.
 
@@ -105,6 +106,59 @@ npm run harness:setup -- --project "$HOME/Projects/MarsRoverIA"
 ```
 
 `--context` is supported there too. Settings and integrations use independent marked sections and preserve each other. Worktree and memory paths under your home directory are saved as `$HOME/...` so they can be committed; agents read them from context and ask only when they are missing, invalid, or conflicting ([how shared locations resolve](project-setup.md#how-shared-locations-resolve)). Do not store secrets; review any absolute, machine-specific paths before committing. Context must be Markdown inside the project; malformed markers/JSON, unknown fields, symlinks, and concurrent changes are refused. Multi-file writes are preflighted and individually atomic, not a transaction; partial-write failures disclose completed writes/backups without discarding newer work.
+
+### Preflight policy
+
+Preflight guardrails can be set per project in a marked `preflight` section. It sits in the
+same file as the `project` section: `AGENTS.md`, or the `--context` file it links to. Setup
+writes the section only when you opt in (see [project setup](project-setup.md#what-setup-asks)).
+
+```json
+{
+  "version": 1,
+  "checks": { "path-policy": { "enabled": true, "severity": "block" } },
+  "forbiddenGlobs": { "mode": "add", "globs": ["**/*.secret"] }
+}
+```
+
+- **Location and absence.** The section is not part of the `project` profile and is not in
+  global project defaults. With no section, preflight uses built-in check behavior. Nothing
+  is inferred or migrated.
+- **Schema.** `version` must be `1`. `checks` maps a configurable check id to `enabled`
+  (boolean) and `severity` (`block` or `warn`). `forbiddenGlobs` has `mode` (`add` or
+  `replace`) and 1 to 200 unique `globs`. `prodGlobs` and `testGlobs` each take 1 to 200 unique
+  globs and must be set together; BH-070 enforces them. `allowlistPath` is a repo-relative
+  POSIX path that stays inside the project, is not under `.git/` (on Windows, a segment that
+  differs from `.git` only by trailing dots or spaces counts too), has no `:` in any segment,
+  and is not the context file itself. Unknown keys are rejected at every level. Errors name the file and the JSON path.
+- **Glob rules.** Each glob is non-empty and at most 256 characters, uses forward slashes,
+  is relative, has no `..` segment or drive letter, and contains no NUL, CR, or LF. Only `*`,
+  `**`, and `?` are supported; `[`, `]`, `{`, `}`, and `!` are rejected. Matching is
+  case-insensitive, as in path-policy.
+- **Trusted ref, with or without `--base`.** The effective policy is read from the
+  [trusted ref](glossary.md#workflow-and-tracking) `refs/remotes/origin/HEAD`, using the same
+  AGENTS.md or link resolution as the base-context check. A worktree edit to the section is
+  reported as `warn` and takes effect only after it reaches origin/HEAD. If the trusted ref is
+  unavailable and the worktree has a `preflight` section, the result is inconclusive; the
+  hint is `git remote set-head origin --auto`. There is no CLI flag and no environment
+  override.
+- **Invalid policy.** An invalid `preflight` section in the worktree is reported as `warn`
+  ("does not apply") and never takes effect. An invalid section at the trusted ref makes every
+  check inconclusive (`exit 2`).
+- **Base ref.** The policy has no base-ref key. The base ref is still `baseBranch` in project
+  context, or `--base` when given.
+- **Fixed and configurable checks.** Only `path-policy` is configurable. The fixed checks
+  `changeset`, `base-context`, `policy`, `secret-scan`, and `worktree-boundary` cannot be
+  disabled or downgraded. Naming a fixed check gives a "fixed check" error. Naming an unknown
+  id lists the configurable ids.
+- **Global values are suggestions only.** The suggested policy is a code constant
+  (`DEFAULT_PREFLIGHT_POLICY`). Global project defaults never store a policy, and project
+  context decides.
+- **Preflight allowlist.** `allowlistPath` is resolved in the worktree. Links and junctions
+  are refused at any level, and the file must be regular and at most 1 MiB. A missing file
+  is evidence only. The allowlist entry format belongs to BH-068.
+- **Evidence, never approval.** A policy changes which checks run and how their findings are
+  reported. It never approves work or publication.
 
 ## 3. Optional checks and authentication
 
