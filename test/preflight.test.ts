@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { join, posix, relative, resolve, win32 } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { updateContext } from '../src/project-context.ts';
@@ -652,7 +652,7 @@ function worktreeBoundaryOf(result: { checks: { id: string; status: CheckStatus;
   return result.checks.find((check) => check.id === 'worktree-boundary');
 }
 
-function makeBoundaryFixture(baseDir: string) {
+function makeBoundaryFixture(baseDir: string, options: { originHead?: boolean; link?: boolean } = {}) {
   const repoRoot = join(baseDir, 'repo');
   const configuredWtDir = join(baseDir, 'configured-worktrees');
   mkdirSync(repoRoot, { recursive: true });
@@ -673,9 +673,15 @@ function makeBoundaryFixture(baseDir: string) {
     worktreeDirectory: configuredWtDir,
     memoryPath: join(baseDir, 'mem', 'MEMORY.md'),
   };
-  writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  if (options.link) {
+    writeFileSync(join(repoRoot, 'ctx.md'), updateContext('', 'project', profile, []));
+    writeFileSync(join(repoRoot, 'AGENTS.md'), 'Read `ctx.md` for Advanced Harness project settings before planning.\n');
+  } else {
+    writeFileSync(join(repoRoot, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  }
   git(repoRoot, 'add', '.');
   git(repoRoot, 'commit', '-q', '-m', 'init');
+  if (options.originHead !== false) simulateOriginHead(repoRoot);
   return { repoRoot, configuredWtDir };
 }
 
@@ -762,13 +768,25 @@ test('worktree-boundary: missing worktreeDirectory in project context is blocked
   assert.match(outcome.evidence[0]!, /No shared worktreeDirectory is configured/);
 });
 
-test('worktree-boundary: modified project context / worktreeDirectory in changeset is blocked', async () => {
+test('worktree-boundary: modified project context / worktreeDirectory verification with trusted ref', async () => {
+  // 1. Without trusted ref origin/HEAD, worktreeBoundaryCheck blocks because trusted worktreeDirectory cannot be verified
+  const baseDirNoTrusted = makeTempRoot('preflight-wt-notrusted-');
+  const { repoRoot: repoNoTrusted, configuredWtDir: wtDirNoTrusted } = makeBoundaryFixture(baseDirNoTrusted, { originHead: false });
+  const taskWtNoTrusted = join(wtDirNoTrusted, 'task');
+  git(repoNoTrusted, 'worktree', 'add', '-q', '-b', 'task', taskWtNoTrusted);
+  const outcomeNoTrusted = await worktreeBoundaryCheck.run({
+    worktree: taskWtNoTrusted,
+    changeset: { top: taskWtNoTrusted, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(outcomeNoTrusted.status, 'block');
+  assert.match(outcomeNoTrusted.evidence[0]!, /Trusted worktreeDirectory could not be verified against refs\/remotes\/origin\/HEAD/);
+
+  // 2. With trusted ref origin/HEAD, modifying worktreeDirectory (unstaged, in changeset) blocks
   const baseDir = makeTempRoot('preflight-wt-mod-');
   const { repoRoot, configuredWtDir } = makeBoundaryFixture(baseDir);
   const taskWt = join(configuredWtDir, 'task');
   git(repoRoot, 'worktree', 'add', '-q', '-b', 'task', taskWt);
 
-  // 1. Without trusted ref origin/HEAD, modifying context blocks
   const modifiedProfile = {
     version: 1,
     projectRoot: repoRoot,
@@ -781,34 +799,177 @@ test('worktree-boundary: modified project context / worktreeDirectory in changes
   };
   writeFileSync(join(taskWt, 'AGENTS.md'), updateContext('', 'project', modifiedProfile, []));
   const { entries } = collectChangeset(taskWt, 'main');
-  const outcome = await worktreeBoundaryCheck.run({
+  const outcomeMod = await worktreeBoundaryCheck.run({
     worktree: taskWt,
     changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries },
   });
-  assert.equal(outcome.status, 'block');
-  assert.match(outcome.evidence[0]!, /Project context .* was modified in this changeset/);
+  assert.equal(outcomeMod.status, 'block');
+  assert.match(outcomeMod.evidence[0]!, /modified worktreeDirectory/);
 
-  // 2. With trusted ref origin/HEAD, modifying worktreeDirectory blocks explicitly
-  simulateOriginHead(repoRoot);
-  const outcomeWithTrusted = await worktreeBoundaryCheck.run({
-    worktree: taskWt,
-    changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries },
-  });
-  assert.equal(outcomeWithTrusted.status, 'block');
-  assert.match(outcomeWithTrusted.evidence[0]!, /modified worktreeDirectory/);
-
-  // 3. Modifying an unrelated section in context (e.g. checks) while preserving worktreeDirectory passes
+  // 3. Modifying an unrelated field in AGENTS.md (e.g. checks) while preserving worktreeDirectory passes
   const unmodifiedWtProfile = {
     ...modifiedProfile,
     worktreeDirectory: configuredWtDir,
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'configured', command: 'echo ok' }])),
   };
   writeFileSync(join(taskWt, 'AGENTS.md'), updateContext('', 'project', unmodifiedWtProfile, []));
   const updatedChangeset = collectChangeset(taskWt, 'main');
-  const outcomeUnmodifiedWtDir = await worktreeBoundaryCheck.run({
+  assert.ok(updatedChangeset.entries.some((e) => e.path === 'AGENTS.md'));
+  const outcomeUnrelated = await worktreeBoundaryCheck.run({
     worktree: taskWt,
     changeset: { top: taskWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: updatedChangeset.entries },
   });
-  assert.equal(outcomeUnmodifiedWtDir.status, 'pass');
+  assert.equal(outcomeUnrelated.status, 'pass');
+
+  // 4. Committed edit to worktreeDirectory on task branch when running with --base HEAD (empty changeset entries)
+  writeFileSync(join(taskWt, 'AGENTS.md'), updateContext('', 'project', modifiedProfile, []));
+  git(taskWt, 'add', 'AGENTS.md');
+  git(taskWt, 'commit', '-q', '-m', 'modify worktreeDirectory');
+  const headChangeset = collectChangeset(taskWt, 'HEAD');
+  assert.equal(headChangeset.entries.length, 0);
+  const outcomeCommittedHead = await worktreeBoundaryCheck.run({
+    worktree: taskWt,
+    changeset: headChangeset,
+  });
+  assert.equal(outcomeCommittedHead.status, 'block');
+  assert.match(outcomeCommittedHead.evidence[0]!, /modified worktreeDirectory/);
+
+  const preflightHead = await runPreflight({ worktree: taskWt, base: 'HEAD' });
+  assert.equal(exitCodeFor(preflightHead), 1);
+  const boundaryCheckHead = worktreeBoundaryOf(preflightHead);
+  assert.equal(boundaryCheckHead?.status, 'block');
+  assert.match(boundaryCheckHead!.evidence[0]!, /modified worktreeDirectory/);
+});
+
+test('worktree-boundary: AGENTS.md absent at trusted ref is blocked', async () => {
+  const baseDirAbsent = makeTempRoot('preflight-wt-absent-');
+  const repoAbsent = join(baseDirAbsent, 'repo');
+  const wtDirAbsent = join(baseDirAbsent, 'wt');
+  mkdirSync(repoAbsent, { recursive: true });
+  mkdirSync(wtDirAbsent, { recursive: true });
+  git(repoAbsent, 'init', '-q', '-b', 'main');
+  git(repoAbsent, 'config', 'user.email', 'test@example.com');
+  git(repoAbsent, 'config', 'user.name', 'Test');
+  git(repoAbsent, 'config', 'core.autocrlf', 'false');
+  writeFileSync(join(repoAbsent, 'init.txt'), 'init\n');
+  git(repoAbsent, 'add', '.');
+  git(repoAbsent, 'commit', '-q', '-m', 'init without context');
+  simulateOriginHead(repoAbsent);
+
+  const taskWtAbsent = join(wtDirAbsent, 'task');
+  git(repoAbsent, 'worktree', 'add', '-q', '-b', 'task', taskWtAbsent);
+  const validProfile = {
+    version: 1,
+    projectRoot: repoAbsent,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: wtDirAbsent,
+    memoryPath: join(baseDirAbsent, 'mem', 'MEMORY.md'),
+  };
+  writeFileSync(join(taskWtAbsent, 'AGENTS.md'), updateContext('', 'project', validProfile, []));
+  const outcomeAbsent = await worktreeBoundaryCheck.run({
+    worktree: taskWtAbsent,
+    changeset: { top: taskWtAbsent, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(outcomeAbsent.status, 'block');
+  assert.match(outcomeAbsent.evidence[0]!, /AGENTS\.md is absent at trusted ref/);
+});
+
+test('worktree-boundary: linked context ctx.md verification against trusted ref', async () => {
+  const baseDirLink = makeTempRoot('preflight-wt-link-');
+  const { repoRoot: repoLink, configuredWtDir: wtDirLink } = makeBoundaryFixture(baseDirLink, { link: true });
+  const taskWtLink = join(wtDirLink, 'task');
+  git(repoLink, 'worktree', 'add', '-q', '-b', 'task', taskWtLink);
+
+  // 1. Untouched linked context passes
+  const outcomeLinkUntouched = await worktreeBoundaryCheck.run({
+    worktree: taskWtLink,
+    changeset: { top: taskWtLink, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(outcomeLinkUntouched.status, 'pass');
+
+  // 2. Modifying an unrelated field in ctx.md passes
+  const profileLink = {
+    version: 1,
+    projectRoot: repoLink,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'configured', command: 'echo ok' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: wtDirLink,
+    memoryPath: join(baseDirLink, 'mem', 'MEMORY.md'),
+  };
+  writeFileSync(join(taskWtLink, 'ctx.md'), updateContext('', 'project', profileLink, []));
+  const linkChangeset = collectChangeset(taskWtLink, 'main');
+  assert.ok(linkChangeset.entries.some((e) => e.path === 'ctx.md'));
+  const outcomeLinkUnrelated = await worktreeBoundaryCheck.run({
+    worktree: taskWtLink,
+    changeset: linkChangeset,
+  });
+  assert.equal(outcomeLinkUnrelated.status, 'pass');
+
+  // 3. Modifying worktreeDirectory in ctx.md (unstaged) blocks
+  const profileLinkMod = {
+    ...profileLink,
+    worktreeDirectory: join(baseDirLink, 'other-wt'),
+  };
+  writeFileSync(join(taskWtLink, 'ctx.md'), updateContext('', 'project', profileLinkMod, []));
+  const linkModChangeset = collectChangeset(taskWtLink, 'main');
+  const outcomeLinkMod = await worktreeBoundaryCheck.run({
+    worktree: taskWtLink,
+    changeset: linkModChangeset,
+  });
+  assert.equal(outcomeLinkMod.status, 'block');
+  assert.match(outcomeLinkMod.evidence[0]!, /modified worktreeDirectory/);
+
+  // 4. Modifying worktreeDirectory in ctx.md (committed with --base HEAD) blocks
+  git(taskWtLink, 'add', 'ctx.md');
+  git(taskWtLink, 'commit', '-q', '-m', 'modify worktreeDirectory in ctx.md');
+  const headLinkChangeset = collectChangeset(taskWtLink, 'HEAD');
+  assert.equal(headLinkChangeset.entries.length, 0);
+  const outcomeLinkCommittedHead = await worktreeBoundaryCheck.run({
+    worktree: taskWtLink,
+    changeset: headLinkChangeset,
+  });
+  assert.equal(outcomeLinkCommittedHead.status, 'block');
+  assert.match(outcomeLinkCommittedHead.evidence[0]!, /modified worktreeDirectory/);
+
+  // 5. If AGENTS.md at origin/HEAD links to ctx.md which is absent at origin/HEAD, it blocks
+  const baseDirAbsentCtx = makeTempRoot('preflight-wt-absent-ctx-');
+  const repoAbsentCtx = join(baseDirAbsentCtx, 'repo');
+  const wtDirAbsentCtx = join(baseDirAbsentCtx, 'wt');
+  mkdirSync(repoAbsentCtx, { recursive: true });
+  mkdirSync(wtDirAbsentCtx, { recursive: true });
+  git(repoAbsentCtx, 'init', '-q', '-b', 'main');
+  git(repoAbsentCtx, 'config', 'user.email', 'test@example.com');
+  git(repoAbsentCtx, 'config', 'user.name', 'Test');
+  git(repoAbsentCtx, 'config', 'core.autocrlf', 'false');
+  // Commit AGENTS.md linking to ctx.md, but do not commit ctx.md
+  writeFileSync(join(repoAbsentCtx, 'AGENTS.md'), 'Read `ctx.md` for Advanced Harness project settings before planning.\n');
+  git(repoAbsentCtx, 'add', '.');
+  git(repoAbsentCtx, 'commit', '-q', '-m', 'link to absent ctx.md');
+  simulateOriginHead(repoAbsentCtx);
+
+  const taskWtAbsentCtx = join(wtDirAbsentCtx, 'task');
+  git(repoAbsentCtx, 'worktree', 'add', '-q', '-b', 'task', taskWtAbsentCtx);
+  writeFileSync(join(taskWtAbsentCtx, 'ctx.md'), updateContext('', 'project', {
+    version: 1,
+    projectRoot: repoAbsentCtx,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: Object.fromEntries(contextSections.map((n) => [n, { status: 'unconfigured' }])),
+    device: { preference: 'ask' },
+    worktreeDirectory: wtDirAbsentCtx,
+    memoryPath: join(baseDirAbsentCtx, 'mem', 'MEMORY.md'),
+  }, []));
+  const outcomeAbsentCtx = await worktreeBoundaryCheck.run({
+    worktree: taskWtAbsentCtx,
+    changeset: { top: taskWtAbsentCtx, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
+  });
+  assert.equal(outcomeAbsentCtx.status, 'block');
+  assert.match(outcomeAbsentCtx.evidence[0]!, /ctx\.md is absent at trusted ref/);
 });
 
 test('worktree-boundary: linked worktree outside configured worktreeDirectory is blocked', async () => {
@@ -939,7 +1100,7 @@ test('worktree-boundary: symlink escape and linked worktreeDirectory handling', 
   assert.equal(outcome.status, 'block');
   assert.match(outcome.evidence[0]!, /outside the configured worktreeDirectory/);
 
-  // 2. Legitimate worktreeDirectory reached through a symlink
+  // 2. Legitimate task worktree reached through a symlinked parent directory (configured worktreeDirectory is the real path)
   const linkedWtParent = join(baseDir, 'linked-wt-parent');
   let canLinkParent = false;
   try {
@@ -949,8 +1110,11 @@ test('worktree-boundary: symlink escape and linked worktreeDirectory handling', 
     if ((err as NodeJS.ErrnoException).code !== 'EPERM') throw err;
   }
 
-  if (canLinkParent) {
-  // Point the worktree's project context to the symlinked worktreeDirectory
+  if (!canLinkParent) {
+    t.skip('Directory symlinks unavailable on this platform');
+    return;
+  }
+
   // Note: we test containment of legitWt (inside linkedWtParent) directly against worktreeBoundaryCheck
   // where worktree containment resolves physical symlinks via realpath.
   const legitWt = join(linkedWtParent, 'legit-task');
@@ -960,7 +1124,6 @@ test('worktree-boundary: symlink escape and linked worktreeDirectory handling', 
     changeset: { top: legitWt, base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [] },
   });
   assert.equal(legitOutcome.status, 'pass');
-  }
 });
 
 test('CLI supports --task <key> and reports usage or blocks on mismatch', () => {
@@ -1010,12 +1173,20 @@ test('worktree-boundary: path containment arithmetic edge cases', () => {
   const siblingWithPrefix = `${parent}-other`;
   assert.equal(isPathContained(parent, siblingWithPrefix), false);
 
-  // Windows cross-drive or absolute relative path
-  if (process.platform === 'win32') {
-    assert.equal(isPathContained('C:\\worktrees', 'D:\\worktrees\\task-1'), false);
-    assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees'), false);
-    assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees\\task-1'), true);
-    assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees\\..foo'), true);
-    assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees-other\\task-1'), false);
-  }
+  // POSIX path containment (unconditional on all platforms)
+  const posixParent = '/path/to/worktrees';
+  assert.equal(isPathContained(posixParent, posixParent, posix), false);
+  assert.equal(isPathContained(posixParent, '/path/to/worktrees/task-1', posix), true);
+  assert.equal(isPathContained(posixParent, '/path/to/worktrees/..foo', posix), true);
+  assert.equal(isPathContained(posixParent, '/path/to/worktrees/sub/task-2', posix), true);
+  assert.equal(isPathContained(posixParent, '/path/to', posix), false);
+  assert.equal(isPathContained(posixParent, '/path/to/other', posix), false);
+  assert.equal(isPathContained(posixParent, '/path/to/worktrees-other', posix), false);
+
+  // Windows path containment (unconditional on all platforms)
+  assert.equal(isPathContained('C:\\worktrees', 'D:\\worktrees\\task-1', win32), false);
+  assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees', win32), false);
+  assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees\\task-1', win32), true);
+  assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees\\..foo', win32), true);
+  assert.equal(isPathContained('C:\\worktrees', 'C:\\worktrees-other\\task-1', win32), false);
 });

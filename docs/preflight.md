@@ -14,27 +14,32 @@ npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--
 context (`AGENTS.md` or the context file it links to) is used. There is no
 hardcoded fallback; a missing or unreadable base is [inconclusive](glossary.md#workflow-and-tracking).
 
-**Trust model:** When `--base` is omitted, `baseBranch` is read from the project
-context in the worktree being inspected. The built-in `base-context` check compares
-that context with the project context at the [trusted ref](glossary.md#workflow-and-tracking)
+**Trust model:** Preflight uses the [trusted ref](glossary.md#workflow-and-tracking)
 `refs/remotes/origin/HEAD`, read from the local repository without fetching:
 
-- The linked context target (or `AGENTS.md` itself) and `baseBranch` must match the
-  trusted ref. A difference blocks the run (`exit 1`).
-- If the task modifies the project context file or the root `AGENTS.md` in its
-  changeset, the check blocks the run (`exit 1`). This also covers other context
-  modifications that leave the target and `baseBranch` unchanged.
+- The built-in `base-context` check uses the trusted ref when `--base` is omitted.
+  The worktree's linked context target (or `AGENTS.md` itself) and `baseBranch`
+  must match the trusted ref; a difference blocks the run (`exit 1`). If the task
+  modifies the project context file or the root `AGENTS.md` in its changeset, the
+  check blocks the run (`exit 1`). If the trusted ref is missing, or the project
+  context at the trusted ref is absent or unreadable, `base-context` is
+  inconclusive (`exit 2`), and the evidence suggests passing `--base <ref>` or
+  running `git remote set-head origin --auto`. When `--base <ref>` is passed
+  explicitly, `base-context` skips the trusted-ref comparison and reports context
+  modifications as informational.
+- The built-in `worktree-boundary` check uses the trusted ref on every run (even
+  when `--base` is passed explicitly and independent of whether context files
+  appear in the changeset) to verify `worktreeDirectory`. If the trusted ref or
+  the project context at the trusted ref is unavailable, absent, or unreadable,
+  or if `worktreeDirectory` was modified compared to the trusted ref,
+  `worktree-boundary` blocks the run (`exit 1`).
 - Deleting or renaming the root `AGENTS.md`, or deleting or renaming the linked
   context file, leaves no readable project context in the worktree. Base resolution
   then fails when `--base` is omitted, which is inconclusive (`exit 2`), not a block.
-- If the trusted ref is missing, or the project context at the trusted ref is
-  absent or unreadable, the result is inconclusive (`exit 2`). The evidence names the
-  fix: pass `--base <ref>` or run `git remote set-head origin --auto`.
 
-The check trusts the local `refs/remotes/origin/HEAD` as configured; it does not verify
+The checks trust the local `refs/remotes/origin/HEAD` as configured; they do not verify
 that ref against the remote. Callers that need an authoritative base reference can pass
-`--base <ref>` explicitly. With `--base`, the trusted-ref comparison is skipped and
-context modifications are reported as informational.
+`--base <ref>` explicitly to satisfy `base-context`.
 
 ## Changeset
 
@@ -61,9 +66,10 @@ in the canonical checkout:
 
 - Compares `--git-dir` and `--git-common-dir` from `git rev-parse`. If they resolve to
   the same directory, the target is the canonical checkout and is blocked (`exit 1`).
-- When project context (`AGENTS.md` or the linked context file) is modified in the changeset,
-  verifies that the configured `worktreeDirectory` matches the trusted ref (`refs/remotes/origin/HEAD`);
-  altering the `worktreeDirectory` boundary or failing to verify against the trusted ref blocks (`exit 1`).
+- Verifies the configured `worktreeDirectory` against the trusted ref
+  (`refs/remotes/origin/HEAD`) on every run (independent of the changeset and even
+  when `--base` is provided); altering the `worktreeDirectory` boundary or failing to
+  verify against the trusted ref or trusted project context blocks (`exit 1`).
 - Reads `worktreeDirectory` from project context. A missing `worktreeDirectory` or
   one that does not exist on disk blocks (`exit 1`). Shared-location resolution
   errors (such as conflict or invalid shape) are inconclusive (`exit 2`).
