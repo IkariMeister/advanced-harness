@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { contextData, hasContextSection } from '../project-context.ts';
 // policy.ts and project-setup.ts import each other: top-level code here must not call imported functions at module evaluation time.
 import { locateProjectContext } from '../project-setup.ts';
-import { readTrustedContext, toRepoPath, TRUSTED_REF, trustedCommit, type TrustedContext } from './trusted-context.ts';
+import { readTrustedContext, toRepoPath, TRUSTED_REF, trustedCommit, TrustedRefMissingError, type TrustedContext } from './trusted-context.ts';
 import type { CheckOutcome, CheckStatus, PolicyKey, PreflightCheck } from './types.ts';
 
 /** Severity a configurable check may be set to. A project policy can only move block to warn or warn to block. */
@@ -245,12 +245,17 @@ export function resolveAllowlist(worktree: string, repoPath: string): PolicyAllo
   return { repoPath, absolutePath, present: true };
 }
 
+/**
+ * True when the trusted ref resolves to a commit. Only a ref Git confirms is absent returns false. Any other
+ * failure (Git cannot run, a corrupt repository, a ref whose commit is missing) is rethrown as a load error.
+ */
 function trustedRefAvailable(top: string): boolean {
   try {
     trustedCommit(top);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof TrustedRefMissingError) return false;
+    throw error;
   }
 }
 
@@ -269,8 +274,8 @@ export type PolicyLoadInput = { worktree: string; top: string; checks: readonly 
 
 /**
  * Loads the effective policy from the trusted ref, the only source that takes effect. The worktree copy is
- * compared and reported, never applied. Throws {@link PreflightPolicyError} when the policy cannot be loaded;
- * the runner then reports every check as inconclusive.
+ * compared and reported, never applied. Throws when the policy cannot be loaded (a {@link PreflightPolicyError}, or
+ * a Git failure from the trusted ref); the runner then reports every check as inconclusive.
  */
 export function loadEffectivePolicy({ worktree, top, checks }: PolicyLoadInput): EffectivePolicy {
   const configurableIds = configurableCheckIds(checks);

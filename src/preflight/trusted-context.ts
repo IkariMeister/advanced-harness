@@ -28,11 +28,32 @@ function gitBytes(top: string, args: string[]): Buffer {
   return res.stdout;
 }
 
-/** Resolves the trusted ref to a commit locally. Never fetches. */
+/** Thrown only when Git confirms the trusted ref is absent. Every other failure is a plain Error, which is a load error. */
+export class TrustedRefMissingError extends Error {
+  override name = 'TrustedRefMissingError';
+}
+
+const firstStderrLine = (stderr: string): string => {
+  const line = stderr.trim().split(/\r?\n/)[0] ?? '';
+  return line ? `: ${line}` : '';
+};
+
+/**
+ * Resolves the trusted ref to a commit locally. Never fetches. A ref Git confirms is absent throws
+ * {@link TrustedRefMissingError}. Any other failure (Git cannot run, a corrupt repository, a ref whose
+ * commit is missing or unreadable) throws a plain Error that names the Git failure.
+ */
 export function trustedCommit(top: string): string {
-  const res = spawnSync('git', ['-C', top, '--literal-pathspecs', 'rev-parse', '--verify', '--quiet', `${TRUSTED_REF}^{commit}`], { encoding: 'utf8' });
+  // `show-ref --verify --quiet` exits 1 only when the ref cannot be read (absent, or a symbolic ref whose
+  // target is absent). It does not peel, so it does not fail on a missing commit object (that is checked below).
+  // `rev-parse --verify --quiet` cannot make this split: it exits 1 for a missing object as well.
+  const present = spawnSync('git', ['-C', top, '--literal-pathspecs', 'show-ref', '--verify', '--quiet', TRUSTED_REF], { encoding: 'utf8' });
+  if (present.error) throw new Error(`git show-ref could not be started: ${present.error.message}`);
+  if (present.status === 1) throw new TrustedRefMissingError(`trusted ref ${TRUSTED_REF} unavailable; ${TRUSTED_HINT}`);
+  if (present.status !== 0) throw new Error(`git show-ref ${TRUSTED_REF} failed (exit ${present.status})${firstStderrLine(present.stderr)}`);
+  const res = spawnSync('git', ['-C', top, '--literal-pathspecs', 'rev-parse', '--verify', `${TRUSTED_REF}^{commit}`], { encoding: 'utf8' });
   if (res.error) throw new Error(`git rev-parse could not be started: ${res.error.message}`);
-  if (res.status !== 0) throw new Error(`trusted ref ${TRUSTED_REF} unavailable; ${TRUSTED_HINT}`);
+  if (res.status !== 0) throw new Error(`trusted ref ${TRUSTED_REF} does not resolve to a commit (git rev-parse exit ${res.status})${firstStderrLine(res.stderr)}`);
   const commit = res.stdout.trim();
   if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error(`trusted ref ${TRUSTED_REF} did not resolve to a commit`);
   return commit;

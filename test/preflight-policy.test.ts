@@ -15,6 +15,7 @@ import {
   type EffectivePolicy,
   type PreflightPolicy,
 } from '../src/preflight/policy.ts';
+import { trustedCommit, TrustedRefMissingError } from '../src/preflight/trusted-context.ts';
 import type { CheckResult, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
 import { makeTempRoot } from './temp-directory.ts';
 
@@ -281,6 +282,28 @@ test('a trusted ref that is unavailable with no worktree policy behaves as befor
   assert.equal(resultOf(result, 'base-context')?.status, 'pass', JSON.stringify(result));
   assert.equal(resultOf(result, 'policy')?.status, 'pass');
   assert.match(policyEvidence(result), /Trusted ref refs\/remotes\/origin\/HEAD is unavailable/);
+});
+
+test('(a) a Git failure reading the trusted ref is a load error with --base and no worktree policy: inconclusive (exit 2), not a pass', async () => {
+  const root = policyRepo(undefined);
+  // origin/HEAD still resolves to origin/main, but origin/main now names a commit object that does not exist.
+  writeFileSync(join(root, '.git', 'refs', 'remotes', 'origin', 'main'), '0123456789abcdef0123456789abcdef01234567\n');
+  let caught: unknown;
+  try { trustedCommit(root); } catch (error) { caught = error; }
+  assert.ok(caught instanceof Error && !(caught instanceof TrustedRefMissingError), String(caught));
+  const result = await runPreflight({ worktree: root, base: 'main' });
+  assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
+  assert.ok(result.checks.every((check) => check.status === 'inconclusive'), JSON.stringify(result.checks));
+  assert.match(resultOf(result, 'policy')?.evidence[0] ?? '', /Preflight policy could not be loaded: .*refs\/remotes\/origin\/HEAD/);
+});
+
+test('(b) a confirmed missing trusted ref with no worktree policy is not a load error: it still passes', async () => {
+  const root = policyRepo(undefined, { originHead: false });
+  assert.throws(() => trustedCommit(root), (error: unknown) => error instanceof TrustedRefMissingError);
+  const result = await runPreflight({ worktree: root, base: 'main' });
+  assert.equal(resultOf(result, 'policy')?.status, 'pass', JSON.stringify(result));
+  assert.match(policyEvidence(result), /Policy source: none/);
+  assert.equal(resultOf(result, 'base-context')?.status, 'pass', JSON.stringify(result));
 });
 
 test('an invalid trusted policy makes every check inconclusive with the reason', async () => {

@@ -10,7 +10,7 @@ npm run harness:setup -- --project "C:/path/to/project-checkout"
 
 Or run `npm run harness:setup` and select scope interactively (`global` or `project`). Leading `~` and `$HOME` are expanded in prompted paths. Setup supports any Git checkout/worktree root as well as non-Git project directories. Android Gradle build/settings files and `package.json` scripts are detected heuristically for check suggestions, but neither is required. Git worktree `.git` files are supported. Use `--help` for invocation details. Piped input is refused.
 
-Project settings are stored **only in project context**: `AGENTS.md` by default, or a Markdown file selected with `--context docs/HARNESS.md`. An alternate file receives an explicit reference from `AGENTS.md`. In global scope, defaults are saved to `~/.config/advanced-harness/project-defaults.json`, or under `$XDG_CONFIG_HOME` when it is set. There is no required machine-local JSON profile in the project checkout.
+Project settings are stored **only in project context**: `AGENTS.md` by default, or a Markdown file selected with `--context docs/HARNESS.md`. An alternate file receives an explicit reference from `AGENTS.md`. When `--context` is omitted and `AGENTS.md` already links to a context file, setup follows that link, the same file preflight reads, and keeps the link as written. An unsafe or unreadable link stops setup with no files changed. In global scope, defaults are saved to `~/.config/advanced-harness/project-defaults.json`, or under `$XDG_CONFIG_HOME` when it is set. There is no required machine-local JSON profile in the project checkout.
 
 ### Global project defaults from an older version
 
@@ -79,8 +79,9 @@ Commands can perform arbitrary operations when executed later. Do not enter lite
 
 Setup previews choices, destination files, and the proposed marked instructions section. Type `save` or the legacy `setup` to save (surrounding whitespace is ignored). Enter, `cancel`, and every other response cancel; cancellation explicitly reports that nothing changed. It creates no writes or backups:
 
-1. **`AGENTS.md`** by default: adds/replaces only the section between `<!-- advanced-harness:project:start -->` and `<!-- advanced-harness:project:end -->`. It contains the actual settings as fenced JSON and accompanying workflow instructions. Content outside the section is preserved, including BOM and line endings. Malformed/duplicate markers, invalid embedded JSON/settings, and unknown data fields are rejected rather than discarded.
+1. **`AGENTS.md`** by default, when it holds the settings itself (no link is followed): adds/replaces only the section between `<!-- advanced-harness:project:start -->` and `<!-- advanced-harness:project:end -->`. It contains the actual settings as fenced JSON and accompanying workflow instructions. Content outside the section is preserved, including BOM and line endings. Malformed/duplicate markers, invalid embedded JSON/settings, and unknown data fields are rejected rather than discarded.
 2. **An explicitly selected Markdown context file**, when `--context` is supplied: stores that same marked section, and adds a reference to the file in `AGENTS.md`. The path must stay inside the project. Both files are listed before confirmation.
+3. **The context file an existing `AGENTS.md` link selects**, when `--context` is omitted: the same marked section is stored there, and `AGENTS.md` is not rewritten. The preview states that the link is kept as written.
 
 A chosen preflight policy is written as its own marked `preflight` section in the same file as the project settings. Its instruction text states that it is evidence configuration, not approval. Preflight reads it from the trusted ref, so a new or changed policy takes effect only after the change reaches `origin/HEAD`. Until then, preflight reports the worktree copy as `warn`, and base-context blocks a changed context unless `--base` is given.
 

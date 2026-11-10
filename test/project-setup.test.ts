@@ -642,3 +642,89 @@ test('an alternate --context receives the preflight section; save and cancel bot
   assert.equal(sectionOf(readFileSync(join(project, 'AGENTS.md'), 'utf8')), undefined, 'AGENTS.md holds only the reference');
   assert.ok(readFileSync(join(project, 'AGENTS.md'), 'utf8').includes('docs/HARNESS.md'));
 });
+
+// --- Setup without --context follows AGENTS.md's link (as preflight reads it) ---
+
+/** The link AGENTS.md holds, as written. Setup must not rewrite it. */
+const linkText = 'Read `docs/HARNESS.md` for Advanced Harness project settings before planning.\n';
+
+test('(a) without --context, a valid policy in the linked file is kept unchanged with no prompt; AGENTS.md is byte-identical', async t => {
+  const { project, outputs, asked, run } = policySetup(t);
+  mkdirSync(join(project, 'docs'));
+  writeFileSync(join(project, 'AGENTS.md'), linkText);
+  const context = join(project, 'docs', 'HARNESS.md');
+  const policy = { version: 1, checks: { 'path-policy': { severity: 'warn' } } };
+  const original = updateContext('# Linked rules\n', 'preflight', policy, ['Keep this instruction.']);
+  writeFileSync(context, original);
+
+  assert.equal(await run({ confirm: 'save' }), 0);
+  assert.equal(asked.some(question => question.startsWith('Type policy')), false);
+  assert.ok(outputs.includes('Existing preflight policy kept unchanged.'));
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), linkText);
+  assert.equal(sectionOf(readFileSync(join(project, 'AGENTS.md'), 'utf8')), undefined);
+  const saved = readFileSync(context, 'utf8');
+  assert.equal(sectionOf(saved), sectionOf(original));
+  assert.deepEqual(contextData(saved, 'preflight'), policy);
+  assert.ok(saved.startsWith('# Linked rules\n'));
+});
+
+test('(b) without --context, an invalid policy in the linked file aborts before any prompt, with no writes or backups', async t => {
+  const { root, project, asked, run } = policySetup(t);
+  mkdirSync(join(project, 'docs'));
+  writeFileSync(join(project, 'AGENTS.md'), linkText);
+  const context = join(project, 'docs', 'HARNESS.md');
+  const invalid = '# Rules\n\n<!-- advanced-harness:preflight:start -->\n## Advanced Harness preflight settings\n\n```json\n{\n  "version": 1,\n  "forbidenGlobs": { "mode": "add", "globs": ["**/*.x"] }\n}\n```\n<!-- advanced-harness:preflight:end -->\n';
+  writeFileSync(context, invalid);
+
+  await assert.rejects(run({ policy: 'policy', confirm: 'save' }), /docs\/HARNESS\.md preflight policy: unknown key "forbidenGlobs".*No files changed\./);
+  assert.equal(asked.length, 0);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), linkText);
+  assert.equal(readFileSync(context, 'utf8'), invalid);
+  assert.equal(existsSync(join(root, 'backups')), false);
+});
+
+test('(c) without --context, no policy in the linked file: opt-in then save writes the section into docs/HARNESS.md, not AGENTS.md', async t => {
+  const { project, outputs, asked, run } = policySetup(t);
+  mkdirSync(join(project, 'docs'));
+  writeFileSync(join(project, 'AGENTS.md'), linkText);
+  const context = join(project, 'docs', 'HARNESS.md');
+  const original = '# Linked rules\n';
+  writeFileSync(context, original);
+
+  assert.equal(await run({ policy: 'policy', confirm: 'save' }), 0);
+  assert.equal(asked.filter(question => question === policyPrompt).length, 1);
+  assert.ok(outputs.some(message => message === 'Context file: docs/HARNESS.md (linked from AGENTS.md; the link is kept as written)'));
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), linkText);
+  assert.equal(sectionOf(readFileSync(join(project, 'AGENTS.md'), 'utf8')), undefined);
+  const saved = readFileSync(context, 'utf8');
+  assert.ok(saved.startsWith(original));
+  assert.deepEqual(contextData(saved, 'preflight'), DEFAULT_PREFLIGHT_POLICY);
+  assert.equal(validateProfile(contextData(saved, 'project')).baseBranch, 'main');
+});
+
+test('(d) without --context, no policy in the linked file: opt-in then cancel writes nothing and creates no backups', async t => {
+  const { root, project, outputs, run } = policySetup(t);
+  mkdirSync(join(project, 'docs'));
+  writeFileSync(join(project, 'AGENTS.md'), linkText);
+  const context = join(project, 'docs', 'HARNESS.md');
+  const original = '# Linked rules\n';
+  writeFileSync(context, original);
+
+  assert.equal(await run({ policy: 'policy', confirm: '' }), 0);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), linkText);
+  assert.equal(readFileSync(context, 'utf8'), original);
+  assert.equal(existsSync(join(root, 'backups')), false);
+  assert.ok(outputs.some(message => message.startsWith('Cancelled. Nothing changed')));
+});
+
+test('(e) without --context, a link that escapes the project stops setup before any prompt, with no writes', async t => {
+  const { root, project, asked, run } = policySetup(t);
+  const agents = 'Read `../outside.md` for Advanced Harness project settings before planning.\n';
+  writeFileSync(join(project, 'AGENTS.md'), agents);
+
+  await assert.rejects(run({ policy: 'policy', confirm: 'save' }), /Project context could not be read: Select a Markdown context file inside the project\. No files changed\./);
+  assert.equal(asked.length, 0);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents);
+  assert.equal(existsSync(join(root, 'outside.md')), false);
+  assert.equal(existsSync(join(root, 'backups')), false);
+});

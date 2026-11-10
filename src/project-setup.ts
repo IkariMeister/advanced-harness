@@ -430,11 +430,11 @@ export function updateProjectInstructions(original: string | undefined, profile:
 }
 
 export type SetupFile = { path: string; original: string | undefined; updated: string };
-export function prepareSetup(root: string, profile: ProjectProfile, original: string | undefined, target = join(root, 'AGENTS.md')): SetupFile[] {
+export function prepareSetup(root: string, profile: ProjectProfile, original: string | undefined, target = join(root, 'AGENTS.md'), linkedFromAgents = false): SetupFile[] {
   validateProfile(profile);
   if (profile.projectRoot !== undefined && !sameProject(root, profile.projectRoot)) throw new Error('Profile checkout does not match the selected project.');
   // Full project settings supersede an interim paths section in the same file.
-  return prepareContextFiles(root, target, original, removeContext(updateProjectInstructions(original, profile), 'paths'));
+  return prepareContextFiles(root, target, original, removeContext(updateProjectInstructions(original, profile), 'paths'), linkedFromAgents);
 }
 
 /** The context file AGENTS.md links to (raw path as written), or undefined when AGENTS.md holds the settings itself. */
@@ -442,14 +442,30 @@ export function linkedContextSelection(agents: string | undefined): string | und
   return /Read `([^`\r\n]+)` for Advanced Harness project settings/.exec(agents ?? '')?.[1];
 }
 
-/** Settings live in AGENTS.md or the context file it links to. */
-export function locateProjectContext(root: string): { target: string; original: string | undefined } {
+/** Settings live in AGENTS.md or the context file it links to. `linked` is true when the link was followed. */
+export function locateProjectContext(root: string): { target: string; original: string | undefined; linked: boolean } {
   const agentsPath = join(root, 'AGENTS.md');
   const agents = readContext(agentsPath);
-  const linked = linkedContextSelection(agents);
-  if (!linked) return { target: agentsPath, original: agents };
-  const target = contextPath(root, linked);
-  return { target, original: readContext(target) };
+  const selected = linkedContextSelection(agents);
+  if (!selected) return { target: agentsPath, original: agents, linked: false };
+  const target = contextPath(root, selected);
+  return { target, original: readContext(target), linked: true };
+}
+
+/**
+ * Setup's target. An explicit `--context` wins. Otherwise setup follows AGENTS.md's link the same way preflight does
+ * (locateProjectContext), so the policy is validated in, and written to, the file the link selects.
+ */
+export function setupContextTarget(root: string, context: string | undefined): { target: string; original: string | undefined; linked: boolean } {
+  if (context !== undefined) {
+    const target = contextPath(root, context);
+    return { target, original: readContext(target), linked: false };
+  }
+  try {
+    return locateProjectContext(root);
+  } catch (error) {
+    throw new Error(`Project context could not be read: ${error instanceof Error ? error.message : String(error)} No files changed.`);
+  }
 }
 
 export function recordedLocations(root: string, original: string | undefined, home = homedir()): SharedLocations | undefined {
@@ -704,8 +720,8 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   if (inspection.agents !== undefined) output('Existing AGENTS.md found. Read its rules before confirming setup; content will be preserved outside the marked harness section.');
   output('Do not enter secrets in commands or paths. Use environment references instead. Missing checks remain unconfigured, never waived.');
 
-  const target = contextPath(root, options.context);
-  const original = readContext(target);
+  // Without --context, the target is the file AGENTS.md links to (as preflight reads it), else AGENTS.md.
+  const { target, original, linked } = setupContextTarget(root, options.context);
   // Validated before any prompt: an invalid preflight section stops setup with no writes.
   const existingPolicy = readSetupPreflightPolicy(original, relative(root, target).replaceAll('\\', '/'));
   const data = contextData(original, 'project');
@@ -745,7 +761,7 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
     output('No preflight policy is recorded in this context file. Preflight uses built-in check behavior until one is saved.');
     if ((await ask('Type policy to add the suggested preflight policy; Enter skips', '')).trim() === 'policy') proposedPolicy = DEFAULT_PREFLIGHT_POLICY;
   }
-  const files = prepareSetup(root, profile, original, target);
+  const files = prepareSetup(root, profile, original, target, linked);
   if (proposedPolicy) files[0] = { ...files[0]!, updated: updateContext(files[0]!.updated, 'preflight', proposedPolicy, [...PREFLIGHT_POLICY_INSTRUCTIONS]) };
   const updated = files[0]!.updated;
   const locations = planSharedLocations(root, expandLocations(profile, home));
@@ -759,6 +775,7 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   for (const check of profile.additionalChecks ?? []) output(`${check.name} (additional gate): ${check.command}`);
   output(`Device: ${profile.device.preference}; serial: ${profile.device.serial ?? 'choose at runtime'}`);
   output(`Worktree parent: ${describeStoredLocation(profile.worktreeDirectory, home)}\nShared memory: ${describeStoredLocation(profile.memoryPath, home)}`);
+  output(`Context file: ${relative(root, target).replaceAll('\\', '/')}${linked ? ' (linked from AGENTS.md; the link is kept as written)' : ''}`);
   output('Files to write:');
   for (const file of files) output(`  ${file.path}${file.original === undefined ? ' (new)' : ' (backup before updating)'}`);
   for (const line of describeLocationPlan(locations)) output(line);

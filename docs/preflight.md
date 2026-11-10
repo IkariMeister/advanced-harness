@@ -27,19 +27,26 @@ that context with the project context at the [trusted ref](glossary.md#workflow-
 - Deleting or renaming the root `AGENTS.md`, or deleting or renaming the linked
   context file, leaves no readable project context in the worktree. Base resolution
   then fails when `--base` is omitted, which is inconclusive (`exit 2`), not a block.
-- If the trusted ref is missing, or the project context at the trusted ref is
-  absent or unreadable, the result is inconclusive (`exit 2`). The evidence names the
-  fix: pass `--base <ref>` or run `git remote set-head origin --auto`.
+- If the trusted ref is absent, or the project context at the trusted ref is absent or
+  unreadable, base-context is inconclusive (`exit 2`) when `--base` is omitted. The evidence
+  names the fix: pass `--base <ref>` or run `git remote set-head origin --auto`.
+- Only a trusted ref that Git confirms is absent counts as unavailable (`git show-ref --verify`
+  reports it missing, including a symbolic ref whose target is missing). Any other Git failure
+  reading the trusted ref means the [preflight policy](glossary.md#workflow-and-tracking) could
+  not be loaded: Git cannot run, the repository is corrupt, or the ref's commit object is missing
+  or unreadable. Every check is then inconclusive (`exit 2`), even with `--base` and no worktree
+  policy.
 - The [project policy](#project-policy) is always read from the trusted ref, with or
   without `--base`. A worktree copy of the policy never takes effect: a difference is
   reported as `warn` (`policy` check) and applies only after it reaches origin/HEAD. If
-  the trusted ref is unavailable while the worktree records a policy, every check is
-  inconclusive. With no policy in the worktree, an unavailable trusted ref behaves as before.
+  the trusted ref is absent while the worktree records a policy, every check is
+  inconclusive. With no policy in the worktree, an absent trusted ref behaves as before.
 
 The check trusts the local `refs/remotes/origin/HEAD` as configured; it does not verify
 that ref against the remote. Callers that need an authoritative base reference can pass
-`--base <ref>` explicitly. With `--base`, the trusted-ref comparison is skipped and
-context modifications are reported as informational.
+`--base <ref>` explicitly. With `--base`, base-context skips the trusted-ref comparison and
+reports context modifications as informational. The project policy is still read from the
+trusted ref.
 
 ## Changeset
 

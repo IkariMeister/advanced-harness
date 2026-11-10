@@ -105,12 +105,12 @@ Android commands/device/path settings use the same context model:
 npm run harness:setup -- --project "$HOME/Projects/MarsRoverIA"
 ```
 
-`--context` is supported there too. Settings and integrations use independent marked sections and preserve each other. Worktree and memory paths under your home directory are saved as `$HOME/...` so they can be committed; agents read them from context and ask only when they are missing, invalid, or conflicting ([how shared locations resolve](project-setup.md#how-shared-locations-resolve)). Do not store secrets; review any absolute, machine-specific paths before committing. Context must be Markdown inside the project; malformed markers/JSON, unknown fields, symlinks, and concurrent changes are refused. Multi-file writes are preflighted and individually atomic, not a transaction; partial-write failures disclose completed writes/backups without discarding newer work.
+`--context` is supported there too. Without `--context`, setup follows an existing link in `AGENTS.md` to its context file, as preflight does, and leaves the link as written; an unsafe or unreadable link stops setup with no files changed. Settings and integrations use independent marked sections and preserve each other. Worktree and memory paths under your home directory are saved as `$HOME/...` so they can be committed; agents read them from context and ask only when they are missing, invalid, or conflicting ([how shared locations resolve](project-setup.md#how-shared-locations-resolve)). Do not store secrets; review any absolute, machine-specific paths before committing. Context must be Markdown inside the project; malformed markers/JSON, unknown fields, symlinks, and concurrent changes are refused. Multi-file writes are preflighted and individually atomic, not a transaction; partial-write failures disclose completed writes/backups without discarding newer work.
 
 ### Preflight policy
 
 Preflight guardrails can be set per project in a marked `preflight` section. It sits in the
-same file as the `project` section: `AGENTS.md`, or the `--context` file it links to. Setup
+same file as the `project` section: `AGENTS.md`, or the context file it links to. Setup
 writes the section only when you opt in (see [project setup](project-setup.md#what-setup-asks)).
 
 ```json
@@ -138,10 +138,11 @@ writes the section only when you opt in (see [project setup](project-setup.md#wh
 - **Trusted ref, with or without `--base`.** The effective policy is read from the
   [trusted ref](glossary.md#workflow-and-tracking) `refs/remotes/origin/HEAD`, using the same
   AGENTS.md or link resolution as the base-context check. A worktree edit to the section is
-  reported as `warn` and takes effect only after it reaches origin/HEAD. If the trusted ref is
-  unavailable and the worktree has a `preflight` section, the result is inconclusive; the
-  hint is `git remote set-head origin --auto`. There is no CLI flag and no environment
-  override.
+  reported as `warn` and takes effect only after it reaches origin/HEAD. If Git confirms the trusted
+  ref is absent and the worktree has a `preflight` section, the result is inconclusive; the hint is
+  `git remote set-head origin --auto`. A Git failure reading the trusted ref (Git cannot run, a
+  corrupt repository, or a ref whose commit is missing) means the policy could not be loaded: every
+  check is inconclusive, even with `--base` and no worktree policy. There is no CLI flag and no environment override.
 - **Invalid policy.** An invalid `preflight` section in the worktree is reported as `warn`
   ("does not apply") and never takes effect. An invalid section at the trusted ref makes every
   check inconclusive (`exit 2`).

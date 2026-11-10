@@ -74,7 +74,11 @@ export function removeContext(text: string, section: ContextSection): string {
   return trimmed + text.slice(end);
 }
 
-export function prepareContextFiles(root: string, target: string, original: string | undefined, updated: string): SetupFile[] {
+/**
+ * `linkedFromAgents` is true when AGENTS.md already links to `target` (setup followed that link). The link is then
+ * kept exactly as written, whatever its wording, so AGENTS.md is not rewritten.
+ */
+export function prepareContextFiles(root: string, target: string, original: string | undefined, updated: string, linkedFromAgents = false): SetupFile[] {
   contextPath(root, target);
   const files: SetupFile[] = [{ path: target, original, updated }];
   const agentsPath = join(root, 'AGENTS.md');
@@ -86,7 +90,7 @@ export function prepareContextFiles(root: string, target: string, original: stri
     if (/[\r\n`<>]/.test(child)) throw new Error('Context filename cannot contain instruction delimiters.');
     const link = `Read \`${child}\` for Advanced Harness project settings before planning. Ask on conflicts; configuration is not implementation or publishing approval.`;
     const eol = agents?.includes('\r\n') ? '\r\n' : '\n';
-    if (!agents?.includes(link)) files.push({ path: agentsPath, original: agents, updated: (agents ?? '') + (agents && !agents.endsWith('\n') ? eol : '') + eol + link + eol });
+    if (!linkedFromAgents && !agents?.includes(link)) files.push({ path: agentsPath, original: agents, updated: (agents ?? '') + (agents && !agents.endsWith('\n') ? eol : '') + eol + link + eol });
   }
   return files;
 }
