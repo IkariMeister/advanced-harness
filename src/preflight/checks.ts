@@ -3,7 +3,8 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { contextData, contextPath } from '../project-context.ts';
 import { linkedContextSelection, locateProjectContext, validateProfile } from '../project-setup.ts';
 import type { ChangeOrigin, CheckOutcome, PreflightCheck } from './types.ts';
-import { safeGitleaksRuleId, scanAddedText } from './secret-scanner.ts';
+import { addedTextByteLength, MAX_SECRET_SCAN_BYTES, safeGitleaksRuleId, scanAddedText } from './secret-scanner.ts';
+import { isProjectPreflightPolicyPath } from './policy.ts';
 export { DEFAULT_SENSITIVE_PATH_GLOBS, pathPolicyCheck } from './path-policy.ts';
 
 const TRUSTED_REF = 'refs/remotes/origin/HEAD';
@@ -160,27 +161,57 @@ export const changesetCheck: PreflightCheck = {
   },
 };
 
+/** Project policy files are trusted from --base; edits in the candidate changeset are review blockers. */
+export const policyIntegrityCheck: PreflightCheck = {
+  id: 'policy-integrity',
+  run({ changeset }) {
+    const changed = changeset.entries.flatMap(entry => [entry.path, entry.oldPath].filter((path): path is string => path !== undefined)).filter(isProjectPreflightPolicyPath);
+    const unique = [...new Set(changed)];
+    return unique.length
+      ? { status: 'block', evidence: [`Project preflight policy changes require review: ${unique.map(path => JSON.stringify(path)).join(', ')}.`], metrics: { changedFiles: unique.length } }
+      : { status: 'pass', evidence: ['No project preflight policy files changed.'], metrics: { changedFiles: 0 } };
+  },
+};
+
 export type SecretException = { path: string; rule: string; justification: string };
+const normalizeExceptionPath = (path: string) => path.replaceAll('\\', '/').replace(/^\.\//, '');
+function displayFindingPath(path: string): string {
+  const normalized = path.replaceAll('\\', '/');
+  const points = [...normalized];
+  const clipped = points.slice(0, 240).map(character => /[\u0000-\u001f\u007f]/.test(character) ? `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}` : character).join('');
+  return points.length > 240 ? `${clipped}…` : clipped;
+}
 export function validateSecretExceptions(exceptions: readonly SecretException[]): void {
   for (const exception of exceptions) {
-    if (!exception || typeof exception.path !== 'string' || !exception.path || typeof exception.rule !== 'string' || !exception.rule || typeof exception.justification !== 'string' || !exception.justification.trim()) throw new Error('Secret exceptions require an exact path, rule, and nonblank justification.');
+    if (!exception || typeof exception.path !== 'string' || !exception.path || typeof exception.rule !== 'string' || !exception.rule.trim() || typeof exception.justification !== 'string' || !exception.justification.trim() || /[\u0000-\u001f\u007f]/.test(exception.path) || /[\u0000-\u001f\u007f]/.test(exception.rule)) throw new Error('Secret exceptions require a safe exact path/rule and nonblank justification.');
+    const path = normalizeExceptionPath(exception.path);
+    if (path.startsWith('/') || /^[a-z]:/i.test(path) || path.split('/').includes('..')) throw new Error('Secret exception paths must be exact repository-relative paths.');
   }
 }
 export function secretScanCheck(exceptions: readonly SecretException[] = [], scanner: typeof scanAddedText = scanAddedText): PreflightCheck {
   return { id: 'secret-scan', run({ changeset }) {
     validateSecretExceptions(exceptions);
     const payload = changeset.entries.flatMap(entry => {
-      if (entry.status === 'deleted' || !entry.addedText || entry.addedTextComplete === false) return [];
+      if (entry.status === 'deleted' || entry.addedText === undefined || entry.addedTextComplete === false) return [];
+      if (entry.targetLines?.length === 0) return [];
       const lines = entry.addedText.split(/\r?\n/);
-      return lines.flatMap((text, index) => text ? [{ path: entry.path.replaceAll('\\', '/'), line: entry.targetLines?.[index] ?? index + 1, text }] : []);
+      if (entry.addedText.endsWith('\n')) lines.pop();
+      const addedLines = entry.targetLines === undefined ? lines : lines.slice(0, entry.targetLines.length);
+      return addedLines.map((text, index) => ({ path: entry.path.replaceAll('\\', '/'), line: entry.targetLines?.[index] ?? index + 1, text, origin: entry.origin }));
     });
-    if (changeset.entries.some(entry => entry.status !== 'deleted' && entry.addedTextComplete === false)) {
-      return { status: 'inconclusive', evidence: ['Secret scan could not extract added text from one or more binary changes.'], metrics: { backendGitleaks: 0, complete: 0, findings: 0 } };
+    const incomplete = changeset.entries.filter(entry => entry.status !== 'deleted' && entry.addedTextComplete === false);
+    if (incomplete.length) {
+      const paths = [...new Set(incomplete.map(entry => JSON.stringify(normalizeExceptionPath(entry.path))))];
+      return { status: 'inconclusive', evidence: [`Secret scan could not extract added text from ${paths.length} non-text change(s): ${paths.join(', ')}.`], metrics: { backendGitleaks: 0, backendBuiltin: 0, backendUnavailable: 1, complete: 0, findings: 0, exceptionsApplied: 0, affectedPaths: paths.length } };
     }
+    const payloadBytes = addedTextByteLength(payload);
+    if (payloadBytes > MAX_SECRET_SCAN_BYTES) return { status: 'inconclusive', evidence: ['Secret scan input exceeded the configured 4 MiB aggregate limit.'], metrics: { backendGitleaks: 0, backendBuiltin: 0, backendUnavailable: 1, complete: 0, findings: 0, exceptionsApplied: 0 } };
     const scanned = scanner(payload);
-    if (!scanned.complete) return { status: 'inconclusive', evidence: [`Secret scan backend: ${scanned.backend}.`, scanned.reason ?? 'Secret scanner did not complete.'], metrics: { backendGitleaks: scanned.backend === 'gitleaks' ? 1 : 0, complete: 0, findings: 0 } };
-    const actionable = scanned.findings.filter(finding => !exceptions.some(exception => exception.path === finding.path && canonicalExceptionRule(exception.rule, scanned.backend) === finding.rule && !!exception.justification.trim()));
-    return { status: actionable.length ? 'block' : 'pass', evidence: [`Secret scan backend: ${scanned.backend} (complete).`, ...(actionable.length ? actionable.map(finding => `${finding.rule} at ${finding.path}:${finding.line} [REDACTED]`) : ['No high-confidence secrets found in added text.'])], metrics: { backendGitleaks: scanned.backend === 'gitleaks' ? 1 : 0, complete: 1, findings: actionable.length } };
+    const backendMetrics = { backendGitleaks: scanned.backend === 'gitleaks' ? 1 : 0, backendBuiltin: scanned.backend === 'builtin' ? 1 : 0, backendUnavailable: scanned.backend === 'unavailable' ? 1 : 0 };
+    if (!scanned.complete) return { status: 'inconclusive', evidence: [`Secret scan backend: ${scanned.backend}.`, scanned.reason ?? 'Secret scanner did not complete.'], metrics: { ...backendMetrics, complete: 0, findings: 0, exceptionsApplied: 0 } };
+    const suppressed = scanned.findings.filter(finding => exceptions.some(exception => normalizeExceptionPath(exception.path) === normalizeExceptionPath(finding.path) && canonicalExceptionRule(exception.rule, scanned.backend) === finding.rule && !!exception.justification.trim()));
+    const actionable = scanned.findings.filter(finding => !exceptions.some(exception => normalizeExceptionPath(exception.path) === normalizeExceptionPath(finding.path) && canonicalExceptionRule(exception.rule, scanned.backend) === finding.rule && !!exception.justification.trim()));
+    return { status: actionable.length ? 'block' : 'pass', evidence: [`Secret scan backend: ${scanned.backend} (complete).`, ...(actionable.length ? actionable.map(finding => `${finding.rule} at ${displayFindingPath(finding.path)}:${finding.line} [REDACTED]`) : ['No high-confidence secrets found in added text.'])], metrics: { ...backendMetrics, complete: 1, findings: actionable.length, exceptionsApplied: suppressed.length } };
   } };
 }
 

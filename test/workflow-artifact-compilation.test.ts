@@ -48,6 +48,8 @@ test('compiler emits deterministic documented artifact formats for seven command
   const claude = result.artifacts.find(item => item.host === 'claude-code' && item.command === 'start-issue')!;
   assert.match(claude.content, /\$ARGUMENTS/);
   assert.equal(claude.format, 'command-markdown');
+  // #200 / ADR-005: the compiled Claude artifact carries the human fallback when Operator cannot create the worktree.
+  assert.match(claude.content, /the human creates the task worktree from the updated base/);
   const defect = result.artifacts.find(item => item.host === 'claude-code' && item.command === 'report-defect')!;
   assert.match(defect.content, /issue-42/);
   assert.match(defect.content, /complete report description with \$ARGUMENTS and \$2 text/);

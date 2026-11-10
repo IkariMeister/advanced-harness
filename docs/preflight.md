@@ -48,15 +48,25 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
 - Unstaged renames are reported as an untracked add and an unstaged delete
   (unstaged rename detection `-M` is not run).
 - A deleted file has no contents, which is distinct from a present zero-byte file.
-- Entries also record `kind`: `file`, `symlink` (contents are the link target),
+- Entries also record `kind`: `file`, `symlink` (contents are the link target, read
+  without following it),
   `submodule` (gitlinks or nested git repositories have no contents), or `other`
   (no contents). Contents are read in full with no size limit; limits on large
   files are left to the guardrail checks (BH-067..BH-071) that consume them.
 - Text entries include added lines and their target line numbers, grouped by
   committed net diff, staged, unstaged, and untracked origin.
-- Added-line extraction binds each diff to the exact repository path instead of
-  parsing Git's quoted path header. Binary or otherwise undecodable diffs are
-  marked incomplete and make secret scanning inconclusive.
+- Added-line extraction uses Git's literal path mode, disables external diff and
+  textconv, and binds each diff to exact repository paths. For detected renames,
+  extraction includes both old and destination paths; the regression test verifies
+  destination line numbers. Binary or otherwise undecodable diffs are marked
+  incomplete and make secret scanning inconclusive, with affected paths reported.
+- The changeset contains all file bytes, but secret-scanner input is bounded to
+  4 MiB aggregate UTF-8 payload. The cap is checked before either scanner is
+  selected or invoked; oversized input is inconclusive. Added blank lines are retained, and
+  the scanner receives separate contiguous runs per file and origin. Empty input
+  skips the scanner subprocess. The Gitleaks invocation has a fixed 10-second
+  timeout. Untracked symlinks are not followed and make secret scanning
+  inconclusive.
 - `path-policy` blocks configured sensitive paths (including rename destinations)
   and skips deletions. The default glob list is case-insensitive and project
   replaceable. Rule exceptions require an exact path/rule pair and a trimmed,
@@ -64,21 +74,38 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
 - Default path globs: `**/.env*`, `**/id_rsa*`, `**/.DS_Store`, `**/keys/**`,
   `**/keystores/**`, `**/*.key`, `**/*.pem`, `**/*.p12`, `**/*.pfx`,
   `**/*.jks`, `**/*.keystore`, `**/build/**`, and `**/dist/**`.
-  Programmatic `runPreflight` callers can replace the list with
-  `sensitivePathGlobs` and provide exact `secretExceptions` entries containing
-  `path`, `rule`, and a nonblank `justification`. For Gitleaks findings, the
+  Preflight reads `.harness/preflight.json` (`forbiddenPathGlobs`) and
+  `.harness/preflight-allowlist.json` from the explicit `--base` commit, or from
+  `refs/remotes/origin/HEAD` when base comes from project context. It never reads
+  candidate working-tree policy contents. Changes to either policy file in
+  the candidate changeset block pending review. Programmatic `runPreflight`
+  callers can explicitly supply `sensitivePathGlobs` and `secretExceptions`; these
+  caller-supplied values take precedence over the trusted files. Projects provide justified exceptions in
+  `.harness/preflight-allowlist.json`, a JSON array of entries containing `path`,
+  `rule`, and a nonblank `justification`; programmatic callers use
+  `secretExceptions`. Project policy is validated after resolving the changeset
+  base and before check execution or secret scanning.
+  Custom `checks` cannot be combined with explicit policy overrides or configured
+  project policy. Exceptions are normalized for separators and a leading `./`,
+  then match the exact path/rule pair. Their trimmed justification is never shown;
+  the full normalized path is retained for matching, while display escapes control
+  characters and shortens very long paths. Metrics report only how many findings
+  were excepted. For Gitleaks findings, the
   displayed rule is a stable SHA-256 label; exceptions use the exact upstream
   Gitleaks `RuleID` so arbitrary report identifiers are never emitted.
 - Secret scanning uses the shared bounded scanner probe described in
-  [ADR-005](adr/0005-preflight-scope-and-redaction.md). Scanner payload is passed
-  on stdin; output is reduced to sanitized rule/location records. If Gitleaks is
-  absent, a documented built-in high-confidence detector runs. Scanner failures
-  and malformed output are inconclusive.
+  [ADR-006](adr/0006-preflight-scope-and-redaction.md). Gitleaks uses the checked-in
+  `src/preflight/gitleaks.toml` default-rule config, a neutral working directory,
+  and an environment with all `GITLEAKS_*` variables removed. Scanner payload is
+  passed on stdin; output is reduced to sanitized rule/location records. If
+  Gitleaks is absent, a documented built-in high-confidence detector runs. An
+  installed but unusable probe or failed/malformed scan is inconclusive. Metrics
+  distinguish Gitleaks, built-in, and unavailable backend states.
 - Gitleaks is invoked as `gitleaks stdin --report-format json --report-path
-  <temporary-report> --redact=100 --no-banner`; JSON findings use `RuleID` and
-  `StartLine`. Exit code 1 is accepted only when the report parses as valid
+  <temporary-report> --redact=100 --no-banner` with the pinned config argument;
+  JSON findings use `RuleID` and `StartLine`. Exit code 1 is accepted only when the report parses as valid
   nonempty findings, and exit code 0 only with an empty report. The temporary
-  report is removed immediately after reading. Gitleaks `RuleID` values are
+  temporary report directory is removed after all runs finish or fail. Gitleaks `RuleID` values are
   emitted as stable SHA-256 labels; exact exceptions match the upstream ID.
 
 ## Result contract

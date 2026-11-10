@@ -56,10 +56,32 @@ export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed,
   // this is the only place they are turned on; their disabled_tools still apply.
   for (const name of mcpServers) overrides.push('-c', `mcp_servers.${tomlKey(name)}.enabled=${mcpAllowed && mcpSelected.includes(name)}`);
   const output = ['--json', '--output-schema', schemaPath, '-o', resultPath];
+  // Codex plugins are off for every child (#209). A plugin-provided MCP server has no [mcp_servers.<name>] table, so
+  // the -c override for it would create a partial table that Codex rejects at config load.
   // "--" ends the options: a task starting with "-" is text, never a Codex flag that could widen the sandbox.
   return resumeId
-    ? ['exec', 'resume', ...overrides, ...output, '--', resumeId, task]
-    : ['-p', `harness-${role}`, 'exec', ...overrides, ...output, '--', task];
+    ? ['exec', 'resume', '--disable', 'plugins', ...overrides, ...output, '--', resumeId, task]
+    : ['-p', `harness-${role}`, '--disable', 'plugins', 'exec', ...overrides, ...output, '--', task];
+}
+
+/**
+ * Discovery call for a role's MCP servers, run with Codex plugins disabled so only servers defined in config.toml are listed.
+ * `run(args)` executes Codex and returns its stdout. Throws, naming the role and Codex's stderr, when the listing fails, so no
+ * role starts with an unknown MCP set.
+ */
+export function listMcpServers(role, run) {
+  let stdout;
+  try { stdout = run(['-p', `harness-${role}`, '--disable', 'plugins', 'mcp', 'list', '--json']); }
+  catch (error) {
+    const stderr = String(error?.stderr ?? '').trim();
+    const reason = stderr || (error instanceof Error ? error.message : String(error));
+    throw new Error(`Codex could not list the MCP servers for role ${role}; no role was launched. Codex said: ${reason}`);
+  }
+  let listed;
+  try { listed = JSON.parse(stdout); }
+  catch { throw new Error(`Codex listed the MCP servers for role ${role} in an unreadable format; no role was launched.`); }
+  if (!Array.isArray(listed)) throw new Error(`Codex listed the MCP servers for role ${role} in an unexpected format; no role was launched.`);
+  return listed.map(server => String(server.name));
 }
 
 /** The MCP servers selected at install. Throws when unreadable, so External never starts with a guessed set. */
@@ -190,8 +212,7 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   const cwd = options['--cd'] ?? process.cwd();
   const mcpSelected = mcpAllowed ? readSelectedMcpServers(home) : [];
   // A failed listing aborts the launch rather than starting a role with unknown MCP servers enabled.
-  const listed = JSON.parse(execFileSync(codex, ['-p', `harness-${options.role}`, 'mcp', 'list', '--json'], { cwd, env, encoding: 'utf8', windowsHide: true }));
-  const mcpServers = listed.map(server => String(server.name));
+  const mcpServers = listMcpServers(options.role, args => execFileSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true }));
   const outputDir = join(tmpdir(), 'advanced-harness-codex');
   mkdirSync(outputDir, { recursive: true });
   const resultPath = join(outputDir, `${options.role}-${Date.now()}.json`);

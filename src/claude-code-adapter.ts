@@ -22,6 +22,7 @@ import { discoverProcedureSkills, planProcedureDeployment, procedureManagedEvide
 import { loadRoleDefinitions } from './role-definitions.ts';
 import { loadWorkflowCommands, workflowCommandIds } from './workflow-commands.ts';
 import {
+  claudeAdvisories,
   claudeChildRoles,
   claudeDisclosures,
   claudeMarkers,
@@ -331,6 +332,11 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
 
   output('Settings and CLAUDE.md are merged: unrelated content is preserved. Unsupported mappings are withheld, not approximated:');
   for (const line of claudeDisclosures(plan.mappings)) output(`  - ${line}`);
+  const advisories = claudeAdvisories(plan.mappings);
+  if (advisories.length) {
+    output('Advisory on Claude Code (instruction only, not enforced):');
+    for (const line of advisories) output(`  - ${line}`);
+  }
   if (scope === 'global') {
     output('Global scope writes your Claude Code user settings (CLI and Desktop): Lead becomes the default agent in every');
     output("session unless a project's .claude/settings.json selects another, and the deny/ask rules apply everywhere.");
@@ -429,6 +435,10 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   output('• MCP configuration: none written; no MCP alias maps exactly to a Claude Code identity.');
   output('Withheld or unsupported on Claude Code:');
   for (const line of claudeDisclosures(plan.mappings)) output(`  - ${line}`);
+  if (advisories.length) {
+    output('Advisory on Claude Code (instruction only, not enforced):');
+    for (const line of advisories) output(`  - ${line}`);
+  }
   output(`Verify in a NEW Claude Code session with /agents and by running npm run harness:doctor -- --host claude-code${scope === 'global' ? ' from a directory without a project-level install' : ''}.\n`);
   return 0;
 }
@@ -528,13 +538,14 @@ export async function diagnoseClaudeCode(options: ClaudeCodeDoctorOptions): Prom
       const ask = Array.isArray(permissions.ask) ? permissions.ask.map(String) : [];
       for (const rule of claudeSettingsDeny) if (!deny.includes(rule)) issues.push(`${settingsLabel} is missing deny rule ${rule}.`);
       for (const rule of claudeSettingsAsk) if (!ask.includes(rule)) issues.push(`${settingsLabel} is missing ask rule ${rule}.`);
-      if (!issues.some(issue => issue.startsWith(settingsLabel))) notes.push(`${settingsLabel} selects lead, denies gh pr merge, sensitive-path Read/Edit, and destructive Git, and prompts for .env reads.`);
+      if (!issues.some(issue => issue.startsWith(settingsLabel))) notes.push(`${settingsLabel} selects lead, denies gh pr merge, sensitive-path Read/Edit, destructive Git, and git fetch --upload-pack/-u (ADR-005), and prompts for .env reads.`);
     }
   } else {
     issues.push(`${settingsLabel} is missing.`);
   }
 
   notes.push(...claudeDisclosures(plan.mappings).map(line => `Withheld or unsupported: ${line}`));
+  notes.push(...claudeAdvisories(plan.mappings).map(line => `Advisory (not enforced): ${line}`));
   notes.push('Discovery is checked by file presence and frontmatter only; Claude Code runtime discovery, agent: lead, and Agent(...) delegation are not verified (no claude CLI or session was invoked).');
   notes.push(`Expected Lead marker: ${claudeMarkers.start} ... ${claudeMarkers.end}`);
   return { ok: issues.length === 0, issues, notes };

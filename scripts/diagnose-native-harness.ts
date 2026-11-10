@@ -9,7 +9,7 @@ import { detectInstalledHosts, parseHostSelection, type HostId } from '../src/ho
 import { describeHarnessCheckout } from '../src/harness-version.ts';
 import { diagnoseProcedureSkills } from '../src/procedure-skill-diagnostics.ts';
 import { diagnoseSharedLocations } from '../src/shared-location-diagnostics.ts';
-import { probeGitleaks } from '../src/preflight/secret-scanner.ts';
+import { formatScannerProbe, probeGitleaks } from '../src/preflight/secret-scanner.ts';
 
 const args = process.argv.slice(2);
 
@@ -62,7 +62,7 @@ if (args.includes('--help')) {
       if (scope) console.log(`Checking scope: ${scope}`);
       console.log(`Inspecting host(s): ${hosts.join(', ')}`);
       const secretScanner = probeGitleaks();
-      console.log(`Secret scanner: ${secretScanner.backend}${secretScanner.reason ? ` (${secretScanner.reason})` : ''}`);
+      console.log(`Secret scanner: ${formatScannerProbe(secretScanner)}`);
 
       let allOk = true;
 

@@ -10,7 +10,7 @@ import { collectChangeset } from '../src/preflight/changeset.ts';
 import { exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
 import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
 import { entryDecision, runCli } from '../scripts/preflight.ts';
-import { safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
+import { MAX_SECRET_SCAN_BYTES, safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
 import { makeTempRoot } from './temp-directory.ts';
 
 const script = resolve(import.meta.dirname, '../scripts/preflight.ts');
@@ -36,7 +36,7 @@ test('secret scan reports only a redacted rule and location and validates exact 
   if (outcome.status === 'block') assert.ok(outcome.evidence.some(line => line === 'high-entropy-assignment at src/token.ts:7 [REDACTED]'));
   const exception = secretScanCheck([{ path: 'src/token.ts', rule: 'high-entropy-assignment', justification: ' Reviewed placeholder only ' }], scanner);
   assert.equal((await exception.run({ worktree: '/', changeset })).status, 'pass');
-  const gitleaksScanner = () => ({ backend: 'gitleaks', complete: true, findings: [{ rule: safeGitleaksRuleId('custom-rule'), path: 'src/token.ts', line: 7, redacted: true as const }] });
+  const gitleaksScanner = () => ({ backend: 'gitleaks' as const, complete: true, findings: [{ rule: safeGitleaksRuleId('custom-rule'), path: 'src/token.ts', line: 7, redacted: true as const }] });
   const gitleaksException = secretScanCheck([{ path: 'src/token.ts', rule: 'custom-rule', justification: ' Reviewed exact rule ' }], gitleaksScanner);
   assert.equal((await gitleaksException.run({ worktree: '/', changeset })).status, 'pass');
   const { addedText: _addedText, ...binaryEntry } = changeset.entries[0]!;
@@ -45,6 +45,44 @@ test('secret scan reports only a redacted rule and location and validates exact 
   const binaryOutcome = await secretScanCheck([], () => { binaryScannerCalled = true; return { backend: 'builtin', complete: true, findings: [] }; }).run({ worktree: '/', changeset: binaryChangeset });
   assert.equal(binaryOutcome.status, 'inconclusive');
   assert.equal(binaryScannerCalled, false);
+  assert.ok(binaryOutcome.evidence.some(line => line.includes('src/token.ts')));
+  assert.equal(binaryOutcome.metrics?.backendUnavailable, 1);
+});
+
+test('secret scanner input retains blank added lines and origin boundaries', async () => {
+  const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [{ path: 'src/a.ts', status: 'modified', origin: 'committed', content: Buffer.from(''), addedText: 'alpha\n\nomega\n', targetLines: [1, 2, 3], addedTextComplete: true }, { path: 'src/a.ts', status: 'modified', origin: 'staged', content: Buffer.from(''), addedText: 'staged\n', targetLines: [4], addedTextComplete: true }] };
+  let received: Parameters<typeof scanAddedText>[0] = [];
+  const check = await secretScanCheck([], (changes) => { received = changes; return { backend: 'builtin', complete: true, findings: [] }; }).run({ worktree: '/', changeset });
+  assert.equal(check.status, 'pass');
+  assert.deepEqual(received.map(item => [item.text, item.origin]), [['alpha', 'committed'], ['', 'committed'], ['omega', 'committed'], ['staged', 'staged']]);
+});
+
+test('aggregate scan cap applies before either scanner and long paths remain exact behind safe display', async () => {
+  const tooLarge = 'x'.repeat(MAX_SECRET_SCAN_BYTES + 1);
+  const oversized: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [{ path: 'large.txt', status: 'added', origin: 'untracked', kind: 'file', content: Buffer.from(''), addedText: tooLarge, targetLines: [1], addedTextComplete: true }] };
+  let called = false;
+  const oversizedOutcome = await secretScanCheck([], () => { called = true; return { backend: 'builtin' as const, complete: true, findings: [] }; }).run({ worktree: '/', changeset: oversized });
+  assert.equal(oversizedOutcome.status, 'inconclusive');
+  assert.equal(called, false, 'the aggregate limit is enforced before either scanner is invoked');
+
+  const path = `src/${'deep/'.repeat(80)}token.ts`;
+  const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [{ path, status: 'added', origin: 'untracked', kind: 'file', content: Buffer.from(''), addedText: 'payload', targetLines: [7], addedTextComplete: true }] };
+  const scanner = () => ({ backend: 'builtin' as const, complete: true, findings: [{ rule: 'fixture-rule', path, line: 7, redacted: true as const }] });
+  const exceptionPath = `./${path.replaceAll('/', '\\')}`;
+  const excepted = await secretScanCheck([{ path: exceptionPath, rule: 'fixture-rule', justification: 'Approved fixture.' }], scanner).run({ worktree: '/', changeset });
+  assert.equal(excepted.status, 'pass');
+  assert.equal(excepted.metrics?.exceptionsApplied, 1, 'exception matching uses the untruncated normalized path');
+  const blocked = await secretScanCheck([], scanner).run({ worktree: '/', changeset });
+  assert.equal(blocked.status, 'block');
+  assert.ok(blocked.evidence.some(line => line.includes('[REDACTED]')));
+  assert.ok(!blocked.evidence.some(line => line.includes(path)), 'display path is safely shortened while finding identity stays complete');
+
+  const controlPath = 'src/first-line\nforged-line.ts';
+  const controlChangeset: Changeset = { ...changeset, entries: [{ ...changeset.entries[0]!, path: controlPath }] };
+  const controlFinding = await secretScanCheck([], () => ({ backend: 'builtin' as const, complete: true, findings: [{ rule: 'fixture-rule', path: controlPath, line: 7, redacted: true as const }] })).run({ worktree: '/', changeset: controlChangeset });
+  assert.equal(controlFinding.status, 'block');
+  assert.ok(controlFinding.evidence.some(line => line.includes('first-line\\u000aforged-line.ts')));
+  assert.ok(controlFinding.evidence.every(line => !line.includes('\n')));
 });
 
 test('built-in secret detector returns sanitized locations only', () => {

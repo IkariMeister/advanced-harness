@@ -196,10 +196,10 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
     },
     disclosures: [
       'Lead is the project default agent (.claude/settings.json agent: lead) and delegates only to 7 child subagents in .claude/agents via Agent(...) tool scoping.',
-      'Per-role tools use tools/disallowedTools allowlists. Operator, Implementer, Reviewer, and QA have no Bash tool because per-role Bash scoping cannot be expressed exactly.',
+      'Per-role tools use tools/disallowedTools allowlists. Implementer, Reviewer, and QA have no Bash tool because per-role Bash scoping cannot be expressed exactly. Operator has Bash for local Git/worktrees (ADR-005): its git fetch --upload-pack/-u denies are project settings deny rules for every role; its git push, git pull, git clone and gh denies are advisory, and Operator Bash calls use Claude\'s default prompts.',
       'MCP aliases (jira, github, figma, stitch) and OpenCode Code Mode have no verified Claude identity; no .mcp.json is written and External has no MCP tools.',
       'Claude permission evaluation is deny > ask > allow; source ordered-last-match exceptions are downgraded to Claude prompts, never to allows.',
-      'Project .claude/settings.json denies Read/Edit of sensitive paths (keystores, signing/local properties, google-services.json, private keys, ~/.ssh, ~/.aws, gh credentials) and Bash git reset --hard, git clean, and force pushes for every session and subagent.',
+      'Project .claude/settings.json denies Read/Edit of sensitive paths (keystores, signing/local properties, google-services.json, private keys, ~/.ssh, ~/.aws, gh credentials) and Bash git reset --hard, git clean, force pushes, and git fetch --upload-pack/-u for every session and subagent.',
       'Project scope or global ~/.claude scope (CLI and Desktop). Claude Code runtime discovery, agent selection, and model aliases are not verified by this harness.',
     ],
   },

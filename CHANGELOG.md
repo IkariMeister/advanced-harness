@@ -25,6 +25,25 @@ version between releases.
   Untouched canonical changes no longer let bootstrap proceed, and a failed fetch no
   longer falls back to branching from the local base. The rule applies only to projects that
   use task worktrees; pinned consumer harness checkouts are unchanged.
+- Claude Code: Operator now has Bash for local Git and task worktree bootstrap, so
+  `/start-issue` can create the worktree there (#200, [ADR-005](docs/adr/0005-claude-code-operator-bash.md),
+  Proposed). Operator's `git fetch --upload-pack` and `-u` denies become project settings
+  deny rules for every session. Its `git push`, `git pull`, `git clone`, and `gh` denies are
+  advisory on Claude Code: instruction only, not enforced. The Operator exception applies only
+  while its shell denies exactly match the ADR-005 list; any missing or extra deny withholds
+  Bash and is reported as unsupported. Implementer, Reviewer, QA, and Lead
+  still have no Bash. If Operator's Bash is unavailable or declined, bootstrap stops for a human
+  to create the worktree or cancel.
+  Upgrade: run `harness:update --host claude-code`. Until you do, `harness:doctor` reports
+  `operator.md` and `CLAUDE.md` as outdated and `.claude/settings.json` as missing the new
+  fetch deny rules.
+
+### Fixed
+
+- Codex role processes (listing, launch and resume) now run with Codex plugins disabled,
+  so plugin-provided MCP servers no longer make every role launch fail with "invalid
+  transport" (#209). If listing the MCP servers fails, the launcher now names the role and
+  Codex's reason and starts nothing.
 
 ## v0.3.0 — 2026-11-08
 

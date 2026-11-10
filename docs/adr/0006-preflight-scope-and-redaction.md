@@ -40,11 +40,23 @@ intermediate commits), staged, unstaged, and nonignored untracked changes. A sha
 bounded, content-free Gitleaks capability probe is used by preflight and doctor.
 When Gitleaks is absent, preflight uses a built-in high-confidence detector;
 coverage may differ between backends. Added payload is passed on shell-free stdin.
+Gitleaks uses the repository-pinned default-rule config from a neutral working
+directory with all `GITLEAKS_*` variables removed. It has a fixed timeout and a
+4 MiB aggregate input limit. Empty payload skips its scan subprocess. Added blank
+lines are retained, and contiguous added-line runs are scanned separately by file
+and origin. Diff extraction disables textconv and external diff; rename extraction
+includes both old and destination paths so findings use destination line numbers.
 Only sanitized rule, location, and a redaction marker may be reported. Invalid,
 unusable, failed, or malformed scanner results are inconclusive.
 
-The baseline path rules are configurable by project. Exceptions match an exact
-path and rule with a trimmed nonblank justification and do not alter path policy.
+The baseline path rules and justified exceptions are loaded from the explicit
+`--base` commit, or `refs/remotes/origin/HEAD` when base comes from project
+context, not candidate worktree files. Changes to either policy
+file in the candidate changeset block pending review. Explicit programmatic policy
+options take precedence. Exceptions match an
+exact normalized path and rule with a trimmed nonblank justification and do not
+alter path policy. Invalid policy is rejected before checks or secret scanning. Custom
+checks cannot be combined with configured policy or explicit policy overrides.
 Gitleaks rule IDs are converted to stable SHA-256 labels for output; exception
 matching hashes the supplied exact upstream rule ID using the same mapping.
 
@@ -61,9 +73,10 @@ are supplied through preflight configuration; exceptions do not alter path polic
 
 ## Adoption
 
-This implementation plan adds added-text/line scope, the path and secret checks,
-the shared doctor probe, regression coverage, and preflight/configuration/doctor
-documentation. Rollback reverts those implementation changes; it does not modify
+The accepted implementation scope adds project policy loading, scanner isolation,
+added-line collection and completion handling, regression coverage, and updated
+preflight/configuration/doctor documentation. Non-text changes remain inconclusive
+and identify affected paths without exposing payload text. Rollback does not modify
 machine configuration or install Gitleaks.
 
 ## Reconsideration

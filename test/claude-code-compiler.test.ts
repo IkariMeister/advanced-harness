@@ -6,9 +6,11 @@ import { loadRoleDefinitions } from '../src/role-definitions.ts';
 import { nativeRoles } from '../src/native-role-types.ts';
 import { HOST_MODEL_PRESETS } from '../src/host-registry.ts';
 import {
+  claudeAdvisories,
   claudeChildRoles,
   claudeDisclosures,
   claudeManagedTools,
+  claudeOperatorShellDenies,
   claudeSettingsAsk,
   claudeSettingsDeny,
   compileClaudeLeadBlock,
@@ -18,6 +20,7 @@ import {
   mergeClaudeMemory,
   mergeClaudeSettings,
 } from '../src/claude-code-compiler.ts';
+import type { CapabilityPolicy, CapabilityRule } from '../src/capability-policy.ts';
 
 const agentsDirectory = fileURLToPath(new URL('../agents/', import.meta.url));
 const definitions = loadRoleDefinitions(agentsDirectory);
@@ -43,18 +46,67 @@ test('child roles cannot spawn agents and receive only their mapped tools', () =
   }
   assert.deepEqual(mappings.researcher.tools, ['Read', 'Glob', 'Grep']);
   assert.deepEqual(mappings.planner.tools, ['Read', 'Glob', 'Grep']);
-  assert.deepEqual(mappings.operator.tools, ['Read', 'Glob', 'Grep', 'Edit', 'Write']);
+  assert.deepEqual(mappings.operator.tools, ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash']);
   assert.deepEqual(mappings.implementer.tools, ['Read', 'Glob', 'Grep', 'Edit', 'Write']);
 });
 
-test('Bash is withheld wherever per-role git/gh deny patterns cannot be scoped; External keeps prompted Bash', () => {
-  for (const role of ['operator', 'implementer', 'reviewer', 'qa'] as const) {
+test('Bash is withheld for Implementer, Reviewer, and QA, where per-role git/gh deny patterns cannot be scoped; External keeps prompted Bash', () => {
+  for (const role of ['implementer', 'reviewer', 'qa'] as const) {
     assert.ok(!toolNames(role).includes('Bash'), role);
     assert.ok(mappings[role].disallowedTools.includes('Bash'), role);
     assert.ok(mappings[role].unsupported.some(line => line.includes('cannot be scoped per role')), role);
   }
   assert.ok(toolNames('external').includes('Bash'));
   assert.ok(!mappings.external.tools.some(tool => tool.startsWith('Edit') || tool === 'Write'));
+  assert.ok(!toolNames('lead').includes('Bash'));
+});
+
+test('Operator has Bash through the listed exception: fetch denies are project settings, remote Git and gh denies are advisory', () => {
+  assert.ok(!mappings.operator.disallowedTools.includes('Bash'));
+  assert.ok(!mappings.operator.unsupported.some(line => line.includes('shell.run')), 'no shell.run line is unsupported for Operator');
+  assert.deepEqual(mappings.operator.advisory.map(line => /shell "([^"]+)"/.exec(line)?.[1]), ['git push *', 'git pull *', 'git clone *', 'gh *']);
+  assert.equal(claudeAdvisories(mappings).length, 4);
+  const promoted = mappings.operator.mapped.filter(line => line.includes('is enforced by project settings (Bash(git fetch'));
+  assert.equal(promoted.length, 3);
+  for (const pattern of ['git fetch *--upl*', 'git fetch -u*', 'git fetch * -u*']) assert.ok(promoted.some(line => line.includes(`shell "${pattern}" deny`)), pattern);
+});
+
+test('project settings deny the Operator fetch upload-pack and -u forms for every session, and not the advisory remote Git or gh patterns', () => {
+  for (const rule of ['Bash(git fetch *--upl*)', 'Bash(git fetch -u*)', 'Bash(git fetch * -u*)']) assert.ok(claudeSettingsDeny.includes(rule), rule);
+  for (const rule of ['Bash(gh *)', 'Bash(git push *)', 'Bash(git pull *)', 'Bash(git clone *)']) assert.ok(!claudeSettingsDeny.includes(rule), rule);
+});
+
+test('the Operator exception is closed: unlisted denies, other roles, and a different base shell effect still withhold Bash', () => {
+  const base: CapabilityPolicy = definitions.operator.deployment.opencode.policy;
+  const withRule = (rule: CapabilityRule): CapabilityPolicy => ({ ...base, rules: [...base.rules, rule] });
+  const shellDeny = (value: string): CapabilityRule => ({ capability: 'shell.run', resource: { kind: 'native-pattern', host: 'opencode', value }, effect: 'deny', binding: { host: 'opencode', action: 'shell' } });
+  const unlisted = mapClaudeRolePolicy('operator', withRule(shellDeny('git rebase *')));
+  assert.ok(!unlisted.tools.includes('Bash'), 'unlisted deny');
+  assert.deepEqual(unlisted.advisory, [], 'withheld Bash discloses no advisory exception line');
+  assert.ok(!unlisted.mapped.some(line => line.includes('is enforced by project settings (Bash(git fetch')), 'withheld Bash discloses no promoted fetch line');
+  assert.ok(!mapClaudeRolePolicy('implementer', base).tools.includes('Bash'), 'Operator policy mapped as implementer');
+  assert.ok(!mapClaudeRolePolicy('operator', withRule({ capability: 'shell.run', resource: { kind: 'all' }, effect: 'allow', binding: { host: 'opencode', action: 'shell' } })).tools.includes('Bash'), 'base shell allow');
+});
+
+test('the Operator exception needs the full listed deny set: removing any listed deny withholds Bash, reports it unsupported, and discloses no exception lines', () => {
+  const base: CapabilityPolicy = definitions.operator.deployment.opencode.policy;
+  for (const listed of Object.keys(claudeOperatorShellDenies)) {
+    const withoutListed = { ...base, rules: base.rules.filter(rule => !(rule.resource.kind === 'native-pattern' && rule.resource.value === listed)) };
+    const mapping = mapClaudeRolePolicy('operator', withoutListed);
+    assert.ok(!mapping.tools.includes('Bash'), `${listed}: Bash withheld`);
+    assert.ok(mapping.disallowedTools.includes('Bash'), `${listed}: Bash disallowed`);
+    assert.ok(mapping.unsupported.some(line => line.includes('no longer match the ADR-005 exception list') && line.includes(listed)), `${listed}: unsupported line`);
+    assert.deepEqual(mapping.advisory, [], `${listed}: advisory empty`);
+    assert.ok(!mapping.mapped.some(line => line.includes('is enforced by project settings (Bash(git fetch')), `${listed}: no promoted fetch line`);
+  }
+});
+
+test('Lead block states the Operator advisory denies and the roles without Bash', () => {
+  const block = compileClaudeLeadBlock(mappings);
+  assert.ok(block.includes('Implementer, Reviewer, and QA have no Bash tool'));
+  assert.ok(!block.includes('Operator, Implementer, Reviewer, and QA have no Bash'));
+  assert.ok(block.includes('its `git push`, `git pull`, `git clone`, and `gh` denies are advisory, not enforced'));
+  assert.ok(block.includes('| `operator` | `haiku` | Read, Glob, Grep, Edit, Write, Bash |'));
 });
 
 test('no Claude role receives MCP or Code Mode identities; they are reported as unsupported', () => {

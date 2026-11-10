@@ -1,6 +1,9 @@
 import type { PreflightCheck } from './types.ts';
 
 export const DEFAULT_SENSITIVE_PATH_GLOBS = ['**/.env*', '**/id_rsa*', '**/.DS_Store', '**/keys/**', '**/keystores/**', '**/*.key', '**/*.pem', '**/*.p12', '**/*.pfx', '**/*.jks', '**/*.keystore', '**/build/**', '**/dist/**'] as const;
+export function validateSensitivePathGlobs(value: unknown): asserts value is readonly string[] {
+  if (!Array.isArray(value) || value.some(glob => typeof glob !== 'string' || !glob.trim() || glob.length > 300 || /[\u0000-\u001f\u007f]/.test(glob) || glob.startsWith('/') || /^[a-z]:/i.test(glob) || glob.replaceAll('\\', '/').split('/').includes('..'))) throw new Error('forbiddenPathGlobs must be an array of safe repository-relative glob strings.');
+}
 function matchesGlob(path: string, glob: string): boolean {
   const p = path.replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
   const g = glob.replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
@@ -17,6 +20,7 @@ function matchesGlob(path: string, glob: string): boolean {
 }
 
 export function pathPolicyCheck(globs: readonly string[] = DEFAULT_SENSITIVE_PATH_GLOBS): PreflightCheck {
+  validateSensitivePathGlobs(globs);
   return { id: 'path-policy', run({ changeset }) {
     const hits = changeset.entries.filter(entry => entry.status !== 'deleted' && globs.some(glob => matchesGlob(entry.path, glob)));
     return hits.length ? { status: 'block', evidence: hits.map(entry => `Sensitive path rule matched: ${entry.path} [${entry.origin}]`), metrics: { matched: hits.length } } : { status: 'pass', evidence: ['No changed paths match configured sensitive path rules.'], metrics: { matched: 0 } };

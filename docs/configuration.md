@@ -27,12 +27,23 @@ Workflow and canonical procedure source compilation can emit deterministic host-
 
 `harness:doctor` statically validates canonical procedure skills and checks the expected emitted skill name, description/frontmatter, and intended-role advisory guidance for OpenCode, Claude Code, and Antigravity. It does not require byte-identical bodies, since installed skill bodies can be customized. A missing expected skill is an error only when a harness installation footprint is detected; otherwise the result is reported as not installed/not checked. Existing expected artifacts can still be inspected without a footprint. Unrelated third-party skills are ignored. Role guidance is advisory only: doctor does not discover/enforce role authorization or grant permissions. Codex and Cursor procedure-skill native deployment is unsupported; their canonical sources can still be statically validated. These checks do not establish runtime discovery/invocation or permissions/enforcement. OpenCode runtime/catalog diagnostics are retained separately, and static results are shown even when runtime verification is inconclusive.
 
-Preflight and doctor share a bounded, content-free Gitleaks probe. Preflight invokes
-`gitleaks stdin --report-format json` with added text on stdin. When Gitleaks is not
-installed, preflight uses a built-in high-confidence detector; backend coverage may
-differ. Installed but unusable scanner interfaces and malformed reports are
-inconclusive. Diagnostics contain sanitized rule/location fields and a redaction
-marker only. See [preflight](preflight.md) and [ADR-005](adr/0005-preflight-scope-and-redaction.md).
+Preflight and doctor share a bounded, content-free Gitleaks probe. Doctor names
+whether Gitleaks is available, absent with built-in fallback, or unusable. Preflight
+invokes `gitleaks stdin --report-format json` with added text on stdin, the pinned
+repository config, a neutral working directory, and no inherited `GITLEAKS_*`
+environment variables. When Gitleaks is absent, preflight uses a built-in
+high-confidence detector; backend coverage may differ. Installed but unusable
+scanner interfaces and malformed reports are inconclusive. Diagnostics contain
+sanitized rule/location fields and a redaction marker only.
+
+Project preflight policy is stored in `.harness/preflight.json` with a replacement
+`forbiddenPathGlobs` array and `.harness/preflight-allowlist.json` with a JSON array
+of justified exact `path`/`rule` exceptions. Preflight reads these files from the
+explicit `--base` commit, or from `refs/remotes/origin/HEAD` when base comes from
+project context; candidate edits block pending review and cannot change the policy
+used for that run. Both files are optional; malformed trusted
+policy makes preflight inconclusive before secret scanning. See
+[preflight](preflight.md) and [ADR-006](adr/0006-preflight-scope-and-redaction.md).
 
 | Host | Canonical compilation | Native procedure-skill deployment | Doctor static validation | Runtime / exposure and permissions |
 | --- | --- | --- | --- | --- |
@@ -50,7 +61,7 @@ offline link/path/script/workflow-command checks; this is not semantic glossary 
 
 **One process per role (#45).** Codex subagents inherit the parent sandbox, approval and MCP settings, so each child role runs as its own `codex exec` process with a profile in `~/.codex/harness-<role>.config.toml`, launched by Lead (your Codex Desktop session) with your approval for every launch. Codex installs at global scope only. Shared-permission and prompt-only fallbacks are not used. Details: [OpenAI Codex installation](installation.md#openai-codex-global-scope-one-process-per-role).
 
-`harness:install --host codex` and `harness:update --host codex` write `~/.codex/` files after explicit confirmation. Every child role requires a model ID and reasoning effort; an existing role's values are the Enter defaults, while a new role requires explicit values. There is no guessed preset or fallback. Choices can come from the live `model/list` catalog, with off-catalog values kept only on an explicit `keep` ([Codex model discovery](installation.md#openai-codex-global-scope-one-process-per-role)). Required answers allow at most three invalid attempts; a closed/rejected prompt aborts before writes. Enter preserves previously selected MCP servers and their disabled-tool entries; enter `-` to clear only selection tracking (it does not re-enable servers or remove disabled tools). Your own content in `~/.codex/AGENTS.md` is kept: the harness changes only its managed Lead block there, and uninstall removes only that block. Workflow skills use `.agents/skills/<name>/SKILL.md`; existing differing skills are preserved because that directory may be shared with other hosts.
+`harness:install --host codex` and `harness:update --host codex` write `~/.codex/` files after explicit confirmation. Every child role requires a model ID and reasoning effort; an existing role's values are the Enter defaults, while a new role requires explicit values. There is no guessed preset or fallback. Choices can come from the live `model/list` catalog, with off-catalog values kept only on an explicit `keep` ([Codex model discovery](installation.md#openai-codex-global-scope-one-process-per-role)). Required answers allow at most three invalid attempts; a closed/rejected prompt aborts before writes. Enter preserves previously selected MCP servers and their disabled-tool entries; enter `-` to clear only selection tracking (it does not re-enable servers or remove disabled tools). Only servers defined in `config.toml` can be selected: child role processes run with Codex plugins disabled, so a plugin-provided MCP server cannot be selected for External (#209). Your own content in `~/.codex/AGENTS.md` is kept: the harness changes only its managed Lead block there, and uninstall removes only that block. Workflow skills use `.agents/skills/<name>/SKILL.md`; existing differing skills are preserved because that directory may be shared with other hosts.
 
 Codex install/update and doctor share one bounded, offset-preserving TOML scanner for basic tables, dotted/quoted keys, scalar values, arrays, and inline tables. Comments, whitespace, line endings, and untouched source slices are preserved. Unsupported multiline strings/arrays, array-of-table forms, and TOML syntax outside this subset are refused rather than normalized. `harness:uninstall --host codex --scope global` restores the receipt-managed files and reverses only the harness's own `config.toml` edits; values changed since install, including a customized `disabled_tools` list, are kept and listed ([Codex uninstall](installation.md#openai-codex-global-scope-one-process-per-role)). Codex runtime behaviour, including an approved role launch, is not yet verified by this harness.
 

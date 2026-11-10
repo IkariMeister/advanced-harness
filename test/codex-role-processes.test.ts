@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { diagnoseCodex, disableMultiAgent, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
 import { codexChildRoles, codexRoleLauncherSource, codexRolePolicies, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from '../src/codex-role-processes.ts';
-import { assertResumable, buildRoleInvocation, isEntryPoint, main as launcherMain, parseProfile, readSelectedMcpServers, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
+import { assertResumable, buildRoleInvocation, isEntryPoint, listMcpServers, main as launcherMain, parseProfile, readSelectedMcpServers, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 
 const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -52,7 +52,7 @@ test('launcher re-applies role settings on launch and resume and switches MCP of
   const profileText = compileCodexRoleProfile('reviewer', policies.reviewer, 'gpt-example', 'high', 'Review.');
   const base = { role: 'reviewer', profileText, mcpServers: ['github', 'my server'], mcpAllowed: false, task: 'Review the diff', schemaPath: 's.json', resultPath: 'r.json' };
   const launch = buildRoleInvocation(base);
-  assert.deepEqual(launch.slice(0, 3), ['-p', 'harness-reviewer', 'exec']);
+  assert.deepEqual(launch.slice(0, 5), ['-p', 'harness-reviewer', '--disable', 'plugins', 'exec']);
   assert.ok(launch.includes('sandbox_mode="read-only"'));
   assert.ok(launch.includes('approval_policy="never"'));
   assert.ok(launch.includes('sandbox_workspace_write.network_access=false'));
@@ -61,7 +61,7 @@ test('launcher re-applies role settings on launch and resume and switches MCP of
   assert.deepEqual(launch.slice(-1), ['Review the diff']);
 
   const resume = buildRoleInvocation({ ...base, resumeId: 'thread-1', task: 'Continue' });
-  assert.deepEqual(resume.slice(0, 2), ['exec', 'resume']);
+  assert.deepEqual(resume.slice(0, 4), ['exec', 'resume', '--disable', 'plugins']);
   assert.ok(!resume.includes('-p'), 'resume has no -p; every setting comes from -c');
   assert.ok(resume.includes('sandbox_mode="read-only"'), 'resume cannot fall back to the base sandbox');
   assert.deepEqual(resume.slice(-2), ['thread-1', 'Continue']);
@@ -380,6 +380,47 @@ test('a task starting with a dash reaches Codex as text, never as a flag (#45)',
     assert.equal(resume.indexOf('--'), resume.length - 3);
   }
   assert.throws(() => buildRoleInvocation({ ...base, task: ' - ' }), /cannot be "-"/);
+});
+
+test('child processes run with Codex plugins disabled, before the -- separator, on launch and resume (#209)', () => {
+  const profileText = compileCodexRoleProfile('external', policies.external, 'm', 'low', 'x');
+  const base = { role: 'external', profileText, mcpServers: ['gh'], mcpAllowed: true, mcpSelected: ['gh'], schemaPath: 's.json', resultPath: 'r.json' };
+  const disabledBeforeSeparator = (args: string[]) => {
+    const flag = args.indexOf('--disable');
+    return flag > 0 && args[flag + 1] === 'plugins' && flag < args.indexOf('--');
+  };
+
+  const launch = buildRoleInvocation({ ...base, task: 'Check the diff' });
+  assert.ok(disabledBeforeSeparator(launch), launch.join(' '));
+  assert.deepEqual(launch.slice(0, 5), ['-p', 'harness-external', '--disable', 'plugins', 'exec']);
+  assert.ok(launch.includes('mcp_servers.gh.enabled=true'), 'the selected config.toml server is still switched on for External');
+
+  const resume = buildRoleInvocation({ ...base, resumeId: 'thread-1', task: 'Continue' });
+  assert.ok(disabledBeforeSeparator(resume), resume.join(' '));
+  assert.deepEqual(resume.slice(0, 4), ['exec', 'resume', '--disable', 'plugins']);
+  assert.ok(resume.includes('mcp_servers.gh.enabled=true'), 'a resume keeps the same MCP set');
+  assert.deepEqual(resume.slice(-3), ['--', 'thread-1', 'Continue']);
+});
+
+test('the MCP listing runs with plugins disabled and names the role and Codex reason when it fails (#209)', () => {
+  const calls: string[][] = [];
+  const names = listMcpServers('external', args => { calls.push(args); return '[{"name":"gh"}]'; });
+  assert.deepEqual(names, ['gh']);
+  assert.deepEqual(calls, [['-p', 'harness-external', '--disable', 'plugins', 'mcp', 'list', '--json']]);
+
+  // The Codex config-load failure from #209: Codex prints its reason on stderr and exits 1.
+  const configError = Object.assign(new Error('Command failed: codex mcp list --json'), { stderr: '\nError loading config: invalid transport in `mcp_servers.codex_app`\n' });
+  assert.throws(
+    () => listMcpServers('researcher', () => { throw configError; }),
+    /could not list the MCP servers for role researcher; no role was launched\. Codex said: Error loading config: invalid transport in `mcp_servers\.codex_app`$/,
+  );
+  // Without stderr the error's own message is the reason; a missing binary still reports ENOENT.
+  assert.throws(
+    () => listMcpServers('qa', () => { throw Object.assign(new Error('spawnSync codex ENOENT'), { stderr: '' }); }),
+    /role qa[\s\S]*Codex said: spawnSync codex ENOENT/,
+  );
+  assert.throws(() => listMcpServers('qa', () => 'not json'), /role qa in an unreadable format/);
+  assert.throws(() => listMcpServers('qa', () => '{}'), /role qa in an unexpected format/);
 });
 
 test('the launcher runs when started through a linked directory, instead of exiting silently (#45)', async t => {
