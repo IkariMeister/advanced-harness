@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import type { SecretException } from './checks.ts';
+import { normalizeExceptionPath, validateSecretExceptions, type SecretException } from './exceptions.ts';
 import { validateSensitivePathGlobs } from './path-policy.ts';
 
 const CONFIG_PATH = '.harness/preflight.json';
@@ -41,17 +41,14 @@ function parseJson(value: string | undefined): unknown | undefined {
 
 function validateExceptions(value: unknown): SecretException[] {
   if (!Array.isArray(value)) throw new Error('Secret allowlist must be a JSON array.');
-  return value.map((item) => {
+  const entries = value.map(item => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Secret allowlist entries require path, rule, and justification strings.');
     const candidate = item as Record<string, unknown>;
-    const path = candidate.path;
-    const rule = candidate.rule;
-    const justification = candidate.justification;
-    if (typeof path !== 'string' || typeof rule !== 'string' || typeof justification !== 'string' || !justification.trim() || /[\u0000-\u001f\u007f]/.test(path) || /[\u0000-\u001f\u007f]/.test(rule)) throw new Error('Secret allowlist entries require a safe exact path/rule and nonblank justification.');
-    const normalized = path.replaceAll('\\', '/').replace(/^\.\//, '');
-    if (!normalized || normalized.startsWith('/') || /^[a-z]:/i.test(normalized) || normalized.split('/').includes('..')) throw new Error('Secret allowlist paths must be exact repository-relative paths.');
-    return { path: normalized, rule: rule.trim(), justification: justification.trim() };
+    if (Object.keys(candidate).some(key => !['path', 'rule', 'justification', 'line'].includes(key))) throw new Error('Secret allowlist entry contains an unknown setting.');
+    return candidate as unknown as SecretException;
   });
+  validateSecretExceptions(entries);
+  return entries.map(entry => ({ ...entry, path: normalizeExceptionPath(entry.path), rule: entry.rule.trim(), justification: entry.justification.trim() }));
 }
 
 /** Loads validated project policy only from the commit named by the caller's trusted base ref. */

@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { updateContext } from '../src/project-context.ts';
 import { baseContextCheck, pathPolicyCheck, secretScanCheck } from '../src/preflight/checks.ts';
 import { collectChangeset } from '../src/preflight/changeset.ts';
-import { exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
+import { exitCodeFor, resolveBase, runPreflight, UnresolvedBaseError } from '../src/preflight/runner.ts';
 import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
 import { entryDecision, runCli } from '../scripts/preflight.ts';
 import { MAX_SECRET_SCAN_BYTES, safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
@@ -36,17 +36,24 @@ test('secret scan reports only a redacted rule and location and validates exact 
   if (outcome.status === 'block') assert.ok(outcome.evidence.some(line => line === 'high-entropy-assignment at src/token.ts:7 [REDACTED]'));
   const exception = secretScanCheck([{ path: 'src/token.ts', rule: 'high-entropy-assignment', justification: ' Reviewed placeholder only ' }], scanner);
   assert.equal((await exception.run({ worktree: '/', changeset })).status, 'pass');
+  const lineScoped = secretScanCheck([{ path: 'src/token.ts', rule: 'high-entropy-assignment', line: 8, justification: 'Only this generated fixture line.' }], scanner);
+  assert.equal((await lineScoped.run({ worktree: '/', changeset })).status, 'block', 'a line-scoped exception does not suppress another line');
   const gitleaksScanner = () => ({ backend: 'gitleaks' as const, complete: true, findings: [{ rule: safeGitleaksRuleId('custom-rule'), path: 'src/token.ts', line: 7, redacted: true as const }] });
   const gitleaksException = secretScanCheck([{ path: 'src/token.ts', rule: 'custom-rule', justification: ' Reviewed exact rule ' }], gitleaksScanner);
   assert.equal((await gitleaksException.run({ worktree: '/', changeset })).status, 'pass');
   const { addedText: _addedText, ...binaryEntry } = changeset.entries[0]!;
-  const binaryChangeset: Changeset = { ...changeset, entries: [{ ...binaryEntry, addedTextComplete: false }] };
+  const binaryChangeset: Changeset = { ...changeset, entries: [{ ...binaryEntry, addedTextComplete: false }, { ...changeset.entries[0]!, path: 'src/other.ts', addedText: 'ordinary text\n', targetLines: [3], addedTextComplete: true }] };
   let binaryScannerCalled = false;
-  const binaryOutcome = await secretScanCheck([], () => { binaryScannerCalled = true; return { backend: 'builtin', complete: true, findings: [] }; }).run({ worktree: '/', changeset: binaryChangeset });
+  const binaryOutcome = await secretScanCheck([], (lines) => { binaryScannerCalled = true; assert.deepEqual(lines.map(line => line.path), ['src/other.ts']); return { backend: 'builtin', complete: true, findings: [] }; }).run({ worktree: '/', changeset: binaryChangeset });
   assert.equal(binaryOutcome.status, 'inconclusive');
-  assert.equal(binaryScannerCalled, false);
+  assert.equal(binaryScannerCalled, true);
   assert.ok(binaryOutcome.evidence.some(line => line.includes('src/token.ts')));
-  assert.equal(binaryOutcome.metrics?.backendUnavailable, 1);
+  assert.equal(binaryOutcome.metrics?.backendBuiltin, 1);
+  assert.equal(binaryOutcome.metrics?.affectedPaths, 1);
+  const noEligibleText = await secretScanCheck([], () => { throw new Error('scanner must not run'); }).run({ worktree: '/', changeset: { ...changeset, entries: [{ ...binaryEntry, addedTextComplete: false }] } });
+  assert.equal(noEligibleText.status, 'inconclusive');
+  assert.equal(noEligibleText.metrics?.notRun, 1);
+  assert.equal(noEligibleText.metrics?.backendBuiltin, 0);
 });
 
 test('secret scanner input retains blank added lines and origin boundaries', async () => {
@@ -322,6 +329,12 @@ test('missing base, missing ref, non-git directories, and unborn HEAD are inconc
   }
 });
 
+test('base resolution exposes an explicit typed unresolved-base error', () => {
+  const resolved = resolveBase(repo(), undefined);
+  assert.ok('error' in resolved);
+  if ('error' in resolved) assert.ok(resolved.error instanceof UnresolvedBaseError);
+});
+
 test('base ref defaults to baseBranch from project context, and base-context fails closed on context changes without explicit base', async () => {
   const root = makeTempRoot('preflight-base-ctx-');
   git(root, 'init', '-q', '-b', 'main');
@@ -451,6 +464,21 @@ test('CLI exit codes and JSON contract', () => {
   // CLI exit 2 when the --base ref does not exist (missing-base case)
   const exit2Cli = cli('--worktree', blockRepo, '--base', 'does-not-exist');
   assert.equal(exit2Cli.status, 2);
+});
+
+test('CLI blocks a secret finding while keeping the payload out of human and JSON output', () => {
+  const root = projectRepo();
+  const secret = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdef';
+  writeFileSync(join(root, 'candidate.txt'), `token=${secret}\n`);
+  const human = cli('--worktree', root, '--base', 'main');
+  assert.equal(human.status, 1, human.stderr);
+  assert.match(human.stdout, /Preflight: BLOCKED/);
+  assert.match(human.stdout, /\[REDACTED\]/);
+  assert.ok(!human.stdout.includes(secret));
+  const json = cli('--worktree', root, '--base', 'main', '--json');
+  assert.equal(json.status, 1, json.stderr);
+  assert.ok(!json.stdout.includes(secret));
+  assert.match(json.stdout, /\[REDACTED\]/);
 });
 
 test('runCli maps an unexpected runner failure to exit 2 with the unexpected-error message', async () => {

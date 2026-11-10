@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { formatScannerProbe, MAX_SECRET_SCAN_BYTES, probeGitleaks, safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
+import { formatScannerProbe, isSupportedGitleaksVersion, MAX_SECRET_SCAN_BYTES, probeGitleaks, safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
 
 test('scanner probe does not expose command output or scanned content', () => {
   const probe = probeGitleaks();
@@ -12,6 +14,46 @@ test('scanner probe does not expose command output or scanned content', () => {
   assert.ok(!JSON.stringify(probe).includes('secret'));
   assert.equal(formatScannerProbe({ available: true, backend: 'gitleaks' }), 'Gitleaks available (gitleaks backend).');
   assert.equal(formatScannerProbe({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }), 'Gitleaks absent; built-in fallback available (Gitleaks is not installed.)');
+  assert.equal(isSupportedGitleaksVersion('8.30.0'), false);
+  assert.equal(isSupportedGitleaksVersion('8.30.1-rc.1'), false, 'a prerelease at the minimum core version sorts before the stable minimum');
+  assert.equal(isSupportedGitleaksVersion('8.30.1'), true, 'the official bare minimum release is accepted');
+  assert.equal(isSupportedGitleaksVersion('8.30.1+build.4'), true, 'build metadata does not change SemVer precedence');
+  assert.equal(isSupportedGitleaksVersion('8.30.2-rc.1'), true, 'a prerelease of a later core version sorts above the minimum');
+  assert.equal(isSupportedGitleaksVersion('8.30.2'), true);
+  assert.equal(isSupportedGitleaksVersion('8.31.0'), true);
+  assert.equal(isSupportedGitleaksVersion('9.0.0'), true);
+  assert.equal(isSupportedGitleaksVersion('gitleaks version 8.30.1'), false, 'extra labels are not part of the official response');
+  assert.equal(isSupportedGitleaksVersion('build 2026.1.2; gitleaks 9.0.0'), false, 'unrelated numeric triplets are rejected');
+  assert.equal(isSupportedGitleaksVersion('8.30.1-rc.01'), false, 'invalid numeric prerelease identifiers are rejected');
+});
+
+test('present but unusable Gitleaks does not select the built-in fallback', () => {
+  const result = scanAddedText([{ path: 'key.txt', line: 1, text: '-----BEGIN PRIVATE KEY-----' }], { probe: () => ({ available: false, backend: 'unavailable', reason: 'Gitleaks version is too old.' }) });
+  assert.equal(result.backend, 'unavailable');
+  assert.equal(result.complete, false);
+  assert.deepEqual(result.findings, []);
+});
+
+test('doctor CLI prints the scanner availability line from its real probe path', () => {
+  const pathRoot = mkdtempSync(join(tmpdir(), 'harness-doctor-empty-path-'));
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.toLowerCase() === 'path') delete env[key];
+  env.PATH = pathRoot;
+  try {
+    const doctor = resolve(import.meta.dirname, '../scripts/diagnose-native-harness.ts');
+    const result = spawnSync(process.execPath, [doctor, '--scope', 'global', '--host', 'cursor', '--project', process.cwd()], { encoding: 'utf8', env });
+    assert.match(result.stdout, /Secret scanner: Gitleaks absent; built-in fallback available \(Gitleaks is not installed in an absolute PATH entry\.\)/);
+  } finally { rmSync(pathRoot, { recursive: true, force: true }); }
+});
+
+test('optional real Gitleaks 8.30.1+ stdin/report contract', (t) => {
+  const probe = probeGitleaks();
+  if (!probe.available) { t.skip('no supported native Gitleaks executable on absolute PATH'); return; }
+  const payload = 'ghp_7Q2M9L1X8C4D6E0F7Q2M9L1X8C4D6E0F7Q2M9L1X';
+  const result = scanAddedText([{ path: 'fixtures/key.txt', line: 6, text: payload }], { probe: () => probe });
+  assert.equal(result.complete, true, result.reason);
+  assert.ok(result.findings.some(finding => finding.path === 'fixtures/key.txt' && finding.line === 6));
+  assert.ok(!JSON.stringify(result).includes(payload));
 });
 
 test('built-in scanner reports sanitized rule and location only', () => {
@@ -21,6 +63,14 @@ test('built-in scanner reports sanitized rule and location only', () => {
   assert.equal(result.findings[0]?.rule, 'private-key');
   assert.equal(result.findings[0]?.line, 4);
   assert.ok(!JSON.stringify(result).includes('SUPER_SECRET_SAMPLE_VALUE'));
+  const markerFindings = scanAddedText([
+    { path: 'dsa', line: 1, text: '-----BEGIN DSA PRIVATE KEY-----' },
+    { path: 'encrypted', line: 2, text: '-----BEGIN ENCRYPTED PRIVATE KEY-----' },
+    { path: 'pgp', line: 3, text: '-----BEGIN PGP PRIVATE KEY BLOCK-----' },
+  ], { probe: () => ({ available: false, backend: 'builtin', reason: 'absent' }) });
+  assert.deepEqual(markerFindings.findings.map(finding => [finding.rule, finding.path, finding.line]), [
+    ['dsa-private-key', 'dsa', 1], ['encrypted-private-key', 'encrypted', 2], ['pgp-private-key', 'pgp', 3],
+  ]);
 });
 
 test('Gitleaks backend maps JSON findings to sanitized added-line locations', () => {
@@ -44,9 +94,10 @@ test('Gitleaks backend maps JSON findings to sanitized added-line locations', ()
   assert.ok(!JSON.stringify(result).includes('RAW_SECRET_MUST_NOT_ESCAPE'));
   assert.equal(capturedArgs.includes('--config'), true);
   assert.equal(capturedArgs.includes('--redact=100'), true);
-  assert.equal(capturedOptions.cwd, tmpdir());
+  assert.notEqual(capturedOptions.cwd, tmpdir());
+  assert.match(capturedOptions.cwd, /harness-gitleaks-/);
   assert.equal(capturedOptions.env.GITLEAKS_TEST_MUST_NOT_ESCAPE, undefined);
-  assert.equal(capturedOptions.timeout, 10_000);
+  assert.ok(capturedOptions.timeout > 0 && capturedOptions.timeout <= 10_000);
   assert.equal(existsSync(capturedReport), false, 'temporary report is removed after scanning');
 });
 
@@ -81,6 +132,37 @@ test('empty, oversized, and contiguous run inputs have bounded isolated invocati
   assert.deepEqual(payloads, ['alpha\n\nomega', 'staged', 'other file']);
   assert.equal(calls, 3, 'one invocation per contiguous file/origin run');
   assert.equal(reportRoots.every(path => !existsSync(path)), true, 'temporary reports are removed after scanning');
+});
+
+test('Gitleaks runs share one deterministic deadline and do not spawn after expiry', () => {
+  const originalNow = Date.now;
+  let now = 1_000;
+  Object.defineProperty(Date, 'now', { configurable: true, value: () => now });
+  const timeouts: number[] = [];
+  const reports: string[] = [];
+  let calls = 0;
+  const run = (_command: string, args: string[], options: any) => {
+    calls += 1;
+    timeouts.push(options.timeout);
+    const report = args[args.indexOf('--report-path') + 1]!;
+    reports.push(report.replace(/report-\d+\.json$/, ''));
+    writeFileSync(report, '[]');
+    now += calls === 1 ? 4_000 : 6_000;
+    return { status: 0, error: undefined };
+  };
+  let result;
+  try {
+    result = scanAddedText([
+      { path: 'a.txt', line: 1, text: 'one' },
+      { path: 'b.txt', line: 1, text: 'two' },
+      { path: 'c.txt', line: 1, text: 'three' },
+    ], { probe: () => ({ available: true, backend: 'gitleaks' }), run: run as never });
+  } finally { Object.defineProperty(Date, 'now', { configurable: true, value: originalNow }); }
+  assert.equal(result.complete, false);
+  assert.match(result.reason ?? '', /aggregate scan deadline exceeded/);
+  assert.equal(calls, 2, 'the third run is never spawned after the shared deadline expires');
+  assert.deepEqual(timeouts, [10_000, 6_000], 'each subprocess receives only the remaining aggregate budget');
+  assert.ok(reports.every(path => !existsSync(path)), 'temporary reports are removed on deadline failure');
 });
 
 test('aggregate scanner payload at exactly 4 MiB is accepted', () => {

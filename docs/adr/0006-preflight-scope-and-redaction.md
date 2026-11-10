@@ -40,12 +40,18 @@ intermediate commits), staged, unstaged, and nonignored untracked changes. A sha
 bounded, content-free Gitleaks capability probe is used by preflight and doctor.
 When Gitleaks is absent, preflight uses a built-in high-confidence detector;
 coverage may differ between backends. Added payload is passed on shell-free stdin.
-Gitleaks uses the repository-pinned default-rule config from a neutral working
-directory with all `GITLEAKS_*` variables removed. It has a fixed timeout and a
-4 MiB aggregate input limit. Empty payload skips its scan subprocess. Added blank
+Gitleaks uses the repository-pinned default-rule config from a private temporary
+working directory with all `GITLEAKS_*` variables removed. It requires Gitleaks
+8.30.1 or newer, resolved only through absolute `PATH` entries. All scan runs share
+a fixed 10-second aggregate deadline and a 4 MiB aggregate input limit. Empty
+payload skips its scan subprocess. Added blank
 lines are retained, and contiguous added-line runs are scanned separately by file
 and origin. Diff extraction disables textconv and external diff; rename extraction
 includes both old and destination paths so findings use destination line numbers.
+Git must support `diff --name-status -z -M`, literal pathspecs, `--no-ext-diff`,
+`--no-textconv`, zero-context patches, `merge-base`, `ls-tree`, `ls-files`, and
+`cat-file`; unsupported commands/options make the changeset inconclusive. Windows
+uses the native Gitleaks executable rather than a shell wrapper.
 Only sanitized rule, location, and a redaction marker may be reported. Invalid,
 unusable, failed, or malformed scanner results are inconclusive.
 
@@ -59,6 +65,15 @@ alter path policy. Invalid policy is rejected before checks or secret scanning. 
 checks cannot be combined with configured policy or explicit policy overrides.
 Gitleaks rule IDs are converted to stable SHA-256 labels for output; exception
 matching hashes the supplied exact upstream rule ID using the same mapping.
+Exceptions may include a positive `line` field for a single finding; omitting it
+preserves existing whole-file path/rule behavior. Exception validation is shared
+by trusted project policy and programmatic options.
+
+Policy files live under `.harness/` because they are harness-specific configuration
+that should travel with the repository but remain separate from host-neutral project
+context. A global-only policy would not travel with the project; placing scanner rules
+inside `AGENTS.md` would mix operating instructions with tool policy and complicate
+the linked-context trust boundary.
 
 ## Consequences
 

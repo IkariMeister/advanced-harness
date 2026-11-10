@@ -30,12 +30,15 @@ test('changeset exposes added text and new-side line numbers per committed, stag
   writeFileSync(join(root, 'staged [name].txt'), 'old\n++staged\nafter staged\n'); git(root, 'add', 'staged [name].txt');
   writeFileSync(join(root, 'unstaged [name].txt'), 'old\n++unstaged\nafter unstaged\n');
   writeFileSync(join(root, 'untracked.txt'), 'untracked\n');
+  writeFileSync(join(root, 'empty-untracked.txt'), '');
   const entries = collectChangeset(root, 'main').entries;
   const byPath = (path: string, origin: string) => entries.find(entry => entry.path === path && entry.origin === origin);
   assert.deepEqual(byPath('committed.txt', 'committed')?.targetLines, [2, 3, 4]);
   assert.equal(byPath('committed.txt', 'committed')?.addedText, 'committed\n++committed\nafter committed\n');
   assert.deepEqual(byPath('untracked.txt', 'untracked')?.targetLines, [1]);
   assert.equal(byPath('untracked.txt', 'untracked')?.addedText, 'untracked\n');
+  assert.deepEqual(byPath('empty-untracked.txt', 'untracked')?.targetLines, []);
+  assert.equal(byPath('empty-untracked.txt', 'untracked')?.addedText, '');
   assert.equal(byPath('committed [name].txt', 'committed')?.addedText, 'added\n');
   assert.deepEqual(byPath('committed [name].txt', 'committed')?.targetLines, [2]);
   assert.equal(byPath('staged [name].txt', 'staged')?.addedText, '++staged\nafter staged\n');

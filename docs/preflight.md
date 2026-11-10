@@ -45,8 +45,8 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
 
 - Entries are recorded per-origin: a file that is staged and then modified again
   in the working tree will appear as separate staged and unstaged entries.
-- Unstaged renames are reported as an untracked add and an unstaged delete
-  (unstaged rename detection `-M` is not run).
+- Git rename detection (`-M`) is enabled for committed net changes, staged changes,
+  and unstaged changes. Rename destinations are scanned and checked by path policy.
 - A deleted file has no contents, which is distinct from a present zero-byte file.
 - Entries also record `kind`: `file`, `symlink` (contents are the link target, read
   without following it),
@@ -59,21 +59,39 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   textconv, and binds each diff to exact repository paths. For detected renames,
   extraction includes both old and destination paths; the regression test verifies
   destination line numbers. Binary or otherwise undecodable diffs are marked
-  incomplete and make secret scanning inconclusive, with affected paths reported.
+  incomplete. Eligible text is still scanned; a finding blocks even when another
+  entry is incomplete, and otherwise the check is inconclusive. Affected paths are
+  escaped, bounded, and summarized with counts. Empty untracked files have no added
+  lines. Untracked symlinks are inspected with `lstat`/`readlink` only, never followed,
+  and make secret scanning inconclusive.
+- The supported Git contract requires `diff --name-status -z -M`, literal pathspecs,
+  `--no-ext-diff`, `--no-textconv`, zero-context patches, `merge-base`, `ls-tree`,
+  `ls-files`, and `cat-file`. If a required command or option is unavailable, the
+  changeset is inconclusive.
 - The changeset contains all file bytes, but secret-scanner input is bounded to
   4 MiB aggregate UTF-8 payload. The cap is checked before either scanner is
   selected or invoked; oversized input is inconclusive. Added blank lines are retained, and
   the scanner receives separate contiguous runs per file and origin. Empty input
-  skips the scanner subprocess. The Gitleaks invocation has a fixed 10-second
-  timeout. Untracked symlinks are not followed and make secret scanning
-  inconclusive.
+  skips the scanner subprocess. All Gitleaks runs share a fixed 10-second aggregate
+  deadline. Metrics distinguish an unrun scanner from an unavailable backend and
+  report bounded affected-path counts.
 - `path-policy` blocks configured sensitive paths (including rename destinations)
   and skips deletions. The default glob list is case-insensitive and project
   replaceable. Rule exceptions require an exact path/rule pair and a trimmed,
-  nonblank justification; exceptions never change path policy.
+  nonblank justification; optional positive `line` narrows an exception to one line.
+  Omitting `line` preserves whole-file path/rule entries. Exceptions never change
+  path policy. On Windows the native Gitleaks executable (`gitleaks.exe`) is required;
+  shell wrappers are not used.
 - Default path globs: `**/.env*`, `**/id_rsa*`, `**/.DS_Store`, `**/keys/**`,
   `**/keystores/**`, `**/*.key`, `**/*.pem`, `**/*.p12`, `**/*.pfx`,
   `**/*.jks`, `**/*.keystore`, `**/build/**`, and `**/dist/**`.
+  Glob matching is case-insensitive after converting `\\` to `/`. `*` matches
+  zero or more characters within one path component; `?` matches exactly one
+  character within one component. `**` matches any characters including `/`, and
+  `**/` matches zero or more directory components, so `**/*.pem` includes both
+  `root.pem` and `certs/root.pem`. By contrast, `*.pem` matches root-level files
+  only. Brackets and braces are literal characters, not character classes or
+  alternation syntax: `file[1].pem` matches that bracketed name literally.
   Preflight reads `.harness/preflight.json` (`forbiddenPathGlobs`) and
   `.harness/preflight-allowlist.json` from the explicit `--base` commit, or from
   `refs/remotes/origin/HEAD` when base comes from project context. It never reads
@@ -82,7 +100,8 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   callers can explicitly supply `sensitivePathGlobs` and `secretExceptions`; these
   caller-supplied values take precedence over the trusted files. Projects provide justified exceptions in
   `.harness/preflight-allowlist.json`, a JSON array of entries containing `path`,
-  `rule`, and a nonblank `justification`; programmatic callers use
+  `rule`, and a nonblank `justification`, optionally with a positive `line`;
+  programmatic callers use
   `secretExceptions`. Project policy is validated after resolving the changeset
   base and before check execution or secret scanning.
   Custom `checks` cannot be combined with explicit policy overrides or configured
@@ -95,17 +114,20 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   Gitleaks `RuleID` so arbitrary report identifiers are never emitted.
 - Secret scanning uses the shared bounded scanner probe described in
   [ADR-006](adr/0006-preflight-scope-and-redaction.md). Gitleaks uses the checked-in
-  `src/preflight/gitleaks.toml` default-rule config, a neutral working directory,
+  `src/preflight/gitleaks.toml` default-rule config, a private temporary working directory,
   and an environment with all `GITLEAKS_*` variables removed. Scanner payload is
   passed on stdin; output is reduced to sanitized rule/location records. If
   Gitleaks is absent, a documented built-in high-confidence detector runs. An
-  installed but unusable probe or failed/malformed scan is inconclusive. Metrics
+  installation must be Gitleaks 8.30.1 or newer. An installed but unsupported or
+  unusable probe is inconclusive; only an absent executable selects fallback. The
+  executable is resolved from absolute `PATH` entries. Metrics
   distinguish Gitleaks, built-in, and unavailable backend states.
-- Gitleaks is invoked as `gitleaks stdin --report-format json --report-path
+- Gitleaks is invoked as `<resolved-executable> stdin --report-format json --report-path
   <temporary-report> --redact=100 --no-banner` with the pinned config argument;
   JSON findings use `RuleID` and `StartLine`. Exit code 1 is accepted only when the report parses as valid
   nonempty findings, and exit code 0 only with an empty report. The temporary
-  temporary report directory is removed after all runs finish or fail. Gitleaks `RuleID` values are
+  report directory is removed after all runs finish or fail, including
+  incomplete scans and subprocess errors. Gitleaks `RuleID` values are
   emitted as stable SHA-256 labels; exact exceptions match the upstream ID.
 
 ## Result contract

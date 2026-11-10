@@ -71,7 +71,7 @@ function addedLinesForPath(worktree: string, args: string[], path: string, oldPa
   const paths = oldPath === undefined ? [path] : [oldPath, path];
   const bytes = git(worktree, [...args, '--no-ext-diff', '--no-textconv', '--no-color', '--unified=0', '--', ...paths]);
   const diff = bytes.toString('utf8');
-  if (/(?:^|\n)Binary files .+ differ(?:\r?\n|$)/.test(diff) || diff.includes('GIT binary patch')) return { text: '', lines: [], complete: false };
+  if (/^Binary files .+ differ\r?$/m.test(diff) || /^GIT binary patch\r?$/m.test(diff)) return { text: '', lines: [], complete: false };
   if (!Buffer.from(diff, 'utf8').equals(bytes)) return { text: '', lines: [], complete: false };
   const result: { text: string; lines: number[] } = { text: '', lines: [] };
   let next = 0;
@@ -79,6 +79,7 @@ function addedLinesForPath(worktree: string, args: string[], path: string, oldPa
   for (const line of diff.split(/\r?\n/)) {
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
     if (hunk) { next = Number(hunk[1]); inHunk = true; continue; }
+    if (line.startsWith('diff --git ') || line.startsWith('Index: ')) { inHunk = false; continue; }
     if (!inHunk) continue;
     if (line.startsWith('+')) {
       result.text += `${line.slice(1)}\n`; result.lines.push(next++);
@@ -100,20 +101,22 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
 
   const entries: ChangeEntry[] = [];
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-M', '-z', mergeBase, head]), 'committed')) {
-    const added = entry.status === 'deleted' ? undefined : addedLinesForPath(top, ['diff', mergeBase, head], entry.path, entry.oldPath);
-    entries.push({ ...entry, ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `${head}:${entry.path}`, modeOf(top, ['ls-tree', head], entry.path))), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
+    const kind = entry.status === 'deleted' ? undefined : modeOf(top, ['ls-tree', head], entry.path);
+    const added = entry.status === 'deleted' ? undefined : kind === '160000' ? { text: '', lines: [], complete: false } : addedLinesForPath(top, ['diff', mergeBase, head], entry.path, entry.oldPath);
+    entries.push({ ...entry, ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `${head}:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
   }
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--cached', '--name-status', '-M', '-z']), 'staged')) {
-    const added = entry.status === 'deleted' ? undefined : addedLinesForPath(top, ['diff', '--cached'], entry.path, entry.oldPath);
-    entries.push({ ...entry, ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `:${entry.path}`, modeOf(top, ['ls-files', '-s'], entry.path))), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
+    const kind = entry.status === 'deleted' ? undefined : modeOf(top, ['ls-files', '-s'], entry.path);
+    const added = entry.status === 'deleted' ? undefined : kind === '160000' ? { text: '', lines: [], complete: false } : addedLinesForPath(top, ['diff', '--cached'], entry.path, entry.oldPath);
+    entries.push({ ...entry, ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
   }
-  for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-z']), 'unstaged')) {
+  for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-M', '-z']), 'unstaged')) {
     if (entry.status === 'deleted') {
       entries.push({ ...entry, content: undefined });
     } else {
       const added = addedLinesForPath(top, ['diff'], entry.path);
       const mode = modeOf(top, ['ls-files', '-s'], entry.path);
-      entries.push({ ...entry, ...(mode === '160000' ? { kind: 'submodule', content: undefined } : readWorkingFile(top, entry.path)), addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete });
+      entries.push({ ...entry, ...(mode === '160000' ? { kind: 'submodule', content: undefined } : readWorkingFile(top, entry.path)), addedText: added.text, targetLines: added.lines, addedTextComplete: mode === '160000' ? false : added.complete });
     }
   }
   const untracked = git(top, ['ls-files', '--others', '--exclude-standard', '-z']).toString('utf8').split('\0').filter(Boolean);
@@ -121,9 +124,9 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
     const file = readWorkingFile(top, path);
     const candidate = file.content && file.kind === 'file' && !file.content.includes(0) ? file.content.toString('utf8') : undefined;
     const decoded = candidate !== undefined && Buffer.from(candidate, 'utf8').equals(file.content!) ? candidate : undefined;
-    const lines = decoded?.split(/\r?\n/) ?? [];
+    const lines = decoded ? decoded.split(/\r?\n/) : [];
     if (decoded?.endsWith('\n')) lines.pop();
-    entries.push({ path, status: 'added', origin: 'untracked', ...file, ...(decoded !== undefined ? { addedText: decoded, targetLines: lines.map((_, i) => i + 1), addedTextComplete: true } : file.kind === 'file' || file.kind === 'symlink' ? { addedTextComplete: false } : {}) });
+    entries.push({ path, status: 'added', origin: 'untracked', ...file, ...(decoded !== undefined ? { addedText: decoded, targetLines: lines.length ? lines.map((_, i) => i + 1) : [], addedTextComplete: true } : { addedTextComplete: false }) });
   }
 
   return { top, base, baseSource, mergeBase, head, entries };

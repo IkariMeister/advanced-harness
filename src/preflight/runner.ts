@@ -8,7 +8,8 @@ import { scanAddedText } from './secret-scanner.ts';
 import { DEFAULT_SENSITIVE_PATH_GLOBS, validateSensitivePathGlobs } from './path-policy.ts';
 import type { CheckResult, CheckStatus, Changeset, PreflightCheck, PreflightExitCode, PreflightResult } from './types.ts';
 
-export type BaseResolution = { ref: string; source: 'option' | 'project-context' } | { error: string };
+export class UnresolvedBaseError extends Error { override name = 'UnresolvedBaseError'; }
+export type BaseResolution = { ref: string; source: 'option' | 'project-context' } | { error: UnresolvedBaseError };
 const TRUSTED_POLICY_REF = 'refs/remotes/origin/HEAD';
 
 /** `--base` wins; otherwise the project context `baseBranch`. There is no hardcoded fallback. */
@@ -17,10 +18,10 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
   try {
     const { original } = locateProjectContext(worktree);
     const data = contextData(original, 'project');
-    if (data === undefined) return { error: 'No base ref: pass --base or record baseBranch in project context.' };
+    if (data === undefined) return { error: new UnresolvedBaseError('No base ref: pass --base or record baseBranch in project context.') };
     return { ref: validateProfile(data).baseBranch, source: 'project-context' };
   } catch (error) {
-    return { error: `Project context could not be read: ${error instanceof Error ? error.message : String(error)}` };
+    return { error: new UnresolvedBaseError(`Project context could not be read: ${error instanceof Error ? error.message : String(error)}`) };
   }
 }
 
@@ -43,7 +44,7 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
   let worktree: string;
   try { worktree = realpathSync(options.worktree); } catch { return inconclusiveAll(options.checks ?? defaultChecks, `Worktree not found: ${options.worktree}`); }
   const base = resolveBase(worktree, options.base);
-  if ('error' in base) return inconclusiveAll(options.checks ?? defaultChecks, base.error);
+  if ('error' in base) return inconclusiveAll(options.checks ?? defaultChecks, base.error.message);
   let changeset: Changeset;
   try { changeset = collectChangeset(worktree, base.ref, base.source); } catch (error) {
     return inconclusiveAll(options.checks ?? defaultChecks, `Changeset unavailable: ${error instanceof Error ? error.message : String(error)}`);

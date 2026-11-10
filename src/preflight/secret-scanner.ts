@@ -1,16 +1,16 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export type ScannerProbe = { available: true; backend: 'gitleaks' } | { available: false; backend: 'builtin' | 'unavailable'; reason: string };
+export type ScannerProbe = { available: true; backend: 'gitleaks'; executable?: string } | { available: false; backend: 'builtin' | 'unavailable'; reason: string };
 export const MAX_SECRET_SCAN_BYTES = 4 * 1024 * 1024;
 const LIMIT = MAX_SECRET_SCAN_BYTES;
 const TIMEOUT_MS = 10_000;
 const GITLEAKS_CONFIG = fileURLToPath(new URL('./gitleaks.toml', import.meta.url));
-const neutralCwd = tmpdir();
+const MIN_GITLEAKS = [8, 30, 1] as const;
 
 function scannerEnvironment(): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GITLEAKS_')));
@@ -24,13 +24,47 @@ export function formatScannerProbe(probe: ScannerProbe): string {
 
 /** Content-free, bounded capability probe shared by doctor and preflight. */
 export function probeGitleaks(): ScannerProbe {
-  const options = { encoding: 'utf8' as const, timeout: 3000, maxBuffer: 32 * 1024, cwd: neutralCwd, env: scannerEnvironment() };
-  const version = spawnSync('gitleaks', ['version'], options);
-  if (version.error && 'code' in version.error && version.error.code === 'ENOENT') return { available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' };
+  const executable = resolveGitleaks();
+  if (!executable) return { available: false, backend: 'builtin', reason: 'Gitleaks is not installed in an absolute PATH entry.' };
+  const privateCwd = mkdtempSync(join(tmpdir(), 'harness-gitleaks-probe-'));
+  const options = { encoding: 'utf8' as const, timeout: 3000, maxBuffer: 32 * 1024, cwd: privateCwd, env: scannerEnvironment() };
+  let version;
+  try { version = spawnSync(executable, ['version'], options); } finally { rmSync(privateCwd, { recursive: true, force: true }); }
   if (version.error || version.status !== 0) return { available: false, backend: 'unavailable', reason: 'Gitleaks is present but its version probe failed.' };
-  const command = spawnSync('gitleaks', ['stdin', '--help'], options);
+  if (!isSupportedGitleaksVersion(version.stdout)) return { available: false, backend: 'unavailable', reason: 'Gitleaks 8.30.1 or newer is required.' };
+  const probeCwd = mkdtempSync(join(tmpdir(), 'harness-gitleaks-probe-'));
+  let command;
+  try { command = spawnSync(executable, ['stdin', '--help'], { ...options, cwd: probeCwd }); } finally { rmSync(probeCwd, { recursive: true, force: true }); }
   if (command.error || command.status !== 0 || !/--report-format/.test(command.stdout) || !/--report-path/.test(command.stdout) || !/--config/.test(command.stdout) || !/--redact/.test(command.stdout)) return { available: false, backend: 'unavailable', reason: 'Gitleaks stdin JSON report interface is unavailable.' };
-  return { available: true, backend: 'gitleaks' };
+  return { available: true, backend: 'gitleaks', executable };
+}
+
+function resolveGitleaks(): string | undefined {
+  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
+    if (!isAbsolute(directory)) continue;
+    const candidates = process.platform === 'win32' ? ['gitleaks.exe', 'gitleaks.cmd', 'gitleaks'] : ['gitleaks'];
+    for (const name of candidates) {
+      const candidate = resolve(directory, name);
+      try { if (existsSync(candidate) && statSync(candidate).isFile()) return candidate; } catch { /* ignore inaccessible PATH entries */ }
+    }
+  }
+  return undefined;
+}
+export function isSupportedGitleaksVersion(versionText: string): boolean {
+  // `gitleaks version` prints one bare SemVer string. Require the whole response so
+  // unrelated build/log numbers cannot accidentally satisfy the minimum.
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(versionText.trim());
+  if (!match) return false;
+  const core = match.slice(1, 4).map(Number);
+  if (!core.every(Number.isSafeInteger)) return false;
+  if (match[4]?.split('.').some(identifier => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith('0'))) return false;
+  for (let i = 0; i < MIN_GITLEAKS.length; i += 1) {
+    if (core[i] !== MIN_GITLEAKS[i]) return core[i]! > MIN_GITLEAKS[i]!;
+  }
+  const prerelease = match[4];
+  // The minimum is a stable release; every prerelease at the same core version
+  // sorts before it under SemVer precedence.
+  return prerelease === undefined;
 }
 
 export type SecretFinding = { rule: string; path: string; line: number; redacted: true };
@@ -41,6 +75,9 @@ export function safeGitleaksRuleId(ruleId: string): string {
 }
 const builtinRules: [string, RegExp][] = [
   ['private-key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g],
+  ['dsa-private-key', /-----BEGIN DSA PRIVATE KEY-----/g],
+  ['encrypted-private-key', /-----BEGIN ENCRYPTED PRIVATE KEY-----/g],
+  ['pgp-private-key', /-----BEGIN PGP PRIVATE KEY BLOCK-----/g],
   ['aws-access-key', /\bAKIA[0-9A-Z]{16}\b/g],
   ['github-token', /\bgh[pousr]_[A-Za-z0-9_]{30,}\b/g],
   ['high-entropy-assignment', /(?:api[_-]?key|access[_-]?token|secret)\s*[:=]\s*["']?[A-Za-z0-9/+_=-]{32,}/gi],
@@ -70,14 +107,16 @@ export function addedTextByteLength(changes: AddedLine[]): number {
   return contiguousRuns(changes).reduce((total, run) => total + run.reduce((runTotal, item) => runTotal + Buffer.byteLength(item.text, 'utf8'), 0) + Math.max(0, run.length - 1), 0);
 }
 
-function gitleaksRun(changes: AddedLine[], dependencies: { run?: typeof spawnSync }, reportRoot: string, reportIndex: number): { findings: SecretFinding[]; complete: boolean; reason?: string } {
+function gitleaksRun(changes: AddedLine[], dependencies: { run?: typeof spawnSync }, reportRoot: string, reportIndex: number, executable: string, deadline: number): { findings: SecretFinding[]; complete: boolean; reason?: string } {
   const payload = changes.map(item => item.text).join('\n');
   const reportPath = join(reportRoot, `report-${reportIndex}.json`);
   const args = ['stdin', '--config', GITLEAKS_CONFIG, '--report-format', 'json', '--report-path', reportPath, '--redact=100', '--no-banner'];
   let report: string;
   let status: number | null;
   try {
-    const run = (dependencies.run ?? spawnSync)('gitleaks', args, { input: payload, encoding: 'utf8', timeout: TIMEOUT_MS, maxBuffer: LIMIT, cwd: neutralCwd, env: scannerEnvironment() });
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return { findings: [], complete: false, reason: 'Gitleaks aggregate scan deadline exceeded.' };
+    const run = (dependencies.run ?? spawnSync)(executable, args, { input: payload, encoding: 'utf8', timeout: remaining, maxBuffer: LIMIT, cwd: reportRoot, env: scannerEnvironment() });
     if (run.error || (run.status !== 0 && run.status !== 1)) return { findings: [], complete: false, reason: 'Gitleaks scan failed.' };
     status = run.status;
     report = readFileSync(reportPath, 'utf8');
@@ -106,8 +145,10 @@ export function scanAddedText(changes: AddedLine[], dependencies: { probe?: type
   const temp = mkdtempSync(join(tmpdir(), 'harness-gitleaks-'));
   try {
     const findings: SecretFinding[] = [];
+    const deadline = Date.now() + TIMEOUT_MS;
+    const executable = probe.available ? probe.executable ?? 'gitleaks' : 'gitleaks';
     for (let index = 0; index < runs.length; index += 1) {
-      const scanned = gitleaksRun(runs[index]!, dependencies, temp, index);
+      const scanned = gitleaksRun(runs[index]!, dependencies, temp, index, executable, deadline);
       if (!scanned.complete) return { backend: 'gitleaks', findings: [], complete: false, ...(scanned.reason === undefined ? {} : { reason: scanned.reason }) };
       findings.push(...scanned.findings);
     }

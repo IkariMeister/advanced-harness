@@ -53,6 +53,13 @@ test('trusted base policy replaces path globs, normalizes exact allowlist paths,
   assert.ok(!JSON.stringify(result).includes(justification));
 });
 
+test('trusted allowlist preserves optional positive line and rejects unknown exception keys', () => {
+  const root = projectRepo({ allowlist: [{ path: './src/token.ts', rule: 'fixture', line: 12, justification: 'Reviewed one generated line.' }] });
+  assert.deepEqual(loadProjectPreflightPolicy(root, 'main').secretExceptions, [{ path: 'src/token.ts', rule: 'fixture', line: 12, justification: 'Reviewed one generated line.' }]);
+  const invalid = projectRepo({ allowlist: [{ path: 'src/token.ts', rule: 'fixture', line: 12, justification: 'Reviewed.', extra: 'bad' }] });
+  assert.throws(() => loadProjectPreflightPolicy(invalid, 'main'), /unknown setting/);
+});
+
 test('branch policy edits are blocked and cannot weaken trusted checks; explicit options remain authoritative', async () => {
   const root = projectRepo({ forbiddenPathGlobs: ['**/*.pem'], allowlist: [] });
   mkdirSync(join(root, '.harness'), { recursive: true });
@@ -97,3 +104,29 @@ test('invalid trusted policy is inconclusive before checks and custom policy opt
   assert.equal(conflict.checks[0]?.status, 'inconclusive');
   assert.match(conflict.checks[0]?.evidence[0] ?? '', /cannot be combined/);
 });
+
+test('trusted policy rejects non-regular, oversized, invalid UTF-8, unknown-key, and traversal inputs', async (t) => {
+  const scenarios: { name: string; apply(root: string): void }[] = [
+    { name: 'symlink mode', apply(root) { const hash = spawnSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], { input: '{}', encoding: 'utf8' }); assert.equal(hash.status, 0); git(root, 'update-index', '--cacheinfo', `120000,${hash.stdout.trim()},.harness/preflight.json`); } },
+    { name: 'gitlink mode', apply(root) { git(root, 'update-index', '--add', '--cacheinfo', `160000,${gitOutput(root, 'rev-parse', 'HEAD')},.harness/preflight.json`); } },
+    { name: 'over 1 MiB', apply(root) { writeFileSync(join(root, '.harness', 'preflight.json'), Buffer.alloc(1024 * 1024 + 1, 0x20)); } },
+    { name: 'invalid UTF-8', apply(root) { writeFileSync(join(root, '.harness', 'preflight.json'), Buffer.from([0xff, 0xfe])); } },
+    { name: 'unknown configuration key', apply(root) { writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ forbiddenPathGlobs: [], weaken: true })); } },
+    { name: 'allowlist traversal path', apply(root) { writeFileSync(join(root, '.harness', 'preflight-allowlist.json'), JSON.stringify([{ path: '../token', rule: 'fixture', justification: 'Reviewed.' }])); } },
+  ];
+  for (const scenario of scenarios) await t.test(scenario.name, async () => {
+    const root = projectRepo({ forbiddenPathGlobs: [], allowlist: [] });
+    scenario.apply(root);
+    if (!scenario.name.includes('mode')) git(root, 'add', '.harness');
+    git(root, 'commit', '-q', '-m', 'invalid trusted policy fixture');
+    git(root, 'update-ref', 'refs/heads/main', 'HEAD');
+    const result = await runPreflight({ worktree: root, base: 'main' });
+    assert.ok(result.checks.every(check => check.status === 'inconclusive'), JSON.stringify(result));
+  });
+});
+
+function gitOutput(root: string, ...args: string[]): string {
+  const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}

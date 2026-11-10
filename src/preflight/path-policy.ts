@@ -23,6 +23,7 @@ export function pathPolicyCheck(globs: readonly string[] = DEFAULT_SENSITIVE_PAT
   validateSensitivePathGlobs(globs);
   return { id: 'path-policy', run({ changeset }) {
     const hits = changeset.entries.filter(entry => entry.status !== 'deleted' && globs.some(glob => matchesGlob(entry.path, glob)));
-    return hits.length ? { status: 'block', evidence: hits.map(entry => `Sensitive path rule matched: ${entry.path} [${entry.origin}]`), metrics: { matched: hits.length } } : { status: 'pass', evidence: ['No changed paths match configured sensitive path rules.'], metrics: { matched: 0 } };
+    const safePath = (path: string) => [...path.replaceAll('\\', '/')].slice(0, 240).map(character => /[\u0000-\u001f\u007f]/.test(character) ? `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}` : character).join('');
+    return hits.length ? { status: 'block', evidence: [...hits.slice(0, 50).map(entry => `Sensitive path rule matched: ${safePath(entry.path)} [${entry.origin}]`), ...(hits.length > 50 ? [`… ${hits.length - 50} additional matching path(s).`] : [])], metrics: { matched: hits.length } } : { status: 'pass', evidence: ['No changed paths match configured sensitive path rules.'], metrics: { matched: 0 } };
   } };
 }
