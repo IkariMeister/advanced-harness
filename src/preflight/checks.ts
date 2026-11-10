@@ -6,6 +6,7 @@ import {
   expandPath,
   linkedContextSelection,
   locateProjectContext,
+  readLocalProjectContext,
   resolveProjectLocations,
   validateProfile,
   type ProjectProfile,
@@ -13,7 +14,8 @@ import {
 import type { ChangeOrigin, Changeset, CheckOutcome, PreflightCheck } from './types.ts';
 
 const TRUSTED_REF = 'refs/remotes/origin/HEAD';
-const TRUSTED_HINT = 'pass --base <ref> or run `git remote set-head origin --auto`';
+const BASE_CONTEXT_TRUSTED_HINT = 'pass --base <ref> or run `git remote set-head origin --auto`';
+const WORKTREE_BOUNDARY_TRUSTED_HINT = 'run `git remote set-head origin --auto`';
 const MAX_CONTEXT_BYTES = 1024 * 1024;
 
 /** Repo-relative, forward-slash path of an absolute path under the repository top-level. */
@@ -36,10 +38,10 @@ function gitBytes(top: string, args: string[]): Buffer {
 }
 
 /** Resolves the trusted ref to a commit locally. Never fetches. */
-function trustedCommit(top: string): string {
+function trustedCommit(top: string, hint: string): string {
   const res = spawnSync('git', ['-C', top, '--literal-pathspecs', 'rev-parse', '--verify', '--quiet', `${TRUSTED_REF}^{commit}`], { encoding: 'utf8' });
   if (res.error) throw new Error(`git rev-parse could not be started: ${res.error.message}`);
-  if (res.status !== 0) throw new Error(`trusted ref ${TRUSTED_REF} unavailable; ${TRUSTED_HINT}`);
+  if (res.status !== 0) throw new Error(`trusted ref ${TRUSTED_REF} unavailable; ${hint}`);
   const commit = res.stdout.trim();
   if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error(`trusted ref ${TRUSTED_REF} did not resolve to a commit`);
   return commit;
@@ -60,8 +62,8 @@ function trustedFile(top: string, commit: string, repoPath: string): string | un
 }
 
 /** Reads and validates the project profile at the trusted ref. */
-function readTrustedProjectContext(top: string, contextRoot = top): { target: string; profile: ProjectProfile } {
-  const commit = trustedCommit(top);
+function readTrustedProjectContext(top: string, contextRoot = top, hint = BASE_CONTEXT_TRUSTED_HINT): { target: string; profile: ProjectProfile } {
+  const commit = trustedCommit(top, hint);
   const agentsRel = toRepoPath(top, join(contextRoot, 'AGENTS.md'));
   const trustedAgents = trustedFile(top, commit, agentsRel);
   if (trustedAgents === undefined) throw new Error(`${agentsRel} is absent at trusted ref ${TRUSTED_REF}`);
@@ -87,7 +89,7 @@ function readTrustedProjectContext(top: string, contextRoot = top): { target: st
  * Returns undefined when they match; throws when the trusted ref cannot be read (inconclusive).
  */
 function compareWithTrustedRef(top: string, worktree: string, worktreeTarget: string, worktreeBase: string): CheckOutcome | undefined {
-  const { target: trustedTarget, profile: trustedProfile } = readTrustedProjectContext(top, worktree);
+  const { target: trustedTarget, profile: trustedProfile } = readTrustedProjectContext(top, worktree, BASE_CONTEXT_TRUSTED_HINT);
 
   const differences: string[] = [];
   if (!samePath(trustedTarget, worktreeTarget)) differences.push(`linked context target ${trustedTarget} (trusted) vs ${worktreeTarget} (worktree)`);
@@ -219,10 +221,10 @@ function checkCanonicalCheckout(top: string): CheckOutcome | undefined {
  * An unavailable or unreadable trusted ref or trusted project context blocks (exit 1),
  * as does a modified worktreeDirectory.
  */
-function checkTrustedWorktreeDirectory(top: string, configuredParent: string): CheckOutcome | undefined {
+function checkTrustedWorktreeDirectory(top: string): CheckOutcome | undefined {
   let trustedProfile: ProjectProfile;
   try {
-    const trusted = readTrustedProjectContext(top);
+    const trusted = readTrustedProjectContext(top, top, WORKTREE_BOUNDARY_TRUSTED_HINT);
     trustedProfile = trusted.profile;
   } catch (error) {
     return {
@@ -236,11 +238,12 @@ function checkTrustedWorktreeDirectory(top: string, configuredParent: string): C
   let localTarget: string;
   let localProfile: ProjectProfile;
   try {
-    const { target: absTarget, original: localText } = locateProjectContext(top);
-    localTarget = toRepoPath(top, absTarget);
-    const localData = contextData(localText ?? '', 'project');
-    if (localData === undefined) throw new Error(`no project settings in ${localTarget}`);
-    localProfile = validateProfile(localData);
+    const local = readLocalProjectContext(top);
+    if (local.status === 'missing') {
+      throw new Error(local.reason);
+    }
+    localProfile = local.profile;
+    localTarget = local.contextRel;
   } catch (error) {
     return {
       status: 'block',
@@ -252,7 +255,7 @@ function checkTrustedWorktreeDirectory(top: string, configuredParent: string): C
 
   const trustedExpanded = expandPath(trustedProfile.worktreeDirectory);
   const localExpanded = expandPath(localProfile.worktreeDirectory);
-  if (trustedProfile.worktreeDirectory !== localProfile.worktreeDirectory || trustedExpanded !== localExpanded || configuredParent !== localExpanded) {
+  if (trustedProfile.worktreeDirectory !== localProfile.worktreeDirectory || trustedExpanded !== localExpanded) {
     return {
       status: 'block',
       evidence: [
@@ -419,7 +422,7 @@ export const worktreeBoundaryCheck: PreflightCheck = {
     const configuredParent = locationRes.locations.worktreeDirectory;
 
     // 3. Verify worktreeDirectory against trusted ref
-    const trustedWtDir = checkTrustedWorktreeDirectory(top, configuredParent);
+    const trustedWtDir = checkTrustedWorktreeDirectory(top);
     if (trustedWtDir) return trustedWtDir;
 
     // 4. Check worktree containment
