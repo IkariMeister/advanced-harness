@@ -135,12 +135,14 @@ journey never starts a real Codex binary: the live catalog prompt is answered `n
 | CX-05 | `harness:doctor --host codex` | Exit 0; reports role-process mode |
 | CX-06 | `harness:uninstall --host codex --scope global` | Exit 0; prior `config.toml` restored byte for byte; profiles, launcher, Lead block and state removed |
 
-**Manual (human, Codex Desktop):** after CX-04 on a real machine, open a Codex Desktop session in a
+**Manual case CX-M1 (human, Codex Desktop):** after CX-04 on a real machine, open a Codex Desktop session in a
 disposable Git project and ask Lead to review a small diff. Expected: Lead runs the launcher for
-`reviewer`, Desktop asks to approve that exact command (role and task visible, "approve once"), and the
+`reviewer`, Desktop shows its host permission prompt for that exact command (role and task visible, "approve once"), and the
 launcher prints JSON with a `status` of Working, Checking, Ready, or Needs your decision. Then ask for a
-one-line change: Lead launches `implementer` with a separate approval and the change lands in the
+one-line change: Lead launches `implementer` with a separate host permission prompt and the change lands in the
 project. Record who ran it, the Codex version, and the result on #45.
+
+**Manual case CX-M2 (Operator and External, `danger-full-access`): WAIVED for #218.** The human waived this case for the #218 change. It is not run, not passed, and not runtime evidence. When it is run on a real machine, after CX-04: ask Lead to launch `operator` in a disposable task worktree to create one file, then `external` for one web lookup. Expected: each launch shows its host permission prompt with the role and task visible; Operator's launch is not limited by a sandbox; Operator's `git push`, `git pull`, `git clone`, and `gh` requests are declined by its instructions only (not enforced by a rule). Record whether Codex blocks a direct `git push --force` from Operator as observed, not assumed. Record who ran it, the Codex version, and the result on #218.
 
 ### SMK-PS / SMK-PI: project context (`smoke/project-context.smoke.ts`)
 
@@ -162,7 +164,8 @@ automated global role-process install/update/uninstall coverage; this is not
 interactive TTY or Codex Desktop runtime validation.
 
 Codex Windows/macOS TTY validation remains pending; the human waived this manual
-test for this pass only. Codex Desktop validation also remains pending and out of
+test for this pass only. The Operator/External full-access manual case (CX-M2) is
+waived for #218 as well, and no run of it is recorded. Codex Desktop validation also remains pending and out of
 scope. Automated smoke is non-TTY and is not TTY/Desktop runtime evidence.
 Multiline config arrays remain deliberately unsupported and fail closed before any
 prompt or write; role TOML parse failures are instead preserved unless explicit
