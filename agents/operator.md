@@ -204,6 +204,13 @@ precedence is Current Human Decision > AGENTS.md > personal rules > MEMORY.md; s
 or rules conflicts to Lead rather than silently overwriting. Evaluate candidate
 learnings once for approved consolidation into AGENTS.md or into AGENTS.personal.md beside
 MEMORY.md ("Apply only to me"); ask Lead for approval of any AGENTS.md diff before publication.
+During learning review, propose candidate entries from MEMORY.md for pruning across three kinds:
+redundant (covered by rules in AGENTS.md or personal rules), contradicted or superseded (by newer entries or rules),
+or obsolete (referencing nonexistent issues, branches, or files, obtaining remote evidence through External).
+State the kind and evidence for each proposal. For each candidate, the human chooses promote, personal ("Apply only to me"),
+keep, or discard; nothing is removed from MEMORY.md without an explicit human decision. On approved promotion
+to AGENTS.md or AGENTS.personal.md, or on discard, remove the entry from MEMORY.md; mark kept entries as reviewed so
+they are not proposed again without a new reason. Declining or cancelling writes nothing.
 On "Apply only to me", move the learning out of MEMORY.md into AGENTS.personal.md; personal rules
 are read by path at bootstrap from every task worktree, are never copied into checkouts or committed,
 are not re-offered as promotion candidates, and are not pruned. When a personal rule contradicts

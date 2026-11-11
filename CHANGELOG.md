@@ -8,6 +8,14 @@ version between releases.
 
 ### Added
 
+- `MEMORY.md` pruning during learning review (BH-077, #216): add pruning candidate proposals
+  at end-of-task learning review across three kinds: redundant (covered by rules in `AGENTS.md`
+  or `AGENTS.personal.md`), contradicted or superseded (by newer entries or rules), and
+  obsolete (refers to issues, branches, or files that no longer exist, with remote evidence
+  verified through External). Learnings leave `MEMORY.md` upon approved promotion to any tier
+  (`AGENTS.md` or `AGENTS.personal.md`) or on discard. Kept entries are marked as reviewed so
+  they are not re-proposed without a new reason. Operators remain the sole serialized writer of
+  `MEMORY.md`; declining or cancelling writes nothing.
 - Personal project rules destination (BH-076, #208): add private, permanent storage for learnings
   in `AGENTS.personal.md` stored beside `MEMORY.md` in the project data directory (derived from `memoryPath`),
   never committed or copied into worktrees. Learning review gains a fourth disposition, "Apply only to me".

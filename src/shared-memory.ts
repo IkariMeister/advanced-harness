@@ -23,6 +23,35 @@ export type BootstrapReadiness = {
 
 export type RuleDispositionType = 'promote' | 'keep-memory' | 'discard' | 'personal';
 
+export type PruningKind = 'redundant' | 'contradicted' | 'obsolete';
+
+export type PruningCandidate = {
+  entry: MemoryEntry;
+  kind: PruningKind;
+  reason: string;
+  evidence: string;
+};
+
+export type PruningDispositionType = 'promote' | 'personal' | 'keep' | 'discard';
+
+export type PruningDisposition = {
+  entry: MemoryEntry;
+  disposition: PruningDispositionType;
+  targetRuleText?: string;
+};
+
+export type MemoryPruningPlan = {
+  candidates: PruningCandidate[];
+  dispositions: PruningDisposition[];
+  updatedMemoryEntries: MemoryEntry[];
+  promotedToAgents: string[];
+  promotedToPersonal: string[];
+  keptCount: number;
+  discardedCount: number;
+  updatedAgentsText?: string | undefined;
+  agentsDiff?: string | undefined;
+};
+
 export type RuleDisposition = {
   type: RuleDispositionType;
   entry: MemoryEntry;
@@ -721,6 +750,274 @@ export function detectPersonalRuleContradictions(
   }
 
   return contradictions;
+}
+
+export type PruningExternalChecker = {
+  checkIssueExists?: (issueRef: string) => boolean | { exists: boolean; evidence: string };
+  checkBranchExists?: (branchRef: string) => boolean | { exists: boolean; evidence: string };
+  checkFileExists?: (filePath: string) => boolean | { exists: boolean; evidence: string };
+};
+
+export function detectPruningCandidates(options: {
+  memoryEntries: readonly MemoryEntry[];
+  agentsText?: string | undefined;
+  personalRules?: readonly string[] | undefined;
+  externalChecker?: PruningExternalChecker | undefined;
+}): PruningCandidate[] {
+  const candidates: PruningCandidate[] = [];
+  const agentsNorm = options.agentsText ? normalizeKey(options.agentsText) : '';
+  const personalNorm = (options.personalRules ?? []).map((r) => normalizeKey(r));
+
+  for (let idx = 0; idx < options.memoryEntries.length; idx++) {
+    const entry = options.memoryEntries[idx]!;
+    validateMemoryEntry(entry);
+
+    const factNorm = normalizeKey(entry.fact);
+
+    // 1. Check for Redundancy with AGENTS.md or personal rules
+    if (agentsNorm && agentsNorm.includes(factNorm)) {
+      if (!isAlreadyReviewed(entry, 'redundant', 'agents-rule')) {
+        candidates.push({
+          entry,
+          kind: 'redundant',
+          reason: 'Covered by an existing rule in AGENTS.md.',
+          evidence: 'Fact text is directly contained within AGENTS.md rules.',
+        });
+        continue;
+      }
+    }
+
+    const matchedPersonal = personalNorm.find((p) => p === factNorm || p.includes(factNorm) || factNorm.includes(p));
+    if (matchedPersonal) {
+      if (!isAlreadyReviewed(entry, 'redundant', 'personal-rule')) {
+        candidates.push({
+          entry,
+          kind: 'redundant',
+          reason: 'Covered by a personal rule in AGENTS.personal.md.',
+          evidence: `Matches personal rule: "${matchedPersonal}".`,
+        });
+        continue;
+      }
+    }
+
+    // 2. Check for Contradicted or Superseded
+    // Contradicted by AGENTS.md
+    if (options.agentsText) {
+      if (/never\s+merge|merging\s+remains\s+human-only/i.test(options.agentsText) && /auto[_-]?merge|merges?\s+automatically/i.test(entry.fact)) {
+        if (!isAlreadyReviewed(entry, 'contradicted', 'agents-rule')) {
+          candidates.push({
+            entry,
+            kind: 'contradicted',
+            reason: 'Contradicted by AGENTS.md instruction (merging is human-only).',
+            evidence: 'AGENTS.md mandates merging remains human-only while entry describes auto-merge.',
+          });
+          continue;
+        }
+      }
+    }
+
+    // Contradicted or superseded by a newer entry in MEMORY.md
+    let supersededOrContradictedByNewer = false;
+    for (let j = idx + 1; j < options.memoryEntries.length; j++) {
+      const newer = options.memoryEntries[j]!;
+      if (normalizeKey(newer.scope) === normalizeKey(entry.scope)) {
+        // Newer entry in same scope
+        if (/replaces|replacement|updated|supersedes/i.test(newer.confirmation) || normalizeKey(newer.fact) !== factNorm) {
+          if (!isAlreadyReviewed(entry, 'contradicted', `newer-entry:${newer.fact}`)) {
+            candidates.push({
+              entry,
+              kind: 'contradicted',
+              reason: `Contradicted or superseded by newer memory entry in scope "${entry.scope}".`,
+              evidence: `Newer entry: [Source: ${newer.source}; scope: ${newer.scope}; confirmation: ${newer.confirmation}] ${newer.fact}`,
+            });
+            supersededOrContradictedByNewer = true;
+            break;
+          }
+        }
+      }
+    }
+    if (supersededOrContradictedByNewer) continue;
+
+    // 3. Check for Obsolete (refers to an issue, branch or file that no longer exists)
+    if (options.externalChecker) {
+      // Check for issue reference, e.g. #123 or issue 123
+      const issueMatch = entry.fact.match(/(?:#|issue\s+|issues\/)(\d+)/i);
+      if (issueMatch && options.externalChecker.checkIssueExists) {
+        const issueRef = issueMatch[1]!;
+        const res = options.externalChecker.checkIssueExists(issueRef);
+        const exists = typeof res === 'boolean' ? res : res.exists;
+        const evidence = typeof res === 'boolean' ? `Issue #${issueRef} does not exist in tracker.` : res.evidence;
+        if (!exists) {
+          if (!isAlreadyReviewed(entry, 'obsolete', `issue:${issueRef}`)) {
+            candidates.push({
+              entry,
+              kind: 'obsolete',
+              reason: `Refers to issue #${issueRef} that no longer exists.`,
+              evidence,
+            });
+            continue;
+          }
+        }
+      }
+
+      // Check for branch reference, e.g. branch issue/123 or branch `feature-xyz`
+      const branchMatch = entry.fact.match(/(?:branch\s+[`']?|refs\/heads\/)([a-zA-Z0-9_\-./]+)/i);
+      if (branchMatch && options.externalChecker.checkBranchExists) {
+        const branchRef = branchMatch[1]!.replace(/[`']/g, '');
+        const res = options.externalChecker.checkBranchExists(branchRef);
+        const exists = typeof res === 'boolean' ? res : res.exists;
+        const evidence = typeof res === 'boolean' ? `Branch "${branchRef}" does not exist.` : res.evidence;
+        if (!exists) {
+          if (!isAlreadyReviewed(entry, 'obsolete', `branch:${branchRef}`)) {
+            candidates.push({
+              entry,
+              kind: 'obsolete',
+              reason: `Refers to branch "${branchRef}" that no longer exists.`,
+              evidence,
+            });
+            continue;
+          }
+        }
+      }
+
+      // Check for file reference, e.g. file `src/foo.ts` or path src/foo.ts
+      const fileMatch = entry.fact.match(/(?:file\s+[`']?|path\s+[`']?)([\w./\\-]+\.[a-zA-Z0-9]+)[`']?/i);
+      if (fileMatch && options.externalChecker.checkFileExists) {
+        const fileRef = fileMatch[1]!;
+        const res = options.externalChecker.checkFileExists(fileRef);
+        const exists = typeof res === 'boolean' ? res : res.exists;
+        const evidence = typeof res === 'boolean' ? `File "${fileRef}" does not exist.` : res.evidence;
+        if (!exists) {
+          if (!isAlreadyReviewed(entry, 'obsolete', `file:${fileRef}`)) {
+            candidates.push({
+              entry,
+              kind: 'obsolete',
+              reason: `Refers to file "${fileRef}" that no longer exists.`,
+              evidence,
+            });
+            continue;
+          }
+        }
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function isAlreadyReviewed(entry: MemoryEntry, kind: PruningKind, tag: string): boolean {
+  const normConf = normalizeKey(entry.confirmation);
+  return normConf.includes(`reviewed-${kind}`) ||
+    normConf.includes(`reviewed:${kind}`) ||
+    normConf.includes(`reviewed-${normalizeKey(tag)}`) ||
+    normConf.includes(`reviewed:${normalizeKey(tag)}`) ||
+    normConf === 'keep' ||
+    normConf.includes('reviewed-keep') ||
+    normConf.startsWith('reviewed:keep');
+}
+
+export function markEntryReviewed(entry: MemoryEntry, reason?: string): MemoryEntry {
+  const reviewedTag = reason ? `reviewed-keep-${reason.replace(/[:;\s]+/g, '-')}` : 'reviewed-keep';
+  const confirmation = entry.confirmation.includes('reviewed-keep') || entry.confirmation.includes('reviewed:')
+    ? entry.confirmation
+    : `${entry.confirmation} (${reviewedTag})`;
+  return {
+    ...entry,
+    confirmation,
+  };
+}
+
+export function planMemoryPruning(options: {
+  memoryEntries: readonly MemoryEntry[];
+  candidates: readonly PruningCandidate[];
+  dispositions: readonly PruningDisposition[];
+  agentsText?: string | undefined;
+}): MemoryPruningPlan {
+  const dispMap = new Map<string, PruningDisposition>();
+  for (const d of options.dispositions) {
+    const key = `${normalizeKey(d.entry.scope)}|${normalizeKey(d.entry.fact)}`;
+    dispMap.set(key, d);
+  }
+
+  const updatedMemory: MemoryEntry[] = [];
+  const promotedToAgents: string[] = [];
+  const promotedToPersonal: string[] = [];
+  let keptCount = 0;
+  let discardedCount = 0;
+
+  for (const entry of options.memoryEntries) {
+    validateMemoryEntry(entry);
+    const key = `${normalizeKey(entry.scope)}|${normalizeKey(entry.fact)}`;
+    const disp = dispMap.get(key);
+
+    if (!disp) {
+      // Not part of disposition, remains unchanged
+      updatedMemory.push(entry);
+      continue;
+    }
+
+    if (disp.disposition === 'promote') {
+      const ruleText = (disp.targetRuleText ?? entry.fact).trim();
+      for (const pattern of SECRET_PATTERNS) {
+        if (pattern.test(ruleText)) {
+          throw new Error('Promoted rule contains potential secret/token patterns. Rejecting promotion.');
+        }
+      }
+      for (const pattern of LOCAL_PATH_PATTERNS) {
+        if (pattern.test(ruleText)) {
+          throw new Error('Promoted rule contains machine-local worktree or operational paths. Rejecting promotion into AGENTS.md.');
+        }
+      }
+      if (/(?:^|[^\w])(?:[a-z]:[\\/](?:Users|Documents and Settings)[\\/][^\\/]+|\\\\[^\\]+\\[^\\]+|\/(?:Users|home)\/[^/\s]+)(?:[\\/]|[\s.,;:!?)]|$)/i.test(ruleText)) {
+        throw new Error('Promoted rule contains machine-local worktree or operational paths. Rejecting promotion into AGENTS.md.');
+      }
+      promotedToAgents.push(ruleText);
+      // Leaves MEMORY.md upon promotion
+    } else if (disp.disposition === 'personal') {
+      const ruleText = (disp.targetRuleText ?? entry.fact).trim();
+      validatePersonalRuleText(ruleText);
+      promotedToPersonal.push(ruleText);
+      // Leaves MEMORY.md upon personal promotion
+    } else if (disp.disposition === 'discard') {
+      discardedCount++;
+      // Leaves MEMORY.md upon discard
+    } else if (disp.disposition === 'keep') {
+      keptCount++;
+      // Kept entry is marked as reviewed so it is not proposed again without new reason
+      const reviewed = markEntryReviewed(entry);
+      updatedMemory.push(reviewed);
+    }
+  }
+
+  let updatedAgentsText: string | undefined;
+  let agentsDiff: string | undefined;
+
+  if (promotedToAgents.length > 0 && options.agentsText !== undefined) {
+    const promotionDispositions: RuleDisposition[] = promotedToAgents.map((ruleText) => ({
+      type: 'promote',
+      entry: { source: 'Pruning', scope: 'Project', confirmation: 'approved', fact: ruleText },
+      targetRuleText: ruleText,
+    }));
+    const promoPlan = planRulePromotion({
+      memoryEntries: options.memoryEntries,
+      agentsText: options.agentsText,
+      dispositions: promotionDispositions,
+    });
+    updatedAgentsText = promoPlan.updatedAgentsText;
+    agentsDiff = promoPlan.diff;
+  }
+
+  return {
+    candidates: [...options.candidates],
+    dispositions: [...options.dispositions],
+    updatedMemoryEntries: deduplicateMemoryEntries(updatedMemory),
+    promotedToAgents,
+    promotedToPersonal,
+    keptCount,
+    discardedCount,
+    updatedAgentsText,
+    agentsDiff,
+  };
 }
 
 export function applyApprovedRulePromotion(plan: RulePromotionPlan, approved: boolean): string {

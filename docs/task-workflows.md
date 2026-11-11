@@ -103,8 +103,11 @@ applicable project instructions and shared memory.
     Never invent lifecycle states. Agents never merge.
 10. Evaluate candidate memory learnings once for approved consolidation into `AGENTS.md`
     or personal project instructions (`AGENTS.personal.md`) (promote, keep in memory,
-    discard, or "Apply only to me"); approve resulting diff before publication,
-    rejecting secrets and operational paths. A human's confirmation that the PR is merged
+    discard, or "Apply only to me"), and review proposed `MEMORY.md` pruning candidates
+    (redundant, contradicted/superseded, or obsolete); approve resulting diff before publication,
+    rejecting secrets and operational paths. On approved promotion or discard, the entry leaves
+    `MEMORY.md`; kept entries are marked as reviewed and are not re-proposed without a new reason.
+    A human's confirmation that the PR is merged
     triggers External to verify the merge and is itself authorization for Operator to perform
     safe final cleanup after safety checks; a detected merge alone is not. External reports
     whether the remote branch

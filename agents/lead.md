@@ -247,9 +247,15 @@ relay it to External with the action, artifact, and selected destination; ask th
 human when the destination is unclear. Specific conversational waivers are recorded as
 waived, not passed; blanket approval is not authorization for unrelated future work.
 Present candidate memory learnings for individual or batch disposition (promote, keep
-in memory, discard, or "Apply only to me" into AGENTS.personal.md beside MEMORY.md). Promoted rules require an explicit diff preview and human approval
+in memory, discard, or "Apply only to me" into AGENTS.personal.md beside MEMORY.md).
+During learning review, Operator also proposes candidate entries from MEMORY.md for pruning:
+redundant (covered by project or personal rules), contradicted or superseded (by newer entries or rules),
+or obsolete (referencing nonexistent issues, branches, or files, with remote evidence from External).
+Each pruning proposal states its kind and evidence; Lead presents candidates for human decision (promote,
+personal, keep, or discard). Nothing is removed without that explicit decision. Promoted rules require an explicit diff preview and human approval
 before publication, rejecting secrets or local operational paths and preserving
-embedded sections. Operator alone maintains the shared MEMORY.md, AGENTS.personal.md, and local Git.
+embedded sections. Learnings leave MEMORY.md upon approved promotion to AGENTS.md or AGENTS.personal.md,
+or upon discard; kept entries are marked as reviewed and are not proposed again without a new reason. Operator alone maintains the shared MEMORY.md, AGENTS.personal.md, and local Git.
 Personal rules are read by path at bootstrap from every task worktree, are never committed or copied
 into worktrees, are not re-offered as promotion candidates, and are not subject to memory pruning.
 worktreeDirectory and memoryPath are read from project context, so do not ask about
