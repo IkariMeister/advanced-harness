@@ -12,7 +12,7 @@ test('pinned Gitleaks supports clean and multi-run added-text scans', (context) 
 
   const clean = scanAddedText([{ path: 'clean.txt', origin: 'committed', line: 4, text: 'ordinary source text' }]);
   assert.equal(clean.backend, 'gitleaks');
-  assert.equal(clean.complete, true);
+  assert.equal(clean.complete, true, clean.reason ?? 'Gitleaks clean scan did not complete.');
   assert.deepEqual(clean.findings, []);
 
   const findings = scanAddedText([
