@@ -405,19 +405,7 @@ export function planRulePromotion(options: {
       promotedCount++;
     } else if (disp.type === 'personal') {
       const ruleText = (disp.targetRuleText ?? disp.entry.fact).trim();
-      for (const pattern of SECRET_PATTERNS) {
-        if (pattern.test(ruleText)) {
-          throw new Error('Personal rule contains potential secret/token patterns. Rejecting personal rule.');
-        }
-      }
-      for (const pattern of LOCAL_PATH_PATTERNS) {
-        if (pattern.test(ruleText)) {
-          throw new Error('Personal rule contains machine-local worktree or operational paths. Rejecting personal rule.');
-        }
-      }
-      if (/(?:^|[^\w])(?:[a-z]:[\\/](?:Users|Documents and Settings)[\\/][^\\/]+|\\\\[^\\]+\\[^\\]+|\/(?:Users|home)\/[^/\s]+)(?:[\\/]|[\s.,;:!?)]|$)/i.test(ruleText)) {
-        throw new Error('Personal rule contains machine-local worktree or operational paths. Rejecting personal rule.');
-      }
+      validatePersonalRuleText(ruleText);
       personalRulesToAdd.push(ruleText);
       personalCount++;
     } else if (disp.type === 'keep-memory') {
@@ -661,6 +649,9 @@ export function writePersonalRulesSerialized(
       }
     }
     const formatted = formatPersonalRules(deduplicated);
+    if (Buffer.byteLength(formatted, 'utf8') > 1024 * 1024) {
+      throw new Error('Personal rules file exceeds 1 MiB size limit.');
+    }
     const newHash = createHash('sha256').update(formatted).digest('hex');
     writeFileSync(tempPath, formatted, 'utf8');
     renameSync(tempPath, target);
@@ -688,10 +679,13 @@ export function detectPersonalRuleContradictions(
     const normRule = normalizeKey(rule);
 
     if (/never\s+merge|merging\s+remains\s+human-only/i.test(agentsText) && /auto[_-]?merge|merges?\s+automatically/i.test(rule)) {
-      contradictions.push({
-        rule,
-        contradictionReason: 'Personal rule permits automatic merging, but AGENTS.md specifies merging remains human-only.',
-      });
+      const isNegated = /\b(?:never|not?|don't|must not|cannot|should not)\b.*?\b(?:auto[_-]?merge|merges?\s+automatically)\b/i.test(rule);
+      if (!isNegated) {
+        contradictions.push({
+          rule,
+          contradictionReason: 'Personal rule permits automatic merging, but AGENTS.md specifies merging remains human-only.',
+        });
+      }
     } else if (normRule.includes('always') || normRule.includes('never') || normRule.includes('do not') || normRule.includes('must not')) {
       // General conflict check if opposite terms appear in agents
       const positive = normRule.replace(/\b(never|do not|don't|must not)\b/g, '').trim();
