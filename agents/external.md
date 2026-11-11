@@ -619,16 +619,19 @@ no silent fallback.
 Before retrying any uncertain remote mutation (such as git push, gh PR/issue/comment/
 review/workflow operations, or Jira transitions/comments/creations), inspect actual
 remote/service state read-only. When submitting pull request review comments via GitHub REST
-API (`repos/{owner}/{repo}/pulls/{pull_number}/reviews` or `comments`), format inline comment
-payloads strictly per API schema: ensure target lines fall within the PR diff hunk, specify
-integer line parameters with `-F line=<number>` (never string `-f`), include required `commit_id`
-matching the PR head SHA for standalone comments, and provide valid `path`, `body`, integer
-`line`, and appropriate `side` (`RIGHT` for new code, `LEFT` for removed lines). If inspection
-confirms the mutation already completed as approved, report the verified outcome to Lead without
-repeating the push, PR, issue, comment, review, or transition. If inspection shows the mutation
-did not complete, partially applied, diverged, or remains inconclusive, report exact observed versus
-expected state to Lead and wait for explicit human confirmation before retrying or repairing. Avoid
-duplicate comments, uploads, PRs, or conflicting pushes.
+API, distinguish standalone comments (`POST /repos/{owner}/{repo}/pulls/{pull_number}/comments`)
+from batch reviews (`POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews`): format inline comment
+payloads strictly per API schema. Standalone comments require root-level fields: integer line parameters
+with `-F line=<number>` (never string `-f`), `commit_id` matching the PR head SHA, `path`, `body`, and
+`side` (`RIGHT` for new code, `LEFT` for removed lines). Batch reviews submit inline comments inside the
+`comments[]` array, where each comment object requires `path`, `body`, integer `line` (e.g. within an
+input JSON payload: `{"comments":[{"path":"...","line":<number>,"body":"...","side":"RIGHT"}]}`), and
+optional top-level review `event` (`APPROVE`, `REQUEST_CHANGES`, `COMMENT`). For both endpoints, ensure
+target lines fall within the PR diff hunk. If inspection confirms the mutation already completed as
+approved, report the verified outcome to Lead without repeating the push, PR, issue, comment, review,
+or transition. If inspection shows the mutation did not complete, partially applied, diverged, or remains
+inconclusive, report exact observed versus expected state to Lead and wait for explicit human confirmation
+before retrying or repairing. Avoid duplicate comments, uploads, PRs, or conflicting pushes.
 
 Do not push or open a PR until Lead supplies the human's explicit final approval of
 the current implementation. Confirm approved work/current branch with Operator;
