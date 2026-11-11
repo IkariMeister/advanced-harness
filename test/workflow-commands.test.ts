@@ -181,6 +181,7 @@ test('workflow commands preserve their expected handoff behavior', async () => {
   assert.match(await readFile(new URL('start-issue.md', root), 'utf8'), /smoke plan[\s\S]*approval before implementation/i);
   assert.match(await readFile(new URL('review-pr.md', root), 'utf8'), /Approve, Just Comment, or Request changes/);
   assert.match(await readFile(new URL('review-pr.md', root), 'utf8'), /inline on relevant code lines/);
+  assert.match(await readFile(new URL('review-pr.md', root), 'utf8'), /ensure target lines fall within the PR diff hunk, specify integer line numbers with `-F line=<number>` \(never string `-f`\)/);
   const defect = await readFile(new URL('report-defect.md', root), 'utf8');
   assert.match(defect, /\$1/);
   assert.match(defect, /\$2/);
