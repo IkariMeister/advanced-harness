@@ -28,10 +28,13 @@ import {
   detectPruningCandidates,
   planMemoryPruning,
   markEntryReviewed,
+  applyApprovedMemoryPruning,
+  validatePromotedRuleText,
   type MemoryEntry,
   type BootstrapContext,
   type PruningCandidate,
   type PruningDisposition,
+  type TriStateResult,
 } from '../src/shared-memory.ts';
 
 function createFixture(t: test.TestContext) {
@@ -679,6 +682,45 @@ test('detectPersonalRuleContradictions identifies contradictions with AGENTS.md 
   assert.match(contradictions[3]!.contradictionReason, /human-only/);
 });
 
+test('detectPruningCandidates avoids false positives and handles tri-state checks', () => {
+  const agents = `# Instructions\n\nMerging remains human-only.\n`;
+  const personal = ['', '   ', 'valid-personal-rule'];
+
+  const entries: MemoryEntry[] = [
+    // Should NOT be flagged as redundant because fact is short ("Node")
+    { source: 'Test', scope: 'General', confirmation: 'approved', fact: 'Node' },
+    // Should NOT be flagged by empty personal rules
+    { source: 'Test', scope: 'General', confirmation: 'approved', fact: 'Some fact not in personal rules' },
+    // Should NOT be flagged as contradicted because it explicitly negates auto-merge
+    { source: 'Git', scope: 'Workflow', confirmation: 'approved', fact: 'Never auto-merge pull requests' },
+    // Two unrelated facts in the same scope: should NOT flag the first as contradicted
+    { source: 'Tooling', scope: 'Versions', confirmation: 'approved', fact: 'Node 24 is active' },
+    { source: 'Tooling', scope: 'Versions', confirmation: 'approved', fact: 'TypeScript 7 is active' },
+    // Prose with "branch protection": should NOT match branch obsolete check
+    { source: 'Security', scope: 'Git', confirmation: 'approved', fact: 'Configure branch protection for main' },
+    // Prose with "#1": should NOT match obsolete issue if it's not an issue reference
+    { source: 'Rank', scope: 'Priority', confirmation: 'approved', fact: 'Priority is #1 item in queue' },
+    // Candidate with external check that returns "unknown" (e.g. offline/error): must NOT be flagged as obsolete
+    { source: 'Bug', scope: 'Fixes', confirmation: 'approved', fact: 'Fixes issue #888' },
+  ];
+
+  const externalChecker = {
+    checkIssueExists: (id: string) => (id === '888' ? { status: 'unknown' as TriStateResult, evidence: 'Network error' } : { status: 'exists' as TriStateResult, evidence: 'Exists' }),
+    checkBranchExists: () => 'exists' as TriStateResult,
+    checkFileExists: () => 'exists' as TriStateResult,
+  };
+
+  const candidates = detectPruningCandidates({
+    memoryEntries: entries,
+    agentsText: agents,
+    personalRules: personal,
+    externalChecker,
+  });
+
+  // Zero false positives should be produced
+  assert.equal(candidates.length, 0);
+});
+
 test('detectPruningCandidates identifies redundant, contradicted/superseded, and obsolete entries', () => {
   const agents = `# Instructions\n\nAlways run tests before PR. Merging remains human-only.\n`;
   const personal = ['Use 2 spaces for indentation'];
@@ -690,7 +732,7 @@ test('detectPruningCandidates identifies redundant, contradicted/superseded, and
     { source: 'Operator', scope: 'Editor', confirmation: 'approved', fact: 'Use 2 spaces for indentation' },
     // 2: contradicted by AGENTS.md
     { source: 'Operator', scope: 'Git', confirmation: 'approved', fact: 'Merges automatically when tests pass' },
-    // 3: older entry superseded by newer entry in same scope
+    // 3: older entry superseded by newer entry in same scope with shared topic
     { source: 'Test', scope: 'Tooling', confirmation: 'approved', fact: 'Node 18 is required' },
     // 4: newer entry superseding #3
     { source: 'Test', scope: 'Tooling', confirmation: 'replaces Node 18', fact: 'Node 24 is required' },
@@ -702,14 +744,12 @@ test('detectPruningCandidates identifies redundant, contradicted/superseded, and
     { source: 'Repo', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/obsolete.ts` on start' },
     // 8: active and valid entry
     { source: 'Dev', scope: 'Context', confirmation: 'approved', fact: 'All active work happens in task worktrees' },
-    // 9: already reviewed entry marked keep
-    { source: 'Review', scope: 'Repo', confirmation: 'approved (reviewed-keep-redundant)', fact: 'Always run tests before PR.' },
   ];
 
   const externalChecker = {
-    checkIssueExists: (id: string) => id !== '999',
-    checkBranchExists: (branch: string) => branch !== 'issue/999',
-    checkFileExists: (path: string) => !path.includes('obsolete.ts'),
+    checkIssueExists: (id: string) => (id === '999' ? { status: 'missing' as TriStateResult, evidence: 'Issue #999 deleted' } : 'exists' as TriStateResult),
+    checkBranchExists: (branch: string) => (branch === 'issue/999' ? { status: 'missing' as TriStateResult, evidence: 'Branch deleted' } : 'exists' as TriStateResult),
+    checkFileExists: (path: string) => (path.includes('obsolete.ts') ? { status: 'missing' as TriStateResult, evidence: 'File removed' } : 'exists' as TriStateResult),
   };
 
   const candidates = detectPruningCandidates({
@@ -756,13 +796,20 @@ test('detectPruningCandidates identifies redundant, contradicted/superseded, and
   assert.match(candidates[6]!.reason, /file "src\/obsolete\.ts"/);
 });
 
-test('planMemoryPruning handles promote, personal, keep, and discard dispositions accurately', () => {
+test('planMemoryPruning handles promote, personal, keep, and discard dispositions accurately and rechecks', () => {
   const agentsOriginal = '# Project Guidelines\n\nExisting rule.\n';
   const entries: MemoryEntry[] = [
     { source: 'Review', scope: 'Repo', confirmation: 'approved', fact: 'Promote this rule to AGENTS' },
     { source: 'Operator', scope: 'User', confirmation: 'approved', fact: 'Promote this rule to personal' },
     { source: 'Test', scope: 'Legacy', confirmation: 'approved', fact: 'Discard this obsolete fact' },
     { source: 'Dev', scope: 'Context', confirmation: 'approved', fact: 'Keep this valid fact in memory' },
+  ];
+
+  const candidates: PruningCandidate[] = [
+    { entry: entries[0]!, kind: 'redundant', reason: 'Covered', evidence: 'agents-rule' },
+    { entry: entries[1]!, kind: 'redundant', reason: 'Personal rule', evidence: 'personal-rule' },
+    { entry: entries[2]!, kind: 'obsolete', reason: 'Obsolete', evidence: 'file:deleted.ts' },
+    { entry: entries[3]!, kind: 'obsolete', reason: 'Issue closed', evidence: 'issue:100' },
   ];
 
   const dispositions: PruningDisposition[] = [
@@ -774,17 +821,15 @@ test('planMemoryPruning handles promote, personal, keep, and discard disposition
 
   const plan = planMemoryPruning({
     memoryEntries: entries,
-    candidates: [],
+    candidates,
     dispositions,
     agentsText: agentsOriginal,
   });
 
   // Verify memory removals and keep retention
-  // Only the kept entry should remain in updatedMemoryEntries
   assert.equal(plan.updatedMemoryEntries.length, 1);
   assert.equal(plan.updatedMemoryEntries[0]!.fact, 'Keep this valid fact in memory');
-  // Kept entry is marked as reviewed
-  assert.ok(plan.updatedMemoryEntries[0]!.confirmation.includes('reviewed-keep'));
+  assert.ok(plan.updatedMemoryEntries[0]!.confirmation.includes('reviewed-keep:obsolete'));
 
   // Counts
   assert.equal(plan.keptCount, 1);
@@ -796,32 +841,92 @@ test('planMemoryPruning handles promote, personal, keep, and discard disposition
   assert.ok(plan.agentsDiff?.includes('+- Promoted rule for AGENTS'));
   assert.ok(!plan.agentsDiff?.includes('Personal preference rule'));
 
-  // Kept entry is not proposed again on subsequent detection
-  const nextCandidates = detectPruningCandidates({
+  // Re-checking with the SAME trigger yields ZERO candidates for the kept entry
+  const externalChecker = {
+    checkIssueExists: (id: string) => (id === '100' ? { status: 'missing' as TriStateResult, evidence: 'issue:100' } : 'exists' as TriStateResult),
+  };
+  const rechecked = detectPruningCandidates({
     memoryEntries: plan.updatedMemoryEntries,
-    agentsText: plan.updatedAgentsText,
+    externalChecker,
   });
-  assert.equal(nextCandidates.length, 0);
+  assert.equal(rechecked.length, 0);
+
+  // If evidence changes (e.g. now referring to a branch), it IS re-proposed
+  const changedEvidenceChecker = {
+    checkIssueExists: () => 'exists' as TriStateResult,
+    checkBranchExists: () => ({ status: 'missing' as TriStateResult, evidence: 'branch:new-branch' }),
+  };
+  const withBranchFact: MemoryEntry[] = [
+    { ...plan.updatedMemoryEntries[0]!, fact: 'Tracking branch issue/100' },
+  ];
+  const recheckedNewReason = detectPruningCandidates({
+    memoryEntries: withBranchFact,
+    externalChecker: changedEvidenceChecker,
+  });
+  assert.equal(recheckedNewReason.length, 1);
 });
 
-test('planMemoryPruning validates promoted rules and rejects secrets and local paths', () => {
-  const entry: MemoryEntry = { source: 'A', scope: 'B', confirmation: 'C', fact: 'Secret or path fact' };
+test('planMemoryPruning validates dispositions, rejects non-candidates and duplicates, and enforces atomicity', (t) => {
+  const { memoryPath } = createFixture(t);
+  const entry: MemoryEntry = { source: 'A', scope: 'B', confirmation: 'C', fact: 'Valid fact' };
+  const candidate: PruningCandidate = { entry, kind: 'redundant', reason: 'Covered', evidence: 'test' };
 
+  // Rejects disposition for non-candidate
   assert.throws(() => planMemoryPruning({
     memoryEntries: [entry],
     candidates: [],
-    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'ghp_012345678901234567890123456789' }],
-  }), /potential secret\/token/);
+    dispositions: [{ entry, disposition: 'discard' }],
+  }), /not a recognized pruning candidate/);
 
+  // Rejects duplicate dispositions
   assert.throws(() => planMemoryPruning({
     memoryEntries: [entry],
-    candidates: [],
-    dispositions: [{ entry, disposition: 'promote', targetRuleText: '/Users/test/Projects/advanced-harness-worktrees/test' }],
-  }), /machine-local worktree or operational paths/);
+    candidates: [candidate],
+    dispositions: [
+      { entry, disposition: 'discard' },
+      { entry, disposition: 'keep' },
+    ],
+  }), /Duplicate disposition/);
 
+  // Rejects promote without agentsText
   assert.throws(() => planMemoryPruning({
     memoryEntries: [entry],
-    candidates: [],
-    dispositions: [{ entry, disposition: 'personal', targetRuleText: 'ghp_012345678901234567890123456789' }],
-  }), /potential secret or credential/);
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote' }],
+    agentsText: undefined,
+  }), /requires agentsText destination/);
+
+  // Apply without approval throws
+  const plan = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'discard' }],
+    agentsText: '# Rules',
+  });
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: false,
+    memoryPath,
+  }), /requires explicit human approval/);
+
+  // Decline / cancel writes nothing
+  writeSharedMemorySerialized(memoryPath, [entry], undefined);
+  const beforeMem = readSharedMemory(memoryPath);
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: false,
+    memoryPath,
+  }), /explicit human approval/);
+  const afterMem = readSharedMemory(memoryPath);
+  assert.equal(beforeMem.hash, afterMem.hash);
+});
+
+test('validatePromotedRuleText rejects secrets, Windows and UNC local paths', () => {
+  assert.throws(() => validatePromotedRuleText(''), /cannot be empty/);
+  assert.throws(() => validatePromotedRuleText('line 1\nline 2'), /must not contain raw newlines/);
+  assert.throws(() => validatePromotedRuleText('ghp_012345678901234567890123456789'), /potential secret\/token/);
+  assert.throws(() => validatePromotedRuleText('/Users/test/Projects/advanced-harness-worktrees/test'), /machine-local/);
+  assert.throws(() => validatePromotedRuleText('C:\\Users\\Alice\\Projects\\advanced-harness-worktrees\\issue-1'), /machine-local/);
+  assert.throws(() => validatePromotedRuleText('\\\\server\\share\\Projects\\advanced-harness-worktrees\\issue-1'), /machine-local/);
+  assert.doesNotMatch('Always check lint before commit', /error/);
 });
