@@ -657,12 +657,19 @@ test('detectPersonalRuleContradictions identifies contradictions with AGENTS.md 
     'Never auto-merge',
     'Do not auto-merge pull requests',
     'Must not auto-merge',
+    'Do not rebase; auto-merge when green',
+    'Never force push, auto-merge if tests pass',
+    'Do not rebase; never auto-merge',
   ];
 
   const contradictions = detectPersonalRuleContradictions(personal, agents);
-  assert.equal(contradictions.length, 2);
+  assert.equal(contradictions.length, 4);
   assert.equal(contradictions[0]!.rule, 'Merges automatically when green');
   assert.match(contradictions[0]!.contradictionReason, /human-only/);
   assert.equal(contradictions[1]!.rule, 'Never check before commit');
   assert.match(contradictions[1]!.contradictionReason, /forbids/);
+  assert.equal(contradictions[2]!.rule, 'Do not rebase; auto-merge when green');
+  assert.match(contradictions[2]!.contradictionReason, /human-only/);
+  assert.equal(contradictions[3]!.rule, 'Never force push, auto-merge if tests pass');
+  assert.match(contradictions[3]!.contradictionReason, /human-only/);
 });

@@ -679,8 +679,19 @@ export function detectPersonalRuleContradictions(
     const normRule = normalizeKey(rule);
 
     if (/never\s+merge|merging\s+remains\s+human-only/i.test(agentsText) && /auto[_-]?merge|merges?\s+automatically/i.test(rule)) {
-      const isNegated = /\b(?:never|not?|don't|must not|cannot|should not)\b.*?\b(?:auto[_-]?merge|merges?\s+automatically)\b/i.test(rule);
-      if (!isNegated) {
+      // Split into clauses (by semicolon, comma, or sentence endings) and check the clause(s) mentioning auto-merge
+      const clauses = rule.split(/[;,.\n]+/);
+      let permitsAutoMerge = false;
+      for (const clause of clauses) {
+        if (/auto[_-]?merge|merges?\s+automatically/i.test(clause)) {
+          const isNegated = /\b(?:never|not?|don't|must not|cannot|should not|no)\b.*?\b(?:auto[_-]?merge|merges?\s+automatically)\b/i.test(clause);
+          if (!isNegated) {
+            permitsAutoMerge = true;
+            break;
+          }
+        }
+      }
+      if (permitsAutoMerge) {
         contradictions.push({
           rule,
           contradictionReason: 'Personal rule permits automatic merging, but AGENTS.md specifies merging remains human-only.',
