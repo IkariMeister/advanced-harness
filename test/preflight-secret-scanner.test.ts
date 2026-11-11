@@ -186,6 +186,67 @@ test('Gitleaks runs share one deterministic deadline and do not spawn after expi
   assert.ok(reports.every(path => !existsSync(path)), 'temporary reports are removed on deadline failure');
 });
 
+test('fractional remaining scan time is floored and sub-ms scan time expires without spawning', () => {
+  const timeouts: number[] = [];
+  const run = (_command: string, args: string[], options: any) => {
+    timeouts.push(options.timeout);
+    writeFileSync(args[args.indexOf('--report-path') + 1]!, '[]');
+    return { status: 0, error: undefined };
+  };
+  const ticks = [0, 659.322673];
+  const fractional = scanAddedText([{ path: 'clean.txt', line: 1, text: 'ordinary text' }], {
+    probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }),
+    run: run as never,
+    now: () => ticks.shift()!,
+  });
+  assert.equal(fractional.complete, true);
+  assert.deepEqual(timeouts, [9340], 'spawnSync receives an integer timeout floored from the fractional remaining budget');
+
+  let calls = 0;
+  const exhaustedTicks = [0, 9999.2];
+  const exhausted = scanAddedText([{ path: 'clean.txt', line: 1, text: 'ordinary text' }], {
+    probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }),
+    run: (() => { calls += 1; throw new Error('must not spawn with timeout zero'); }) as never,
+    now: () => exhaustedTicks.shift()!,
+  });
+  assert.equal(exhausted.complete, false);
+  assert.match(exhausted.reason ?? '', /aggregate scan deadline exceeded/);
+  assert.equal(calls, 0, 'a sub-ms budget is expired rather than passed as timeout 0 (unbounded)');
+});
+
+test('probe subprocesses receive integer timeouts and sub-ms probe budget expires', () => {
+  const directories: string[] = [];
+  const makeTemp = (prefix: string) => {
+    const directory = mkdtempSync(join(tmpdir(), prefix));
+    directories.push(directory);
+    return directory;
+  };
+  const timeouts: number[] = [];
+  const run = (_command: string, args: string[], options: any) => {
+    timeouts.push(options.timeout);
+    const stdout = args[0] === 'version' ? '8.30.1' : '--report-format --report-path --config --redact';
+    return { status: 0, error: undefined, stdout, stderr: '' } as unknown as ReturnType<typeof spawnSync>;
+  };
+  const available = probeGitleaks(2500.8, makeTemp, { now: () => 0, run: run as never, resolveExecutable: () => process.execPath });
+  assert.equal(available.available, true);
+  assert.deepEqual(timeouts, [2500, 2500]);
+  assert.ok(timeouts.every(timeout => Number.isInteger(timeout) && timeout > 0));
+  assert.ok(directories.every(directory => !existsSync(directory)), 'probe temporary directories are removed');
+
+  let calls = 0;
+  const expiredDirectories: string[] = [];
+  const expired = probeGitleaks(0.8, prefix => {
+    const directory = mkdtempSync(join(tmpdir(), prefix));
+    expiredDirectories.push(directory);
+    return directory;
+  }, { now: () => 0, run: (() => { calls += 1; throw new Error('must not spawn'); }) as never, resolveExecutable: () => process.execPath });
+  assert.equal(expired.available, false);
+  assert.equal(expired.backend, 'unavailable');
+  assert.match(expired.reason, /aggregate scan deadline exceeded/);
+  assert.equal(calls, 0);
+  assert.ok(expiredDirectories.every(directory => !existsSync(directory)), 'expired probe temp is removed before return');
+});
+
 test('aggregate scanner payload at exactly 4 MiB is accepted', () => {
   let calls = 0;
   const run = (_command: string, args: string[]) => {

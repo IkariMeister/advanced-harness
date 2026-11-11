@@ -16,8 +16,8 @@ test('pinned Gitleaks supports clean and multi-run added-text scans', (context) 
   assert.deepEqual(clean.findings, []);
 
   const findings = scanAddedText([
-    { path: 'first.txt', origin: 'committed', line: 12, text: 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' },
-    { path: 'second.txt', origin: 'staged', line: 3, text: 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' },
+    { path: 'first.txt', origin: 'committed', line: 12, text: 'ghp_7Q2M9L1X8C4D6E0F7Q2M9L1X8C4D6E0F7Q2M9L1X' },
+    { path: 'second.txt', origin: 'staged', line: 3, text: 'ghp_7Q2M9L1X8C4D6E0F7Q2M9L1X8C4D6E0F7Q2M9L1X' },
   ]);
   assert.equal(findings.backend, 'gitleaks');
   assert.equal(findings.complete, true);

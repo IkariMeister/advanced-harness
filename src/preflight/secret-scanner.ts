@@ -15,6 +15,12 @@ const MIN_GITLEAKS = [8, 30, 1] as const;
 type TempDirectoryFactory = (prefix: string) => string;
 const defaultTempDirectory: TempDirectoryFactory = prefix => mkdtempSync(join(tmpdir(), prefix));
 
+/** spawnSync requires an integer timeout; zero means no timeout, so sub-ms budgets expire. */
+function boundedTimeout(remainingMs: number, maximumMs: number): number | undefined {
+  const timeout = Math.floor(Math.min(remainingMs, maximumMs));
+  return timeout >= 1 ? timeout : undefined;
+}
+
 function scannerEnvironment(): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GITLEAKS_')));
 }
@@ -26,24 +32,26 @@ export function formatScannerProbe(probe: ScannerProbe): string {
 }
 
 /** Content-free, bounded capability probe shared by doctor and preflight. */
-export function probeGitleaks(deadline = performance.now() + TIMEOUT_MS, makeTempDirectory: TempDirectoryFactory = defaultTempDirectory): ScannerProbe {
-  const executable = resolveGitleaks();
+export function probeGitleaks(deadline = performance.now() + TIMEOUT_MS, makeTempDirectory: TempDirectoryFactory = defaultTempDirectory, dependencies: { run?: typeof spawnSync; now?: () => number; resolveExecutable?: () => string | undefined } = {}): ScannerProbe {
+  const now = dependencies.now ?? (() => performance.now());
+  const run = dependencies.run ?? spawnSync;
+  const executable = dependencies.resolveExecutable?.() ?? resolveGitleaks();
   if (!executable) return { available: false, backend: 'builtin', reason: 'Gitleaks is not installed in an absolute PATH entry.' };
   let privateCwd: string;
   try { privateCwd = makeTempDirectory('harness-gitleaks-probe-'); } catch { return { available: false, backend: 'unavailable', reason: 'Gitleaks probe temporary directory could not be created.' }; }
-  const remaining = deadline - performance.now();
-  if (remaining <= 0) { rmSync(privateCwd, { recursive: true, force: true }); return { available: false, backend: 'unavailable', reason: 'Gitleaks aggregate scan deadline exceeded.' }; }
-  const options = { encoding: 'utf8' as const, timeout: Math.min(3000, remaining), maxBuffer: 32 * 1024, cwd: privateCwd, env: scannerEnvironment() };
+  const timeout = boundedTimeout(deadline - now(), 3000);
+  if (timeout === undefined) { rmSync(privateCwd, { recursive: true, force: true }); return { available: false, backend: 'unavailable', reason: 'Gitleaks aggregate scan deadline exceeded.' }; }
+  const options = { encoding: 'utf8' as const, timeout, maxBuffer: 32 * 1024, cwd: privateCwd, env: scannerEnvironment() };
   let version;
-  try { version = spawnSync(executable, ['version'], options); } finally { rmSync(privateCwd, { recursive: true, force: true }); }
+  try { version = run(executable, ['version'], options); } finally { rmSync(privateCwd, { recursive: true, force: true }); }
   if (version.error || version.status !== 0) return { available: false, backend: 'unavailable', reason: 'Gitleaks is present but its version probe failed.' };
   if (!isSupportedGitleaksVersion(version.stdout)) return { available: false, backend: 'unavailable', reason: 'Gitleaks 8.30.1 or newer is required.' };
   let probeCwd: string;
   try { probeCwd = makeTempDirectory('harness-gitleaks-probe-'); } catch { return { available: false, backend: 'unavailable', reason: 'Gitleaks probe temporary directory could not be created.' }; }
-  const probeRemaining = deadline - performance.now();
-  if (probeRemaining <= 0) { rmSync(probeCwd, { recursive: true, force: true }); return { available: false, backend: 'unavailable', reason: 'Gitleaks aggregate scan deadline exceeded.' }; }
+  const probeTimeout = boundedTimeout(deadline - now(), 3000);
+  if (probeTimeout === undefined) { rmSync(probeCwd, { recursive: true, force: true }); return { available: false, backend: 'unavailable', reason: 'Gitleaks aggregate scan deadline exceeded.' }; }
   let command;
-  try { command = spawnSync(executable, ['stdin', '--help'], { ...options, timeout: Math.min(3000, probeRemaining), cwd: probeCwd }); } finally { rmSync(probeCwd, { recursive: true, force: true }); }
+  try { command = run(executable, ['stdin', '--help'], { ...options, timeout: probeTimeout, cwd: probeCwd }); } finally { rmSync(probeCwd, { recursive: true, force: true }); }
   if (command.error || command.status !== 0 || !/--report-format/.test(command.stdout) || !/--report-path/.test(command.stdout) || !/--config/.test(command.stdout) || !/--redact/.test(command.stdout)) return { available: false, backend: 'unavailable', reason: 'Gitleaks stdin JSON report interface is unavailable.' };
   return { available: true, backend: 'gitleaks', executable };
 }
@@ -130,11 +138,11 @@ function gitleaksRun(changes: AddedLine[], dependencies: { run?: typeof spawnSyn
   let report: string;
   let status: number | null;
   try {
-    const remaining = deadline - dependencies.now();
-    if (remaining <= 0) return { findings: [], complete: false, reason: 'Gitleaks aggregate scan deadline exceeded.' };
-    const run = (dependencies.run ?? spawnSync)(executable, args, { input: payload, encoding: 'utf8', timeout: remaining, maxBuffer: LIMIT, cwd: reportRoot, env: scannerEnvironment() });
-    if (run.error || (run.status !== 0 && run.status !== 1)) return { findings: [], complete: false, reason: 'Gitleaks scan failed.' };
-    status = run.status;
+    const timeout = boundedTimeout(deadline - dependencies.now(), TIMEOUT_MS);
+    if (timeout === undefined) return { findings: [], complete: false, reason: 'Gitleaks aggregate scan deadline exceeded.' };
+    const result = (dependencies.run ?? spawnSync)(executable, args, { input: payload, encoding: 'utf8', timeout, maxBuffer: LIMIT, cwd: reportRoot, env: scannerEnvironment() });
+    if (result.error || (result.status !== 0 && result.status !== 1)) return { findings: [], complete: false, reason: 'Gitleaks scan failed.' };
+    status = result.status;
     report = readFileSync(reportPath, 'utf8');
   } catch { return { findings: [], complete: false, reason: 'Gitleaks report could not be read.' }; }
   try {
