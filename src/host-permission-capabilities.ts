@@ -141,7 +141,7 @@ export const hostPermissionMatrix: Readonly<Record<HostId, HostPermissionRow>> =
       },
       roleCommands: {
         status: 'unverified',
-        scope: 'Per-process sandbox settings are tested statically; approved role launches and Reviewer/QA re-runs remain unverified. A launcher MCP override failed during startup (#200).',
+        scope: 'Per-process sandbox settings are tested statically; role launches under host permission and Reviewer/QA re-runs remain unverified. A launcher MCP override failed during startup (#200).',
         evidence: [regression('test/codex-role-processes.test.ts'), { kind: 'live-run', source: 'https://github.com/IkariMeister/advanced-harness/issues/200#issuecomment-6716047378', runner: 'Codex agent, authorized by IkariMeister on 2026-11-08; agent-executed diagnostics, not a human interactive run' }],
       },
       roleExposure: {
