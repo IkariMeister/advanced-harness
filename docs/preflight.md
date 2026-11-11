@@ -126,7 +126,7 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   displayed rule is a stable SHA-256 label; exceptions use the exact upstream
   Gitleaks `RuleID` so arbitrary report identifiers are never emitted.
 - Secret scanning uses the shared bounded scanner probe described in
-  [ADR-006](adr/0006-preflight-scope-and-redaction.md). Gitleaks uses the checked-in
+  [ADR-007](adr/0007-preflight-scope-and-redaction.md). Gitleaks uses the checked-in
   `src/preflight/gitleaks.toml` default-rule config, a private temporary working directory,
   and an environment with all `GITLEAKS_*` variables removed. Scanner payload is
   passed on stdin; output is reduced to sanitized rule/location records. If
