@@ -78,8 +78,8 @@ test('untracked symlinks are not followed and make secret scanning inconclusive'
   git(root, 'config', 'user.email', 'test@example.com');
   git(root, 'config', 'user.name', 'Test');
   writeFileSync(join(root, 'keep.txt'), 'keep\n');
-  git(root, 'add', '.'); git(root, 'commit', '-q', '-m', 'base'); git(root, 'checkout', '-q', '-b', 'task');
   writeFileSync(join(root, 'secret-target.txt'), 'const api_key = "THIS_IS_A_FAKE_SECRET_VALUE_0123456789";\n');
+  git(root, 'add', '.'); git(root, 'commit', '-q', '-m', 'base'); git(root, 'checkout', '-q', '-b', 'task');
   try { symlinkSync('secret-target.txt', join(root, 'link.txt')); } catch { t.skip('symlinks unavailable on this machine'); return; }
   const changeset = collectChangeset(root, 'main');
   const link = changeset.entries.find(entry => entry.path === 'link.txt');

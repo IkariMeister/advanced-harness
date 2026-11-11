@@ -484,6 +484,8 @@ test('changed gitlinks expose exact before and after commit IDs for acknowledgem
   writeFileSync(join(sub, 'payload.txt'), 'initial\n');
   git(sub, 'add', '.'); git(sub, 'commit', '-q', '-m', 'initial submodule commit');
   git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'vendor/lib');
+  git(join(root, 'vendor/lib'), 'config', 'user.email', 'sub@example.com');
+  git(join(root, 'vendor/lib'), 'config', 'user.name', 'Sub');
   git(root, 'commit', '-q', '-m', 'add gitlink');
   const base = git(root, 'rev-parse', 'HEAD');
   writeFileSync(join(root, 'vendor/lib', 'payload.txt'), 'updated\n');
@@ -553,6 +555,8 @@ test('unstaged gitlink before-state comes from the index, not HEAD', async () =>
   git(sub, 'add', '.'); git(sub, 'commit', '-q', '-m', 'gitlink A');
   git(root, 'checkout', '-q', 'main');
   git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'vendor/lib');
+  git(join(root, 'vendor/lib'), 'config', 'user.email', 'sub@example.com');
+  git(join(root, 'vendor/lib'), 'config', 'user.name', 'Sub');
   git(root, 'commit', '-q', '-m', 'baseline gitlink A');
   const base = git(root, 'rev-parse', 'HEAD');
   const idA = git(join(root, 'vendor/lib'), 'rev-parse', 'HEAD');
