@@ -6,7 +6,7 @@ import { baseContextCheck, changesetCheck, pathPolicyCheck, policyIntegrityCheck
 import { loadProjectPreflightPolicy, PreflightPolicyError } from './policy.ts';
 import { scanAddedText } from './secret-scanner.ts';
 import { DEFAULT_SENSITIVE_PATH_GLOBS, validateSensitivePathGlobs } from './path-policy.ts';
-import type { CheckResult, CheckStatus, Changeset, PreflightCheck, PreflightExitCode, PreflightResult } from './types.ts';
+import type { CheckResult, Changeset, PreflightCheck, PreflightExitCode, PreflightResult } from './types.ts';
 
 export class UnresolvedBaseError extends Error { override name = 'UnresolvedBaseError'; }
 export type BaseResolution = { ref: string; source: 'option' | 'project-context' } | { error: UnresolvedBaseError };
@@ -25,7 +25,7 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
   }
 }
 
-export type PreflightOptions = { worktree: string; base?: string | undefined; task?: string | undefined; checks?: readonly PreflightCheck[]; sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText; gitlinkAcknowledgements?: readonly { path: string; oldId: string; newId: string }[] };
+export type PreflightOptions = { worktree: string; base?: string | undefined; task?: string | undefined; checks?: readonly PreflightCheck[]; sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText };
 export type DefaultCheckOptions = { sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText };
 export function createDefaultChecks(options: DefaultCheckOptions = {}): readonly PreflightCheck[] {
   return [changesetCheck, baseContextCheck, policyIntegrityCheck, worktreeBoundaryCheck, pathPolicyCheck(options.sensitivePathGlobs), secretScanCheck(options.secretExceptions, options.secretScanner)];
@@ -38,27 +38,35 @@ function inconclusiveAll(checks: readonly PreflightCheck[], reason: string): Pre
   return { approved: false, blocking: [], warnings: [], metrics: {}, checks: results };
 }
 
-async function unavailablePolicyResult(worktree: string, changeset: Changeset, checks: readonly PreflightCheck[], reason: string, task?: string): Promise<PreflightResult> {
+async function executeChecks(worktree: string, changeset: Changeset, checks: readonly PreflightCheck[], task?: string, projectPolicy?: { gitlinkAcknowledgements: readonly import('./policy.ts').GitlinkAcknowledgement[] }, unavailableReason?: string): Promise<PreflightResult> {
+  if (!checks.length) return inconclusiveAll(checks, 'No checks configured to run.');
+  const ordered = [...checks].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const seen = new Set<string>();
+  for (const check of ordered) {
+    if (seen.has(check.id)) return inconclusiveAll(ordered, `Duplicate preflight check id: ${check.id}`);
+    seen.add(check.id);
+  }
   const results: CheckResult[] = [];
   const blocking: string[] = [];
   const warnings: string[] = [];
   const metrics: Record<string, number> = {};
-  for (const check of [...checks].sort((a, b) => a.id.localeCompare(b.id))) {
-    if (check.id === 'path-policy' || check.id === 'secret-scan') {
-      results.push({ id: check.id, status: 'inconclusive', evidence: [reason] });
+  for (const check of ordered) {
+    if (unavailableReason && (check.id === 'path-policy' || check.id === 'secret-scan')) {
+      results.push({ id: check.id, status: 'inconclusive', evidence: [unavailableReason] });
       continue;
     }
     try {
-      const outcome = await check.run({ worktree, changeset, task });
-      results.push({ id: check.id, status: outcome.status, evidence: [...outcome.evidence] });
+      const outcome = await check.run({ worktree, changeset, task, gitlinkAcknowledgements: projectPolicy?.gitlinkAcknowledgements });
+      const status = ['pass', 'warn', 'block', 'inconclusive'].includes(outcome.status) ? outcome.status : 'inconclusive';
+      results.push({ id: check.id, status, evidence: [...outcome.evidence, ...(status === outcome.status ? [] : [`Invalid check status returned: ${String(outcome.status)}`])] });
       for (const [key, value] of Object.entries(outcome.metrics ?? {})) metrics[`${check.id}.${key}`] = value;
-      if (outcome.status === 'block') blocking.push(...outcome.evidence.map(line => `${check.id}: ${line}`));
-      if (outcome.status === 'warn') warnings.push(...outcome.evidence.map(line => `${check.id}: ${line}`));
-    } catch {
-      results.push({ id: check.id, status: 'inconclusive', evidence: ['Check could not run while trusted preflight policy was unavailable.'] });
+      if (status === 'block') blocking.push(...outcome.evidence.map(line => `${check.id}: ${line}`));
+      if (status === 'warn') warnings.push(...outcome.evidence.map(line => `${check.id}: ${line}`));
+    } catch (error) {
+      results.push({ id: check.id, status: 'inconclusive', evidence: [unavailableReason ? 'Check could not run while trusted preflight policy was unavailable.' : `Check failed: ${error instanceof Error ? error.message : String(error)}`] });
     }
   }
-  return { approved: false, blocking, warnings, metrics, checks: results };
+  return { approved: results.length > 0 && results.every(result => result.status === 'pass' || result.status === 'warn'), blocking, warnings, metrics, checks: results };
 }
 
 /** Runs checks in `id` order. A thrown check or failed tool call is `inconclusive`, never a pass. */
@@ -73,17 +81,15 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
     return inconclusiveAll(options.checks ?? defaultChecks, `Changeset unavailable: ${error instanceof Error ? error.message : String(error)}`);
   }
   let projectPolicy;
-  const policyBase = base.source === 'option' ? base.ref : TRUSTED_POLICY_REF;
+  const policyBase = TRUSTED_POLICY_REF;
   try { projectPolicy = loadProjectPreflightPolicy(changeset.top, policyBase, { forbiddenPathGlobs: options.sensitivePathGlobs !== undefined, secretExceptions: options.secretExceptions !== undefined }); } catch (error) {
     if (base.source === 'project-context' && error instanceof PreflightPolicyError && error.code === 'base-unavailable') {
-      const reason = `Trusted preflight policy ref ${TRUSTED_POLICY_REF} is unavailable; pass --base <ref> or run \`git remote set-head origin --auto\`.`;
-      if (options.checks !== undefined) return inconclusiveAll(options.checks, reason);
-      return unavailablePolicyResult(worktree, changeset, defaultChecks, reason, options.task);
+      const reason = `Trusted preflight policy ref ${TRUSTED_POLICY_REF} is unavailable; restore it with \`git remote set-head origin --auto\`.`;
+      return executeChecks(worktree, changeset, options.checks ?? defaultChecks, options.task, undefined, reason);
     }
     const detail = error instanceof PreflightPolicyError ? error.message : 'validation failed.';
-    return inconclusiveAll(options.checks ?? defaultChecks, `Project preflight policy is invalid: ${detail}`);
+    return executeChecks(worktree, changeset, options.checks ?? defaultChecks, options.task, undefined, `Project preflight policy is invalid: ${detail}`);
   }
-  if (options.checks !== undefined && (projectPolicy.sensitivePathGlobs !== undefined || projectPolicy.secretExceptions.length > 0)) return inconclusiveAll(options.checks, 'Custom checks cannot be combined with configured project preflight policy.');
   const sensitivePathGlobs = options.sensitivePathGlobs ?? projectPolicy.sensitivePathGlobs;
   let rawChecks: readonly PreflightCheck[];
   try {
@@ -97,47 +103,18 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
   } catch (error) {
     return inconclusiveAll(options.checks ?? defaultChecks, `Preflight policy is invalid: ${error instanceof Error ? error.message : 'validation failed.'}`);
   }
-  if (!rawChecks.length) return inconclusiveAll([], 'No checks configured to run.');
-  const checks = [...rawChecks].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const ids = new Set<string>();
-  for (const check of checks) {
-    if (ids.has(check.id)) return inconclusiveAll(checks, `Duplicate preflight check id: ${check.id}`);
-    ids.add(check.id);
-  }
-
-  const results: CheckResult[] = [];
-  const blocking: string[] = [];
-  const warnings: string[] = [];
-  const metrics: Record<string, number> = {};
-  for (const check of checks) {
-    try {
-      const outcome = await check.run({ worktree, changeset, task: options.task, gitlinkAcknowledgements: options.gitlinkAcknowledgements });
-      const validStatuses: CheckStatus[] = ['pass', 'warn', 'block', 'inconclusive'];
-      const status: CheckStatus = validStatuses.includes(outcome.status) ? outcome.status : 'inconclusive';
-      const evidence = [...outcome.evidence];
-      if (status !== outcome.status) {
-        evidence.push(`Invalid check status returned: ${String(outcome.status)}`);
-      }
-      results.push({ id: check.id, status, evidence });
-      for (const [key, value] of Object.entries(outcome.metrics ?? {})) metrics[`${check.id}.${key}`] = value;
-      if (status === 'block') blocking.push(...evidence.map((line) => `${check.id}: ${line}`));
-      if (status === 'warn') warnings.push(...evidence.map((line) => `${check.id}: ${line}`));
-    } catch (error) {
-      results.push({ id: check.id, status: 'inconclusive', evidence: [`Check failed: ${error instanceof Error ? error.message : String(error)}`] });
-    }
-  }
-  const approved = results.length > 0 && results.every((result) => result.status === 'pass' || result.status === 'warn');
-  return { approved, blocking, warnings, metrics, checks: results };
+  return executeChecks(worktree, changeset, rawChecks, options.task, projectPolicy);
 }
 
 export function exitCodeFor(result: PreflightResult): PreflightExitCode {
-  if (result.checks.some((check) => check.status === 'inconclusive')) return 2;
+  const acknowledgedOnlyIncomplete = result.checks.some(check => check.id === 'secret-scan' && check.status === 'warn' && check.evidence.some(line => line.includes('Acknowledged incomplete coverage:')));
+  if (result.checks.some((check) => check.status === 'inconclusive' && !(acknowledgedOnlyIncomplete && check.id === 'secret-scan'))) return 2;
   if (result.checks.some((check) => check.status === 'block')) return 1;
   return 0;
 }
 
 export function formatHuman(result: PreflightResult): string {
-  const verdict = { 0: 'PASS', 1: 'BLOCKED', 2: 'INCONCLUSIVE' }[exitCodeFor(result)];
+  const verdict = { 0: result.checks.some(check => check.evidence.some(line => line.includes('Acknowledged incomplete coverage:'))) ? 'PASS (ACKNOWLEDGED INCOMPLETE COVERAGE)' : 'PASS', 1: 'BLOCKED', 2: 'INCONCLUSIVE' }[exitCodeFor(result)];
   const lines = [`Preflight: ${verdict} (evidence only; a human approves publication)`];
   for (const check of result.checks) {
     lines.push(`  [${check.status}] ${check.id}`);

@@ -91,7 +91,7 @@ function nestedContentDirty(worktree: string, path: string): boolean {
       // Populated directories without repository metadata are uninspectable.
       return readdirSync(nested).length > 0;
     }
-    const result = spawnSync('git', ['-C', nested, 'status', '--porcelain', '--untracked-files=all'], { maxBuffer: 16 *  1024 * 1024 });
+    const result = spawnSync('git', ['-C', nested, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'], { maxBuffer: 16 * 1024 * 1024, timeout: 3000, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
     return result.error !== undefined || result.status !== 0 || result.stdout.length > 0;
   } catch { return true; }
 }

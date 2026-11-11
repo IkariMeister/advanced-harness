@@ -6,6 +6,13 @@ version between releases.
 
 ## Unreleased
 
+### Changed
+
+- Preflight gitlink coverage acknowledgements now come only from trusted
+  `.harness/preflight.json` at local `refs/remotes/origin/HEAD`, independently of
+  `--base`. Exact clean gitlink gaps with nonblank justifications remain visibly
+  incomplete; the legacy `--ack-gitlink` CLI option now reports migration guidance.
+
 ### Added
 
 - `worktree-boundary` preflight check (BH-067, #182): enforces that preflight is run in an

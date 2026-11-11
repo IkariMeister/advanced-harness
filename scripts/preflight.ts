@@ -3,7 +3,7 @@ import { basename, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { exitCodeFor, formatHuman, runPreflight } from '../src/preflight/runner.ts';
 
-const usage = `Usage: npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--ack-gitlink <json>] [--json]
+const usage = `Usage: npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--json]
        npm run harness:preflight -- -h | --help
 
 Reports pre-publish evidence for a task worktree. It never records approval.
@@ -12,8 +12,6 @@ Reports pre-publish evidence for a task worktree. It never records approval.
                      Required if the project context has no baseBranch.
   --task <key>       Optional task or issue key (e.g. 182, #182, BH-067)
                      to verify that HEAD matches the task branch.
-  --ack-gitlink <json> Invocation-scoped acknowledgement: JSON object with exact path,
-                     oldId, and newId. May be repeated; affects that gitlink gap only.
   --json             Print the result contract as JSON
   -h, --help         Show this help message
 
@@ -42,22 +40,12 @@ export async function runCli(args: string[], deps: CliDeps = defaultDeps): Promi
   try {
     if (args.includes('--help') || args.includes('-h')) { deps.output(usage); return 0; }
     const options: Record<string, string> = {};
-    const gitlinkAcknowledgements: { path: string; oldId: string; newId: string }[] = [];
     let json = false;
     for (let index = 0; index < args.length; index += 1) {
       const flag = args[index]!;
       if (flag === '--json') { json = true; continue; }
       if (flag === '--ack-gitlink') {
-        const value = args[index + 1];
-        if (!value || value.startsWith('--')) return fail(`Missing value for ${flag}`);
-        let acknowledgement: unknown;
-        try { acknowledgement = JSON.parse(value); } catch { return fail(`Invalid JSON for ${flag}`); }
-        if (!acknowledgement || typeof acknowledgement !== 'object' || Array.isArray(acknowledgement)) return fail(`Invalid value for ${flag}`);
-        const candidate = acknowledgement as Record<string, unknown>;
-        if (Object.keys(candidate).some(key => !['path', 'oldId', 'newId'].includes(key)) || typeof candidate.path !== 'string' || !candidate.path || typeof candidate.oldId !== 'string' || !/^[0-9a-f]{40,64}$/i.test(candidate.oldId) || typeof candidate.newId !== 'string' || !/^[0-9a-f]{40,64}$/i.test(candidate.newId)) return fail(`Invalid value for ${flag}`);
-        gitlinkAcknowledgements.push({ path: candidate.path, oldId: candidate.oldId, newId: candidate.newId });
-        index += 1;
-        continue;
+        return fail('--ack-gitlink was removed. Move acknowledgements into trusted .harness/preflight.json under gitlinkAcknowledgements; see docs/preflight.md.');
       }
       if (flag !== '--worktree' && flag !== '--base' && flag !== '--task') return fail(`Unknown option: ${flag}`);
       if (options[flag] !== undefined) return fail(`Duplicate option: ${flag}`);
@@ -67,7 +55,7 @@ export async function runCli(args: string[], deps: CliDeps = defaultDeps): Promi
       index += 1;
     }
     if (!options['--worktree']) return fail('Missing required --worktree.');
-    const result = await deps.runPreflight({ worktree: options['--worktree'], base: options['--base'], task: options['--task'], gitlinkAcknowledgements });
+    const result = await deps.runPreflight({ worktree: options['--worktree'], base: options['--base'], task: options['--task'] });
     deps.output(json ? JSON.stringify(result, null, 2) : formatHuman(result));
     return exitCodeFor(result);
   } catch (error) {

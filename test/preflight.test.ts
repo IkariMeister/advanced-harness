@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { updateContext } from '../src/project-context.ts';
 import { baseContextCheck, isPathContained, pathPolicyCheck, secretScanCheck, worktreeBoundaryCheck } from '../src/preflight/checks.ts';
 import { collectChangeset } from '../src/preflight/changeset.ts';
-import { exitCodeFor, resolveBase, runPreflight, UnresolvedBaseError } from '../src/preflight/runner.ts';
+import { exitCodeFor, formatHuman, resolveBase, runPreflight, UnresolvedBaseError } from '../src/preflight/runner.ts';
 import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
 import { entryDecision, runCli } from '../scripts/preflight.ts';
 import { MAX_SECRET_SCAN_BYTES, safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
@@ -100,14 +100,19 @@ test('secret scanner input retains blank added lines and origin boundaries', asy
   assert.deepEqual(received.map(item => [item.text, item.origin]), [['alpha', 'committed'], ['', 'committed'], ['omega', 'committed'], ['staged', 'staged']]);
 });
 
-test('gitlink acknowledgement is exact, invocation scoped, visible, and cannot clear other gaps', async () => {
+test('trusted gitlink acknowledgement is exact, visible as incomplete coverage, and cannot clear other gaps', async () => {
   const gitlinkEntry = { path: 'vendor/lib', status: 'modified' as const, origin: 'committed' as const, kind: 'submodule' as const, content: undefined, addedTextComplete: false, gitlink: { oldId: 'a'.repeat(40), newId: 'b'.repeat(40) } };
   const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [gitlinkEntry] };
-  const acknowledgement = { path: 'vendor/lib', oldId: 'a'.repeat(40), newId: 'b'.repeat(40) };
+  const acknowledgement = { path: 'vendor/lib', oldId: 'a'.repeat(40), newId: 'b'.repeat(40), justification: 'Reviewed upstream contents.' };
   const check = secretScanCheck([], () => ({ backend: 'builtin', complete: true, findings: [] }));
   const accepted = await check.run({ worktree: '/', changeset, gitlinkAcknowledgements: [acknowledgement] });
-  assert.equal(accepted.status, 'pass');
-  assert.ok(accepted.evidence.some(line => /acknowledgements supplied: 1; matched: 1; unmatched: 0/.test(line)));
+  assert.equal(accepted.status, 'warn');
+  assert.ok(accepted.evidence.some(line => /Acknowledged incomplete coverage: vendor\/lib/.test(line)));
+  const withText = await check.run({ worktree: '/', changeset: { ...changeset, entries: [...changeset.entries, { path: 'ordinary.txt', status: 'added', origin: 'committed', content: Buffer.from('ordinary'), addedText: 'ordinary text', targetLines: [1], addedTextComplete: true }] }, gitlinkAcknowledgements: [acknowledgement] });
+  assert.equal(withText.metrics?.complete, 0, 'acknowledged gitlink coverage remains incomplete even when ordinary text is scanned');
+  assert.equal(exitCodeFor({ approved: true, blocking: [], warnings: withText.evidence, metrics: {}, checks: [{ id: 'secret-scan', status: withText.status, evidence: withText.evidence }] }), 0, 'the sole acknowledged gap retains the approved exit 0 behavior');
+  assert.match(formatHuman({ approved: true, blocking: [], warnings: withText.evidence, metrics: {}, checks: [{ id: 'secret-scan', status: withText.status, evidence: withText.evidence }] }), /Secret scan backend: builtin \(incomplete\)/);
+  assert.equal(JSON.parse(JSON.stringify({ metrics: withText.metrics })).metrics.complete, 0, 'JSON retains incomplete coverage');
 
   const wrongId = await check.run({ worktree: '/', changeset, gitlinkAcknowledgements: [{ ...acknowledgement, newId: 'c'.repeat(40) }] });
   assert.equal(wrongId.status, 'inconclusive');
@@ -115,8 +120,8 @@ test('gitlink acknowledgement is exact, invocation scoped, visible, and cannot c
 
   const wrongSamePath = { ...acknowledgement, oldId: 'd'.repeat(40) };
   const correctAndIncorrect = await check.run({ worktree: '/', changeset, gitlinkAcknowledgements: [acknowledgement, wrongSamePath] });
-  assert.equal(correctAndIncorrect.status, 'pass');
-  assert.ok(correctAndIncorrect.evidence.some(line => /supplied: 2; matched: 1; unmatched: 1/.test(line)), 'each tuple is counted independently even when its path matches');
+  assert.equal(correctAndIncorrect.status, 'warn');
+  assert.ok(correctAndIncorrect.evidence.some(line => /Trusted gitlink acknowledgements: 2; matched: 1; unmatched: 1/.test(line)), 'each tuple is counted independently even when its path matches');
 
   const unrelatedGap = await check.run({ worktree: '/', changeset: { ...changeset, entries: [...changeset.entries, { path: 'ordinary.bin', status: 'added', origin: 'committed', content: undefined, addedTextComplete: false }] }, gitlinkAcknowledgements: [acknowledgement] });
   assert.equal(unrelatedGap.status, 'inconclusive');
@@ -226,6 +231,7 @@ function baseContextOf(result: { checks: { id: string; status: CheckStatus; evid
 
 test('changeset covers committed, staged, unstaged, untracked, renamed, and deleted files with contents', () => {
   const root = repo();
+  simulateOriginHead(root);
   writeFileSync(join(root, 'committed.txt'), 'new\n');
   renameSync(join(root, 'old.txt'), join(root, 'new.txt'));
   rmSync(join(root, 'gone.txt'));
@@ -275,6 +281,7 @@ test('changeset covers committed, staged, unstaged, untracked, renamed, and dele
 
 test('symlinks are reported with their target, not as empty files', (t) => {
   const root = repo();
+  simulateOriginHead(root);
   try { symlinkSync('keep.txt', join(root, 'link')); } catch { t.skip('symlinks unavailable on this machine'); return; }
   const link = collectChangeset(root, 'main').entries.find((entry) => entry.path === 'link');
   assert.equal(link?.kind, 'symlink');
@@ -328,6 +335,7 @@ test('staged deletion and multi-origin modifications are tracked per origin', ()
 
 test('checks run in deterministic id order and aggregate block/warn', async () => {
   const root = repo();
+  simulateOriginHead(root);
   const order: string[] = [];
   const make = (id: string, status: 'pass' | 'warn' | 'block'): PreflightCheck => ({ id, run: () => { order.push(id); return { status, evidence: [`${id} evidence`], metrics: { n: 1 } }; } });
   const result = await runPreflight({ worktree: root, base: 'main', checks: [make('c', 'block'), make('a', 'pass'), make('b', 'warn')] });
@@ -583,7 +591,7 @@ test('unstaged gitlink before-state comes from the index, not HEAD', async () =>
   const headBasedAck = await check.run({ worktree: root, changeset: unstagedChangeset, gitlinkAcknowledgements: [{ path: 'vendor/lib', oldId: idA, newId: idC }] });
   assert.equal(headBasedAck.status, 'inconclusive', 'HEAD A to worktree C cannot acknowledge the index B to worktree C gap');
   const indexBasedAck = await check.run({ worktree: root, changeset: unstagedChangeset, gitlinkAcknowledgements: [{ path: 'vendor/lib', oldId: idB, newId: idC }] });
-  assert.equal(indexBasedAck.status, 'pass');
+  assert.equal(indexBasedAck.status, 'warn');
 });
 
 test('CLI exit codes and JSON contract', () => {
@@ -666,7 +674,7 @@ test('CLI exit codes and JSON contract', () => {
   assert.equal(exit2Cli.status, 2);
 });
 
-test('CLI parses repeated exact gitlink acknowledgements and rejects malformed acknowledgements', async () => {
+test('CLI rejects the removed gitlink acknowledgement option with trusted-policy migration guidance', async () => {
   let received: Parameters<typeof runPreflight>[0] | undefined;
   const captured: string[] = [];
   const deps = {
@@ -675,10 +683,9 @@ test('CLI parses repeated exact gitlink acknowledgements and rejects malformed a
     error: (message: string) => captured.push(message),
   };
   const ack = { path: 'vendor/a', oldId: 'a'.repeat(40), newId: 'b'.repeat(40) };
-  assert.equal(await runCli(['--worktree', '.', '--ack-gitlink', JSON.stringify(ack)], deps), 0);
-  assert.deepEqual(received?.gitlinkAcknowledgements, [ack]);
-  assert.equal(await runCli(['--worktree', '.', '--ack-gitlink', '{bad'], deps), 2);
-  assert.match(captured.at(-1) ?? '', /Invalid JSON/);
+  assert.equal(await runCli(['--worktree', '.', '--ack-gitlink', JSON.stringify(ack)], deps), 2);
+  assert.match(captured.at(-1) ?? '', /trusted \.harness\/preflight\.json/);
+  assert.equal(received, undefined);
 });
 
 test('CLI blocks a secret finding while keeping the payload out of human and JSON output', () => {
@@ -767,13 +774,15 @@ test('a linked context file outside the repository is inconclusive', async () =>
   assert.equal(baseContextOf(result)?.status, 'inconclusive');
 });
 
-test('a missing origin/HEAD is inconclusive with the --base or set-head hint', async () => {
+test('a missing origin/HEAD is inconclusive and directs restoration of the trusted ref', async () => {
   const root = projectRepo({ originHead: false });
   const result = await runPreflight({ worktree: root });
   assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
   const check = baseContextOf(result);
   assert.equal(check?.status, 'inconclusive');
-  assert.match(check!.evidence[0]!, /pass --base <ref> or run `git remote set-head origin --auto`/);
+  const secretScan = result.checks.find(item => item.id === 'secret-scan');
+  assert.match(secretScan!.evidence[0]!, /restore it with `git remote set-head origin --auto`/);
+  assert.doesNotMatch(secretScan!.evidence[0]!, /pass --base/);
 });
 
 test('an untouched project context matching origin/HEAD passes, including through a linked context file', async () => {
@@ -1293,14 +1302,14 @@ test('worktree-boundary: preflight exit code precedence when trusted ref is miss
   assert.equal(resultNoBase.approved, false);
   assert.equal(exitCodeFor(resultNoBase), 2);
 
-  // 2. With explicit --base: base-context passes (informational), worktree-boundary is block, overall exit 1
+  // 2. Explicit --base does not replace the independent trusted policy ref, so policy-dependent checks remain inconclusive.
   const resultWithBase = await runPreflight({ worktree: taskWt, base: 'main' });
   const baseCheckWithBase = resultWithBase.checks.find((c) => c.id === 'base-context');
   const boundaryCheckWithBase = worktreeBoundaryOf(resultWithBase);
   assert.equal(baseCheckWithBase?.status, 'pass');
   assert.equal(boundaryCheckWithBase?.status, 'block');
   assert.equal(resultWithBase.approved, false);
-  assert.equal(exitCodeFor(resultWithBase), 1);
+  assert.equal(exitCodeFor(resultWithBase), 2);
 });
 
 test('worktree-boundary: trailing slash on configured worktreeDirectory passes without false modification block', async () => {

@@ -36,14 +36,18 @@ high-confidence detector; backend coverage may differ. Installed but unusable
 scanner interfaces and malformed reports are inconclusive. Diagnostics contain
 sanitized rule/location fields and a redaction marker only.
 
-Project preflight policy is stored in `.harness/preflight.json` with a replacement
-`forbiddenPathGlobs` array and `.harness/preflight-allowlist.json` with a JSON array
+Project preflight policy is stored in trusted `.harness/preflight.json` with a replacement
+`forbiddenPathGlobs` array and optional justified `gitlinkAcknowledgements`, and
+`.harness/preflight-allowlist.json` with a JSON array
 of justified exact `path`/`rule` exceptions. A line-scoped exception also requires a
 1-based `line` and a `committed`, `staged`, `unstaged`, or `untracked` `origin`.
 Preflight reads these files from the
-explicit `--base` commit, or from `refs/remotes/origin/HEAD` when base comes from
-project context; candidate edits block pending review and cannot change the policy
-used for that run. Both files are optional; malformed trusted
+`refs/remotes/origin/HEAD`, independently of `--base`; candidate edits block pending
+review and cannot change the policy used for that run. `--base` selects the changeset
+comparison revision only. Acknowledgements require exact clean gitlink path/IDs and
+nonblank justification; additions omit the old ID. Acknowledged incomplete coverage
+is visible and can exit 0 only when no findings or other gaps remain. Dirty or
+uninspectable nested content cannot be acknowledged. Both files are optional; malformed trusted
 policy makes preflight inconclusive before secret scanning. See
 [preflight](preflight.md#project-policy-and-revision-authority) and
 [ADR-007](adr/0007-preflight-scope-and-redaction.md).

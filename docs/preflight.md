@@ -105,9 +105,9 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   `root.pem` and `certs/root.pem`. By contrast, `*.pem` matches root-level files
   only. Brackets and braces are literal characters, not character classes or
   alternation syntax: `file[1].pem` matches that bracketed name literally.
-  Preflight reads `.harness/preflight.json` (`forbiddenPathGlobs`) and
-  `.harness/preflight-allowlist.json` from the explicit `--base` commit, or from
-  `refs/remotes/origin/HEAD` when base comes from project context. It never reads
+  Preflight reads `.harness/preflight.json` (`forbiddenPathGlobs` and
+  `gitlinkAcknowledgements`) and `.harness/preflight-allowlist.json` from
+  `refs/remotes/origin/HEAD`, independently of `--base`. It never reads
   candidate working-tree policy contents. Changes to either policy file in
   the candidate changeset block pending review. Programmatic `runPreflight`
   callers can explicitly supply `sensitivePathGlobs` and `secretExceptions`; these
@@ -117,8 +117,10 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   programmatic callers use
   `secretExceptions`. Project policy is validated after resolving the changeset
   base and before check execution or secret scanning.
-  Custom `checks` cannot be combined with explicit policy overrides or configured
-  project policy. Exceptions are normalized for separators and a leading `./`,
+  Custom `checks` can run while configured project policy is present; they cannot be
+  combined with explicit policy overrides. Trusted policy files are still loaded and
+  validated, including the allowlist shape when programmatic exceptions override its
+  values. Exceptions are normalized for separators and a leading `./`,
   then match the exact path/rule pair. Their trimmed justification is never shown;
   the full normalized path is retained for matching, while display escapes control
   characters and shortens very long paths. Metrics report only how many findings
@@ -144,30 +146,39 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   report directory is removed after all runs finish or fail, including
   incomplete scans and subprocess errors. Gitleaks `RuleID` values are
   emitted as stable SHA-256 labels; exact exceptions match the upstream ID.
+- The optional Linux x64 8.30.1 release asset is pinned to SHA-256
+  `551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb`; downloaded
+  archive bytes must pass this digest check before extraction.
 
 ## Project policy and revision authority
 
 The repository-specific scanner policy is stored in `.harness/preflight.json` and
-`.harness/preflight-allowlist.json`; the root [AGENTS.md](../AGENTS.md) points here
-instead of embedding scanner policy in host-neutral project instructions. Preflight
-loads these files from the explicit `--base` commit, or from the local
-`refs/remotes/origin/HEAD` when base comes from project context. That trusted revision
-is the policy authority for the run. A candidate changeset that edits, renames, or
+`.harness/preflight-allowlist.json`. Preflight loads these files from the local
+`refs/remotes/origin/HEAD` regardless of `--base`; `--base` selects only the changeset
+comparison revision. That trusted revision is the policy authority for the run. A candidate changeset that edits, renames, or
 deletes either policy file is blocked by `policy-integrity`; land and review the
 policy change in the trusted base first, then run preflight against that revision.
 The task branch cannot grant itself a new scanner exception or weaken its path rules.
 
-An invocation may acknowledge a specific gitlink coverage gap with repeatable
-`--ack-gitlink <json>` options. Each JSON object contains `path`, `oldId`, and `newId`,
-for example `--ack-gitlink '{"path":"vendor/example","oldId":"<40-64 hex>","newId":"<40-64 hex>"}'`.
-The exact path and both commit IDs must match a changed gitlink. The acknowledgement
-is reported in output and applies only to that one gitlink's incomplete-scan gap; it
-does not suppress secret findings, acknowledge nested repositories without matching
-  gitlink IDs, or clear any other incomplete path. Dirty or untracked content inside
-  an indexed submodule is detected separately, including when its gitlink commit ID
-  is unchanged; commit-ID acknowledgements cannot clear that coverage gap. Gitlinks
-  and nested repositories remain contentless entries in the changeset. Programmatic `runPreflight` callers use
-the `gitlinkAcknowledgements` option with the same exact tuple.
+Gitlink coverage acknowledgements are configured only in trusted
+`.harness/preflight.json`. For a changed gitlink use a normalized repository-relative
+path, exact IDs, and a nonblank justification. An addition omits `oldId`:
+
+```json
+{"gitlinkAcknowledgements":[{"path":"vendor/example","oldId":"<old commit ID>","newId":"<new commit ID>","justification":"Reviewed upstream contents; source unavailable to scanner."}]}
+```
+
+```json
+{"gitlinkAcknowledgements":[{"path":"vendor/example","newId":"<new commit ID>","justification":"Reviewed upstream contents; source unavailable to scanner."}]}
+```
+
+The exact path and IDs must match. Output identifies matched gaps and keeps the scan
+marked incomplete. Exit 0 is allowed when every remaining gap is a valid trusted
+acknowledgement and there are no findings or other gaps; acknowledged coverage is
+visibly labeled. Dirty or uninspectable nested content cannot be acknowledged.
+Acknowledgements cannot suppress findings or other incomplete paths. The former
+`--ack-gitlink` option is rejected with migration guidance. Policy edits in the
+candidate changeset remain blocked until reviewed and present at trusted `origin/HEAD`.
 
 ## Worktree boundary check
 
@@ -186,7 +197,12 @@ in the canonical checkout:
   Repositories with only an interim `paths` section are blocked (`status: 'block'`).
 - Reads `worktreeDirectory` from project context. A missing `worktreeDirectory` or
   one that does not exist on disk blocks (`exit 1`). Shared-location resolution
-  errors (such as conflict or invalid shape) are inconclusive (`exit 2`).
+  errors (such as conflict or invalid shape) are inconclusive (`exit 2`). Malformed,
+  unreadable, or otherwise invalid trusted policy JSON makes policy-dependent checks
+  inconclusive even when explicit programmatic path-glob or exception overrides are
+  supplied, because trusted gitlink acknowledgements still require validation.
+  Independent checks continue to run. Explicit exception values replace trusted
+  entries only after the trusted allowlist has been read and its JSON shape validated.
 - Verifies that the resolved physical worktree path is strictly inside the resolved
   `worktreeDirectory` (realpath comparison, platform-aware). Any worktree outside the
   configured directory (or attempting directory traversal) is blocked (`exit 1`).

@@ -247,6 +247,33 @@ test('probe subprocesses receive integer timeouts and sub-ms probe budget expire
   assert.ok(expiredDirectories.every(directory => !existsSync(directory)), 'expired probe temp is removed before return');
 });
 
+test('default probe forwards the injected runner and clock with a strict bounded call count', () => {
+  let clockCalls = 0;
+  let commandCalls = 0;
+  const now = () => {
+    clockCalls += 1;
+    if (clockCalls > 4) throw new Error('unexpected clock read');
+    return 0;
+  };
+  const run = (_command: string, args: string[]) => {
+    commandCalls += 1;
+    if (args[0] === 'version') return { status: 0, error: undefined, stdout: '8.30.1', stderr: '' } as unknown as ReturnType<typeof spawnSync>;
+    if (args[1] === '--help') return { status: 0, error: undefined, stdout: '--report-format --report-path --config --redact', stderr: '' } as unknown as ReturnType<typeof spawnSync>;
+    writeFileSync(args[args.indexOf('--report-path') + 1]!, '[]');
+    return { status: 0, error: undefined, stdout: '', stderr: '' } as unknown as ReturnType<typeof spawnSync>;
+  };
+  const result = scanAddedText([{ path: 'clean.txt', line: 1, text: 'ordinary text' }], {
+    run: run as never,
+    now,
+    resolveExecutable: () => process.execPath,
+    createTempDirectory: prefix => mkdtempSync(join(tmpdir(), prefix)),
+  });
+  assert.equal(result.complete, true);
+  assert.equal(result.backend, 'gitleaks');
+  assert.equal(clockCalls, 4);
+  assert.equal(commandCalls, 3, 'the injected runner handles version, capability, and scan commands');
+});
+
 test('aggregate scanner payload at exactly 4 MiB is accepted', () => {
   let calls = 0;
   const run = (_command: string, args: string[]) => {

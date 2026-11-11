@@ -35,7 +35,7 @@ export function formatScannerProbe(probe: ScannerProbe): string {
 export function probeGitleaks(deadline = performance.now() + TIMEOUT_MS, makeTempDirectory: TempDirectoryFactory = defaultTempDirectory, dependencies: { run?: typeof spawnSync; now?: () => number; resolveExecutable?: () => string | undefined } = {}): ScannerProbe {
   const now = dependencies.now ?? (() => performance.now());
   const run = dependencies.run ?? spawnSync;
-  const executable = dependencies.resolveExecutable?.() ?? resolveGitleaks();
+  const executable = dependencies.resolveExecutable ? dependencies.resolveExecutable() : resolveGitleaks();
   if (!executable) return { available: false, backend: 'builtin', reason: 'Gitleaks is not installed in an absolute PATH entry.' };
   let privateCwd: string;
   try { privateCwd = makeTempDirectory('harness-gitleaks-probe-'); } catch { return { available: false, backend: 'unavailable', reason: 'Gitleaks probe temporary directory could not be created.' }; }
@@ -43,7 +43,7 @@ export function probeGitleaks(deadline = performance.now() + TIMEOUT_MS, makeTem
   if (timeout === undefined) { rmSync(privateCwd, { recursive: true, force: true }); return { available: false, backend: 'unavailable', reason: 'Gitleaks aggregate scan deadline exceeded.' }; }
   const options = { encoding: 'utf8' as const, timeout, maxBuffer: 32 * 1024, cwd: privateCwd, env: scannerEnvironment() };
   let version;
-  try { version = run(executable, ['version'], options); } finally { rmSync(privateCwd, { recursive: true, force: true }); }
+  try { version = run(executable, ['version'], options); } catch { rmSync(privateCwd, { recursive: true, force: true }); return { available: false, backend: 'unavailable', reason: 'Gitleaks probe failed.' }; } finally { rmSync(privateCwd, { recursive: true, force: true }); }
   if (version.error || version.status !== 0) return { available: false, backend: 'unavailable', reason: 'Gitleaks is present but its version probe failed.' };
   if (!isSupportedGitleaksVersion(version.stdout)) return { available: false, backend: 'unavailable', reason: 'Gitleaks 8.30.1 or newer is required.' };
   let probeCwd: string;
@@ -51,7 +51,7 @@ export function probeGitleaks(deadline = performance.now() + TIMEOUT_MS, makeTem
   const probeTimeout = boundedTimeout(deadline - now(), 3000);
   if (probeTimeout === undefined) { rmSync(probeCwd, { recursive: true, force: true }); return { available: false, backend: 'unavailable', reason: 'Gitleaks aggregate scan deadline exceeded.' }; }
   let command;
-  try { command = run(executable, ['stdin', '--help'], { ...options, timeout: probeTimeout, cwd: probeCwd }); } finally { rmSync(probeCwd, { recursive: true, force: true }); }
+  try { command = run(executable, ['stdin', '--help'], { ...options, timeout: probeTimeout, cwd: probeCwd }); } catch { rmSync(probeCwd, { recursive: true, force: true }); return { available: false, backend: 'unavailable', reason: 'Gitleaks probe failed.' }; } finally { rmSync(probeCwd, { recursive: true, force: true }); }
   if (command.error || command.status !== 0 || !/--report-format/.test(command.stdout) || !/--report-path/.test(command.stdout) || !/--config/.test(command.stdout) || !/--redact/.test(command.stdout)) return { available: false, backend: 'unavailable', reason: 'Gitleaks stdin JSON report interface is unavailable.' };
   return { available: true, backend: 'gitleaks', executable };
 }
@@ -143,8 +143,8 @@ function gitleaksRun(changes: AddedLine[], dependencies: { run?: typeof spawnSyn
     const result = (dependencies.run ?? spawnSync)(executable, args, { input: payload, encoding: 'utf8', timeout, maxBuffer: LIMIT, cwd: reportRoot, env: scannerEnvironment() });
     if (result.error || (result.status !== 0 && result.status !== 1)) return { findings: [], complete: false, reason: 'Gitleaks scan failed.' };
     status = result.status;
-    report = readFileSync(reportPath, 'utf8');
-  } catch { return { findings: [], complete: false, reason: 'Gitleaks report could not be read.' }; }
+  } catch { return { findings: [], complete: false, reason: 'Gitleaks scan failed.' }; }
+  try { report = readFileSync(reportPath, 'utf8'); } catch { return { findings: [], complete: false, reason: 'Gitleaks report could not be read.' }; }
   try {
     const parsed: unknown = JSON.parse(report || '[]');
     if (!Array.isArray(parsed)) throw new Error('invalid report');
@@ -158,13 +158,13 @@ function gitleaksRun(changes: AddedLine[], dependencies: { run?: typeof spawnSyn
   } catch { return { findings: [], complete: false, reason: 'Gitleaks returned malformed JSON output.' }; }
 }
 
-export function scanAddedText(changes: AddedLine[], dependencies: { probe?: typeof probeGitleaks; run?: typeof spawnSync; now?: () => number; createTempDirectory?: TempDirectoryFactory; removeTempDirectory?: typeof rmSync } = {}): { backend: 'gitleaks' | 'builtin' | 'unavailable'; findings: SecretFinding[]; complete: boolean; reason?: string } {
+export function scanAddedText(changes: AddedLine[], dependencies: { probe?: typeof probeGitleaks; run?: typeof spawnSync; now?: () => number; createTempDirectory?: TempDirectoryFactory; removeTempDirectory?: typeof rmSync; resolveExecutable?: () => string | undefined } = {}): { backend: 'gitleaks' | 'builtin' | 'unavailable'; findings: SecretFinding[]; complete: boolean; reason?: string } {
   const totalBytes = addedTextByteLength(changes);
   if (totalBytes > MAX_SECRET_SCAN_BYTES) return { backend: 'unavailable', findings: [], complete: false, reason: 'Secret scan input exceeded the configured bound.' };
   if (!changes.length) return { backend: 'builtin', findings: [], complete: true };
   const now = dependencies.now ?? (() => performance.now());
   const deadline = now() + TIMEOUT_MS;
-  const probe = dependencies.probe ? dependencies.probe(deadline) : probeGitleaks(deadline, dependencies.createTempDirectory);
+  const probe = dependencies.probe ? dependencies.probe(deadline) : probeGitleaks(deadline, dependencies.createTempDirectory, { ...(dependencies.run === undefined ? {} : { run: dependencies.run }), now, resolveExecutable: dependencies.resolveExecutable ?? resolveGitleaks });
   if (!probe.available && probe.backend === 'builtin') return { backend: 'builtin', findings: builtInScan(changes), complete: true };
   if (!probe.available) return { backend: 'unavailable', findings: [], complete: false, reason: probe.reason };
   const runs = contiguousRuns(changes);

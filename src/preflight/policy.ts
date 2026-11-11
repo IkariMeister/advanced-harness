@@ -7,7 +7,8 @@ const CONFIG_PATH = '.harness/preflight.json';
 const ALLOWLIST_PATH = '.harness/preflight-allowlist.json';
 const MAX_POLICY_BYTES = 1024 * 1024;
 const POLICY_PATHS = [CONFIG_PATH, ALLOWLIST_PATH] as const;
-export type ProjectPreflightPolicy = { sensitivePathGlobs?: readonly string[]; secretExceptions: SecretException[] };
+export type GitlinkAcknowledgement = { path: string; oldId?: string; newId: string; justification: string };
+export type ProjectPreflightPolicy = { sensitivePathGlobs?: readonly string[]; secretExceptions: SecretException[]; gitlinkAcknowledgements: GitlinkAcknowledgement[] };
 export class PreflightPolicyError extends Error {
   override name = 'PreflightPolicyError';
   readonly code: 'base-unavailable' | 'invalid';
@@ -56,23 +57,37 @@ function validateExceptions(value: unknown): SecretException[] {
   return entries.map(entry => ({ ...entry, path: normalizeExceptionPath(entry.path), rule: entry.rule.trim(), justification: entry.justification.trim() }));
 }
 
+function validateGitlinkAcknowledgements(value: unknown): GitlinkAcknowledgement[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error('gitlinkAcknowledgements must be a JSON array.');
+  return value.map(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Gitlink acknowledgement entries must be objects.');
+    const entry = item as Record<string, unknown>;
+    if (Object.keys(entry).some(key => !['path', 'oldId', 'newId', 'justification'].includes(key)) || typeof entry.path !== 'string' || !entry.path.trim() || typeof entry.newId !== 'string' || !/^[0-9a-f]{40,64}$/i.test(entry.newId) || (entry.oldId !== undefined && (typeof entry.oldId !== 'string' || !/^[0-9a-f]{40,64}$/i.test(entry.oldId))) || typeof entry.justification !== 'string' || !entry.justification.trim()) throw new Error('Gitlink acknowledgements require an exact path, newId, optional oldId, and nonblank justification.');
+    const path = entry.path.replaceAll('\\', '/').replace(/^\.\//, '');
+    if (path !== entry.path || path.startsWith('/') || path.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Gitlink acknowledgement path must be normalized and repository-relative.');
+    return { path, ...(entry.oldId === undefined ? {} : { oldId: entry.oldId as string }), newId: entry.newId, justification: entry.justification.trim() };
+  });
+}
+
 /** Loads validated project policy only from the commit named by the caller's trusted base ref. */
 function loadProjectPreflightPolicyUnchecked(root: string, baseRef: string, overrides: { forbiddenPathGlobs?: boolean; secretExceptions?: boolean } = {}): ProjectPreflightPolicy {
   const resolvedRoot = resolve(root);
   const commit = resolveCommit(resolvedRoot, baseRef);
-  const config = overrides.forbiddenPathGlobs ? undefined : parseJson(readTrustedFile(resolvedRoot, commit, CONFIG_PATH));
+  const config = parseJson(readTrustedFile(resolvedRoot, commit, CONFIG_PATH));
   let sensitivePathGlobs: readonly string[] | undefined;
   if (config !== undefined) {
     if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Trusted preflight configuration must be a JSON object.');
     const fields = config as Record<string, unknown>;
-    if (Object.keys(fields).some(key => key !== 'forbiddenPathGlobs')) throw new Error('Trusted preflight configuration contains an unknown setting.');
-    if (fields.forbiddenPathGlobs !== undefined) {
+    if (Object.keys(fields).some(key => !['forbiddenPathGlobs', 'gitlinkAcknowledgements'].includes(key))) throw new Error('Trusted preflight configuration contains an unknown setting.');
+    if (!overrides.forbiddenPathGlobs && fields.forbiddenPathGlobs !== undefined) {
       validateSensitivePathGlobs(fields.forbiddenPathGlobs);
       sensitivePathGlobs = [...fields.forbiddenPathGlobs];
     }
   }
-  const allowlist = overrides.secretExceptions ? undefined : parseJson(readTrustedFile(resolvedRoot, commit, ALLOWLIST_PATH));
-  return { ...(sensitivePathGlobs === undefined ? {} : { sensitivePathGlobs }), secretExceptions: allowlist === undefined ? [] : validateExceptions(allowlist) };
+  const allowlist = parseJson(readTrustedFile(resolvedRoot, commit, ALLOWLIST_PATH));
+  if (allowlist !== undefined && !Array.isArray(allowlist)) throw new Error('Secret allowlist must be a JSON array.');
+  return { ...(sensitivePathGlobs === undefined ? {} : { sensitivePathGlobs }), secretExceptions: overrides.secretExceptions ? [] : allowlist === undefined ? [] : validateExceptions(allowlist), gitlinkAcknowledgements: validateGitlinkAcknowledgements(config && typeof config === 'object' ? (config as Record<string, unknown>).gitlinkAcknowledgements : undefined) };
 }
 
 export function loadProjectPreflightPolicy(root: string, baseRef: string, overrides: { forbiddenPathGlobs?: boolean; secretExceptions?: boolean } = {}): ProjectPreflightPolicy {

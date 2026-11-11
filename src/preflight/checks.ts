@@ -208,9 +208,11 @@ export function secretScanCheck(exceptions: readonly SecretException[] = [], sca
       return addedLines.map((text, index) => ({ path: entry.path.replaceAll('\\', '/'), line: entry.targetLines?.[index] ?? index + 1, text, origin: entry.origin }));
     });
     const acknowledgements = gitlinkAcknowledgements ?? [];
-    const acknowledgementMatchesEntry = (item: typeof acknowledgements[number], entry: typeof changeset.entries[number]) => entry.gitlink !== undefined && entry.gitlink.oldId !== undefined && entry.gitlink.newId !== undefined && item.path === entry.path && item.oldId === entry.gitlink.oldId && item.newId === entry.gitlink.newId;
-    const entryAcknowledged = (entry: typeof changeset.entries[number]) => acknowledgements.some(item => acknowledgementMatchesEntry(item, entry));
-    const incomplete = changeset.entries.filter(entry => entry.status !== 'deleted' && ((entry.addedTextComplete === false && !entryAcknowledged(entry)) || entry.gitlink?.nestedContentDirty === true));
+    const acknowledgementMatchesEntry = (item: typeof acknowledgements[number], entry: typeof changeset.entries[number]) => entry.gitlink !== undefined && entry.gitlink.newId !== undefined && item.path === entry.path && item.newId === entry.gitlink.newId && (item.oldId === undefined ? entry.gitlink.oldId === undefined : item.oldId === entry.gitlink.oldId);
+    const entryAcknowledged = (entry: typeof changeset.entries[number]) => entry.gitlink?.nestedContentDirty !== true && acknowledgements.some(item => acknowledgementMatchesEntry(item, entry));
+    const incompleteEntries = changeset.entries.filter(entry => entry.status !== 'deleted' && entry.addedTextComplete === false);
+    const acknowledgedEntries = incompleteEntries.filter(entry => entry.gitlink && entryAcknowledged(entry));
+    const incomplete = incompleteEntries.filter(entry => !entryAcknowledged(entry));
     const payloadBytes = addedTextByteLength(payload);
     if (payloadBytes > MAX_SECRET_SCAN_BYTES) return { status: 'inconclusive', evidence: ['Secret scan input exceeded the configured 4 MiB aggregate limit.'], metrics: { backendGitleaks: 0, backendBuiltin: 0, backendUnavailable: 0, notRun: 1, scannerComplete: 0, complete: 0, findings: 0, exceptionsApplied: 0 } };
     const scanned = payload.length ? scanner(payload) : { backend: 'unavailable' as const, findings: [], complete: true };
@@ -224,16 +226,17 @@ export function secretScanCheck(exceptions: readonly SecretException[] = [], sca
       else actionable.push(finding);
     }
     const incompletePaths = [...new Set(incomplete.map(entry => entry.path))];
-    const coverageComplete = scanned.complete && incompletePaths.length === 0;
+    const coverageComplete = scanned.complete && incompleteEntries.length === 0;
     const evidence = [notRun ? 'Secret scan backend: not run.' : `Secret scan backend: ${scanned.backend}${coverageComplete ? ' (complete).' : ' (incomplete).'}`];
     if (!scanned.complete) evidence.push(`Secret scan incomplete: ${safeScanReason(scanned.reason)}`);
     if (actionable.length) evidence.push(...actionable.slice(0, 100).map(finding => `${finding.rule} at ${displayFindingPath(finding.path)}:${finding.line} [REDACTED]`));
     else if (scanned.complete) evidence.push('No high-confidence secrets found in added text.');
     if (incompletePaths.length) evidence.push(`Could not scan ${incompletePaths.length} changed path(s): ${incompletePaths.slice(0, 50).map(displayFindingPath).join(', ')}${incompletePaths.length > 50 ? ', …' : ''}.`);
-    const matchedAcknowledgements = acknowledgements.filter(item => changeset.entries.some(entry => acknowledgementMatchesEntry(item, entry)));
-    if (acknowledgements.length) evidence.push(`Gitlink scan acknowledgements supplied: ${acknowledgements.length}; matched: ${matchedAcknowledgements.length}; unmatched: ${acknowledgements.length - matchedAcknowledgements.length}.`);
+    if (acknowledgedEntries.length) evidence.push(`Acknowledged incomplete coverage: ${acknowledgedEntries.map(entry => `${displayFindingPath(entry.path)} (${entry.gitlink!.oldId ?? 'added'} -> ${entry.gitlink!.newId})`).join(', ')}.`);
+    const matchedAcknowledgements = acknowledgements.filter(item => changeset.entries.some(entry => entryAcknowledged(entry) && acknowledgementMatchesEntry(item, entry)));
+    if (acknowledgements.length) evidence.push(`Trusted gitlink acknowledgements: ${acknowledgements.length}; matched: ${matchedAcknowledgements.length}; unmatched: ${acknowledgements.length - matchedAcknowledgements.length}.`);
     const metrics = { ...backendMetrics, notRun, scannerComplete: scanned.complete ? 1 : 0, complete: coverageComplete ? 1 : 0, findings: actionable.length, exceptionsApplied, affectedPaths: incompletePaths.length };
-    return { status: actionable.length ? 'block' : coverageComplete ? 'pass' : 'inconclusive', evidence, metrics };
+    return { status: actionable.length ? 'block' : !scanned.complete || incomplete.length ? 'inconclusive' : acknowledgedEntries.length ? 'warn' : 'pass', evidence, metrics };
   } };
 }
 

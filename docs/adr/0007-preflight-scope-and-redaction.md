@@ -57,16 +57,25 @@ Only sanitized rule, location, and a redaction marker may be reported. Invalid,
 unusable, failed, or malformed scanner results are inconclusive.
 
 The baseline path rules and justified exceptions are loaded from the explicit
-`--base` commit, or `refs/remotes/origin/HEAD` when base comes from project
-context, not candidate worktree files. Changes to either policy
+`refs/remotes/origin/HEAD`, independently of `--base`, not candidate worktree files.
+`--base` selects only the changeset comparison revision. Changes to either policy
 file in the candidate changeset block pending review. Explicit programmatic policy
-options take precedence. Exceptions match an
+options take precedence. Trusted policy files are still loaded and validated when
+programmatic values override their contents, including validation of the trusted
+allowlist shape when programmatic exceptions replace its entries. Exceptions match an
 exact normalized path and rule with a trimmed nonblank justification and do not
 alter path policy. Invalid policy is rejected before checks or secret scanning. Custom
-checks cannot be combined with configured policy or explicit policy overrides.
+checks may run while configured project policy is present, but cannot be combined
+with explicit policy overrides.
 Gitleaks rule IDs are converted to stable SHA-256 labels for output; exception
 matching hashes the supplied exact upstream rule ID using the same mapping.
-Exceptions may include a positive `line` field for a single finding; omitting it
+Malformed, unreadable, or otherwise invalid trusted policy JSON makes checks that
+depend on that policy inconclusive even when explicit programmatic path-glob or
+exception overrides are supplied. This keeps trusted gitlink acknowledgements
+validated; checks independent of policy continue to run. Programmatic exception
+overrides replace trusted values only after the trusted allowlist has been read and
+validated. Exceptions may include a
+positive `line` field for a single finding; omitting it
 preserves existing whole-file path/rule behavior. Exception validation is shared
 by trusted project policy and programmatic options. A line-scoped exception also
 requires the changeset `origin` (`committed`, `staged`, `unstaged`, or `untracked`),
@@ -80,11 +89,14 @@ changes to `.harness/preflight.json` or `.harness/preflight-allowlist.json` rema
 blocked until reviewed and included in the trusted base. Policy loading uses typed
 errors so a missing trusted ref is distinguished from malformed or unreadable policy.
 
-Changed gitlinks and nested repositories have no content to scan. Their incompleteness
-can be acknowledged for one invocation only by an exact repository-relative path and
-old/new gitlink commit ID pair. The acknowledgement is visible in the result, only
-clears the matching gitlink coverage gap, and cannot clear other incomplete paths or
-suppress secret findings.
+Changed gitlinks and nested repositories have no content to scan. A clean gitlink gap
+may be acknowledged only by an entry in trusted `.harness/preflight.json`, with a
+normalized exact repository-relative path, matching old/new commit IDs, and nonblank
+justification. For an added gitlink, `oldId` is omitted and `newId` must match exactly.
+Acknowledged paths and IDs are visible and coverage remains marked incomplete. Exit 0
+is permitted when all remaining gaps are valid trusted acknowledgements and there are
+no findings or other incomplete paths. Dirty or uninspectable nested content cannot be
+acknowledged. The removed `--ack-gitlink` option is rejected with migration guidance.
 
 Policy files live under `.harness/` because they are harness-specific configuration
 that should travel with the repository but remain separate from host-neutral project
@@ -108,7 +120,7 @@ directories is invoked; resolved absolute executable paths are used directly.
 
 ## Adoption
 
-The accepted implementation scope adds project policy loading, scanner isolation,
+The proposed implementation scope adds project policy loading, scanner isolation,
 added-line collection and completion handling, regression coverage, and updated
 preflight/configuration/doctor documentation. Non-text changes remain inconclusive
 and identify affected paths without exposing payload text. Rollback does not modify
