@@ -573,37 +573,23 @@ export function validatePersonalRuleText(ruleText: string): void {
   validatePromotedRuleText(ruleText, 'Personal rule');
 }
 
-const RULE_VALIDATION_MESSAGES: Record<string, { secret: string; path: string }> = {
-  personal: {
-    secret: 'Personal rule contains potential secret or credential tokens. Rejecting rule.',
-    path: 'Personal rule contains machine-local worktree or operational paths. Rejecting rule.',
-  },
-  default: {
-    secret: 'Promoted rule contains potential secret/token patterns. Rejecting promotion.',
-    path: 'Promoted rule contains machine-local worktree or operational paths. Rejecting promotion into AGENTS.md.',
-  },
-};
-
 export function validatePromotedRuleText(ruleText: string, label: string = 'Promoted rule'): void {
   const text = ruleText.trim();
   if (!text) throw new Error(`${label} cannot be empty.`);
   if (/[\r\n]/.test(text)) throw new Error(`${label} must not contain raw newlines.`);
 
-  const key = label.toLowerCase().includes('personal') ? 'personal' : 'default';
-  const messages = RULE_VALIDATION_MESSAGES[key]!;
-
   for (const pattern of SECRET_PATTERNS) {
     if (pattern.test(text)) {
-      throw new Error(messages.secret);
+      throw new Error(`${label} contains potential secret/token patterns. Rejecting rule.`);
     }
   }
   for (const pattern of LOCAL_PATH_PATTERNS) {
     if (pattern.test(text)) {
-      throw new Error(messages.path);
+      throw new Error(`${label} contains machine-local worktree or operational paths. Rejecting rule.`);
     }
   }
   if (/(?:^|[^\w])(?:[a-z]:[\\/](?:Users|Documents and Settings)[\\/][^\\/]+|\\\\[^\\]+\\[^\\]+|\/(?:Users|home)\/[^/\s]+)(?:[\\/]|[\s.,;:!?)]|$)/i.test(text)) {
-    throw new Error(messages.path);
+    throw new Error(`${label} contains machine-local worktree or operational paths. Rejecting rule.`);
   }
   if (text.length > 2000) {
     throw new Error(`${label} exceeds maximum length (2000 characters).`);
@@ -1031,31 +1017,72 @@ export function parseReviewedKeepTags(confirmation: string): string[] {
 }
 
 function isAlreadyReviewed(entry: MemoryEntry, kind: PruningKind, evidenceKey: string): boolean {
-  const targetTag = `reviewed-keep:${kind}:${normalizeKey(evidenceKey)}`;
+  const targetTag = `reviewed-keep:${kind}:${evidenceKey.trim()}`;
   const tags = parseReviewedKeepTags(entry.confirmation);
-  return tags.some((t) => normalizeKey(t) === normalizeKey(targetTag));
+  return tags.some((t) => t === targetTag);
 }
 
 export function markEntryReviewed(entry: MemoryEntry, candidate: PruningCandidate): MemoryEntry {
-  const newTag = `reviewed-keep:${candidate.kind}:${normalizeKey(candidate.evidenceKey)}`;
+  const cleanKey = candidate.evidenceKey.trim();
+  if (/[)\r\n]/.test(cleanKey)) {
+    throw new Error(`Evidence key cannot contain closing parenthesis or newlines: "${cleanKey}".`);
+  }
+  const newTag = `reviewed-keep:${candidate.kind}:${cleanKey}`;
   const existingTags = parseReviewedKeepTags(entry.confirmation);
-  
-  // Deduplicate tags while preserving recent ones
-  const filtered = existingTags.filter((t) => normalizeKey(t) !== normalizeKey(newTag));
+
+  // Deduplicate tags while preserving recent ones (case-preserving comparison)
+  const filtered = existingTags.filter((t) => t !== newTag);
   filtered.push(newTag);
-  
-  // Cap at 5 most recent keep tags to prevent unbounded bloat
+
+  // Cap at 5 most recent keep tags (oldest evicted first) to prevent unbounded bloat
   const capped = filtered.slice(-5);
-  
+
   // Strip out all existing (reviewed-keep:...) segments from base confirmation
-  let baseConfirmation = entry.confirmation.replace(/\s*\(reviewed-keep:[^)]+\)/g, '').trim();
+  const baseConfirmation = entry.confirmation.replace(/\s*\(reviewed-keep:[^)]+\)/g, '').trim();
   const tagsFormatted = capped.map((t) => `(${t})`).join(' ');
   const confirmation = baseConfirmation ? `${baseConfirmation} ${tagsFormatted}` : tagsFormatted;
-  
+
   return {
     ...entry,
     confirmation,
   };
+}
+
+export function computePruningPlanHash(plan: {
+  candidates: readonly PruningCandidate[];
+  dispositions: readonly PruningDisposition[];
+  promotedToAgents: readonly string[];
+  promotedToPersonal: readonly string[];
+  keptCount: number;
+  discardedCount: number;
+  updatedMemoryEntries: readonly MemoryEntry[];
+  updatedAgentsText?: string | undefined;
+  agentsDiff?: string | undefined;
+}): string {
+  const planDigestInput = JSON.stringify({
+    candidates: plan.candidates.map((c) => ({
+      kind: c.kind,
+      evidenceKey: c.evidenceKey,
+      fact: c.entry.fact,
+      scope: c.entry.scope,
+    })),
+    dispositions: plan.dispositions.map((d) => ({
+      disposition: d.disposition,
+      fact: d.entry.fact,
+      targetRuleText: d.targetRuleText,
+    })),
+    promotedToAgents: plan.promotedToAgents,
+    promotedToPersonal: plan.promotedToPersonal,
+    keptCount: plan.keptCount,
+    discardedCount: plan.discardedCount,
+    updatedMemoryEntries: plan.updatedMemoryEntries.map((e) => ({
+      fact: e.fact,
+      confirmation: e.confirmation,
+    })),
+    updatedAgentsText: plan.updatedAgentsText ?? '',
+    agentsDiff: plan.agentsDiff ?? '',
+  });
+  return createHash('sha256').update(planDigestInput).digest('hex');
 }
 
 export function planMemoryPruning(options: {
@@ -1158,28 +1185,17 @@ export function planMemoryPruning(options: {
     agentsDiff = promoPlan.diff;
   }
 
-  const planDigestInput = JSON.stringify({
-    candidates: options.candidates.map((c) => ({
-      kind: c.kind,
-      evidenceKey: c.evidenceKey,
-      fact: c.entry.fact,
-      scope: c.entry.scope,
-    })),
-    dispositions: options.dispositions.map((d) => ({
-      disposition: d.disposition,
-      fact: d.entry.fact,
-      targetRuleText: d.targetRuleText,
-    })),
+  const planHash = computePruningPlanHash({
+    candidates: options.candidates,
+    dispositions: options.dispositions,
     promotedToAgents,
     promotedToPersonal,
     keptCount,
     discardedCount,
-    updatedMemoryEntries: updatedMemory.map((e) => ({
-      fact: e.fact,
-      confirmation: e.confirmation,
-    })),
+    updatedMemoryEntries: updatedMemory,
+    updatedAgentsText,
+    agentsDiff,
   });
-  const planHash = createHash('sha256').update(planDigestInput).digest('hex');
 
   return {
     candidates: [...options.candidates],
@@ -1219,7 +1235,7 @@ export function applyApprovedMemoryPruning(options: {
   memoryPath: string;
   memoryBaselineHash: string;
   personalBaselineHash: string;
-  expectedPlanHash?: string | undefined;
+  expectedPlanHash: string;
   agentsPath?: string | undefined;
   agentsBaselineHash?: string | undefined;
   projectRoot?: string | undefined;
@@ -1241,17 +1257,29 @@ export function applyApprovedMemoryPruning(options: {
   if (typeof options.personalBaselineHash !== 'string' || !options.personalBaselineHash) {
     throw new Error('Memory pruning requires a valid personalBaselineHash.');
   }
-  if (options.expectedPlanHash !== undefined && options.plan.planHash !== options.expectedPlanHash) {
-    throw new Error('Approval plan hash does not match current MemoryPruningPlan hash.');
+  if (typeof options.expectedPlanHash !== 'string' || !options.expectedPlanHash) {
+    throw new Error('Memory pruning requires a valid expectedPlanHash.');
   }
 
   const { plan, memoryPath } = options;
   const personalPath = resolvePersonalRulesPath(memoryPath);
 
-  // If promotions to AGENTS.md exist, enforce that agentsPath and agentsBaselineHash are provided
+  // Recompute planHash from content to ensure plan has not been tampered with or desynchronized
+  const recomputedPlanHash = computePruningPlanHash(plan);
+  if (plan.planHash !== recomputedPlanHash) {
+    throw new Error('MemoryPruningPlan planHash does not match computed hash of plan content.');
+  }
+  if (plan.planHash !== options.expectedPlanHash) {
+    throw new Error('Approval plan hash does not match current MemoryPruningPlan hash.');
+  }
+
+  // If promotions to AGENTS.md exist, enforce that agentsPath, agentsBaselineHash, and updatedAgentsText are provided
   if (plan.promotedToAgents.length > 0) {
     if (!options.agentsPath || typeof options.agentsBaselineHash !== 'string') {
       throw new Error('Promotion to AGENTS.md requires valid agentsPath and agentsBaselineHash to enforce write ordering.');
+    }
+    if (typeof plan.updatedAgentsText !== 'string') {
+      throw new Error('Promotion to AGENTS.md requires updatedAgentsText to be defined.');
     }
   }
 
@@ -1305,11 +1333,23 @@ export function applyApprovedMemoryPruning(options: {
   };
 
   try {
-    // 1. If AGENTS.md promotions exist, write AGENTS.md first
+    // 1. If AGENTS.md promotions exist, write AGENTS.md first via atomic temp file + rename
     if (plan.promotedToAgents.length > 0 && options.agentsPath && plan.updatedAgentsText !== undefined) {
-      writeFileSync(options.agentsPath, plan.updatedAgentsText, 'utf8');
-      receipt.agentsWritten = true;
-      receipt.agentsHash = createHash('sha256').update(plan.updatedAgentsText).digest('hex');
+      const agentsTarget = resolve(options.agentsPath);
+      const agentsParent = dirname(agentsTarget);
+      if (!existsSync(agentsParent)) mkdirSync(agentsParent, { recursive: true });
+      const tempAgentsPath = join(agentsParent, `.AGENTS.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
+      try {
+        writeFileSync(tempAgentsPath, plan.updatedAgentsText, 'utf8');
+        renameSync(tempAgentsPath, agentsTarget);
+        receipt.agentsWritten = true;
+        receipt.agentsHash = createHash('sha256').update(plan.updatedAgentsText).digest('hex');
+      } catch (writeErr) {
+        if (existsSync(tempAgentsPath)) {
+          try { unlinkSync(tempAgentsPath); } catch {}
+        }
+        throw writeErr;
+      }
     }
 
     // 2. If personal rules are being added, append to AGENTS.personal.md

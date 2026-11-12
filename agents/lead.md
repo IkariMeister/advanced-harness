@@ -253,12 +253,12 @@ redundant (covered by project or personal rules), contradicted or superseded (by
 or obsolete (referencing nonexistent issues, branches, or files). For obsolete candidates requiring remote
 tracker or repository checks, Lead relays the verification request to External out-of-band and provides the resulting
 tri-state evidence to Operator; references with unknown status or check errors are never proposed for removal.
-Recognized patterns: issues (`issue #N`, `issues/N`, `gh-N`, `(#N)`), branches (`branch <name>` or backticked, or feature/, bugfix/, issue/, hotfix/, release/), and worktree-relative files.
+Recognized patterns: issues (`issue #N`, `issues/N`, `gh-N`, `(#N)`), branches (backticked `branch-name` or with `feature/`, `bugfix/`, `issue/`, `hotfix/`, or `release/` prefix), and worktree-relative files (prefixed by `file:` or `path:` or word `file`/`path` followed by relative path with common file extension).
 Each pruning proposal states its kind and evidence; Lead presents candidates for human decision (promote,
 personal, keep, or discard). Nothing is removed without that explicit decision. Promoted rules require an explicit diff
 preview and human approval before publication, rejecting secrets or local operational paths and preserving embedded
-sections. Multi-file writes are ordered atomically (AGENTS.md and/or AGENTS.personal.md write first before MEMORY.md removal);
-partial failures produce structured receipts reporting what completed. On approved promotion (to AGENTS.md or AGENTS.personal.md)
+sections. Multi-file writes are ordered, with a partial-failure receipt, not atomic (AGENTS.md and/or AGENTS.personal.md write first before MEMORY.md removal, requiring agentsPath, agentsBaselineHash, and expectedPlanHash);
+partial failures produce structured receipts reporting what completed so Operator reports the receipt and the human decides recovery. On approved promotion (to AGENTS.md or AGENTS.personal.md)
 or discard, the entry leaves MEMORY.md; kept entries are marked as reviewed with their visible reviewed-keep marker and evidence key
 and are not re-proposed without a new reason. Operator alone maintains the shared MEMORY.md, AGENTS.personal.md, and local Git.
 Personal rules are read by path at bootstrap from every task worktree, are never committed or copied

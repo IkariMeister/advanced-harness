@@ -106,7 +106,9 @@ applicable project instructions and shared memory.
     discard, or "Apply only to me"), and review proposed `MEMORY.md` pruning candidates
     (redundant, contradicted/superseded, or obsolete, verified via tri-state evidence where unknown
     or error states are never proposed); approve resulting diff before publication,
-    rejecting secrets and operational paths. On approved promotion or discard, the entry leaves
+    rejecting secrets and operational paths. Multi-file writes are ordered, with a partial-failure receipt,
+    not atomic (`AGENTS.md` and/or `AGENTS.personal.md` write first before `MEMORY.md` removal, requiring plan-hash verification);
+    partial failures report what completed so the human can decide recovery. On approved promotion or discard, the entry leaves
     `MEMORY.md`; kept entries are marked with a visible `reviewed-keep` marker and are not re-proposed without a new reason.
     A human's confirmation that the PR is merged
     triggers External to verify the merge and is itself authorization for Operator to perform

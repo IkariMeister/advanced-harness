@@ -209,8 +209,9 @@ redundant (covered by rules in AGENTS.md or personal rules), contradicted or sup
 or obsolete (referencing nonexistent issues, branches, or files, with remote tracker or repository evidence obtained
 through Lead from External out-of-band; unknown status or check errors are never proposed). State the kind and evidence for each
 proposal. For each candidate, the human chooses promote, personal ("Apply only to me"), keep, or discard; nothing is
-removed from MEMORY.md without an explicit human decision. Multi-file writes are ordered atomically (AGENTS.md and/or
-AGENTS.personal.md write first before MEMORY.md removal); partial failures produce structured receipts reporting what completed.
+removed from MEMORY.md without an explicit human decision. Multi-file writes are ordered, with a partial-failure receipt, not atomic (AGENTS.md and/or
+AGENTS.personal.md write first before MEMORY.md removal, requiring agentsPath, agentsBaselineHash, and expectedPlanHash);
+partial failures produce structured receipts reporting what completed so Operator reports the receipt and the human decides recovery.
 On approved promotion to AGENTS.md or AGENTS.personal.md, or on discard, remove the entry from MEMORY.md; mark kept entries
 as reviewed with their visible reviewed-keep marker and evidence key so they are not proposed again without a new reason.
 Declining or cancelling writes nothing.
