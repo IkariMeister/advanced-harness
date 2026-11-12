@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readFileSync, unlinkSync, readdirSync, openSync, closeSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readFileSync, unlinkSync, readdirSync, openSync, closeSync, chmodSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1671,4 +1671,157 @@ test('validatePromotedRuleText and validatePersonalRuleText reject secrets, path
   // Positive valid rule check executes without error
   validatePromotedRuleText('Always check lint before commit.');
   validatePersonalRuleText('Use dark theme in developer tools.');
+});
+
+test('applyApprovedMemoryPruning preserves POSIX mode, rejects dangling symlinks/missing parent, reports stale lock, and handles Windows path case', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-edge-'));
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
+  const agentsPath = join(dir, 'AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+
+  if (process.platform !== 'win32') {
+    chmodSync(agentsPath, 0o640);
+  }
+
+  const memBase = readSharedMemory(memoryPath);
+  const personalBase = readPersonalRules(personalPath);
+  const agentsBaseHash = createHash('sha256').update(initialAgentsText, 'utf8').digest('hex');
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
+  const plan = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule' }],
+    agentsText: initialAgentsText,
+    agentsPath,
+  });
+
+  // 1. Windows case-insensitive agentsPath comparison (F-45)
+  const caseVariantAgentsPath = process.platform === 'win32'
+    ? agentsPath.toUpperCase()
+    : agentsPath;
+
+  const result = applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+    agentsPath: caseVariantAgentsPath,
+    agentsBaselineHash: agentsBaseHash,
+  });
+  assert.equal(result.receipt.agentsWritten, true);
+
+  // 2. POSIX mode preservation (F-46)
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(agentsPath).mode & 0o777, 0o640);
+  }
+
+  // 3. Stale-lock error text (F-46)
+  const lockPath = `${agentsPath}.lock`;
+  writeFileSync(lockPath, 'stale', 'utf8');
+  try {
+    const nextAgentsText = readFileSync(agentsPath, 'utf8');
+    const nextAgentsHash = createHash('sha256').update(nextAgentsText, 'utf8').digest('hex');
+    const entry2 = {
+      date: '2026-11-12',
+      scope: 'edge-topic-2',
+      summary: 'Edge test learning 2',
+      fact: 'Edge test learning 2',
+      confirmation: 'approved',
+      source: 'PR #224',
+      tags: [],
+    };
+    writeFileSync(memoryPath, formatSharedMemory([entry2]), 'utf8');
+    const memBase2 = readSharedMemory(memoryPath);
+    const plan2 = planMemoryPruning({
+      memoryEntries: [entry2],
+      candidates: [{ ...candidate, entry: entry2 }],
+      dispositions: [{ entry: entry2, disposition: 'promote', targetRuleText: 'Promoted edge rule 2' }],
+      agentsText: nextAgentsText,
+      agentsPath,
+    });
+    assert.throws(() => applyApprovedMemoryPruning({
+      plan: plan2,
+      approved: true,
+      memoryPath,
+      memoryBaselineHash: memBase2.hash,
+      personalBaselineHash: personalBase.hash,
+      expectedPlanHash: plan2.planHash,
+      agentsPath,
+      agentsBaselineHash: nextAgentsHash,
+    }), /remove stale AGENTS\.md\.lock/i);
+  } finally {
+    try { unlinkSync(lockPath); } catch {}
+  }
+
+  // 4. Missing AGENTS.md parent directory rejected (F-46)
+  const missingParentAgents = join(dir, 'missing-parent', 'AGENTS.md');
+  const planMissingParent = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule 3' }],
+    agentsText: initialAgentsText,
+    agentsPath: missingParentAgents,
+  });
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: planMissingParent,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: readSharedMemory(memoryPath).hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: planMissingParent.planHash,
+    agentsPath: missingParentAgents,
+    agentsBaselineHash: agentsBaseHash,
+  }), /parent directory does not exist/i);
+
+  // 5. Dangling symlink rejected via lstatSync (F-46)
+  const danglingAgents = join(dir, 'dangling-AGENTS.md');
+  try {
+    symlinkSync(join(dir, 'nonexistent-target.md'), danglingAgents);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'EPERM') {
+      t.skip('Symlink creation requires elevated privileges on Windows');
+      return;
+    }
+    throw err;
+  }
+  const planDangling = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule 4' }],
+    agentsText: initialAgentsText,
+    agentsPath: danglingAgents,
+  });
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: planDangling,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: readSharedMemory(memoryPath).hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: planDangling.planHash,
+    agentsPath: danglingAgents,
+    agentsBaselineHash: agentsBaseHash,
+  }), /symlink/i);
 });

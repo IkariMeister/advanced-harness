@@ -22,7 +22,7 @@ version between releases.
   relayed through Lead from External; references with `unknown` status or check errors are never proposed).
   Learnings leave `MEMORY.md` upon approved promotion to any tier (`AGENTS.md` or `AGENTS.personal.md`) or on discard.
   Each individual file write (`AGENTS.md`, `AGENTS.personal.md`, `MEMORY.md`) is lock-serialized and uses a per-file atomic
-  temp-file rename (preserving file mode via `chmodSync` and using `lstat` to reject symlinks—including dangling symlinks—or
+  temp-file rename (preserving file mode via `chmodSync` (POSIX mode bits; read-only attribute on Windows) and using `lstat` to reject symlinks—including dangling symlinks—or
   non-regular files, and requiring the `AGENTS.md` parent directory to already exist rather than creating directories implicitly),
   while the multi-file sequence is ordered and non-atomic across files, verifying file baselines, `AGENTS.md` path identity, and
   the plan hash before modifying files and yielding a structured partial-failure receipt (with completed writes, failed step, and cause)

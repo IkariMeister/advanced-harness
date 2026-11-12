@@ -399,6 +399,7 @@ export function writeSharedMemorySerialized(
     return { success: true, hash: newHash };
   } catch (err) {
     if (existsSync(tempPath)) {
+      try { chmodSync(tempPath, 0o600); } catch {}
       try { unlinkSync(tempPath); } catch {}
     }
     throw err;
@@ -694,6 +695,7 @@ export function writePersonalRulesSerialized(
     return { success: true, hash: newHash };
   } catch (err) {
     if (existsSync(tempPath)) {
+      try { chmodSync(tempPath, 0o600); } catch {}
       try { unlinkSync(tempPath); } catch {}
     }
     throw err;
@@ -1355,6 +1357,7 @@ function writeAgentsFileSerialized(
     return { hash: written.hash };
   } catch (err) {
     if (existsSync(tempPath)) {
+      try { chmodSync(tempPath, 0o600); } catch {}
       try { unlinkSync(tempPath); } catch {}
     }
     throw err;
@@ -1425,8 +1428,15 @@ export function applyApprovedMemoryPruning(options: {
     if (typeof plan.updatedAgentsText !== 'string') {
       throw new Error('Promotion to AGENTS.md requires updatedAgentsText to be defined.');
     }
-    if (plan.agentsPath !== undefined && resolve(options.agentsPath) !== resolve(plan.agentsPath)) {
-      throw new Error('AGENTS.md path does not match the path recorded in MemoryPruningPlan.');
+    if (plan.agentsPath !== undefined) {
+      const resolvedOption = resolve(options.agentsPath);
+      const resolvedPlan = resolve(plan.agentsPath);
+      const samePath = process.platform === 'win32'
+        ? resolvedOption.toLowerCase() === resolvedPlan.toLowerCase()
+        : resolvedOption === resolvedPlan;
+      if (!samePath) {
+        throw new Error('AGENTS.md path does not match the path recorded in MemoryPruningPlan.');
+      }
     }
     if (plan.agentsBaselineHash === undefined || options.agentsBaselineHash !== plan.agentsBaselineHash) {
       throw new Error('AGENTS.md baseline hash does not match the baseline hash recorded in MemoryPruningPlan.');
