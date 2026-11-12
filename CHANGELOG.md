@@ -15,6 +15,12 @@ version between releases.
 
 ### Added
 
+- Personal project rules destination (BH-076, #208): add private, permanent storage for learnings
+  in `AGENTS.personal.md` stored beside `MEMORY.md` in the project data directory (derived from `memoryPath`),
+  never committed or copied into worktrees. Learning review gains a fourth disposition, "Apply only to me".
+  Order of precedence is `Current Human Decision > AGENTS.md > personal rules > MEMORY.md`.
+  Includes contradiction detection between personal rules and `AGENTS.md` with a single human decision,
+  and exclusion from promotion candidate lists and memory pruning.
 - `worktree-boundary` preflight check (BH-067, #182): enforces that preflight is run in an
   isolated task worktree under `worktreeDirectory`. The default pipeline now blocks canonical checkouts
   (where `--git-dir` resolves to the same path as `--git-common-dir`), unconfigured projects (missing

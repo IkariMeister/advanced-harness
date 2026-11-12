@@ -21,7 +21,7 @@ export type BootstrapReadiness = {
   reasons: string[];
 };
 
-export type RuleDispositionType = 'promote' | 'keep-memory' | 'discard';
+export type RuleDispositionType = 'promote' | 'keep-memory' | 'discard' | 'personal';
 
 export type RuleDisposition = {
   type: RuleDispositionType;
@@ -34,8 +34,10 @@ export type RulePromotionPlan = {
   promotedCount: number;
   keptCount: number;
   discardedCount: number;
+  personalCount: number;
   diff: string;
   updatedAgentsText: string;
+  personalRulesToAdd: string[];
 };
 
 const SECRET_PATTERNS = [
@@ -377,7 +379,9 @@ export function planRulePromotion(options: {
   let promotedCount = 0;
   let keptCount = 0;
   let discardedCount = 0;
+  let personalCount = 0;
   const promotedRules: string[] = [];
+  const personalRulesToAdd: string[] = [];
 
   for (const disp of options.dispositions) {
     validateMemoryEntry(disp.entry);
@@ -399,6 +403,11 @@ export function planRulePromotion(options: {
       }
       promotedRules.push(`- ${ruleText}`);
       promotedCount++;
+    } else if (disp.type === 'personal') {
+      const ruleText = (disp.targetRuleText ?? disp.entry.fact).trim();
+      validatePersonalRuleText(ruleText);
+      personalRulesToAdd.push(ruleText);
+      personalCount++;
     } else if (disp.type === 'keep-memory') {
       keptCount++;
     } else if (disp.type === 'discard') {
@@ -503,9 +512,215 @@ export function planRulePromotion(options: {
     promotedCount,
     keptCount,
     discardedCount,
+    personalCount,
     diff,
     updatedAgentsText,
+    personalRulesToAdd,
   };
+}
+
+export function resolvePersonalRulesPath(memoryPath: string): string {
+  const resolved = resolve(memoryPath);
+  return join(dirname(resolved), 'AGENTS.personal.md');
+}
+
+export function parsePersonalRules(text: string): string[] {
+  const lines = text.split(/\r\n|\n/);
+  if (lines[0]?.startsWith('\uFEFF')) lines[0] = lines[0].slice(1);
+  const rules: string[] = [];
+  let headerSeen = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.includes('\r')) throw new Error(`Unsupported AGENTS.personal.md content on line ${i + 1}.`);
+    if (!line.trim()) continue;
+    if (line.trim() === '# Personal Project Rules' && !headerSeen && rules.length === 0) {
+      headerSeen = true;
+      continue;
+    }
+    const trimmed = line.trim();
+    if (trimmed.startsWith('-')) {
+      const rule = trimmed.replace(/^-\s*/, '').trim();
+      if (!rule) throw new Error(`Invalid AGENTS.personal.md rule on line ${i + 1}.`);
+      validatePersonalRuleText(rule);
+      rules.push(rule);
+      continue;
+    }
+    throw new Error(`Unsupported AGENTS.personal.md content on line ${i + 1}.`);
+  }
+  return rules;
+}
+
+export function validatePersonalRuleText(ruleText: string): void {
+  const text = ruleText.trim();
+  if (!text) throw new Error('Personal rule cannot be empty.');
+  if (/[\r\n]/.test(text)) throw new Error('Personal rule must not contain raw newlines.');
+  for (const pattern of SECRET_PATTERNS) {
+    if (pattern.test(text)) {
+      throw new Error('Personal rule contains potential secret or credential tokens. Rejecting rule.');
+    }
+  }
+  for (const pattern of LOCAL_PATH_PATTERNS) {
+    if (pattern.test(text)) {
+      throw new Error('Personal rule contains machine-local worktree or operational paths. Rejecting rule.');
+    }
+  }
+  if (/(?:^|[^\w])(?:[a-z]:[\\/](?:Users|Documents and Settings)[\\/][^\\/]+|\\\\[^\\]+\\[^\\]+|\/(?:Users|home)\/[^/\s]+)(?:[\\/]|[\s.,;:!?)]|$)/i.test(text)) {
+    throw new Error('Personal rule contains machine-local worktree or operational paths. Rejecting rule.');
+  }
+  if (text.length > 2000) {
+    throw new Error('Personal rule exceeds maximum length (2000 characters).');
+  }
+}
+
+export function formatPersonalRules(rules: readonly string[]): string {
+  const lines = ['# Personal Project Rules', ''];
+  for (const rule of rules) {
+    validatePersonalRuleText(rule);
+    lines.push(`- ${rule.trim()}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+export function readPersonalRules(personalRulesPath: string): {
+  exists: boolean;
+  rules: string[];
+  raw: string;
+  hash: string;
+} {
+  const target = resolve(personalRulesPath);
+  if (!existsSync(target)) {
+    return {
+      exists: false,
+      rules: [],
+      raw: '',
+      hash: createHash('sha256').update('').digest('hex'),
+    };
+  }
+
+  const stat = lstatSync(target);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error('Personal rules path must be a regular file, not a symlink or directory.');
+  }
+  if (stat.size > 1024 * 1024) {
+    throw new Error('Personal rules file exceeds 1 MiB size limit.');
+  }
+
+  const raw = readFileSync(target, 'utf8');
+  const hash = createHash('sha256').update(raw).digest('hex');
+  const rules = parsePersonalRules(raw);
+
+  return {
+    exists: true,
+    rules,
+    raw,
+    hash,
+  };
+}
+
+export function writePersonalRulesSerialized(
+  personalRulesPath: string,
+  rules: readonly string[],
+  baselineHash: string | undefined
+): { success: boolean; hash: string } {
+  const target = resolve(personalRulesPath);
+  const parent = dirname(target);
+  if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
+  const lockPath = `${target}.lock`;
+  let lockFd: number;
+  try { lockFd = openSync(lockPath, 'wx'); }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('Concurrent modification detected on AGENTS.personal.md. Another writer holds the lock.');
+    throw err;
+  }
+  const tempPath = join(parent, `.AGENTS.personal.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
+  try {
+    const current = readPersonalRules(target);
+    if (baselineHash !== undefined && current.hash !== baselineHash) {
+      throw new Error('Concurrent modification detected on AGENTS.personal.md. Baseline hash does not match current file on disk.');
+    }
+    const deduplicated: string[] = [];
+    const seen = new Set<string>();
+    for (const r of rules) {
+      validatePersonalRuleText(r);
+      const key = normalizeKey(r);
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduplicated.push(r.trim());
+      }
+    }
+    const formatted = formatPersonalRules(deduplicated);
+    if (Buffer.byteLength(formatted, 'utf8') > 1024 * 1024) {
+      throw new Error('Personal rules file exceeds 1 MiB size limit.');
+    }
+    const newHash = createHash('sha256').update(formatted).digest('hex');
+    writeFileSync(tempPath, formatted, 'utf8');
+    renameSync(tempPath, target);
+    return { success: true, hash: newHash };
+  } catch (err) {
+    if (existsSync(tempPath)) {
+      try { unlinkSync(tempPath); } catch {}
+    }
+    throw err;
+  } finally {
+    closeSync(lockFd);
+    try { unlinkSync(lockPath); } catch {}
+  }
+}
+
+export function detectPersonalRuleContradictions(
+  personalRules: readonly string[],
+  agentsText: string
+): { rule: string; contradictionReason: string }[] {
+  const contradictions: { rule: string; contradictionReason: string }[] = [];
+  const normalizedAgents = agentsText.toLowerCase();
+
+  for (const rule of personalRules) {
+    validatePersonalRuleText(rule);
+    const normRule = normalizeKey(rule);
+
+    if (/never\s+merge|merging\s+remains\s+human-only/i.test(agentsText) && /auto[_-]?merge|merges?\s+automatically/i.test(rule)) {
+      // Split into clauses (by semicolon, comma, or sentence endings) and check the clause(s) mentioning auto-merge
+      const clauses = rule.split(/[;,.\n]+/);
+      let permitsAutoMerge = false;
+      for (const clause of clauses) {
+        if (/auto[_-]?merge|merges?\s+automatically/i.test(clause)) {
+          const isNegated = /\b(?:never|not?|don't|must not|cannot|should not|no)\b.*?\b(?:auto[_-]?merge|merges?\s+automatically)\b/i.test(clause);
+          if (!isNegated) {
+            permitsAutoMerge = true;
+            break;
+          }
+        }
+      }
+      if (permitsAutoMerge) {
+        contradictions.push({
+          rule,
+          contradictionReason: 'Personal rule permits automatic merging, but AGENTS.md specifies merging remains human-only.',
+        });
+      }
+    } else if (normRule.includes('always') || normRule.includes('never') || normRule.includes('do not') || normRule.includes('must not')) {
+      // General conflict check if opposite terms appear in agents
+      const positive = normRule.replace(/\b(never|do not|don't|must not)\b/g, '').trim();
+      if (/never|do not|don't|must not/.test(normRule)) {
+        // rule says don't X, does AGENTS say always X?
+        if (positive && normalizedAgents.includes(`always ${positive}`)) {
+          contradictions.push({
+            rule,
+            contradictionReason: `Personal rule forbids "${positive}", but AGENTS.md specifies to always do so.`,
+          });
+        }
+      } else if (normRule.includes('always')) {
+        const action = normRule.replace(/\balways\b/g, '').trim();
+        if (action && (normalizedAgents.includes(`never ${action}`) || normalizedAgents.includes(`do not ${action}`))) {
+          contradictions.push({
+            rule,
+            contradictionReason: `Personal rule specifies to always "${action}", but AGENTS.md forbids it.`,
+          });
+        }
+      }
+    }
+  }
+
+  return contradictions;
 }
 
 export function applyApprovedRulePromotion(plan: RulePromotionPlan, approved: boolean): string {

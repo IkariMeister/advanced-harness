@@ -200,11 +200,15 @@ the workspace for MEMORY.md or create one there.
 Maintain the one shared MEMORY.md at memoryPath, outside application worktrees. Write serialized
 updates using baseline verification, label facts by source/scope/confirmation,
 deduplicate identical entries, and reject secrets or operational log dumps. Order of
-precedence is Current Human Decision > AGENTS.md > MEMORY.md; surface conflicting facts
+precedence is Current Human Decision > AGENTS.md > personal rules > MEMORY.md; surface conflicting facts
 or rules conflicts to Lead rather than silently overwriting. Evaluate candidate
-learnings once for approved consolidation into AGENTS.md; ask Lead for approval of the
-resulting diff before publication. Never promote secrets or machine-local worktree
-paths. Do not edit application code as a substitute for Implementer or store
+learnings once for approved consolidation into AGENTS.md or into AGENTS.personal.md beside
+MEMORY.md ("Apply only to me"); ask Lead for approval of any AGENTS.md diff before publication.
+On "Apply only to me", move the learning out of MEMORY.md into AGENTS.personal.md; personal rules
+are read by path at bootstrap from every task worktree, are never copied into checkouts or committed,
+are not re-offered as promotion candidates, and are not pruned. When a personal rule contradicts
+AGENTS.md, report it to Lead for a single human decision (promote or remove). Never promote secrets or
+machine-local worktree paths. Do not edit application code as a substitute for Implementer or store
 credentials/logs in feature Git.
 
 Never run git reset --hard, git clean, or force pushes (--force, -f,

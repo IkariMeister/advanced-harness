@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Advanced Harness Codex role launcher (#45). Installed to $CODEX_HOME/advanced-harness/codex-role.mjs
-// and run by Lead, one approved launch per role task. Each role runs as its own `codex exec` process
+// and run by Lead, one launch per role task, each under host permission. Each role runs as its own `codex exec` process
 // with the settings from $CODEX_HOME/harness-<role>.config.toml.
 //
 // The security settings are re-applied with -c on every launch and resume: `codex exec resume` takes
