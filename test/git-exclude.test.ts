@@ -112,15 +112,23 @@ test('an exclude file edited after the preview is left untouched', t => {
   assert.equal(readFileSync(exclude(), 'utf8'), '# concurrent edit\n');
 });
 
+const policyQuestion = 'Type policy';
+
 async function setup(project: string, root: string, confirm: string) {
   const home = join(root, 'home');
   const xdg = join(root, 'xdg');
   mkdirSync(home, { recursive: true });
   const outputs: string[] = [];
   const errors: string[] = [];
+  const asked: string[] = [];
   const responses = ['bash', 'main', '-', '-', '-', '-', '-', '', join(home, 'worktrees'), join(home, 'data', 'MEMORY.md'), confirm];
-  const code = await runSetupFlow({ scope: 'project', project }, { ask: async () => responses.shift() ?? '', output: line => outputs.push(line), error: line => errors.push(line), home, xdgConfigHome: xdg, recoveryDirectory: join(root, 'recovery') });
-  return { code, outputs, errors };
+  // The preflight policy prompt is answered by its text (Enter skips), so the positional queue stays aligned with the other prompts.
+  const ask = async (question: string) => {
+    asked.push(question);
+    return question.startsWith(policyQuestion) ? '' : responses.shift() ?? '';
+  };
+  const code = await runSetupFlow({ scope: 'project', project }, { ask, output: line => outputs.push(line), error: line => errors.push(line), home, xdgConfigHome: xdg, recoveryDirectory: join(root, 'recovery') });
+  return { code, outputs, errors, asked };
 }
 
 test('setup previews the exclude block; cancellation writes nothing and save adds it', async t => {
@@ -128,11 +136,14 @@ test('setup previews the exclude block; cancellation writes nothing and save add
   for (const response of ['', 'cancel']) {
     const cancelled = await setup(project, root, response);
     assert.equal(cancelled.code, 0);
+    assert.equal(cancelled.asked.filter(question => question.startsWith(policyQuestion)).length, 1, 'policy prompt asked once');
+    assert.ok(cancelled.asked.some(question => question.startsWith('Full preview')), 'the confirmation was reached');
     assert.ok(cancelled.outputs.some(line => /^Local Git exclude: .*add harness block/.test(line)));
     assert.equal(existsSync(exclude()) && readFileSync(exclude(), 'utf8').includes('advanced-harness'), false, `cancel "${response}" wrote no block`);
     assert.equal(existsSync(join(root, 'recovery')), false, 'no backups');
   }
   const saved = await setup(project, root, 'save');
+  assert.equal(saved.asked.filter(question => question.startsWith(policyQuestion)).length, 1, 'policy prompt asked once');
   assert.deepEqual(saved.errors, []);
   assert.ok(saved.outputs.some(line => line.startsWith('Local Git exclude updated:')));
   assert.match(readFileSync(exclude(), 'utf8'), /owners=setup\n/);

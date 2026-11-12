@@ -43,6 +43,20 @@ describe('SMK-PS project setup + SMK-PI project integrations (non-TTY piped answ
     assert.equal(readFileSync(expandStoredPath(settings.memoryPath, box.home), 'utf8'), '# Shared Operator memory\n\n', 'setup creates a header-only shared memory file');
   });
 
+  it('SMK-PS-03 typing policy at the preflight prompt saves the default policy file with the commit hint', async () => {
+    // A fresh sandbox: the shared box already holds settings from SMK-PS-02, which would change the prompts.
+    const fresh = createSandbox('context-policy');
+    try {
+      const result = await fresh.run('setup-native-project.ts', ['--scope', 'project', '--project', fresh.project], { steps: setupSteps('./gradlew assembleDebug', 'save', [], 'policy') });
+      assert.equal(result.code, 0, result.transcript);
+      assert.deepEqual(result.unansweredSteps, []);
+      assert.deepEqual(JSON.parse(readFileSync(join(fresh.project, '.harness', 'preflight.json'), 'utf8')), { version: 1, checks: { 'path-policy': { enabled: true, severity: 'block' } } });
+      assert.match(result.transcript, /Preflight policy saved: .*\.harness[\\/]preflight\.json\. Commit \.harness\/preflight\.json: preflight reads it from origin\/HEAD/);
+    } finally {
+      fresh.dispose();
+    }
+  });
+
   it('SMK-PI-01 project integrations (gh + repository) add their own section without touching setup settings', async () => {
     const before = agentsMd();
     const setupSection = before.slice(before.indexOf('<!-- advanced-harness:project:start -->'), before.indexOf('<!-- advanced-harness:project:end -->'));

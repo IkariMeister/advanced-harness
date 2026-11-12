@@ -14,6 +14,7 @@ import { addedTextByteLength, MAX_SECRET_SCAN_BYTES, safeGitleaksRuleId, scanAdd
 import { markTrustedPolicyDependent } from './path-policy.ts';
 import { isProjectPreflightPolicyPath } from './policy.ts';
 import { normalizeExceptionPath, validateSecretExceptions, type SecretException } from './exceptions.ts';
+import { trustedCommit } from './trusted-context.ts';
 export { validateSecretExceptions, type SecretException } from './exceptions.ts';
 export { DEFAULT_SENSITIVE_PATH_GLOBS, pathPolicyCheck } from './path-policy.ts';
 
@@ -39,16 +40,6 @@ function gitBytes(top: string, args: string[]): Buffer {
     throw new Error(`git ${args[0]} failed (exit ${res.status})${detail ? `: ${detail}` : ''}`);
   }
   return res.stdout;
-}
-
-/** Resolves the trusted ref to a commit locally. Never fetches. */
-function trustedCommit(top: string, hint: string): string {
-  const res = spawnSync('git', ['-C', top, '--literal-pathspecs', 'rev-parse', '--verify', '--quiet', `${TRUSTED_REF}^{commit}`], { encoding: 'utf8' });
-  if (res.error) throw new Error(`git rev-parse could not be started: ${res.error.message}`);
-  if (res.status !== 0) throw new Error(`trusted ref ${TRUSTED_REF} unavailable; ${hint}`);
-  const commit = res.stdout.trim();
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) throw new Error(`trusted ref ${TRUSTED_REF} did not resolve to a commit`);
-  return commit;
 }
 
 /** Reads a regular tracked text file at the trusted commit. Undefined when it is absent there. */
@@ -178,7 +169,7 @@ export const changesetCheck: PreflightCheck = {
   },
 };
 
-/** Project policy files are trusted from --base; edits in the candidate changeset are review blockers. */
+/** Project policy files are read from origin/HEAD (refs/remotes/origin/HEAD), never from --base; edits in the candidate changeset are review blockers. */
 export const policyIntegrityCheck: PreflightCheck = {
   id: 'policy-integrity',
   run({ changeset }) {
