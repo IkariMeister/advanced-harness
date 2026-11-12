@@ -1108,7 +1108,9 @@ export function computePruningPlanHash(plan: {
       confirmation: e.confirmation,
       fact: e.fact,
     })),
-    agentsPath: plan.agentsPath ? resolve(plan.agentsPath) : '',
+    agentsPath: plan.agentsPath
+      ? (process.platform === 'win32' ? resolve(plan.agentsPath).toLowerCase() : resolve(plan.agentsPath))
+      : '',
     agentsBaselineHash: plan.agentsBaselineHash ?? '',
     updatedAgentsText: plan.updatedAgentsText ?? '',
     agentsDiff: plan.agentsDiff ?? '',
@@ -1197,6 +1199,10 @@ export function planMemoryPruning(options: {
       const reviewed = candidate ? markEntryReviewed(entry, candidate) : entry;
       updatedMemory.push(reviewed);
     }
+  }
+
+  if (promotedToAgents.length > 0 && options.agentsText !== undefined && options.agentsPath === undefined) {
+    throw new Error('Promotion to AGENTS.md requires agentsPath when agentsText is provided.');
   }
 
   const agentsPath = options.agentsPath !== undefined ? resolve(options.agentsPath) : undefined;
@@ -1428,15 +1434,16 @@ export function applyApprovedMemoryPruning(options: {
     if (typeof plan.updatedAgentsText !== 'string') {
       throw new Error('Promotion to AGENTS.md requires updatedAgentsText to be defined.');
     }
-    if (plan.agentsPath !== undefined) {
-      const resolvedOption = resolve(options.agentsPath);
-      const resolvedPlan = resolve(plan.agentsPath);
-      const samePath = process.platform === 'win32'
-        ? resolvedOption.toLowerCase() === resolvedPlan.toLowerCase()
-        : resolvedOption === resolvedPlan;
-      if (!samePath) {
-        throw new Error('AGENTS.md path does not match the path recorded in MemoryPruningPlan.');
-      }
+    if (plan.agentsPath === undefined) {
+      throw new Error('Promotion to AGENTS.md requires agentsPath to be recorded in MemoryPruningPlan.');
+    }
+    const resolvedOption = resolve(options.agentsPath);
+    const resolvedPlan = resolve(plan.agentsPath);
+    const samePath = process.platform === 'win32'
+      ? resolvedOption.toLowerCase() === resolvedPlan.toLowerCase()
+      : resolvedOption === resolvedPlan;
+    if (!samePath) {
+      throw new Error('AGENTS.md path does not match the path recorded in MemoryPruningPlan.');
     }
     if (plan.agentsBaselineHash === undefined || options.agentsBaselineHash !== plan.agentsBaselineHash) {
       throw new Error('AGENTS.md baseline hash does not match the baseline hash recorded in MemoryPruningPlan.');

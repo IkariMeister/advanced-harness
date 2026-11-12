@@ -883,6 +883,7 @@ test('planMemoryPruning handles end-to-end detect, plan with keep, discard, prom
       { entry: entries[4]!, disposition: 'discard' },
     ],
     agentsText: agentsOriginal,
+    agentsPath: join(tmpdir(), 'AGENTS.md'),
   });
 
   assert.equal(plan.keptCount, 3);
@@ -1308,6 +1309,7 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     candidates: [candidate],
     dispositions: [{ entry: initialEntry, disposition: 'promote', targetRuleText: 'Promoted rule for baseline test' }],
     agentsText: initialAgentsText,
+    agentsPath,
   });
   writeFileSync(agentsPath, '# Existing AGENTS\n\nRule 0.\nNew concurrent edit.\n', 'utf8');
   const newerDiskAgentsHash = createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex');
@@ -1398,6 +1400,7 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     candidates: [{ entry: retainedEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k-7b' }],
     dispositions: [{ entry: retainedEntry, disposition: 'promote', targetRuleText: 'Always verify receipts after apply.' }],
     agentsText: readFileSync(agentsPath, 'utf8'),
+    agentsPath,
   });
   const res7b = applyApprovedMemoryPruning({
     plan: agentsPlan7b,
@@ -1435,6 +1438,7 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
     dispositions: [{ entry: thirdEntry, disposition: 'promote', targetRuleText: 'Rule blocked by lock' }],
     agentsText: agentsText80,
+    agentsPath,
   });
   const agentsLockFd = openSync(`${agentsPath}.lock`, 'wx');
   try {
@@ -1485,6 +1489,7 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
           { entry: fourthEntry, disposition: 'personal', targetRuleText: 'Personal rule causing failure' },
         ],
         agentsText: agentsTextBefore8a,
+        agentsPath,
       });
 
       applyApprovedMemoryPruning({
@@ -1528,6 +1533,7 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
       { entry: thirdEntry, disposition: 'promote', targetRuleText: 'Promoted rule from 8b' },
     ],
     agentsText: agentsTextAfter8a,
+    agentsPath,
   });
 
   const memLockFd8b = openSync(`${memoryPath}.lock`, 'wx');
@@ -1607,15 +1613,22 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
   // 8d. Rejects directory at agentsPath (non-regular file guard) (F-35)
   const dirAsAgentsPath = join(projectRoot, 'AGENTS_DIR');
   mkdirSync(dirAsAgentsPath, { recursive: true });
+  const plan8d = planMemoryPruning({
+    memoryEntries: [thirdEntry, fourthEntry],
+    candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
+    dispositions: [{ entry: thirdEntry, disposition: 'promote', targetRuleText: 'Promoted rule from 8b' }],
+    agentsText: agentsTextAfter8a,
+    agentsPath: dirAsAgentsPath,
+  });
   assert.throws(() => applyApprovedMemoryPruning({
-    plan: plan8b,
+    plan: plan8d,
     approved: true,
     memoryPath,
     memoryBaselineHash: currentMemHashAfter8b,
     personalBaselineHash: readPersonalRules(personalPath).hash,
-    expectedPlanHash: plan8b.planHash,
+    expectedPlanHash: plan8d.planHash,
     agentsPath: dirAsAgentsPath,
-    agentsBaselineHash: plan8b.agentsBaselineHash,
+    agentsBaselineHash: plan8d.agentsBaselineHash,
   }), /AGENTS\.md path must be a regular file/);
 });
 
@@ -1673,8 +1686,10 @@ test('validatePromotedRuleText and validatePersonalRuleText reject secrets, path
   validatePersonalRuleText('Use dark theme in developer tools.');
 });
 
-test('applyApprovedMemoryPruning preserves POSIX mode, rejects dangling symlinks/missing parent, reports stale lock, and handles Windows path case', (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-edge-'));
+test('applyApprovedMemoryPruning handles Windows path case and preserves POSIX mode', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-case-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
   const memoryPath = join(dir, 'MEMORY.md');
   const personalPath = join(dir, 'AGENTS.personal.md');
   const agentsPath = join(dir, 'AGENTS.md');
@@ -1716,7 +1731,6 @@ test('applyApprovedMemoryPruning preserves POSIX mode, rejects dangling symlinks
     agentsPath,
   });
 
-  // 1. Windows case-insensitive agentsPath comparison (F-45)
   const caseVariantAgentsPath = process.platform === 'win32'
     ? agentsPath.toUpperCase()
     : agentsPath;
@@ -1733,55 +1747,74 @@ test('applyApprovedMemoryPruning preserves POSIX mode, rejects dangling symlinks
   });
   assert.equal(result.receipt.agentsWritten, true);
 
-  // 2. POSIX mode preservation (F-46)
   if (process.platform !== 'win32') {
     assert.equal(statSync(agentsPath).mode & 0o777, 0o640);
   }
+});
 
-  // 3. Stale-lock error text (F-46)
+test('applyApprovedMemoryPruning reports stale lock and rejects missing AGENTS.md parent', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-lock-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
+  const agentsPath = join(dir, 'AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+
+  const memBase = readSharedMemory(memoryPath);
+  const personalBase = readPersonalRules(personalPath);
+  const agentsBaseHash = createHash('sha256').update(initialAgentsText, 'utf8').digest('hex');
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
+
   const lockPath = `${agentsPath}.lock`;
   writeFileSync(lockPath, 'stale', 'utf8');
   try {
-    const nextAgentsText = readFileSync(agentsPath, 'utf8');
-    const nextAgentsHash = createHash('sha256').update(nextAgentsText, 'utf8').digest('hex');
-    const entry2 = {
-      date: '2026-11-12',
-      scope: 'edge-topic-2',
-      summary: 'Edge test learning 2',
-      fact: 'Edge test learning 2',
-      confirmation: 'approved',
-      source: 'PR #224',
-      tags: [],
-    };
-    writeFileSync(memoryPath, formatSharedMemory([entry2]), 'utf8');
-    const memBase2 = readSharedMemory(memoryPath);
-    const plan2 = planMemoryPruning({
-      memoryEntries: [entry2],
-      candidates: [{ ...candidate, entry: entry2 }],
-      dispositions: [{ entry: entry2, disposition: 'promote', targetRuleText: 'Promoted edge rule 2' }],
-      agentsText: nextAgentsText,
+    const plan = planMemoryPruning({
+      memoryEntries: [entry],
+      candidates: [candidate],
+      dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule' }],
+      agentsText: initialAgentsText,
       agentsPath,
     });
     assert.throws(() => applyApprovedMemoryPruning({
-      plan: plan2,
+      plan,
       approved: true,
       memoryPath,
-      memoryBaselineHash: memBase2.hash,
+      memoryBaselineHash: memBase.hash,
       personalBaselineHash: personalBase.hash,
-      expectedPlanHash: plan2.planHash,
+      expectedPlanHash: plan.planHash,
       agentsPath,
-      agentsBaselineHash: nextAgentsHash,
+      agentsBaselineHash: agentsBaseHash,
     }), /remove stale AGENTS\.md\.lock/i);
   } finally {
     try { unlinkSync(lockPath); } catch {}
   }
 
-  // 4. Missing AGENTS.md parent directory rejected (F-46)
   const missingParentAgents = join(dir, 'missing-parent', 'AGENTS.md');
   const planMissingParent = planMemoryPruning({
     memoryEntries: [entry],
     candidates: [candidate],
-    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule 3' }],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule 2' }],
     agentsText: initialAgentsText,
     agentsPath: missingParentAgents,
   });
@@ -1789,15 +1822,35 @@ test('applyApprovedMemoryPruning preserves POSIX mode, rejects dangling symlinks
     plan: planMissingParent,
     approved: true,
     memoryPath,
-    memoryBaselineHash: readSharedMemory(memoryPath).hash,
+    memoryBaselineHash: memBase.hash,
     personalBaselineHash: personalBase.hash,
     expectedPlanHash: planMissingParent.planHash,
     agentsPath: missingParentAgents,
     agentsBaselineHash: agentsBaseHash,
   }), /parent directory does not exist/i);
+});
 
-  // 5. Dangling symlink rejected via lstatSync (F-46)
+test('applyApprovedMemoryPruning rejects dangling AGENTS.md symlink', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-symlink-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
   const danglingAgents = join(dir, 'dangling-AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+
   try {
     symlinkSync(join(dir, 'nonexistent-target.md'), danglingAgents);
   } catch (err: unknown) {
@@ -1807,10 +1860,18 @@ test('applyApprovedMemoryPruning preserves POSIX mode, rejects dangling symlinks
     }
     throw err;
   }
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
   const planDangling = planMemoryPruning({
     memoryEntries: [entry],
     candidates: [candidate],
-    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule 4' }],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule' }],
     agentsText: initialAgentsText,
     agentsPath: danglingAgents,
   });
@@ -1819,9 +1880,128 @@ test('applyApprovedMemoryPruning preserves POSIX mode, rejects dangling symlinks
     approved: true,
     memoryPath,
     memoryBaselineHash: readSharedMemory(memoryPath).hash,
-    personalBaselineHash: personalBase.hash,
+    personalBaselineHash: readPersonalRules(personalPath).hash,
     expectedPlanHash: planDangling.planHash,
     agentsPath: danglingAgents,
-    agentsBaselineHash: agentsBaseHash,
+    agentsBaselineHash: createHash('sha256').update(initialAgentsText, 'utf8').digest('hex'),
   }), /symlink/i);
+});
+
+test('planMemoryPruning and applyApprovedMemoryPruning require agentsPath when promotions exist', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-unbound-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
+  const agentsPath = join(dir, 'AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
+
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted unbound rule' }],
+    agentsText: initialAgentsText,
+  }), /requires agentsPath when agentsText is provided/i);
+
+  const validPlan = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted unbound rule' }],
+    agentsText: initialAgentsText,
+    agentsPath,
+  });
+  const unboundPlan = { ...validPlan, agentsPath: undefined };
+  unboundPlan.planHash = computePruningPlanHash(unboundPlan);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: unboundPlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: readSharedMemory(memoryPath).hash,
+    personalBaselineHash: readPersonalRules(personalPath).hash,
+    expectedPlanHash: unboundPlan.planHash,
+    agentsPath,
+    agentsBaselineHash: createHash('sha256').update(initialAgentsText, 'utf8').digest('hex'),
+  }), /requires agentsPath to be recorded in MemoryPruningPlan/i);
+});
+
+test('applyApprovedMemoryPruning cleans up temp file when source AGENTS.md is read-only', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-readonly-'));
+  t.after(() => {
+    try { chmodSync(join(dir, 'AGENTS.md'), 0o644); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
+  const agentsPath = join(dir, 'AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+  chmodSync(agentsPath, 0o444);
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
+  const plan = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted readonly rule' }],
+    agentsText: initialAgentsText,
+    agentsPath,
+  });
+
+  try {
+    applyApprovedMemoryPruning({
+      plan,
+      approved: true,
+      memoryPath,
+      memoryBaselineHash: readSharedMemory(memoryPath).hash,
+      personalBaselineHash: readPersonalRules(personalPath).hash,
+      expectedPlanHash: plan.planHash,
+      agentsPath,
+      agentsBaselineHash: createHash('sha256').update(initialAgentsText, 'utf8').digest('hex'),
+    });
+  } catch {
+    // Expected on Windows when target is read-only
+  }
+
+  const leftover = readdirSync(dir).filter((f) => f.startsWith('.AGENTS.') && f.endsWith('.tmp'));
+  assert.deepEqual(leftover, []);
 });
