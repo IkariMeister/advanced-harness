@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readFileSync, unlinkSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readFileSync, unlinkSync, readdirSync, openSync, closeSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   validateBootstrapContext,
   checkBootstrapReadiness,
@@ -30,6 +31,7 @@ import {
   markEntryReviewed,
   applyApprovedMemoryPruning,
   validatePromotedRuleText,
+  MemoryPruningApplyError,
   type MemoryEntry,
   type BootstrapContext,
   type PruningCandidate,
@@ -391,10 +393,24 @@ Some initial rules.
   assert.ok(plan.diff.includes('+- Always verify screenshots before PR.'));
   assert.ok(plan.updatedAgentsText.includes('<!-- advanced-harness:project:start -->'));
 
-  // Requires explicit approval to apply
-  assert.throws(() => applyApprovedRulePromotion(plan, false), /Rule promotion requires explicit human approval/);
-  const updated = applyApprovedRulePromotion(plan, true);
-  assert.equal(updated, plan.updatedAgentsText);
+  // Rejects empty, raw-newlines, or >2000-character rules on promotion (F-15)
+  assert.throws(() => planRulePromotion({
+    memoryEntries: entries,
+    agentsText: agentsOriginal,
+    dispositions: [{ type: 'promote', entry: entries[0]!, targetRuleText: '' }],
+  }), /cannot be empty/);
+
+  assert.throws(() => planRulePromotion({
+    memoryEntries: entries,
+    agentsText: agentsOriginal,
+    dispositions: [{ type: 'promote', entry: entries[0]!, targetRuleText: 'line 1\nline 2' }],
+  }), /must not contain raw newlines/);
+
+  assert.throws(() => planRulePromotion({
+    memoryEntries: entries,
+    agentsText: agentsOriginal,
+    dispositions: [{ type: 'promote', entry: entries[0]!, targetRuleText: 'a'.repeat(2001) }],
+  }), /exceeds maximum length/);
 
   // Rejects promotion of secrets or machine-local worktree paths
   assert.throws(() => {
@@ -701,16 +717,22 @@ test('detectPruningCandidates avoids false positives and handles tri-state check
     { source: 'Security', scope: 'Git', confirmation: 'approved', fact: 'The main branch must be clean before push' },
     // Prose with "Priority is #1": should NOT match obsolete issue check
     { source: 'Rank', scope: 'Priority', confirmation: 'approved', fact: 'Priority is #1 item in queue' },
-    // Candidates with external checks that return "unknown" or throw: must NOT be flagged as obsolete
-    { source: 'Bug', scope: 'Fixes', confirmation: 'approved', fact: 'Fixes issue #888' },
-    { source: 'Git', scope: 'Branches', confirmation: 'approved', fact: 'Tracking branch `feature/unknown-branch`' },
-    { source: 'Repo', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/unknown-file.ts`' },
+    // Longer fact merely containing shorter personal rule: should NOT flag as redundant (F-22)
+    { source: 'Personal', scope: 'Settings', confirmation: 'approved', fact: 'Use valid-personal-rule when compiling releases in production' },
+    // Distinct subject nouns: Docker compose vs Docker desktop should NOT supersede each other (F-01)
+    { source: 'DevOps', scope: 'Containers', confirmation: 'approved', fact: 'Docker compose is required for local testing' },
+    { source: 'DevOps', scope: 'Containers', confirmation: 'approved', fact: 'Docker desktop is required for local testing' },
+    // File path with a..b.ts: valid file should not be skipped as path traversal (F-04)
+    { source: 'Repo', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/a..b.ts`' },
+    // Issue reference in parentheses: (#123) should match (F-01)
+    { source: 'Fix', scope: 'Issue', confirmation: 'approved', fact: 'Resolves issue (#123)' },
   ];
 
   const externalChecker = {
     checkIssueExists: (id: string) => {
       if (id === '888') return { status: 'unknown' as TriStateResult, evidence: 'Network error' };
       if (id === '1') return { status: 'missing' as TriStateResult, evidence: 'Issue #1 missing' };
+      if (id === '123') return { status: 'missing' as TriStateResult, evidence: 'Issue #123 missing' };
       return { status: 'missing' as TriStateResult, evidence: 'Missing' };
     },
     checkBranchExists: (branch: string) => {
@@ -719,6 +741,7 @@ test('detectPruningCandidates avoids false positives and handles tri-state check
     },
     checkFileExists: (filePath: string) => {
       if (filePath.includes('unknown-file')) return { status: 'unknown' as TriStateResult, evidence: 'Unknown file' };
+      if (filePath === 'src/a..b.ts') return { status: 'missing' as TriStateResult, evidence: 'Missing a..b.ts' };
       return { status: 'missing' as TriStateResult, evidence: 'Missing file' };
     },
   };
@@ -730,8 +753,10 @@ test('detectPruningCandidates avoids false positives and handles tri-state check
     externalChecker,
   });
 
-  // Zero false positives should be produced
-  assert.equal(candidates.length, 0);
+  // Only the valid obsolete (#123) and valid file (src/a..b.ts) should be flagged!
+  assert.equal(candidates.length, 2);
+  assert.equal(candidates[0]!.kind, 'obsolete');
+  assert.equal(candidates[0]!.evidenceKey, 'src/a..b.ts'.startsWith('file:') ? 'file:src/a..b.ts' : candidates[0]!.evidenceKey);
 });
 
 test('detectPruningCandidates identifies redundant, contradicted/superseded, and obsolete entries', () => {
@@ -815,16 +840,20 @@ test('detectPruningCandidates identifies redundant, contradicted/superseded, and
   assert.equal(candidates[6]!.evidenceKey, 'file:src/obsolete.ts');
 });
 
-test('planMemoryPruning handles end-to-end detect, plan with keep, and re-detection', () => {
+test('planMemoryPruning handles end-to-end detect, plan with keep, discard, promote, and re-detection', () => {
   const agentsOriginal = '# Project Guidelines\n\nAlways check tests before commit.\n';
   const entries: MemoryEntry[] = [
-    { source: 'Dev', scope: 'Issues', confirmation: 'approved', fact: 'Referenced in issue #100 for tracking' },
+    { source: 'Dev', scope: 'Issues', confirmation: 'approved', fact: 'Referenced in issue #12 for tracking' },
+    { source: 'Dev', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/a.ts` on start' },
+    { source: 'Dev', scope: 'Branches', confirmation: 'approved', fact: 'Tracking branch `feature/x`' },
+    { source: 'Dev', scope: 'Redundant', confirmation: 'approved', fact: 'Always check tests before commit.' },
+    { source: 'Dev', scope: 'DiscardMe', confirmation: 'approved', fact: 'Obsolete note with issue #99' },
   ];
 
   const externalChecker = {
-    checkIssueExists: (id: string) => (id === '100' ? { status: 'missing' as TriStateResult, evidence: 'Issue #100 closed' } : 'exists' as TriStateResult),
-    checkBranchExists: () => 'exists' as TriStateResult,
-    checkFileExists: () => 'exists' as TriStateResult,
+    checkIssueExists: (id: string) => (id === '12' || id === '99' ? { status: 'missing' as TriStateResult, evidence: 'Issue closed' } : 'exists' as TriStateResult),
+    checkBranchExists: (branch: string) => (branch === 'feature/x' ? { status: 'missing' as TriStateResult, evidence: 'Branch deleted' } : 'exists' as TriStateResult),
+    checkFileExists: (path: string) => (path === 'src/a.ts' ? { status: 'missing' as TriStateResult, evidence: 'File removed' } : 'exists' as TriStateResult),
   };
 
   // 1. Detect candidate
@@ -833,20 +862,29 @@ test('planMemoryPruning handles end-to-end detect, plan with keep, and re-detect
     agentsText: agentsOriginal,
     externalChecker,
   });
-  assert.equal(initialCandidates.length, 1);
-  assert.equal(initialCandidates[0]!.kind, 'obsolete');
-  assert.equal(initialCandidates[0]!.evidenceKey, 'issue:100');
+  assert.equal(initialCandidates.length, 5);
 
-  // 2. Plan with 'keep' disposition
+  // 2. Plan dispositions: keep issue #12, file, branch; promote redundant; discard obsolete
   const plan = planMemoryPruning({
     memoryEntries: entries,
     candidates: initialCandidates,
-    dispositions: [{ entry: entries[0]!, disposition: 'keep' }],
+    dispositions: [
+      { entry: entries[0]!, disposition: 'keep' },
+      { entry: entries[1]!, disposition: 'keep' },
+      { entry: entries[2]!, disposition: 'keep' },
+      { entry: entries[3]!, disposition: 'promote' },
+      { entry: entries[4]!, disposition: 'discard' },
+    ],
     agentsText: agentsOriginal,
   });
 
-  assert.equal(plan.updatedMemoryEntries.length, 1);
-  assert.ok(plan.updatedMemoryEntries[0]!.confirmation.includes('reviewed-keep:obsolete:issue:100'));
+  assert.equal(plan.keptCount, 3);
+  assert.equal(plan.discardedCount, 1);
+  assert.equal(plan.promotedToAgents.length, 1);
+  assert.equal(plan.updatedMemoryEntries.length, 3); // Kept entries remain, discarded and promoted are gone
+  assert.ok(plan.updatedMemoryEntries[0]!.confirmation.includes('reviewed-keep:obsolete:issue:12'));
+  assert.ok(plan.updatedMemoryEntries[1]!.confirmation.includes('reviewed-keep:obsolete:file:src/a.ts'));
+  assert.ok(plan.updatedMemoryEntries[2]!.confirmation.includes('reviewed-keep:obsolete:branch:feature/x'));
 
   // 3. Re-detect with the exact output of planMemoryPruning: must produce zero candidates!
   const recheckedCandidates = detectPruningCandidates({
@@ -856,33 +894,111 @@ test('planMemoryPruning handles end-to-end detect, plan with keep, and re-detect
   });
   assert.equal(recheckedCandidates.length, 0);
 
-  // 4. Change the reference / reason (e.g. now referencing issue #200 which is also missing)
+  // 4. Prefix collision test: kept issue:12 must not suppress issue:1 when fact changes to issue #1
   const modifiedEntries: MemoryEntry[] = [
-    { ...plan.updatedMemoryEntries[0]!, fact: 'Referenced in issue #200 for tracking' },
+    { ...plan.updatedMemoryEntries[0]!, fact: 'Referenced in issue #1 for tracking' },
   ];
-  const checkerFor200 = {
-    checkIssueExists: (id: string) => (id === '200' ? { status: 'missing' as TriStateResult, evidence: 'Issue #200 closed' } : 'exists' as TriStateResult),
+  const checkerFor1 = {
+    checkIssueExists: (id: string) => (id === '1' ? { status: 'missing' as TriStateResult, evidence: 'Issue #1 closed' } : 'exists' as TriStateResult),
   };
   const recheckedWithNewReason = detectPruningCandidates({
     memoryEntries: modifiedEntries,
     agentsText: agentsOriginal,
-    externalChecker: checkerFor200,
+    externalChecker: checkerFor1,
   });
   assert.equal(recheckedWithNewReason.length, 1);
-  assert.equal(recheckedWithNewReason[0]!.evidenceKey, 'issue:200');
+  assert.equal(recheckedWithNewReason[0]!.evidenceKey, 'issue:1');
 });
 
-test('applyApprovedMemoryPruning enforces atomic writes, baseline verification, and decline guarantees', (t) => {
-  const { memoryPath } = createFixture(t);
+test('planMemoryPruning validates candidates, dispositions, and supports complex supersession with delimiters', () => {
+  const entryA: MemoryEntry = { source: 'Dev', scope: 'ScopeA', confirmation: 'approved', fact: 'Fact A' };
+  const entryB: MemoryEntry = { source: 'Dev', scope: 'ScopeA', confirmation: 'approved', fact: 'Fact B; with [brackets] and long delimiters' };
+  const candidateA: PruningCandidate = {
+    entry: entryA,
+    kind: 'contradicted',
+    reason: 'Superseded',
+    evidence: 'Newer',
+    evidenceKey: 'newer-entry:123456789abc',
+  };
+
+  // Candidate not matching any entry throws
+  const foreignEntry: MemoryEntry = { source: 'Foreign', scope: 'ScopeA', confirmation: 'approved', fact: 'Unknown' };
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA, entryB],
+    candidates: [{ ...candidateA, entry: foreignEntry }],
+    dispositions: [],
+  }), /Candidate does not match any entry in memoryEntries/);
+
+  // Disposition not recognized as candidate throws
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA, entryB],
+    candidates: [candidateA],
+    dispositions: [{ entry: entryB, disposition: 'keep' }],
+  }), /not a recognized pruning candidate/);
+
+  // Duplicate disposition throws
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA, entryB],
+    candidates: [candidateA],
+    dispositions: [
+      { entry: entryA, disposition: 'keep' },
+      { entry: entryA, disposition: 'keep' },
+    ],
+  }), /Duplicate disposition/);
+
+  // Unknown disposition type throws
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA, entryB],
+    candidates: [candidateA],
+    dispositions: [{ entry: entryA, disposition: 'invalid' as any }],
+  }), /Unknown disposition type/);
+
+  // Promote without agentsText throws
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA],
+    candidates: [candidateA],
+    dispositions: [{ entry: entryA, disposition: 'promote' }],
+    agentsText: undefined,
+  }), /Promotion disposition requires agentsText/);
+
+  // Newer fact with ; and ] generates safe evidenceKey without semicolon or bracket
+  const entrySuperseded: MemoryEntry = { source: 'Dev', scope: 'ScopeA', confirmation: 'approved', fact: 'Old fact' };
+  const entrySuperseding: MemoryEntry = { source: 'Dev', scope: 'ScopeA', confirmation: 'replaces Old fact', fact: 'Fact B; with [brackets] and long delimiters' };
+  const candidatesFromDetection = detectPruningCandidates({
+    memoryEntries: [entrySuperseded, entrySuperseding],
+  });
+  assert.equal(candidatesFromDetection.length, 1);
+  assert.equal(candidatesFromDetection[0]!.kind, 'contradicted');
+  assert.ok(!candidatesFromDetection[0]!.evidenceKey.includes(';'));
+  assert.ok(!candidatesFromDetection[0]!.evidenceKey.includes(']'));
+
+  // Keeping candidate with ; and ] produces valid memory entry that formats and parses without error
+  const keepPlan = planMemoryPruning({
+    memoryEntries: [entrySuperseded, entrySuperseding],
+    candidates: candidatesFromDetection,
+    dispositions: [{ entry: entrySuperseded, disposition: 'keep' }],
+  });
+  const formatted = formatSharedMemory(keepPlan.updatedMemoryEntries);
+  const parsed = parseSharedMemory(formatted);
+  assert.equal(parsed.length, 2);
+  assert.ok(parsed[0]!.confirmation.includes('reviewed-keep:contradicted:newer-entry:'));
+});
+
+test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline verification, and partial failure receipts', (t) => {
+  const { memoryPath, projectRoot } = createFixture(t);
+  mkdirSync(projectRoot, { recursive: true });
   const personalPath = resolvePersonalRulesPath(memoryPath);
+  const agentsPath = join(projectRoot, 'AGENTS.md');
 
   const initialEntry: MemoryEntry = { source: 'A', scope: 'General', confirmation: 'confirmed', fact: 'Valid fact initially' };
   writeSharedMemorySerialized(memoryPath, [initialEntry], undefined);
   const initialPersonal = ['Personal rule 1: keep local'];
   writePersonalRulesSerialized(personalPath, initialPersonal, undefined);
+  writeFileSync(agentsPath, '# Existing AGENTS\n\nRule 0.\n', 'utf8');
 
   const memBase = readSharedMemory(memoryPath);
   const personalBase = readPersonalRules(personalPath);
+  const agentsBaseHash = createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex');
 
   const candidate: PruningCandidate = {
     entry: initialEntry,
@@ -899,7 +1015,7 @@ test('applyApprovedMemoryPruning enforces atomic writes, baseline verification, 
     agentsText: '# Rules',
   });
 
-  // 1. Missing baseline hash throws
+  // 1. Missing baseline hashes throw
   assert.throws(() => applyApprovedMemoryPruning({
     plan,
     approved: true,
@@ -916,7 +1032,17 @@ test('applyApprovedMemoryPruning enforces atomic writes, baseline verification, 
     personalBaselineHash: '',
   }), /valid personalBaselineHash/);
 
-  // 2. Stale baseline hash fails
+  // 2. Mismatched planHash throws
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: 'tampered-plan-hash',
+  }), /Approval plan hash does not match/);
+
+  // 3. Stale baseline hash fails
   assert.throws(() => applyApprovedMemoryPruning({
     plan,
     approved: true,
@@ -933,7 +1059,7 @@ test('applyApprovedMemoryPruning enforces atomic writes, baseline verification, 
     personalBaselineHash: 'stale-personal-hash',
   }), /Baseline hash does not match/);
 
-  // 3. Decline (approved: false) leaves both MEMORY.md and AGENTS.personal.md byte-identical
+  // 4. Decline (approved: false) leaves both MEMORY.md and AGENTS.personal.md byte-identical
   assert.throws(() => applyApprovedMemoryPruning({
     plan,
     approved: false,
@@ -945,7 +1071,7 @@ test('applyApprovedMemoryPruning enforces atomic writes, baseline verification, 
   assert.equal(readSharedMemory(memoryPath).hash, memBase.hash);
   assert.equal(readPersonalRules(personalPath).hash, personalBase.hash);
 
-  // 4. No-op plan leaves both files byte-identical without rewriting
+  // 5. No-op plan leaves both files byte-identical without rewriting
   const noOpPlan = planMemoryPruning({
     memoryEntries: [initialEntry],
     candidates: [],
@@ -963,17 +1089,58 @@ test('applyApprovedMemoryPruning enforces atomic writes, baseline verification, 
   assert.equal(readSharedMemory(memoryPath).hash, memBase.hash);
   assert.equal(readPersonalRules(personalPath).hash, personalBase.hash);
 
-  // 5. Success path applies personal rule and updates MEMORY.md
+  // 6. Success path applies personal rule and updates MEMORY.md, retaining pre-existing personal rules
   const successRes = applyApprovedMemoryPruning({
     plan,
     approved: true,
     memoryPath,
     memoryBaselineHash: memBase.hash,
     personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
   });
   assert.equal(successRes.success, true);
-  assert.ok(readPersonalRules(personalPath).rules.includes('New personal rule 2'));
-  assert.equal(readSharedMemory(memoryPath).entries.length, 0);
+  const updatedPersonal = readPersonalRules(personalPath);
+  assert.ok(updatedPersonal.rules.includes('Personal rule 1: keep local'));
+  assert.ok(updatedPersonal.rules.includes('New personal rule 2'));
+  const updatedMem = readSharedMemory(memoryPath);
+  assert.equal(updatedMem.entries.length, 0);
+
+  // 7. Partial failure: lock MEMORY.md so personal rule write succeeds but MEMORY.md fails
+  const secondEntry: MemoryEntry = { source: 'B', scope: 'General', confirmation: 'confirmed', fact: 'Fact 2' };
+  writeSharedMemorySerialized(memoryPath, [secondEntry], undefined);
+  const currentMemHash = readSharedMemory(memoryPath).hash;
+  const currentPersonalHash = readPersonalRules(personalPath).hash;
+
+  const promoPlan = planMemoryPruning({
+    memoryEntries: [secondEntry],
+    candidates: [{ entry: secondEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k2' }],
+    dispositions: [{ entry: secondEntry, disposition: 'personal', targetRuleText: 'New personal rule 3' }],
+    agentsText: '# Rules',
+  });
+
+  // Hold a lock on MEMORY.md
+  const lockFd = openSync(`${memoryPath}.lock`, 'wx');
+  try {
+    let thrownError: any;
+    try {
+      applyApprovedMemoryPruning({
+        plan: promoPlan,
+        approved: true,
+        memoryPath,
+        memoryBaselineHash: currentMemHash,
+        personalBaselineHash: currentPersonalHash,
+      });
+    } catch (err) {
+      thrownError = err;
+    }
+    assert.ok(thrownError, 'Must throw error on locked MEMORY.md');
+    assert.ok(thrownError instanceof MemoryPruningApplyError);
+    assert.equal(thrownError.receipt.personalWritten, true);
+    assert.equal(thrownError.receipt.memoryWritten, false);
+  } finally {
+    closeSync(lockFd);
+    unlinkSync(`${memoryPath}.lock`);
+  }
 });
 
 test('validatePromotedRuleText and validatePersonalRuleText reject secrets, paths, and limits', () => {
