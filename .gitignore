@@ -13,6 +13,8 @@ coverage/
 
 # Operational state belongs outside this repository
 MEMORY.md
+AGENTS.md.lock
+.AGENTS.*.tmp
 .harness-state/
 
 # OS files

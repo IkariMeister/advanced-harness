@@ -22,9 +22,11 @@ version between releases.
   relayed through Lead from External; references with `unknown` status or check errors are never proposed).
   Learnings leave `MEMORY.md` upon approved promotion to any tier (`AGENTS.md` or `AGENTS.personal.md`) or on discard.
   Each individual file write (`AGENTS.md`, `AGENTS.personal.md`, `MEMORY.md`) is lock-serialized and uses a per-file atomic
-  temp-file rename (preserving file mode and rejecting symlinks or non-regular files), while the multi-file sequence is ordered
-  and non-atomic across files, verifying file baselines and the plan hash before modifying files and yielding a structured
-  partial-failure receipt (with completed writes, failed step, and cause) for human recovery.
+  temp-file rename (preserving file mode via `chmodSync` and using `lstat` to reject symlinks—including dangling symlinks—or
+  non-regular files, and requiring the `AGENTS.md` parent directory to already exist rather than creating directories implicitly),
+  while the multi-file sequence is ordered and non-atomic across files, verifying file baselines, `AGENTS.md` path identity, and
+  the plan hash before modifying files and yielding a structured partial-failure receipt (with completed writes, failed step, and cause)
+  for human recovery.
   Kept entries are marked with a visible `reviewed-keep:<kind>:<evidenceKey>` marker (capped at 5 tags per entry with oldest-first
   eviction, so an older kept candidate can be re-proposed if a 6th distinct keep tag evicts its tag)
   so they are not re-proposed without a new reason or tag eviction. Operators remain the sole serialized writer of `MEMORY.md`,

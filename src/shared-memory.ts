@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, type Stats } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export type MemoryEntry = {
@@ -49,6 +49,7 @@ export type MemoryPruningPlan = {
   promotedToPersonal: string[];
   keptCount: number;
   discardedCount: number;
+  agentsPath?: string | undefined;
   agentsBaselineHash?: string | undefined;
   updatedAgentsText?: string | undefined;
   agentsDiff?: string | undefined;
@@ -335,16 +336,21 @@ export function readSharedMemory(memoryPath: string): {
   hash: string;
 } {
   const target = resolve(memoryPath);
-  if (!existsSync(target)) {
-    return {
-      exists: false,
-      entries: [],
-      raw: '',
-      hash: createHash('sha256').update('').digest('hex'),
-    };
+  let stat: Stats;
+  try {
+    stat = lstatSync(target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {
+        exists: false,
+        entries: [],
+        raw: '',
+        hash: createHash('sha256').update('').digest('hex'),
+      };
+    }
+    throw err;
   }
 
-  const stat = lstatSync(target);
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error('Shared memory path must be a regular file, not a symlink or directory.');
   }
@@ -613,16 +619,21 @@ export function readPersonalRules(personalRulesPath: string): {
   hash: string;
 } {
   const target = resolve(personalRulesPath);
-  if (!existsSync(target)) {
-    return {
-      exists: false,
-      rules: [],
-      raw: '',
-      hash: createHash('sha256').update('').digest('hex'),
-    };
+  let stat: Stats;
+  try {
+    stat = lstatSync(target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {
+        exists: false,
+        rules: [],
+        raw: '',
+        hash: createHash('sha256').update('').digest('hex'),
+      };
+    }
+    throw err;
   }
 
-  const stat = lstatSync(target);
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error('Personal rules path must be a regular file, not a symlink or directory.');
   }
@@ -1057,6 +1068,7 @@ export function computePruningPlanHash(plan: {
   keptCount: number;
   discardedCount: number;
   updatedMemoryEntries: readonly MemoryEntry[];
+  agentsPath?: string | undefined;
   agentsBaselineHash?: string | undefined;
   updatedAgentsText?: string | undefined;
   agentsDiff?: string | undefined;
@@ -1094,6 +1106,7 @@ export function computePruningPlanHash(plan: {
       confirmation: e.confirmation,
       fact: e.fact,
     })),
+    agentsPath: plan.agentsPath ? resolve(plan.agentsPath) : '',
     agentsBaselineHash: plan.agentsBaselineHash ?? '',
     updatedAgentsText: plan.updatedAgentsText ?? '',
     agentsDiff: plan.agentsDiff ?? '',
@@ -1106,6 +1119,7 @@ export function planMemoryPruning(options: {
   candidates: readonly PruningCandidate[];
   dispositions: readonly PruningDisposition[];
   agentsText?: string | undefined;
+  agentsPath?: string | undefined;
 }): MemoryPruningPlan {
   // Validate candidate set and disposition keys against memoryEntries
   const memoryEntryKeys = new Set(options.memoryEntries.map((e) => memoryEntryIdentityKey(e)));
@@ -1183,6 +1197,7 @@ export function planMemoryPruning(options: {
     }
   }
 
+  const agentsPath = options.agentsPath !== undefined ? resolve(options.agentsPath) : undefined;
   const agentsBaselineHash =
     options.agentsText !== undefined
       ? createHash('sha256').update(options.agentsText).digest('hex')
@@ -1214,6 +1229,7 @@ export function planMemoryPruning(options: {
     keptCount,
     discardedCount,
     updatedMemoryEntries: updatedMemory,
+    agentsPath,
     agentsBaselineHash,
     updatedAgentsText,
     agentsDiff,
@@ -1227,6 +1243,7 @@ export function planMemoryPruning(options: {
     promotedToPersonal,
     keptCount,
     discardedCount,
+    agentsPath,
     agentsBaselineHash,
     updatedAgentsText,
     agentsDiff,
@@ -1261,15 +1278,20 @@ function readAgentsFileChecked(agentsPath: string): {
   mode: number | undefined;
 } {
   const target = resolve(agentsPath);
-  if (!existsSync(target)) {
-    return {
-      exists: false,
-      raw: '',
-      hash: createHash('sha256').update('').digest('hex'),
-      mode: undefined,
-    };
+  let stat: Stats;
+  try {
+    stat = lstatSync(target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {
+        exists: false,
+        raw: '',
+        hash: createHash('sha256').update('').digest('hex'),
+        mode: undefined,
+      };
+    }
+    throw err;
   }
-  const stat = lstatSync(target);
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error('AGENTS.md path must be a regular file, not a symlink or directory.');
   }
@@ -1285,14 +1307,20 @@ function readAgentsFileChecked(agentsPath: string): {
 function writeAgentsFileSerialized(
   agentsPath: string,
   updatedAgentsText: string,
-  baselineHash: string
+  baselineHash: string,
+  onRenamed?: () => void
 ): { hash: string } {
   const target = resolve(agentsPath);
   const parent = dirname(target);
-  if (!existsSync(parent)) {
-    throw new Error('AGENTS.md parent directory does not exist.');
+  let parentStat: Stats;
+  try {
+    parentStat = lstatSync(parent);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error('AGENTS.md parent directory does not exist.');
+    }
+    throw err;
   }
-  const parentStat = lstatSync(parent);
   if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
     throw new Error('AGENTS.md parent path must be an existing directory.');
   }
@@ -1303,7 +1331,7 @@ function writeAgentsFileSerialized(
     lockFd = openSync(lockPath, 'wx');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new Error('Concurrent modification detected on AGENTS.md. Another writer holds the lock.');
+      throw new Error('Concurrent modification detected on AGENTS.md. Another writer holds the lock (or remove stale AGENTS.md.lock if a previous process crashed).');
     }
     throw err;
   }
@@ -1318,7 +1346,11 @@ function writeAgentsFileSerialized(
       encoding: 'utf8',
       ...(current.mode !== undefined ? { mode: current.mode } : {}),
     });
+    if (current.mode !== undefined) {
+      chmodSync(tempPath, current.mode & 0o7777);
+    }
     renameSync(tempPath, target);
+    onRenamed?.();
     const written = readAgentsFileChecked(target);
     return { hash: written.hash };
   } catch (err) {
@@ -1393,6 +1425,9 @@ export function applyApprovedMemoryPruning(options: {
     if (typeof plan.updatedAgentsText !== 'string') {
       throw new Error('Promotion to AGENTS.md requires updatedAgentsText to be defined.');
     }
+    if (plan.agentsPath !== undefined && resolve(options.agentsPath) !== resolve(plan.agentsPath)) {
+      throw new Error('AGENTS.md path does not match the path recorded in MemoryPruningPlan.');
+    }
     if (plan.agentsBaselineHash === undefined || options.agentsBaselineHash !== plan.agentsBaselineHash) {
       throw new Error('AGENTS.md baseline hash does not match the baseline hash recorded in MemoryPruningPlan.');
     }
@@ -1438,6 +1473,19 @@ export function applyApprovedMemoryPruning(options: {
     throw new Error('Concurrent modification detected on AGENTS.personal.md. Baseline hash does not match current file on disk.');
   }
   if (options.agentsPath && options.agentsBaselineHash !== undefined) {
+    const agentsParent = dirname(resolve(options.agentsPath));
+    let parentStat: Stats;
+    try {
+      parentStat = lstatSync(agentsParent);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error('AGENTS.md parent directory does not exist.');
+      }
+      throw err;
+    }
+    if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+      throw new Error('AGENTS.md parent path must be an existing directory.');
+    }
     const currentAgents = readAgentsFileChecked(options.agentsPath);
     if (currentAgents.hash !== options.agentsBaselineHash) {
       throw new Error('Concurrent modification detected on AGENTS.md. Baseline hash does not match current file on disk.');
@@ -1455,7 +1503,12 @@ export function applyApprovedMemoryPruning(options: {
     // 1. If AGENTS.md promotions exist, write AGENTS.md first via lock-serialized temp file + rename
     if (plan.promotedToAgents.length > 0 && options.agentsPath && plan.updatedAgentsText !== undefined && options.agentsBaselineHash !== undefined) {
       currentStep = 'agents';
-      const agentsRes = writeAgentsFileSerialized(options.agentsPath, plan.updatedAgentsText, options.agentsBaselineHash);
+      const agentsRes = writeAgentsFileSerialized(
+        options.agentsPath,
+        plan.updatedAgentsText,
+        options.agentsBaselineHash,
+        () => { receipt.agentsWritten = true; }
+      );
       receipt.agentsWritten = true;
       receipt.agentsHash = agentsRes.hash;
     }

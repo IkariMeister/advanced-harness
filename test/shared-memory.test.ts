@@ -1169,6 +1169,99 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     expectedPlanHash: plan.planHash,
   }), /planHash does not match computed hash of plan content/);
 
+  // 2b. Mutation tests on a real promotion plan covering candidates, dispositions, agentsBaselineHash, updatedAgentsText, agentsDiff, and agentsPath (F-40, F-43)
+  const promoPlanForHashTest = planMemoryPruning({
+    memoryEntries: [initialEntry, retainedEntry],
+    candidates: [candidate],
+    dispositions: [{ entry: initialEntry, disposition: 'promote', targetRuleText: 'Real promoted rule' }],
+    agentsText: initialAgentsText,
+    agentsPath,
+  });
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      candidates: promoPlanForHashTest.candidates.map((c, i) => (i === 0 ? { ...c, reason: 'Tampered reason' } : c)),
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      dispositions: promoPlanForHashTest.dispositions.map((d, i) => (i === 0 ? { ...d, targetRuleText: 'Tampered rule' } : d)),
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      agentsBaselineHash: '0'.repeat(64),
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      updatedAgentsText: promoPlanForHashTest.updatedAgentsText + '# extra\n',
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      agentsDiff: promoPlanForHashTest.agentsDiff + '\n+tampered',
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // Pointing an agentsPath-bound plan at a different AGENTS.md path throws even if content/baseline hash matches (F-43)
+  const altAgentsPath = join(projectRoot, 'AGENTS.alt.md');
+  writeFileSync(altAgentsPath, initialAgentsText, 'utf8');
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: promoPlanForHashTest,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath: altAgentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /AGENTS\.md path does not match the path recorded in MemoryPruningPlan/);
+
   // 3. Hand-built plan with promotedToAgents but missing updatedAgentsText throws before writing and leaves files unchanged (F-26, F-33)
   const planWithMissingAgentsText = {
     ...plan,
