@@ -5,7 +5,7 @@ import { collectChangeset } from './changeset.ts';
 import { baseContextCheck, changesetCheck, pathPolicyCheck, policyIntegrityCheck, secretScanCheck, validateSecretExceptions, worktreeBoundaryCheck, type SecretException } from './checks.ts';
 import { loadProjectPreflightPolicy, PreflightPolicyError, type GitlinkAcknowledgement } from './policy.ts';
 import { scanAddedText } from './secret-scanner.ts';
-import { DEFAULT_SENSITIVE_PATH_GLOBS, validateSensitivePathGlobs } from './path-policy.ts';
+import { DEFAULT_SENSITIVE_PATH_GLOBS, isTrustedPolicyDependent, validateSensitivePathGlobs } from './path-policy.ts';
 import type { CheckResult, Changeset, PreflightCheck, PreflightExitCode, PreflightResult } from './types.ts';
 
 export class UnresolvedBaseError extends Error { override name = 'UnresolvedBaseError'; }
@@ -28,12 +28,9 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
 export type PreflightOptions = { worktree: string; base?: string | undefined; task?: string | undefined; checks?: readonly PreflightCheck[]; sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText };
 type ExecuteChecksOptions = { worktree: string; changeset: Changeset; checks: readonly PreflightCheck[]; task?: string | undefined; projectPolicy?: { trustedCommit: string; gitlinkAcknowledgements: readonly GitlinkAcknowledgement[] } | undefined; unavailableReason?: string | undefined };
 export type DefaultCheckOptions = { sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText };
-const trustedPolicyDependentBuiltins = new WeakSet<PreflightCheck>();
 export function createDefaultChecks(options: DefaultCheckOptions = {}): readonly PreflightCheck[] {
   const pathPolicy = pathPolicyCheck(options.sensitivePathGlobs);
   const secretScan = secretScanCheck(options.secretExceptions, options.secretScanner);
-  trustedPolicyDependentBuiltins.add(pathPolicy);
-  trustedPolicyDependentBuiltins.add(secretScan);
   return [changesetCheck, baseContextCheck, policyIntegrityCheck, worktreeBoundaryCheck, pathPolicy, secretScan];
 }
 export const defaultChecks = createDefaultChecks();
@@ -57,7 +54,7 @@ async function executeChecks({ worktree, changeset, checks, task, projectPolicy,
   const warnings: string[] = [];
   const metrics: Record<string, number> = {};
   for (const check of ordered) {
-    if (unavailableReason && trustedPolicyDependentBuiltins.has(check)) {
+    if (unavailableReason && isTrustedPolicyDependent(check)) {
       results.push({ id: check.id, status: 'inconclusive', evidence: [unavailableReason] });
       continue;
     }

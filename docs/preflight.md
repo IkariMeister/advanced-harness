@@ -260,5 +260,6 @@ identifies the resolved trusted policy commit. Gitlink commit IDs accept exactly
 `secret-scan.acknowledgedPaths` metric records acknowledged paths and drives the
 exit code and human verdict. Custom checks still run if trusted policy is invalid,
 while checks that depend on that policy report the policy error. Nested gitlink
-status is probed once per path per changeset collection with repository environment
-overrides removed; probe timeout or failure leaves nested content dirty/incomplete.
+status is probed once per path per changeset collection with repository location,
+object-store, and Git configuration environment overrides removed; probe timeout or
+failure leaves nested content dirty/incomplete.

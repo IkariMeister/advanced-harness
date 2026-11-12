@@ -11,6 +11,7 @@ import {
 } from '../project-setup.ts';
 import type { ChangeOrigin, Changeset, CheckOutcome, PreflightCheck } from './types.ts';
 import { addedTextByteLength, MAX_SECRET_SCAN_BYTES, safeGitleaksRuleId, scanAddedText, type SecretFinding } from './secret-scanner.ts';
+import { markTrustedPolicyDependent } from './path-policy.ts';
 import { isProjectPreflightPolicyPath } from './policy.ts';
 import { normalizeExceptionPath, validateSecretExceptions, type SecretException } from './exceptions.ts';
 export { validateSecretExceptions, type SecretException } from './exceptions.ts';
@@ -197,7 +198,7 @@ function displayFindingPath(path: string): string {
   return points.length > 240 ? `${clipped}…` : clipped;
 }
 export function secretScanCheck(exceptions: readonly SecretException[] = [], scanner: typeof scanAddedText = scanAddedText): PreflightCheck {
-  return { id: 'secret-scan', run({ changeset, gitlinkAcknowledgements, trustedPolicyCommit }) {
+  const check: PreflightCheck = { id: 'secret-scan', run({ changeset, gitlinkAcknowledgements, trustedPolicyCommit }) {
     validateSecretExceptions(exceptions);
     const payload = changeset.entries.flatMap(entry => {
       if (entry.status === 'deleted' || entry.addedText === undefined || entry.addedTextComplete === false) return [];
@@ -239,6 +240,7 @@ export function secretScanCheck(exceptions: readonly SecretException[] = [], sca
     const metrics = { ...backendMetrics, notRun, scannerComplete: scanned.complete ? 1 : 0, complete: coverageComplete ? 1 : 0, findings: actionable.length, exceptionsApplied, affectedPaths: incompletePaths.length, acknowledgedPaths };
     return { status: actionable.length ? 'block' : !scanned.complete || incomplete.length ? 'inconclusive' : acknowledgedEntries.length ? 'warn' : 'pass', evidence, metrics };
   } };
+  return markTrustedPolicyDependent(check);
 }
 
 function safeScanReason(reason: unknown): string {

@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { updateContext } from '../src/project-context.ts';
 import { loadProjectPreflightPolicy } from '../src/preflight/policy.ts';
 import { createDefaultChecks, exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
-import { changesetCheck, policyIntegrityCheck, secretScanCheck } from '../src/preflight/checks.ts';
+import { changesetCheck, pathPolicyCheck, policyIntegrityCheck, secretScanCheck } from '../src/preflight/checks.ts';
 import { scanAddedText } from '../src/preflight/secret-scanner.ts';
 import { makeTempRoot } from './temp-directory.ts';
 
@@ -156,6 +156,26 @@ test('invalid trusted policy keeps policy-dependent checks inconclusive while in
   assert.match(conflict.checks[0]?.evidence[0] ?? '', /cannot be combined/);
 });
 
+test('policy-dependent custom factory checks are guarded while custom same-ID checks run', async () => {
+  const missing = projectRepo();
+  git(missing, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  const directFactory = await runPreflight({ worktree: missing, base: 'main', checks: [pathPolicyCheck(), secretScanCheck()] });
+  assert.deepEqual(directFactory.checks.map(check => check.status), ['inconclusive', 'inconclusive']);
+
+  let sameIdRan = false;
+  const sameId = await runPreflight({ worktree: missing, base: 'main', checks: [{ id: 'secret-scan', run: () => { sameIdRan = true; return { status: 'pass', evidence: ['custom'] }; } }] });
+  assert.equal(sameIdRan, true);
+  assert.equal(sameId.checks[0]?.status, 'pass');
+});
+
+test('custom check failure message is retained when trusted policy is unavailable', async () => {
+  const root = projectRepo();
+  git(root, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  const result = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'custom', run: () => { throw new Error('custom diagnostic'); } }] });
+  assert.equal(result.checks[0]?.status, 'inconclusive');
+  assert.match(result.checks[0]?.evidence.join('\n') ?? '', /custom diagnostic/);
+});
+
 test('explicit exceptions replace valid trusted entries but malformed trusted allowlists remain inconclusive', async () => {
   const valid = projectRepo({ allowlist: [{ path: 'candidate.ts', rule: 'fixture', justification: 'Trusted fixture exception.' }] });
   const policy = loadProjectPreflightPolicy(valid, 'refs/remotes/origin/HEAD', { secretExceptions: true });
@@ -257,8 +277,8 @@ test('runPreflight honors trusted committed gitlink acknowledgements for updates
   git(root, 'add', '.'); git(root, 'commit', '-q', '-m', 'base gitlink');
   mkdirSync(join(root, '.harness'), { recursive: true });
   const acks = [
-    { path: 'vendor/update', oldId: idA, newId: idB, justification: 'Reviewed updated upstream source.' },
-    { path: 'vendor/added', newId: idNew, justification: 'Reviewed added upstream source.' },
+    { path: 'vendor/update', oldId: idA.toUpperCase(), newId: idB.toUpperCase(), justification: 'Reviewed updated upstream source.' },
+    { path: 'vendor/added', newId: idNew.toUpperCase(), justification: 'Reviewed added upstream source.' },
   ];
   writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ gitlinkAcknowledgements: acks }));
   git(root, 'add', '.harness/preflight.json'); git(root, 'commit', '-q', '-m', 'trusted gitlink acknowledgements');
@@ -280,6 +300,21 @@ test('runPreflight honors trusted committed gitlink acknowledgements for updates
   assert.match(cleanScan.evidence.join('\n'), /vendor\/update/);
   assert.match(cleanScan.evidence.join('\n'), /vendor\/added/);
   assert.ok(cleanScan.evidence.join('\n').includes(policyCommit), 'evidence identifies the exact trusted policy commit');
+
+  writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ gitlinkAcknowledgements: [
+    { path: 'vendor/update', newId: idB, justification: 'Omitted before ID must not acknowledge a modified gitlink.' },
+  ] }));
+  git(root, 'add', '.harness/preflight.json'); git(root, 'commit', '-q', '-m', 'test omitted old gitlink acknowledgement');
+  git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const omittedOldIdResult = await runPreflight({ worktree: root, base: 'main', checks });
+  const omittedOldIdScan = omittedOldIdResult.checks.find(check => check.id === 'secret-scan')!;
+  assert.equal(omittedOldIdResult.metrics['secret-scan.acknowledgedPaths'], 0);
+  assert.equal(omittedOldIdScan.status, 'inconclusive', JSON.stringify(omittedOldIdResult));
+  assert.match(omittedOldIdScan.evidence.join('\n'), /unmatched: 1/);
+
+  writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ gitlinkAcknowledgements: acks }));
+  git(root, 'add', '.harness/preflight.json'); git(root, 'commit', '-q', '-m', 'restore positive gitlink acknowledgements');
+  git(root, 'update-ref', 'refs/remotes/origin/main', policyCommit);
 
   writeFileSync(join(root, 'vendor/update', 'untracked.txt'), 'nested dirty content\n');
   const dirty = await runPreflight({ worktree: root, base: 'main', checks });

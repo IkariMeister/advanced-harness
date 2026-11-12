@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { delimiter, join, posix, relative, resolve, win32 } from 'node:path';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { delimiter, dirname, join, posix, relative, resolve, win32 } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { updateContext } from '../src/project-context.ts';
 import { baseContextCheck, isPathContained, pathPolicyCheck, secretScanCheck, worktreeBoundaryCheck } from '../src/preflight/checks.ts';
-import { collectChangeset } from '../src/preflight/changeset.ts';
+import { collectChangeset, nestedGitEnvironment } from '../src/preflight/changeset.ts';
 import { exitCodeFor, formatHuman, resolveBase, runPreflight, UnresolvedBaseError } from '../src/preflight/runner.ts';
 import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
 import { entryDecision, runCli } from '../scripts/preflight.ts';
@@ -577,12 +577,13 @@ test('nested Git timeout remains a dirty gap, is cached per path, and receives a
 
   let calls = 0;
   let suppliedEnvironment: NodeJS.ProcessEnv | undefined;
-  const old = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE, GIT_INDEX_FILE: process.env.GIT_INDEX_FILE };
+  const poisonKeys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'] as const;
+  const old = Object.fromEntries(poisonKeys.map(key => [key, process.env[key]])) as Record<typeof poisonKeys[number], string | undefined>;
   const runner = (_command: string, _args: readonly string[], options: { maxBuffer: number; timeout: number; env: NodeJS.ProcessEnv }) => {
     calls += 1;
-    process.env.GIT_DIR = 'poison'; process.env.GIT_WORK_TREE = 'poison'; process.env.GIT_INDEX_FILE = 'poison';
+    for (const key of poisonKeys) process.env[key] = 'poison';
     suppliedEnvironment = options.env;
-    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'] as const) {
+    for (const key of poisonKeys) {
       if (old[key] === undefined) delete process.env[key]; else process.env[key] = old[key];
     }
     const error = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
@@ -591,7 +592,7 @@ test('nested Git timeout remains a dirty gap, is cached per path, and receives a
   let changeset: Changeset;
   try { changeset = collectChangeset(root, base, 'option', { nestedStatus: runner }); }
   finally {
-    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'] as const) {
+    for (const key of poisonKeys) {
       if (old[key] === undefined) delete process.env[key]; else process.env[key] = old[key];
     }
   }
@@ -599,12 +600,33 @@ test('nested Git timeout remains a dirty gap, is cached per path, and receives a
   assert.equal(suppliedEnvironment?.GIT_DIR, undefined);
   assert.equal(suppliedEnvironment?.GIT_WORK_TREE, undefined);
   assert.equal(suppliedEnvironment?.GIT_INDEX_FILE, undefined);
+  for (const key of poisonKeys.slice(3)) assert.equal(suppliedEnvironment?.[key], undefined, `${key} is scrubbed from nested Git`);
   assert.equal(suppliedEnvironment?.GIT_OPTIONAL_LOCKS, '0');
   const entry = changeset.entries.find(candidate => candidate.path === 'vendor/lib' && candidate.origin === 'committed');
   assert.equal(entry?.gitlink?.nestedContentDirty, true, 'a timed-out status probe is treated as dirty');
   const check = await secretScanCheck([], () => ({ backend: 'builtin', complete: true, findings: [] })).run({ worktree: root, changeset, gitlinkAcknowledgements: [{ path: 'vendor/lib', oldId: idA, newId: idB }] });
   assert.equal(check.status, 'inconclusive');
   assert.match(check.evidence.join('\n'), /vendor\/lib/);
+});
+
+test('nested Git environment helper removes inherited location and configuration overrides', () => {
+  const keys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'] as const;
+  const originals = Object.fromEntries(keys.map(key => [key, process.env[key]])) as Record<typeof keys[number], string | undefined>;
+  const values: Record<typeof keys[number], string> = {
+    GIT_DIR: 'same-repo/.git', GIT_WORK_TREE: 'same-repo', GIT_INDEX_FILE: 'same-repo/.git/index', GIT_COMMON_DIR: 'same-repo/.git',
+    GIT_OBJECT_DIRECTORY: 'same-repo/.git/objects', GIT_ALTERNATE_OBJECT_DIRECTORIES: 'same-repo/.git/objects',
+    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false',
+  };
+  try {
+    for (const key of keys) process.env[key] = values[key];
+    const scrubbed = nestedGitEnvironment();
+    for (const key of keys) assert.equal(scrubbed[key], undefined, `${key} must be removed for nested Git`);
+    assert.equal(scrubbed.GIT_OPTIONAL_LOCKS, '0');
+  } finally {
+    for (const key of keys) {
+      if (originals[key] === undefined) delete process.env[key]; else process.env[key] = originals[key];
+    }
+  }
 });
 
 test('populated gitlink directory without repository metadata is not acknowledgeable', async () => {
@@ -779,18 +801,40 @@ test('CLI blocks a secret finding while keeping the payload out of human and JSO
   assert.match(json.stdout, /\[REDACTED\]/);
 });
 
-test('CLI secret scan is hermetic with a controlled PATH that retains Git but excludes Gitleaks', () => {
+test('CLI secret scan uses controlled PATH with Git and without Gitleaks', () => {
   const root = projectRepo();
   const secret = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdef';
   writeFileSync(join(root, 'candidate.txt'), `token=${secret}\n`);
-  const gitDirectories = (process.env.PATH ?? '').split(delimiter).map(value => value.replace(/^"(.*)"$/, '$1')).filter(directory => existsSync(join(directory, process.platform === 'win32' ? 'git.exe' : 'git')));
-  assert.ok(gitDirectories.length, 'the controlled PATH must keep a working Git executable');
-  const controlledPath = gitDirectories.join(delimiter);
-  assert.equal(resolveGitleaksExecutable(controlledPath), undefined, 'the controlled PATH must not expose Gitleaks');
-  const result = spawnSync(process.execPath, [script, '--worktree', root, '--base', 'main'], { encoding: 'utf8', env: { ...process.env, PATH: controlledPath } });
-  assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stdout, /\[REDACTED\]/);
-  assert.ok(!result.stdout.includes(secret));
+  const gitExecutable = (process.env.PATH ?? '').split(delimiter).map(value => value.replace(/^"(.*)"$/, '$1')).map(directory => join(directory, process.platform === 'win32' ? 'git.exe' : 'git')).find(path => existsSync(path));
+  assert.ok(gitExecutable, 'a Git executable is available for the isolated PATH');
+  const portableGit = process.platform === 'win32' ? resolve(gitExecutable, '..', '..', 'mingw64', 'bin', 'git.exe') : gitExecutable;
+  const isolatedGitSource = existsSync(portableGit) ? portableGit : gitExecutable;
+  const fixture = mkdtempSync(join(dirname(root), 'preflight-isolated-path-'));
+  try {
+    const bin = join(fixture, 'bin');
+    mkdirSync(bin);
+    const wrapper = join(bin, process.platform === 'win32' ? 'git.exe' : 'git');
+    if (process.platform === 'win32') {
+      copyFileSync(isolatedGitSource, wrapper);
+      const dependencyDirectory = resolve(isolatedGitSource, '..');
+      if (isolatedGitSource === portableGit) {
+        for (const name of readdirSync(dependencyDirectory)) if (/\.dll$/i.test(name)) copyFileSync(join(dependencyDirectory, name), join(bin, name));
+      }
+    }
+    else {
+      writeFileSync(wrapper, `#!/bin/sh\nexec "${isolatedGitSource}" "$@"\n`);
+      chmodSync(wrapper, 0o755);
+    }
+    const controlledPath = bin;
+    assert.equal(resolveGitleaksExecutable(controlledPath), undefined);
+    const result = spawnSync(process.execPath, [script, '--worktree', root, '--base', 'main'], { encoding: 'utf8', env: { ...process.env, PATH: controlledPath, GIT_CONFIG_NOSYSTEM: '1' } });
+    assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}`);
+    assert.match(result.stdout, /Secret scan backend: builtin \(complete\)\./);
+    assert.match(result.stdout, /candidate\.txt.*\[REDACTED\]/);
+    assert.ok(!result.stdout.includes(secret));
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });
 
 test('runCli maps an unexpected runner failure to exit 2 with the unexpected-error message', async () => {

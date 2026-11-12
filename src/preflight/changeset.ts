@@ -84,6 +84,12 @@ function indexGitlinkId(worktree: string, path: string): string | undefined {
 /** Dirty or untracked nested content is never covered by acknowledging commit IDs. */
 export type NestedStatusRunner = (command: string, args: readonly string[], options: { maxBuffer: number; timeout: number; env: NodeJS.ProcessEnv }) => { error?: Error | null; status: number | null; stdout: Buffer };
 
+export function nestedGitEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...environment, GIT_OPTIONAL_LOCKS: '0' };
+  for (const key of Object.keys(env)) if (key === 'GIT_DIR' || key === 'GIT_WORK_TREE' || key === 'GIT_INDEX_FILE' || key === 'GIT_COMMON_DIR' || key === 'GIT_OBJECT_DIRECTORY' || key === 'GIT_ALTERNATE_OBJECT_DIRECTORIES' || key.startsWith('GIT_CONFIG_')) delete env[key];
+  return env;
+}
+
 function nestedContentDirty(worktree: string, path: string, cache: Map<string, boolean>, run: NestedStatusRunner = spawnSync): boolean {
   if (cache.has(path)) return cache.get(path)!;
   const nested = join(worktree, path);
@@ -94,8 +100,7 @@ function nestedContentDirty(worktree: string, path: string, cache: Map<string, b
       // Populated directories without repository metadata are uninspectable.
       const dirty = readdirSync(nested).length > 0; cache.set(path, dirty); return dirty;
     }
-    const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
-    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[key];
+    const env = nestedGitEnvironment();
     const result = run('git', ['-C', nested, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'], { maxBuffer: 16 * 1024 * 1024, timeout: 3000, env });
     const dirty = result.error !== undefined || result.status !== 0 || result.stdout.length > 0; cache.set(path, dirty); return dirty;
   } catch { cache.set(path, true); return true; }
