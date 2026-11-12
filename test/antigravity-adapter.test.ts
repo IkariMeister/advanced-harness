@@ -21,8 +21,11 @@ test('planAntigravityDeployment produces expected project footprint', () => {
   try {
     const plan = planAntigravityDeployment('project', tempProject, tempHome, rolesDir, commandsDir);
     assert.equal(plan.targetConfig, join(tempProject, '.agents', 'hooks.json'));
-    // 1 lead rule + 7 skills + merge-guard script + hooks.json + mcp_config.json = 11 files
-    assert.equal(plan.filesToDeploy.length, 11);
+    // 1 lead rule + 8 custom agents + 7 skills + merge-guard script + hooks.json + mcp_config.json = 19 files
+    assert.equal(plan.filesToDeploy.length, 19);
+
+    const projectLeadAgent = plan.filesToDeploy.find(f => f.relativePath === '.agents/agents/lead.md');
+    assert.ok(projectLeadAgent);
 
     const leadRule = plan.filesToDeploy.find(f => f.relativePath === '.agents/rules/advanced-harness-lead.md');
     assert.ok(leadRule);
@@ -48,8 +51,11 @@ test('planAntigravityDeployment produces expected global footprint including wor
   try {
     const plan = planAntigravityDeployment('global', undefined, tempHome, rolesDir, commandsDir);
     assert.equal(plan.targetConfig, join(tempHome, '.gemini', 'config', 'hooks.json'));
-    // 1 lead rule + 7 skills + merge-guard script + hooks.json + mcp_config.json = 11 files
-    assert.equal(plan.filesToDeploy.length, 11);
+    // 1 lead rule + 8 custom agents + 7 skills + merge-guard script + hooks.json + mcp_config.json = 19 files
+    assert.equal(plan.filesToDeploy.length, 19);
+
+    const globalLeadAgent = plan.filesToDeploy.find(f => f.relativePath === 'agents/lead.md');
+    assert.ok(globalLeadAgent);
 
     const leadRule = plan.filesToDeploy.find(f => f.relativePath === 'rules/advanced-harness-lead.md');
     assert.ok(leadRule);
@@ -81,7 +87,7 @@ test('planAntigravityDeployment marks a receipt-owned older Lead rule outdated a
     const outdated = planAntigravityDeployment('project', tempProject, tempHome, rolesDir, commandsDir, prior);
     const outdatedRule = outdated.filesToDeploy.find(f => f.relativePath === '.agents/rules/advanced-harness-lead.md');
     assert.equal(outdatedRule?.status, 'outdated');
-    assert.ok(outdatedRule?.content.includes('## Subagent Definition Lifecycle'));
+    assert.ok(outdatedRule?.content.includes('## Subagent Role Registration Table'));
 
     writeFileSync(rulePath, `${olderRule}user edit\n`);
     const customized = planAntigravityDeployment('project', tempProject, tempHome, rolesDir, commandsDir, prior);

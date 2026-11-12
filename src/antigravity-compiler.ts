@@ -42,6 +42,12 @@ export interface AntigravityRuleArtifact {
   content: string;
 }
 
+export interface AntigravityAgentArtifact {
+  role: NativeRole;
+  path: string;
+  content: string;
+}
+
 export interface AntigravityHookConfig {
   [hookName: string]: {
     enabled?: boolean;
@@ -182,6 +188,88 @@ export function compileAntigravitySubagentSpec(
  * Extracts the body of the `## Risk-tiered review` section from the Reviewer instructions.
  * Antigravity subagents receive only a summary, so the rubric must travel in the Lead rule.
  */
+function yamlString(value: string): string {
+  return JSON.stringify(value.replace(/\r?\n/g, ' ').trim());
+}
+
+function agentToolsForRole(role: NativeRole): string[] {
+  switch (role) {
+    case 'lead':
+      return ['read_file', 'run_command', 'invoke_subagent', 'send_message', 'manage_subagents', 'ask_question'];
+    case 'operator':
+      return ['read_file', 'write_file', 'edit_file', 'run_command'];
+    case 'external':
+      return ['read_file', 'run_command'];
+    case 'researcher':
+      return ['read_file', 'search_web'];
+    case 'planner':
+      return ['read_file'];
+    case 'implementer':
+      return ['read_file', 'write_file', 'edit_file', 'run_command'];
+    case 'reviewer':
+      return ['read_file', 'run_command'];
+    case 'qa':
+      return ['read_file', 'run_command'];
+  }
+}
+
+function commandExecutionPolicyForRole(role: NativeRole): 'off' | 'prompt' | 'auto' {
+  switch (role) {
+    case 'researcher':
+    case 'planner':
+      return 'off';
+    default:
+      return 'prompt';
+  }
+}
+
+/**
+ * Compiles a single harness role into a declarative Antigravity custom agent Markdown file.
+ * Only `lead` is a main agent (`mainAgent: true`, `subagent: false`); all other roles are subagents.
+ */
+export function compileAntigravityCustomAgent(
+  role: NativeRole,
+  definition: RoleDefinition,
+  preset?: HostRolePreset
+): AntigravityAgentArtifact {
+  const isLead = role === 'lead';
+  const model = isLead ? 'inherit' : (preset?.tier ?? compileAntigravitySubagentSpec(role, definition, preset).model);
+  const tools = agentToolsForRole(role);
+  const skills = definition.skills ?? [];
+  const commandExecutionPolicy = commandExecutionPolicyForRole(role);
+  const body = isLead ? definition.instructions : compileAntigravitySubagentSpec(role, definition, preset).instructionSummary;
+
+  const frontmatter = [
+    '---',
+    `name: ${role}`,
+    `description: ${yamlString(definition.description)}`,
+    `mainAgent: ${isLead}`,
+    `subagent: ${!isLead}`,
+    `model: ${model}`,
+    `tools:`,
+    ...tools.map(tool => `  - ${tool}`),
+    skills.length > 0 ? 'skills:' : 'skills: []',
+    ...skills.map(skill => `  - ${skill}`),
+    `commandExecutionPolicy: ${commandExecutionPolicy}`,
+    '---',
+  ];
+
+  return {
+    role,
+    path: `.agents/agents/${role}.md`,
+    content: `${frontmatter.join('\n')}\n\n${body.trim()}\n`,
+  };
+}
+
+/** Compiles all 8 harness roles (`lead` + 7 child roles) into declarative Antigravity custom agent files. */
+export function compileAntigravityCustomAgents(
+  roles: Record<NativeRole, RoleDefinition>,
+  presets: Record<NativeRole, HostRolePreset> = HOST_MODEL_PRESETS.antigravity
+): AntigravityAgentArtifact[] {
+  const allRoles: readonly NativeRole[] = ['lead', ...antigravityChildRoles];
+  return allRoles.map(role => compileAntigravityCustomAgent(role, roles[role], presets[role]));
+}
+
 export function extractReviewerRubric(instructions: string): string {
   const match = /^## Risk-tiered review\r?\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(instructions);
   if (!match) {
@@ -209,11 +297,11 @@ export function compileLeadOrchestrationRule(
     '## Human Approval and Workflow Gates',
     '1. **Conversational Approval:** Lead presents plans, findings, and publishing checkpoints to the user and waits for explicit human approval before delegating to Implementer or External.',
     '2. **No Merging:** Merging pull requests is strictly human-only. External may push and open PRs upon final human approval, but never merges.',
-    '3. **Child Subagent Delegation:** Lead coordinates the 7 specialized child roles using Antigravity\'s `define_subagent` and `invoke_subagent` APIs. Lead must configure child subagents with the exact parameters listed in the table below.',
+    '3. **Child Subagent Delegation:** Lead coordinates the 7 specialized child subagents declared in `.agents/agents/<role>.md` (project) or `~/.gemini/config/agents/<role>.md` (global) using `invoke_subagent`, without dynamically calling `define_subagent` at runtime.',
     '4. **Documentation & Verification Tracking:** Lead tracks the documentation requirement, documentation-impact assessment, ADR/documentation approval state, and Reviewer check verification basis (**re-run** versus **judged from evidence only**, routing Reviewer re-run requests to an authorized command-running role when Reviewer cannot execute commands) throughout the conversation and in the resume checklist on interruption or lost context.',
     '',
     '## Subagent Role Registration Table',
-    'When invoking child roles, call `define_subagent` (or use existing definitions) matching these parameters. The role descriptions below are compact labels; pass each role\'s complete instruction content from the compiled spec, not merely its table description.',
+    'Declarative subagent definitions are deployed per role with the parameters below.',
     '',
     '| Role | Model Tier | Write Tools (edits + `run_command`) | MCP Tools | Workspace | Role Description |',
     '| :--- | :--- | :--- | :--- | :--- | :--- |',
@@ -223,26 +311,6 @@ export function compileLeadOrchestrationRule(
     lines.push(`| **${s.name}** | \`${s.model}\` | ${s.enableWriteTools ? 'true' : 'false'} | ${s.enableMCPTools ? 'true' : 'false'} | \`${s.workspace}\` | ${s.description.replace(/[\r\n|]/g, ' ')} |`);
   }
 
-  lines.push('');
-  const reviewerSpec = specs.find(spec => spec.name === 'reviewer')!;
-  lines.push('## Complete Child Role Instructions');
-  lines.push('For each role, pass exactly the complete instruction body below as its instruction summary. The fenced body is verbatim; do not interpret headings inside it as Lead-rule sections.');
-  for (const spec of specs) {
-    const completeInstructions = spec.instructionSummary;
-    const delimiter = safeInstructionFence(completeInstructions);
-    lines.push('');
-    lines.push(`### ${spec.name}`);
-    lines.push(`Child role ${spec.name} instruction body starts immediately below; only the matching fence closes this body.`);
-    lines.push(delimiter);
-    lines.push(completeInstructions);
-    lines.push(delimiter);
-    lines.push(`End of child role ${spec.name} instruction body.`);
-  }
-  lines.push('');
-  lines.push('## Subagent Definition Lifecycle');
-  lines.push('- Define each child role at most once per session. Reuse an existing definition only if reliable visible evidence in this same current session proves its complete instructions and runtime settings were successfully defined from an identical compiled spec.');
-  lines.push('- An “already exists” response is not evidence of equivalence. Do not infer/read back hidden definitions, retry or repeat definitions, blindly invoke a child, or repair a definition in place.');
-  lines.push('- If matching evidence is missing, compacted, mismatched, or uncertain, stop and ask the human to start a fresh session.');
   lines.push('');
   lines.push('## Subagent Execution Constraints');
   lines.push('- **Write Tools:** In Antigravity, write tools include both file editing and `run_command`. External, Reviewer, and QA have write tools enabled only so they can run commands; they must never use file-edit tools on application, test, or configuration source.');

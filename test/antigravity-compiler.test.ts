@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 import { loadWorkflowCommands } from '../src/workflow-commands.ts';
 import {
+  compileAntigravityCustomAgents,
   compileAntigravitySubagentSpec,
   compileLeadOrchestrationRule,
   extractReviewerRubric,
@@ -93,77 +94,35 @@ test('compileLeadOrchestrationRule grants command-running roles write tools with
   assert.match(rule.content, /External, Reviewer, and QA have write tools enabled only so they can run commands; they must never use file-edit tools/);
 });
 
-test('compileLeadOrchestrationRule reuses definitions only with reliable same-session evidence', () => {
+test('compileLeadOrchestrationRule references declarative subagents without define_subagent lifecycle', () => {
   const rule = compileLeadOrchestrationRule(roles);
-  assert.ok(rule.content.includes('## Subagent Definition Lifecycle'));
-  assert.match(rule.content, /reliable visible evidence in this same current session proves its complete instructions and runtime settings/);
-  assert.match(rule.content, /“already exists” response is not evidence of equivalence/);
-  assert.match(rule.content, /missing, compacted, mismatched, or uncertain, stop and ask the human to start a fresh session/);
-  assert.match(rule.content, /Do not infer\/read back hidden definitions/);
+  assert.ok(!rule.content.includes('## Subagent Definition Lifecycle'));
+  assert.ok(!rule.content.includes('## Complete Child Role Instructions'));
+  assert.match(rule.content, /without dynamically calling `define_subagent`/);
+  assert.match(rule.content, /invoke_subagent/);
+  assert.match(rule.content, /\*\*Documentation & Verification Tracking:\*\*/);
 });
 
-test('compileLeadOrchestrationRule carries all complete child instructions with safe boundaries', () => {
-  const rule = compileLeadOrchestrationRule(roles);
-  const snapshot = requireReviewerSnapshot();
-  const start = snapshot.indexOf('## Risk-tiered review\n');
-  const end = snapshot.indexOf('\n## Checks and reporting', start);
-  assert.ok(start >= 0 && end > start, 'static reviewer snapshot contains rubric boundaries');
-  const expectedRubric = snapshot.slice(start + '## Risk-tiered review\n'.length, end).trim();
-  const rubric = extractReviewerRubric(roles.reviewer.instructions);
-  const standaloneReviewer = compileAntigravitySubagentSpec('reviewer', roles.reviewer);
-  assert.ok(standaloneReviewer.instructionSummary.includes(expectedRubric), 'standalone Reviewer spec embeds independent rubric text');
-  assert.ok(rule.content.includes('## Complete Child Role Instructions'));
-  assert.equal(rubric, expectedRubric, 'extractor matches the independent static current-reviewer snapshot');
-  const expectedBodies = {
-    operator: 'Owns local Git, worktree lifecycle, and shared MEMORY.md updates. Does not edit app source.',
-    external: 'Exclusively owns MCP tools, remote Git pushing, and GitHub CLI operations. Does not merge PRs.',
-    researcher: 'Explores codebase, reads files, and surveys architecture with read-only tools.',
-    planner: 'Develops scoped implementation plans, authors and maintains ADRs and design rationale (an ADR remains Proposed until accepted through the project\'s approval process, and file writes are performed by Implementer after approval), identifies documentation impact (affected artifacts and whether an ADR is needed), and defines test strategies and risk assessments. Does not implement.',
-    implementer: 'Implements approved changes, unit tests, and affected implementation documentation (examples, integration notes, and developer instructions); records an explicit documentation-impact assessment when impact is uncertain or when no documentation changes are needed; escalates material deviations from an approved ADR to Lead instead of silently rewriting an approved ADR or decision. Does not touch remote Git or MCP.',
-    reviewer: standaloneReviewer.instructionSummary,
-    qa: 'Runs runtime/E2E verifications, Roborazzi, and device checks. Reports pass/fail findings.',
-  } as const;
-  for (const role of ['operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const) {
-    const section = extractBoundedRoleBody(rule.content, role);
-    assert.equal(section.body, expectedBodies[role], `complete ${role} instruction bytes match independent expectation`);
-    assert.ok(section.open.length >= 4 && /^~+$/.test(section.open), `${role} has an opening fence`);
-    assert.equal(section.close, section.open, `${role} closes with its selected fence`);
+test('compileAntigravityCustomAgents compiles lead as mainAgent and 7 child roles as subagents', () => {
+  const agents = compileAntigravityCustomAgents(roles);
+  assert.equal(agents.length, 8);
+
+  const lead = agents.find(a => a.role === 'lead');
+  assert.ok(lead);
+  assert.equal(lead.path, '.agents/agents/lead.md');
+  assert.match(lead.content, /^mainAgent: true$/m);
+  assert.match(lead.content, /^subagent: false$/m);
+  assert.match(lead.content, /^model: inherit$/m);
+
+  for (const childRole of ['operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const) {
+    const child = agents.find(a => a.role === childRole);
+    assert.ok(child, `missing ${childRole}`);
+    assert.equal(child.path, `.agents/agents/${childRole}.md`);
+    assert.match(child.content, /^mainAgent: false$/m);
+    assert.match(child.content, /^subagent: true$/m);
+    assert.match(child.content, /^commandExecutionPolicy: (off|prompt|auto)$/m);
   }
-  const reviewerRow = '| **reviewer** | `pro` | true | false | `inherit` | Reviews changes and runs configured build, lint, unit, and Roborazzi checks |';
-  assert.ok(rule.content.includes(reviewerRow), 'compact Reviewer table row remains exact');
-  assert.ok(rule.content.includes(standaloneReviewer.instructionSummary), 'standalone Reviewer summary remains complete');
-  assert.ok(!standaloneReviewer.instructionSummary.includes('see Reviewer Risk-Tiered Review below'));
-  assert.match(standaloneReviewer.instructionSummary, /\*\*re-run\*\* versus \*\*judged from evidence only\*\*/);
-  assert.match(standaloneReviewer.instructionSummary, /Check documentation accuracy, completeness, and alignment/);
-  assert.match(rule.content, /\*\*Documentation & Verification Tracking:\*\* Lead tracks the documentation requirement, documentation-impact assessment, ADR\/documentation approval state, and Reviewer check verification basis \(\*\*re-run\*\* versus \*\*judged from evidence only\*\*, routing Reviewer re-run requests to an authorized command-running role when Reviewer cannot execute commands\) throughout the conversation and in the resume checklist on interruption or lost context\./);
-  assert.match(extractBoundedRoleBody(rule.content, 'planner').body, /an ADR remains Proposed until accepted through the project's approval process, and file writes are performed by Implementer after approval/);
-  assert.match(extractBoundedRoleBody(rule.content, 'implementer').body, /records an explicit documentation-impact assessment when impact is uncertain or when no documentation changes are needed; escalates material deviations from an approved ADR to Lead/);
 });
-
-test('instruction fences expand to avoid embedded delimiter collisions', () => {
-  const adversarialInstruction = '\n~~~~~\nembedded zero indent\n ~~~~~ \nembedded one indent\n  ~~~~~\t\nembedded two indent\n   ~~~~~   \nembedded three indent\n';
-  const collisionRoles = { ...roles, reviewer: { ...roles.reviewer, instructions: roles.reviewer.instructions.replace('### Specialized lenses', `${adversarialInstruction}\n### Specialized lenses`) } };
-  const rule = compileLeadOrchestrationRule(collisionRoles);
-  const reviewer = extractBoundedRoleBody(rule.content, 'reviewer');
-  assert.equal(reviewer.open, '~~~~~~');
-  assert.equal(reviewer.body, expectedReviewerWithAdversarialLines().replace('\n\n~~~~~', '\n\n\n~~~~~'));
-  assert.ok(reviewer.body.includes(adversarialInstruction.trimStart().trimEnd()), 'all adversarial bytes remain inside the bounded body');
-});
-
-function extractBoundedRoleBody(rule: string, role: string): { open: string; body: string; close: string } {
-  const sectionStart = rule.indexOf(`### ${role}\n`);
-  assert.notEqual(sectionStart, -1, `missing ${role} section`);
-  const section = rule.slice(sectionStart);
-  const opener = /^Child role .* instruction body starts immediately below; only the matching fence closes this body\.\n(~+)\n/m.exec(section);
-  assert.ok(opener, `missing opening boundary for ${role}`);
-  const open = opener[1]!;
-  const closeLine = `\n${open}\nEnd of child role ${role} instruction body.`;
-  const closeAt = section.indexOf(closeLine, opener.index + opener[0].length);
-  assert.notEqual(closeAt, -1, `missing bounded closing boundary for ${role}`);
-  const afterClose = section.slice(closeAt + closeLine.length);
-  assert.match(afterClose, /^\n\n### (?:operator|external|researcher|planner|implementer|reviewer|qa)\n|^\n\n## Subagent Definition Lifecycle\n/, `bounded ${role} closing boundary must precede the next rule section`);
-  return { open, body: section.slice(opener.index + opener[0].length, closeAt), close: open };
-}
 
 function expectedReviewerWithAdversarialLines(): string {
   const snapshot = requireReviewerSnapshot();

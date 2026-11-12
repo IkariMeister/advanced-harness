@@ -19,6 +19,7 @@ import { nativeRoles, saveInstallation, type Ask, type NativeRole } from './nati
 import { loadRoleDefinitions } from './role-definitions.ts';
 import {
   compileLeadOrchestrationRule,
+  compileAntigravityCustomAgents,
   compileAntigravitySkill,
   mergeAntigravityHooksConfig,
   mergeAntigravityMcpConfig,
@@ -123,7 +124,9 @@ export function planAntigravityDeployment(
   skills: ProcedureFilePlan[];
 } {
   const roles = loadRoleDefinitions(agentsDir);
-  const leadRule = compileLeadOrchestrationRule(roles, antigravityPresetsWithTiers(tiers));
+  const presets = antigravityPresetsWithTiers(tiers);
+  const leadRule = compileLeadOrchestrationRule(roles, presets);
+  const customAgents = compileAntigravityCustomAgents(roles, presets);
   const commands = loadWorkflowCommands(commandsDir);
 
   const rawFiles: Array<{
@@ -176,6 +179,16 @@ export function planAntigravityDeployment(
       content: leadRule.content,
       kind: 'rules',
     });
+
+    // 1b. Declarative custom agents (.agents/agents/<role>.md)
+    for (const agent of customAgents) {
+      rawFiles.push({
+        relativePath: agent.path,
+        absolutePath: join(projectRoot, agent.path),
+        content: agent.content,
+        kind: 'instructions',
+      });
+    }
 
     // 2. Workflow skills (all 6)
     for (const cmdId of workflowCommandIds) {
@@ -232,6 +245,16 @@ export function planAntigravityDeployment(
       content: leadRule.content,
       kind: 'rules',
     });
+
+    // 1b. Declarative custom agents (~/.gemini/config/agents/<role>.md)
+    for (const agent of customAgents) {
+      rawFiles.push({
+        relativePath: `agents/${agent.role}.md`,
+        absolutePath: join(baseDir, 'agents', `${agent.role}.md`),
+        content: agent.content,
+        kind: 'instructions',
+      });
+    }
 
     // 2. Workflow skills (all 6) in global skills directory
     for (const cmdId of workflowCommandIds) {
