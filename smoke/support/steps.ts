@@ -38,8 +38,12 @@ export const antigravityInstall = (confirmation: string): Step[] => [
   ask('Type yes to install the Antigravity', confirmation),
 ];
 
-/** harness:setup in project scope: configure only the build check, accept the remaining suggestions, then confirm or cancel. */
-export const setupSteps = (build: string, confirmation: string, gates: [string, string][] = []): Step[] => [
+/**
+ * harness:setup in project scope: configure only the build check, accept the remaining suggestions, then confirm or cancel.
+ * The sandbox project is always a Git checkout, so the preflight policy prompt is always offered; `policy` is its answer
+ * ('' skips, 'policy' adds .harness/preflight.json).
+ */
+export const setupSteps = (build: string, confirmation: string, gates: [string, string][] = [], policy = ''): Step[] => [
   ask('Command shell', 'bash'),
   ask('Base branch'),
   ask('build: confirm command', build),
@@ -54,5 +58,6 @@ export const setupSteps = (build: string, confirmation: string, gates: [string, 
   ask('Optional device serial'),
   ask('Parent directory for future worktrees'),
   ask('Shared MEMORY.md path'),
+  ask('Type policy to add the suggested preflight policy', policy),
   ask('Full preview: type save', confirmation),
 ];

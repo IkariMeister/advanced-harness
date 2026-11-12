@@ -150,6 +150,7 @@ project. Record who ran it, the Codex version, and the result on #45.
 | --- | --- | --- |
 | PS-01 | `harness:setup`, Enter at the save preview | "Nothing changed", tree unchanged, no backups |
 | PS-02 | Setup with a bash shell, one configured build command, a `detekt` additional gate, emulator, then `save` | Marked section holds the settings JSON with `additionalChecks`; the other checks stay `unconfigured` (lint is not replaced); original `AGENTS.md` text preserved; no legacy profile; an empty worktree parent and a header-only `MEMORY.md` are created, but no Git worktree |
+| PS-03 | `harness:setup` in a fresh Git checkout, `policy` at the preflight policy prompt, then `save` | `.harness/preflight.json` holds the default policy (`path-policy` enabled, `block`); the transcript shows the "Preflight policy saved" line and the commit hint |
 | PI-01 | Project integrations: `gh` plus `example/smoke-android-app`, then `integrations` | Repository recorded; setup section byte-identical; no project OpenCode config; no connection checks |
 
 ## Known gaps found by the suite

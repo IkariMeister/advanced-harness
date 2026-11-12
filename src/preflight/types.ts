@@ -52,7 +52,11 @@ export type CheckOutcome = {
   metrics?: Record<string, number>;
 };
 
-/** A pluggable check. Checks report evidence only; they never record approval. */
+/**
+ * A pluggable check. Checks report evidence only; they never record approval.
+ * Built-in checks carry module-private identity (for example, whether the trusted policy may configure them),
+ * so a caller-supplied object cannot opt in by setting a field.
+ */
 export type PreflightCheck = {
   id: string;
   run(context: PreflightContext): Promise<CheckOutcome> | CheckOutcome;

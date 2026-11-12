@@ -11,6 +11,7 @@ This directory contains proposed and accepted architecture decisions for Advance
 | [ADR-005](0005-claude-code-operator-bash.md) | Give Operator Bash on Claude Code With Advisory Remote-Git Denies | Proposed | Claude Code tool mapping for Operator and its shell deny patterns |
 | [ADR-006](0006-codex-operator-external-full-access.md) | Run Codex Operator and External Outside the Sandbox, With Per-Launch Host Permission and Unverified Forbidden Rules | Proposed | Codex sandbox for Operator and External, and what still bounds them |
 | [ADR-007](0007-preflight-scope-and-redaction.md) | Preflight Scope, Redaction, and Secret Scanning | Proposed | Changeset scope, secret scanning, and sanitized findings |
+| [ADR-008](0008-project-guardrail-policy.md) | Project Guardrail Policy in `.harness/preflight.json`, Read From origin/HEAD | Proposed | Preflight check enablement and severity, the policy result, and the trust anchor |
 
 ## Status lifecycle
 

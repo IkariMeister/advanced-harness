@@ -5,6 +5,7 @@ import { parseConfiguration, saveInstallation, type Ask } from './native-install
 import { contextData, contextPath, hasContextSection, prepareContextFiles, readContext, removeContext, updateContext } from './project-context.ts';
 import { createSharedLocations, defaultLocations, describeLocationPlan, emptyLocationPlan, expandLocations, isAbsoluteOnAnyPlatform, isPortablePath, legacyWorktreeLocations, mainCheckoutRoot, pathsInstructions, planSharedLocations, resolveLocationSettings, sameProject, toStoredPath, validateLocationShape, validateLocations, validatePathsSettings, type LocationPlan, type LocationResolution, type PathsSettings, type SharedLocations } from './shared-locations.ts';
 import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
+import { DEFAULT_PREFLIGHT_CONFIG, validatePreflightConfig } from './preflight/policy.ts';
 
 export const checkNames = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'] as const;
 export type CheckName = typeof checkNames[number];
@@ -427,11 +428,12 @@ export function updateProjectInstructions(original: string | undefined, profile:
 }
 
 export type SetupFile = { path: string; original: string | undefined; updated: string };
-export function prepareSetup(root: string, profile: ProjectProfile, original: string | undefined, target = join(root, 'AGENTS.md')): SetupFile[] {
+/** `linkedFromAgents` is true when setup followed AGENTS.md's existing link to `target`; the link is then kept as written. */
+export function prepareSetup(root: string, profile: ProjectProfile, original: string | undefined, target = join(root, 'AGENTS.md'), linkedFromAgents = false): SetupFile[] {
   validateProfile(profile);
   if (profile.projectRoot !== undefined && !sameProject(root, profile.projectRoot)) throw new Error('Profile checkout does not match the selected project.');
   // Full project settings supersede an interim paths section in the same file.
-  return prepareContextFiles(root, target, original, removeContext(updateProjectInstructions(original, profile), 'paths'));
+  return prepareContextFiles(root, target, original, removeContext(updateProjectInstructions(original, profile), 'paths'), linkedFromAgents);
 }
 
 /** The context file AGENTS.md links to (raw path as written), or undefined when AGENTS.md holds the settings itself. */
@@ -439,16 +441,37 @@ export function linkedContextSelection(agents: string | undefined): string | und
   return /Read `([^`\r\n]+)` for Advanced Harness project settings/.exec(agents ?? '')?.[1];
 }
 
-export type LocatedContext = { target: string; original: string | undefined };
+export type LocatedContext = { target: string; original: string | undefined; linked: boolean };
 
 /** Settings live in AGENTS.md or the context file it links to. */
 export function locateProjectContext(root: string): LocatedContext {
   const agentsPath = join(root, 'AGENTS.md');
   const agents = readContext(agentsPath);
   const linked = linkedContextSelection(agents);
-  if (!linked) return { target: agentsPath, original: agents };
+  if (!linked) return { target: agentsPath, original: agents, linked: false };
   const target = contextPath(root, linked);
-  return { target, original: readContext(target) };
+  return { target, original: readContext(target), linked: true };
+}
+
+export type SetupContextTarget = LocatedContext;
+
+/**
+ * Where setup writes project settings. An explicit `--context` file is used as given (never linked); otherwise
+ * AGENTS.md's link is followed, or AGENTS.md holds the settings itself. Unreadable, unsafe, or invalid settings
+ * stop before any prompt.
+ */
+export function setupContextTarget(root: string, context?: string): SetupContextTarget {
+  try {
+    const located: SetupContextTarget = context !== undefined
+      ? { target: contextPath(root, context), original: undefined, linked: false }
+      : locateProjectContext(root);
+    if (context !== undefined) located.original = readContext(located.target);
+    const data = contextData(located.original, 'project');
+    if (data !== undefined) validateProfile(data);
+    return located;
+  } catch (error) {
+    throw new Error(`Project context could not be read: ${error instanceof Error ? error.message : String(error)} No files changed.`);
+  }
 }
 
 export type LocalProjectContextResult =
@@ -597,6 +620,32 @@ export function saveSetup(files: readonly SetupFile[], backupParent: string): (s
   return backups;
 }
 
+const PREFLIGHT_POLICY_PATH = '.harness/preflight.json';
+const MAX_PREFLIGHT_POLICY_BYTES = 1024 * 1024;
+export const REPLACE_POLICY_WARNING = 'Warning: .harness/preflight.json replaces the built-in forbidden path globs (forbiddenPathGlobs as an array or in replace mode), so default rules such as **/.env* apply only when listed. Review it before committing.';
+
+/**
+ * Reads `.harness/preflight.json` for setup. An absent file is undefined. Any symlink below the root, a non-regular
+ * file, or an oversized file stops setup before any prompt.
+ */
+export function readSetupPreflightPolicy(root: string): string | undefined {
+  const directory = join(root, '.harness');
+  const directoryEntry = lstatSync(directory, { throwIfNoEntry: false });
+  if (directoryEntry === undefined) return undefined;
+  if (!directoryEntry.isDirectory() || directoryEntry.isSymbolicLink()) throw new Error(`${PREFLIGHT_POLICY_PATH}: .harness must be a real directory, not a link or a file. Fix it and rerun setup. No files changed.`);
+  const path = join(directory, 'preflight.json');
+  const entry = lstatSync(path, { throwIfNoEntry: false });
+  if (entry === undefined) return undefined;
+  if (!entry.isFile() || entry.isSymbolicLink() || entry.size > MAX_PREFLIGHT_POLICY_BYTES) throw new Error(`${PREFLIGHT_POLICY_PATH} must be a regular text file no larger than 1 MiB. Fix or remove it and rerun setup. No files changed.`);
+  return readFileSync(path, 'utf8');
+}
+
+/** A present policy file is checked with the same validator the trusted loader uses; an invalid one stops setup. */
+function validateExistingPolicy(text: string): { replacesBuiltIns: boolean } {
+  try { return { replacesBuiltIns: validatePreflightConfig(text).forbiddenPathGlobs?.mode === 'replace' }; }
+  catch (error) { throw new Error(`${(error as Error).message} No files changed.`); }
+}
+
 export interface SetupFlowOptions {
   scope?: string | undefined;
   project?: string | undefined;
@@ -695,6 +744,21 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
     output(`Note: No .git entry found in ${root}; proceeding with non-Git directory setup.`);
   }
 
+  // The policy is read from origin/HEAD, so it is offered only in a Git checkout. An existing file is validated before any prompt.
+  let offerPolicy = false;
+  if (!inspection.hasGit) {
+    output('Note: the preflight policy (.harness/preflight.json) is read at the repository top level, which needs a Git checkout; it is not offered here.');
+  } else {
+    const existingPolicy = readSetupPreflightPolicy(root);
+    if (existingPolicy === undefined) {
+      offerPolicy = true;
+    } else {
+      const { replacesBuiltIns } = validateExistingPolicy(existingPolicy);
+      output('Existing preflight policy kept unchanged.');
+      if (replacesBuiltIns) output(REPLACE_POLICY_WARNING);
+    }
+  }
+
   output(`Project: ${root}`);
   if (inspection.gradleFiles.length > 0) {
     output(`Gradle files inspected: ${inspection.gradleFiles.join(', ')}`);
@@ -708,8 +772,8 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   if (inspection.agents !== undefined) output('Existing AGENTS.md found. Read its rules before confirming setup; content will be preserved outside the marked harness section.');
   output('Do not enter secrets in commands or paths. Use environment references instead. Missing checks remain unconfigured, never waived.');
 
-  const target = contextPath(root, options.context);
-  const original = readContext(target);
+  const context = setupContextTarget(root, options.context);
+  const { target, original } = context;
   const data = contextData(original, 'project');
   let previous: ProjectProfile | undefined = data === undefined ? undefined : validateProfile(data);
   const legacyPath = join(root, '.opencode', 'harness.project.json');
@@ -740,7 +804,10 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   if (!previous && !recorded) recorded = await askLegacyWorktreeLocations(root, { ask, output, home, globalDefaults });
   const profile = await askProfile(root, inspection, previous, ask, shell, globalDefaults, home, recorded);
   if (profile.shell !== shell) throw new Error('Collected shell differs from the selected shell. No files changed.');
-  const files = prepareSetup(root, profile, original, target);
+  // Asked once, and only when no valid policy file exists. Only the exact answer `policy` opts in.
+  const addPolicy = offerPolicy && (await ask('Type policy to add the suggested preflight policy (.harness/preflight.json); Enter skips', '')).trim() === 'policy';
+  const policyFile: SetupFile = { path: join(root, '.harness', 'preflight.json'), original: undefined, updated: `${JSON.stringify(DEFAULT_PREFLIGHT_CONFIG, null, 2)}\n` };
+  const files = [...prepareSetup(root, profile, original, target, context.linked), ...(addPolicy ? [policyFile] : [])];
   const updated = files[0]!.updated;
   const locations = planSharedLocations(root, expandLocations(profile, home));
 
@@ -753,6 +820,7 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
   for (const check of profile.additionalChecks ?? []) output(`${check.name} (additional gate): ${check.command}`);
   output(`Device: ${profile.device.preference}; serial: ${profile.device.serial ?? 'choose at runtime'}`);
   output(`Worktree parent: ${describeStoredLocation(profile.worktreeDirectory, home)}\nShared memory: ${describeStoredLocation(profile.memoryPath, home)}`);
+  if (context.linked) output(`Context file: ${target} (linked from AGENTS.md; the link is kept as written)`);
   output('Files to write:');
   for (const file of files) output(`  ${file.path}${file.original === undefined ? ' (new)' : ' (backup before updating)'}`);
   for (const line of describeLocationPlan(locations)) output(line);
@@ -768,6 +836,10 @@ export async function runSetupFlow(options: SetupFlowOptions, deps: SetupFlowDep
     return 0;
   }
   output(`Project settings saved in context: ${target}`);
+  if (addPolicy) {
+    output(`Preflight policy saved: ${policyFile.path}. Commit .harness/preflight.json: preflight reads it from origin/HEAD, so it takes effect only after that commit reaches origin/HEAD.`);
+    output('If .harness/ is locally excluded by the harness exclude block, stage the policy with: git add -f .harness/preflight.json');
+  }
   for (const backup of result.backups) if (backup) output(`Backup (keep private): ${backup}`);
   try { for (const created of createSharedLocations(locations)) output(`Created: ${created}`); }
   catch (error) { throw new Error(`Project settings were saved, but creating shared locations failed: ${(error as Error).message} Rerun harness:setup or harness:update to retry.`); }

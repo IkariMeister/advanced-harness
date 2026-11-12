@@ -258,6 +258,8 @@ Project-scope `harness:setup` and `harness:install` (OpenCode, Claude Code, Anti
 - A project-scope `harness:uninstall` previews releasing that host's owner and applies it after `uninstall`. The block is removed only when no other owner remains. `harness:setup` has no uninstall, so remove its owner (or the whole block) by hand if you no longer want it.
 - If the directory is not inside a Git work tree, the markers are malformed, or the file changed after the preview, this step is skipped or left untouched. The command still completes and reports why.
 
+Because the block excludes `.harness/`, a tracked policy file under `.harness/` (for example `.harness/preflight.json`) needs `git add -f` when you first commit it.
+
 ## What is installed and preserved
 
 The selected config receives inline V2 `agents` definitions: description, primary/subagent mode, selected model, role permissions, and the native conversational system prompt. Inline definitions avoid the historical `agent/` versus `agents/` file-layout discrepancy. No harness plugin, host, IPC service, workflow database, or Markdown agent copies are installed.
