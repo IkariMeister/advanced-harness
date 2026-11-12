@@ -44,6 +44,9 @@ export async function runCli(args: string[], deps: CliDeps = defaultDeps): Promi
     for (let index = 0; index < args.length; index += 1) {
       const flag = args[index]!;
       if (flag === '--json') { json = true; continue; }
+      if (flag === '--ack-gitlink') {
+        return fail('--ack-gitlink was removed. Move acknowledgements into trusted .harness/preflight.json under gitlinkAcknowledgements; see docs/preflight.md.');
+      }
       if (flag !== '--worktree' && flag !== '--base' && flag !== '--task') return fail(`Unknown option: ${flag}`);
       if (options[flag] !== undefined) return fail(`Duplicate option: ${flag}`);
       const value = args[index + 1];

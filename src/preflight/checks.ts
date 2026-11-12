@@ -10,6 +10,12 @@ import {
   type ProjectProfile,
 } from '../project-setup.ts';
 import type { ChangeOrigin, Changeset, CheckOutcome, PreflightCheck } from './types.ts';
+import { addedTextByteLength, MAX_SECRET_SCAN_BYTES, safeGitleaksRuleId, scanAddedText, type SecretFinding } from './secret-scanner.ts';
+import { markTrustedPolicyDependent } from './path-policy.ts';
+import { isProjectPreflightPolicyPath } from './policy.ts';
+import { normalizeExceptionPath, validateSecretExceptions, type SecretException } from './exceptions.ts';
+export { validateSecretExceptions, type SecretException } from './exceptions.ts';
+export { DEFAULT_SENSITIVE_PATH_GLOBS, pathPolicyCheck } from './path-policy.ts';
 
 const TRUSTED_REF = 'refs/remotes/origin/HEAD';
 const BASE_CONTEXT_TRUSTED_HINT = 'pass --base <ref> or run `git remote set-head origin --auto`';
@@ -41,7 +47,7 @@ function trustedCommit(top: string, hint: string): string {
   if (res.error) throw new Error(`git rev-parse could not be started: ${res.error.message}`);
   if (res.status !== 0) throw new Error(`trusted ref ${TRUSTED_REF} unavailable; ${hint}`);
   const commit = res.stdout.trim();
-  if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error(`trusted ref ${TRUSTED_REF} did not resolve to a commit`);
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) throw new Error(`trusted ref ${TRUSTED_REF} did not resolve to a commit`);
   return commit;
 }
 
@@ -172,6 +178,94 @@ export const changesetCheck: PreflightCheck = {
   },
 };
 
+/** Project policy files are trusted from --base; edits in the candidate changeset are review blockers. */
+export const policyIntegrityCheck: PreflightCheck = {
+  id: 'policy-integrity',
+  run({ changeset }) {
+    const changed = changeset.entries.flatMap(entry => [entry.path, entry.oldPath].filter((path): path is string => path !== undefined)).filter(isProjectPreflightPolicyPath);
+    const unique = [...new Set(changed)];
+    const shown = unique.slice(0, 50).map(path => JSON.stringify(path.length > 240 ? `${path.slice(0, 240)}…` : path));
+    return unique.length
+      ? { status: 'block', evidence: [`Project preflight policy changes require review: ${shown.join(', ')}${unique.length > 50 ? `, … ${unique.length - 50} additional path(s)` : ''}.`], metrics: { changedFiles: unique.length } }
+      : { status: 'pass', evidence: ['No project preflight policy files changed.'], metrics: { changedFiles: 0 } };
+  },
+};
+
+function displayFindingPath(path: string): string {
+  const normalized = path.replaceAll('\\', '/');
+  const points = [...normalized];
+  const clipped = points.slice(0, 240).map(character => /[\u0000-\u001f\u007f]/.test(character) ? `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}` : character).join('');
+  return points.length > 240 ? `${clipped}…` : clipped;
+}
+export function secretScanCheck(exceptions: readonly SecretException[] = [], scanner: typeof scanAddedText = scanAddedText): PreflightCheck {
+  const check: PreflightCheck = { id: 'secret-scan', run({ changeset, gitlinkAcknowledgements, trustedPolicyCommit }) {
+    validateSecretExceptions(exceptions);
+    const payload = changeset.entries.flatMap(entry => {
+      if (entry.status === 'deleted' || entry.addedText === undefined || entry.addedTextComplete === false) return [];
+      if (entry.targetLines?.length === 0) return [];
+      const lines = entry.addedText.split(/\r?\n/);
+      if (entry.addedText.endsWith('\n')) lines.pop();
+      const addedLines = entry.targetLines === undefined ? lines : lines.slice(0, entry.targetLines.length);
+      return addedLines.map((text, index) => ({ path: entry.path.replaceAll('\\', '/'), line: entry.targetLines?.[index] ?? index + 1, text, origin: entry.origin }));
+    });
+    const acknowledgements = gitlinkAcknowledgements ?? [];
+    const acknowledgementMatchesEntry = (item: typeof acknowledgements[number], entry: typeof changeset.entries[number]) => entry.gitlink !== undefined && entry.gitlink.newId !== undefined && item.path === entry.path && item.newId.toLowerCase() === entry.gitlink.newId.toLowerCase() && (item.oldId === undefined ? entry.status === 'added' && entry.gitlink.oldId === undefined : item.oldId.toLowerCase() === entry.gitlink.oldId?.toLowerCase());
+    const entryAcknowledged = (entry: typeof changeset.entries[number]) => entry.gitlink?.nestedContentDirty !== true && acknowledgements.some(item => acknowledgementMatchesEntry(item, entry));
+    const incompleteEntries = changeset.entries.filter(entry => entry.status !== 'deleted' && entry.addedTextComplete === false);
+    const acknowledgedEntries = incompleteEntries.filter(entry => entry.gitlink && entryAcknowledged(entry));
+    const incomplete = incompleteEntries.filter(entry => !entryAcknowledged(entry));
+    const payloadBytes = addedTextByteLength(payload);
+    if (payloadBytes > MAX_SECRET_SCAN_BYTES) return { status: 'inconclusive', evidence: ['Secret scan input exceeded the configured 4 MiB aggregate limit.'], metrics: { backendGitleaks: 0, backendBuiltin: 0, backendUnavailable: 0, notRun: 1, scannerComplete: 0, complete: 0, findings: 0, exceptionsApplied: 0 } };
+    const scanned = payload.length ? scanner(payload) : { backend: 'unavailable' as const, findings: [], complete: true };
+    const notRun = payload.length === 0 ? 1 : 0;
+    const backendMetrics = { backendGitleaks: notRun ? 0 : scanned.backend === 'gitleaks' ? 1 : 0, backendBuiltin: notRun ? 0 : scanned.backend === 'builtin' ? 1 : 0, backendUnavailable: notRun ? 0 : scanned.backend === 'unavailable' ? 1 : 0 };
+    const isExcepted = (finding: SecretFinding) => exceptions.some(exception => normalizeExceptionPath(exception.path) === normalizeExceptionPath(finding.path) && canonicalExceptionRule(exception.rule, scanned.backend) === finding.rule && (exception.line === undefined || (exception.line === finding.line && exception.origin === finding.origin)) && !!exception.justification.trim());
+    const actionable: SecretFinding[] = [];
+    let exceptionsApplied = 0;
+    for (const finding of scanned.findings) {
+      if (isExcepted(finding)) exceptionsApplied += 1;
+      else actionable.push(finding);
+    }
+    const incompletePaths = [...new Set(incomplete.map(entry => entry.path))];
+    const coverageComplete = scanned.complete && incompleteEntries.length === 0;
+    const evidence = [notRun ? 'Secret scan backend: not run.' : `Secret scan backend: ${scanned.backend}${coverageComplete ? ' (complete).' : ' (incomplete).'}`];
+    if (!scanned.complete) evidence.push(`Secret scan incomplete: ${safeScanReason(scanned.reason)}`);
+    if (actionable.length) evidence.push(...actionable.slice(0, 100).map(finding => `${finding.rule} at ${displayFindingPath(finding.path)}:${finding.line} [REDACTED]`));
+    else if (scanned.complete) evidence.push('No high-confidence secrets found in added text.');
+    if (incompletePaths.length) evidence.push(`Could not scan ${incompletePaths.length} changed path(s): ${incompletePaths.slice(0, 50).map(displayFindingPath).join(', ')}${incompletePaths.length > 50 ? ', …' : ''}.`);
+    if (acknowledgedEntries.length) evidence.push(`Acknowledged incomplete coverage: ${acknowledgedEntries.map(entry => `${displayFindingPath(entry.path)} (${entry.gitlink!.oldId ?? 'added'} -> ${entry.gitlink!.newId})`).join(', ')}.`);
+    const matchedAcknowledgements = acknowledgements.filter(item => changeset.entries.some(entry => entryAcknowledged(entry) && acknowledgementMatchesEntry(item, entry)));
+    if (acknowledgements.length) evidence.push(`Trusted gitlink acknowledgements from policy commit ${trustedPolicyCommit ?? 'unavailable'}: ${acknowledgements.length}; matched: ${matchedAcknowledgements.length}; unmatched: ${acknowledgements.length - matchedAcknowledgements.length}.`);
+    const acknowledgedPaths = new Set(acknowledgedEntries.map(entry => entry.path)).size;
+    const metrics = { ...backendMetrics, notRun, scannerComplete: scanned.complete ? 1 : 0, complete: coverageComplete ? 1 : 0, findings: actionable.length, exceptionsApplied, affectedPaths: incompletePaths.length, acknowledgedPaths };
+    return { status: actionable.length ? 'block' : !scanned.complete || incomplete.length ? 'inconclusive' : acknowledgedEntries.length ? 'warn' : 'pass', evidence, metrics };
+  } };
+  return markTrustedPolicyDependent(check);
+}
+
+function safeScanReason(reason: unknown): string {
+  const allowed = new Set([
+    'Gitleaks aggregate scan deadline exceeded.',
+    'Gitleaks scan failed.',
+    'Gitleaks report could not be read.',
+    'Gitleaks returned malformed JSON output.',
+    'Gitleaks probe failed.',
+    'Gitleaks is not installed in an absolute PATH entry.',
+    'Gitleaks probe temporary directory could not be created.',
+    'Gitleaks scan temporary directory could not be created.',
+    'Gitleaks temporary files could not be cleaned up.',
+    'Gitleaks is present but its version probe failed.',
+    'Gitleaks 8.30.1 or newer is required.',
+    'Gitleaks stdin JSON report interface is unavailable.',
+    'Secret scan input exceeded the configured bound.',
+    'Gitleaks executable was not resolved to an absolute path.',
+  ]);
+  return typeof reason === 'string' && allowed.has(reason) ? reason : 'scanner could not complete its bounded probe or scan.';
+}
+
+function canonicalExceptionRule(rule: string, backend: string): string {
+  return backend === 'gitleaks' ? safeGitleaksRuleId(rule) : rule;
+}
 /** Checks git rev-parse --git-dir vs --git-common-dir. */
 function checkCanonicalCheckout(top: string): CheckOutcome | undefined {
   let gitDirRes: ReturnType<typeof spawnSync>;
