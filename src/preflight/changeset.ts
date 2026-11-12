@@ -71,29 +71,34 @@ function gitlinkId(worktree: string, args: string[], path: string): string | und
   const record = git(worktree, [...args, '-z', '--', path]).toString('utf8').split('\0')[0] ?? '';
   const header = record.slice(0, record.indexOf('\t'));
   const [mode, , object] = header.split(' ');
-  return mode === '160000' && /^[0-9a-f]{40,64}$/i.test(object ?? '') ? object : undefined;
+  return mode === '160000' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(object ?? '') ? object : undefined;
 }
 
 /** Resolves the staged gitlink commit; for an unstaged gitlink change, this is the before-state. */
 function indexGitlinkId(worktree: string, path: string): string | undefined {
   const record = git(worktree, ['ls-files', '-s', '-z', '--', path]).toString('utf8').split('\0')[0] ?? '';
   const [mode, object] = record.split(/[ \t]/, 3);
-  return mode === '160000' && /^[0-9a-f]{40,64}$/i.test(object ?? '') ? object : undefined;
+  return mode === '160000' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(object ?? '') ? object : undefined;
 }
 
 /** Dirty or untracked nested content is never covered by acknowledging commit IDs. */
-function nestedContentDirty(worktree: string, path: string): boolean {
+export type NestedStatusRunner = (command: string, args: readonly string[], options: { maxBuffer: number; timeout: number; env: NodeJS.ProcessEnv }) => { error?: Error | null; status: number | null; stdout: Buffer };
+
+function nestedContentDirty(worktree: string, path: string, cache: Map<string, boolean>, run: NestedStatusRunner = spawnSync): boolean {
+  if (cache.has(path)) return cache.get(path)!;
   const nested = join(worktree, path);
   try {
-    if (!existsSync(nested)) return false;
+    if (!existsSync(nested)) { cache.set(path, false); return false; }
     if (!existsSync(join(nested, '.git'))) {
       // An empty, deinitialized submodule has no available content to scan.
       // Populated directories without repository metadata are uninspectable.
-      return readdirSync(nested).length > 0;
+      const dirty = readdirSync(nested).length > 0; cache.set(path, dirty); return dirty;
     }
-    const result = spawnSync('git', ['-C', nested, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'], { maxBuffer: 16 * 1024 * 1024, timeout: 3000, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
-    return result.error !== undefined || result.status !== 0 || result.stdout.length > 0;
-  } catch { return true; }
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[key];
+    const result = run('git', ['-C', nested, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'], { maxBuffer: 16 * 1024 * 1024, timeout: 3000, env });
+    const dirty = result.error !== undefined || result.status !== 0 || result.stdout.length > 0; cache.set(path, dirty); return dirty;
+  } catch { cache.set(path, true); return true; }
 }
 
 function addedLinesForPath(worktree: string, args: string[], path: string, oldPath?: string): { text: string; lines: number[]; complete: boolean } {
@@ -121,7 +126,7 @@ function addedLinesForPath(worktree: string, args: string[], path: string, oldPa
  * Collects `merge-base(base, HEAD)...HEAD` plus staged, unstaged, and untracked
  * files, with contents. Any git failure throws {@link PreflightToolError}.
  */
-export function collectChangeset(worktree: string, base: string, baseSource: BaseSource = 'option'): Changeset {
+export function collectChangeset(worktree: string, base: string, baseSource: BaseSource = 'option', dependencies: { nestedStatus?: NestedStatusRunner } = {}): Changeset {
   const top = text(worktree, ['rev-parse', '--show-toplevel']);
   const head = text(top, ['rev-parse', '--verify', 'HEAD^{commit}']);
   let baseCommit: string;
@@ -129,19 +134,21 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
   const mergeBase = text(top, ['merge-base', baseCommit, head]);
 
   const entries: ChangeEntry[] = [];
+  const nestedStatusCache = new Map<string, boolean>();
+  const nestedStatus = dependencies.nestedStatus ?? spawnSync;
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-M', '-z', mergeBase, head]), 'committed')) {
     const kind = entry.status === 'deleted' ? undefined : modeOf(top, ['ls-tree', head], entry.path);
     const oldId = gitlinkId(top, ['ls-tree', mergeBase], entry.oldPath ?? entry.path);
     const newId = gitlinkId(top, ['ls-tree', head], entry.path);
     const added = entry.status === 'deleted' ? undefined : kind === '160000' ? { text: '', lines: [], complete: false } : addedLinesForPath(top, ['diff', mergeBase, head], entry.path, entry.oldPath);
-    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `${head}:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
+    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path, nestedStatusCache, nestedStatus) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `${head}:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
   }
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--cached', '--name-status', '-M', '-z']), 'staged')) {
     const kind = entry.status === 'deleted' ? undefined : modeOf(top, ['ls-files', '-s'], entry.path);
     const oldId = gitlinkId(top, ['ls-tree', 'HEAD'], entry.oldPath ?? entry.path);
     const newId = kind === '160000' ? (git(top, ['ls-files', '-s', '-z', '--', entry.path]).toString('utf8').split('\0')[0]?.split(' ')[1]) : undefined;
     const added = entry.status === 'deleted' ? undefined : kind === '160000' ? { text: '', lines: [], complete: false } : addedLinesForPath(top, ['diff', '--cached'], entry.path, entry.oldPath);
-    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
+    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path, nestedStatusCache, nestedStatus) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
   }
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-M', '-z']), 'unstaged')) {
     if (entry.status === 'deleted') {
@@ -152,7 +159,7 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
       const oldId = mode === '160000' ? indexGitlinkId(top, entry.path) : undefined;
       let newId: string | undefined;
       if (mode === '160000') { try { newId = text(join(top, entry.path), ['rev-parse', '--verify', 'HEAD^{commit}']); } catch { /* uninitialized or unavailable gitlink stays incomplete */ } }
-      entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(mode === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path) } : {}) } } : {}), ...(mode === '160000' ? { kind: 'submodule', content: undefined } : readWorkingFile(top, entry.path)), addedText: added.text, targetLines: added.lines, addedTextComplete: mode === '160000' ? false : added.complete });
+      entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(mode === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path, nestedStatusCache, nestedStatus) } : {}) } } : {}), ...(mode === '160000' ? { kind: 'submodule', content: undefined } : readWorkingFile(top, entry.path)), addedText: added.text, targetLines: added.lines, addedTextComplete: mode === '160000' ? false : added.complete });
     }
   }
   const untracked = git(top, ['ls-files', '--others', '--exclude-standard', '-z']).toString('utf8').split('\0').filter(Boolean);
@@ -172,7 +179,7 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
     if (tab < 0) continue;
     const [mode, id] = record.slice(0, tab).split(' ');
     const path = record.slice(tab + 1);
-    if (mode !== '160000' || !/^[0-9a-f]{40,64}$/i.test(id ?? '') || !nestedContentDirty(top, path)) continue;
+    if (mode !== '160000' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(id ?? '') || !nestedContentDirty(top, path, nestedStatusCache, nestedStatus)) continue;
     const existing = entries.find(entry => entry.path === path && entry.origin === 'unstaged');
     if (existing) {
       existing.gitlink = { ...(existing.gitlink ?? {}), oldId: existing.gitlink?.oldId ?? id!, newId: existing.gitlink?.newId ?? id!, nestedContentDirty: true };

@@ -136,3 +136,7 @@ false-positive/false-negative rates justify a different fallback or scope.
 - [Preflight guide](../preflight.md)
 - [Global connections and project context](../configuration.md)
 - [Gitleaks command and report documentation](https://github.com/gitleaks/gitleaks/blob/master/README.md#usage)
+
+## Implementation validation note
+
+Acknowledgement exit behavior is tied to the structured secret-scan.acknowledgedPaths metric, rather than matching evidence wording. Nested repository status uses a per-collection path cache, strips inherited Git repository/index variables, and treats timeout or subprocess failure as dirty content. The resolved trusted policy commit is included with acknowledgement evidence. These details preserve the decision above: only clean gaps matching trusted path and commit IDs are acknowledgeable.

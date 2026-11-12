@@ -249,3 +249,16 @@ status, evidence lines, and optional numeric metrics. A thrown error becomes
 checks summarize the changeset, block unverified project context modifications,
 and ensure preflight runs within an isolated task worktree; guardrail checks
 (BH-068..BH-071) plug in alongside them.
+
+## Trusted acknowledgement evidence and status
+
+Trusted policy is resolved from the local `refs/remotes/origin/HEAD`; `--base`
+selects only the changeset comparison base. Gitlink acknowledgement evidence
+identifies the resolved trusted policy commit. Gitlink commit IDs accept exactly
+40 or 64 hexadecimal characters and are normalized to lowercase. Omitting
+`oldId` only acknowledges an added gitlink. The
+`secret-scan.acknowledgedPaths` metric records acknowledged paths and drives the
+exit code and human verdict. Custom checks still run if trusted policy is invalid,
+while checks that depend on that policy report the policy error. Nested gitlink
+status is probed once per path per changeset collection with repository environment
+overrides removed; probe timeout or failure leaves nested content dirty/incomplete.

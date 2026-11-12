@@ -46,7 +46,7 @@ function trustedCommit(top: string, hint: string): string {
   if (res.error) throw new Error(`git rev-parse could not be started: ${res.error.message}`);
   if (res.status !== 0) throw new Error(`trusted ref ${TRUSTED_REF} unavailable; ${hint}`);
   const commit = res.stdout.trim();
-  if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error(`trusted ref ${TRUSTED_REF} did not resolve to a commit`);
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) throw new Error(`trusted ref ${TRUSTED_REF} did not resolve to a commit`);
   return commit;
 }
 
@@ -197,7 +197,7 @@ function displayFindingPath(path: string): string {
   return points.length > 240 ? `${clipped}…` : clipped;
 }
 export function secretScanCheck(exceptions: readonly SecretException[] = [], scanner: typeof scanAddedText = scanAddedText): PreflightCheck {
-  return { id: 'secret-scan', run({ changeset, gitlinkAcknowledgements }) {
+  return { id: 'secret-scan', run({ changeset, gitlinkAcknowledgements, trustedPolicyCommit }) {
     validateSecretExceptions(exceptions);
     const payload = changeset.entries.flatMap(entry => {
       if (entry.status === 'deleted' || entry.addedText === undefined || entry.addedTextComplete === false) return [];
@@ -208,7 +208,7 @@ export function secretScanCheck(exceptions: readonly SecretException[] = [], sca
       return addedLines.map((text, index) => ({ path: entry.path.replaceAll('\\', '/'), line: entry.targetLines?.[index] ?? index + 1, text, origin: entry.origin }));
     });
     const acknowledgements = gitlinkAcknowledgements ?? [];
-    const acknowledgementMatchesEntry = (item: typeof acknowledgements[number], entry: typeof changeset.entries[number]) => entry.gitlink !== undefined && entry.gitlink.newId !== undefined && item.path === entry.path && item.newId === entry.gitlink.newId && (item.oldId === undefined ? entry.gitlink.oldId === undefined : item.oldId === entry.gitlink.oldId);
+    const acknowledgementMatchesEntry = (item: typeof acknowledgements[number], entry: typeof changeset.entries[number]) => entry.gitlink !== undefined && entry.gitlink.newId !== undefined && item.path === entry.path && item.newId.toLowerCase() === entry.gitlink.newId.toLowerCase() && (item.oldId === undefined ? entry.status === 'added' && entry.gitlink.oldId === undefined : item.oldId.toLowerCase() === entry.gitlink.oldId?.toLowerCase());
     const entryAcknowledged = (entry: typeof changeset.entries[number]) => entry.gitlink?.nestedContentDirty !== true && acknowledgements.some(item => acknowledgementMatchesEntry(item, entry));
     const incompleteEntries = changeset.entries.filter(entry => entry.status !== 'deleted' && entry.addedTextComplete === false);
     const acknowledgedEntries = incompleteEntries.filter(entry => entry.gitlink && entryAcknowledged(entry));
@@ -234,8 +234,9 @@ export function secretScanCheck(exceptions: readonly SecretException[] = [], sca
     if (incompletePaths.length) evidence.push(`Could not scan ${incompletePaths.length} changed path(s): ${incompletePaths.slice(0, 50).map(displayFindingPath).join(', ')}${incompletePaths.length > 50 ? ', …' : ''}.`);
     if (acknowledgedEntries.length) evidence.push(`Acknowledged incomplete coverage: ${acknowledgedEntries.map(entry => `${displayFindingPath(entry.path)} (${entry.gitlink!.oldId ?? 'added'} -> ${entry.gitlink!.newId})`).join(', ')}.`);
     const matchedAcknowledgements = acknowledgements.filter(item => changeset.entries.some(entry => entryAcknowledged(entry) && acknowledgementMatchesEntry(item, entry)));
-    if (acknowledgements.length) evidence.push(`Trusted gitlink acknowledgements: ${acknowledgements.length}; matched: ${matchedAcknowledgements.length}; unmatched: ${acknowledgements.length - matchedAcknowledgements.length}.`);
-    const metrics = { ...backendMetrics, notRun, scannerComplete: scanned.complete ? 1 : 0, complete: coverageComplete ? 1 : 0, findings: actionable.length, exceptionsApplied, affectedPaths: incompletePaths.length };
+    if (acknowledgements.length) evidence.push(`Trusted gitlink acknowledgements from policy commit ${trustedPolicyCommit ?? 'unavailable'}: ${acknowledgements.length}; matched: ${matchedAcknowledgements.length}; unmatched: ${acknowledgements.length - matchedAcknowledgements.length}.`);
+    const acknowledgedPaths = new Set(acknowledgedEntries.map(entry => entry.path)).size;
+    const metrics = { ...backendMetrics, notRun, scannerComplete: scanned.complete ? 1 : 0, complete: coverageComplete ? 1 : 0, findings: actionable.length, exceptionsApplied, affectedPaths: incompletePaths.length, acknowledgedPaths };
     return { status: actionable.length ? 'block' : !scanned.complete || incomplete.length ? 'inconclusive' : acknowledgedEntries.length ? 'warn' : 'pass', evidence, metrics };
   } };
 }

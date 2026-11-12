@@ -43,6 +43,7 @@ export type PreflightContext = {
   changeset: Changeset;
   task?: string | undefined;
   gitlinkAcknowledgements?: readonly { path: string; oldId?: string; newId: string; justification?: string }[] | undefined;
+  trustedPolicyCommit?: string | undefined;
 };
 
 export type CheckOutcome = {
