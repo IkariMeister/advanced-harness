@@ -5,9 +5,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
-import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, runSetupFlow, saveSetup, setupConfirmation, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
-import { contextData, contextSectionBlock, updateContext } from '../src/project-context.ts';
-import { DEFAULT_PREFLIGHT_POLICY } from '../src/preflight/policy.ts';
+import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, readLocalProjectContext, resolveProjectLocations, runSetupFlow, saveSetup, setupConfirmation, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
+import { contextData, updateContext } from '../src/project-context.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const root = makeTempRoot('harness-project-setup-');
@@ -480,8 +479,7 @@ test('runSetupFlow in project scope supports non-Git and non-Android directory, 
   const code = await runSetupFlow(
     { scope: 'project' },
     {
-      // The preflight policy question is answered by its text, so the positional queue below is unchanged.
-      ask: async question => (question.startsWith('Type policy') ? '' : responses.shift()!),
+      ask: async () => responses.shift()!,
       output: msg => outputs.push(msg),
       error: msg => outputs.push(`ERROR: ${msg}`),
       home,
@@ -512,219 +510,76 @@ test('CLI script parses --global and refuses invalid flag combinations', () => {
   assert.throws(() => execFileSync(process.execPath, [script, '--global', '--scope', 'project'], { encoding: 'utf8', stdio: 'pipe' }), /Conflicting options/);
 });
 
-// --- Preflight policy in harness:setup (production runSetupFlow path) -------
+test('readLocalProjectContext: parses valid project section, reports missing, resolves linked context, and throws on malformed schema', t => {
+  const { root, project } = fixture(t);
 
-const policyPrompt = 'Type policy to add the suggested preflight policy; Enter skips';
+  // 1. Missing context file
+  const missing = readLocalProjectContext(join(root, 'nonexistent'));
+  assert.equal(missing.status, 'missing');
+  assert.match(missing.reason, /no project settings in AGENTS\.md/);
 
-/** A project checkout with its own AGENTS.md (or the given --context file) and scripted answers keyed by question prefix. */
-function policySetup(t: { after: (fn: () => void) => void }) {
-  const root = makeTempRoot('harness-policy-setup-');
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const project = join(root, 'app');
-  mkdirSync(join(project, '.git'), { recursive: true });
-  const home = join(root, 'home');
-  mkdirSync(home);
-  const outputs: string[] = [];
-  const asked: string[] = [];
-  const run = (options: { context?: string; policy?: string; confirm?: string; backups?: string }) => runSetupFlow(
-    { project, ...(options.context ? { context: options.context } : {}) },
-    {
-      ask: async (question, suggested) => {
-        asked.push(question);
-        if (question.startsWith('Command shell')) return 'bash';
-        if (question.startsWith('Base branch')) return 'main';
-        if (question.startsWith('Parent directory')) return join(root, 'trees');
-        if (question.startsWith('Shared MEMORY.md')) return join(root, 'memory', 'MEMORY.md');
-        if (question.startsWith('Full preview')) return options.confirm ?? 'cancel';
-        if (question === policyPrompt) return options.policy ?? '';
-        return suggested ?? '';
-      },
-      output: message => outputs.push(message),
-      error: message => outputs.push(`ERROR: ${message}`),
-      home,
-      xdgConfigHome: join(root, 'xdg'),
-      recoveryDirectory: options.backups ?? join(root, 'backups'),
-      cwd: root,
-    },
+  // 2. Valid project section in AGENTS.md -> status: 'ok'
+  const valid = profile(root, project);
+  writeFileSync(join(project, 'AGENTS.md'), updateContext('', 'project', valid, []));
+  const resultOk = readLocalProjectContext(project);
+  assert.equal(resultOk.status, 'ok');
+  assert.equal(resultOk.contextRel, 'AGENTS.md');
+  assert.equal(resultOk.profile.baseBranch, 'main');
+  assert.equal(resultOk.profile.worktreeDirectory, valid.worktreeDirectory);
+
+  // 3. Linked context -> resolves linked file
+  const linkedFile = join(project, 'custom-context.md');
+  writeFileSync(linkedFile, updateContext('', 'project', valid, []));
+  writeFileSync(join(project, 'AGENTS.md'), 'Read `custom-context.md` for Advanced Harness project settings before planning.\n');
+  const resultLinked = readLocalProjectContext(project);
+  assert.equal(resultLinked.status, 'ok');
+  assert.equal(resultLinked.contextRel, 'custom-context.md');
+  assert.equal(resultLinked.profile.baseBranch, 'main');
+
+  // 4. Invalid schema -> throws on malformed project schema
+  writeFileSync(join(project, 'AGENTS.md'), updateContext('', 'project', { version: 999 }, []));
+  assert.throws(() => readLocalProjectContext(project), /Invalid or unsupported project profile metadata/);
+});
+
+test('resolveProjectLocations: handles paths-only fallback and reports conflict when project and paths differ', t => {
+  const { root, project } = fixture(t);
+  const wtDir = join(root, 'worktrees');
+  const memDir = join(root, 'data');
+  mkdirSync(wtDir, { recursive: true });
+  mkdirSync(memDir, { recursive: true });
+  const memFile = join(memDir, 'MEMORY.md');
+  writeFileSync(memFile, '# Shared Memory\n');
+
+  // 1. Paths-only fallback handling
+  writeFileSync(
+    join(project, 'AGENTS.md'),
+    updateContext('', 'paths', {
+      version: 1,
+      worktreeDirectory: wtDir,
+      memoryPath: memFile,
+    }, []),
   );
-  return { root, project, outputs, asked, run };
-}
+  const pathsOnly = resolveProjectLocations(project);
+  assert.equal(pathsOnly.status, 'resolved');
+  assert.equal(pathsOnly.source, 'paths');
+  assert.equal(pathsOnly.stored.worktreeDirectory, wtDir);
 
-const sectionOf = (text: string | undefined) => (text === undefined ? undefined : contextSectionBlock(text, 'preflight'));
-
-test('preflight opt-in: one notice and one question, then save writes the suggested section with instructions', async t => {
-  const { project, outputs, asked, run } = policySetup(t);
-  writeFileSync(join(project, 'AGENTS.md'), '# Existing rules\n');
-  assert.equal(await run({ policy: 'policy', confirm: 'save' }), 0);
-  assert.equal(asked.filter(question => question === policyPrompt).length, 1);
-  assert.equal(outputs.filter(message => message.startsWith('No preflight policy is recorded')).length, 1);
-  const text = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-  assert.ok(text.startsWith('# Existing rules\n'));
-  assert.deepEqual(contextData(text, 'preflight'), DEFAULT_PREFLIGHT_POLICY);
-  assert.ok(text.includes('evidence configuration for harness:preflight. It is not approval'));
-  assert.deepEqual(validateProfile(contextData(text, 'project')).baseBranch, 'main');
-  assert.ok(outputs.some(message => message.startsWith('Proposed preflight policy section')));
-});
-
-test('preflight opt-in then cancel: files are byte-identical and no backup directory is created', async t => {
-  const { root, project, outputs, run } = policySetup(t);
-  const original = '# Existing rules\n';
-  writeFileSync(join(project, 'AGENTS.md'), original);
-  assert.equal(await run({ policy: 'policy', confirm: '' }), 0);
-  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), original);
-  assert.equal(existsSync(join(root, 'backups')), false);
-  assert.ok(outputs.some(message => message.startsWith('Cancelled. Nothing changed')));
-});
-
-test('preflight skip via Enter or a non-token answer records nothing', async t => {
-  const { project, run } = policySetup(t);
-  const original = '# Existing rules\n';
-  for (const [index, policy] of ['', 'yes', 'Policy', 'policy please'].entries()) {
-    writeFileSync(join(project, 'AGENTS.md'), original);
-    assert.equal(await run({ policy, confirm: 'save', backups: join(project, '..', `backups-${index}`) }), 0);
-    const text = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-    assert.equal(sectionOf(text), undefined, `answer ${JSON.stringify(policy)} must not add a preflight section`);
-    assert.ok(text.startsWith(original));
-  }
-});
-
-test('an existing valid preflight policy is kept byte-for-byte and is not prompted, including with CRLF line endings', async t => {
-  const { project, outputs, asked, run } = policySetup(t);
-  const section = updateContext('', 'preflight', { version: 1, checks: { 'path-policy': { severity: 'warn' } } }, ['Keep this instruction.']);
-  const original = ('# Rules\n\n' + section).replaceAll('\n', '\r\n');
-  writeFileSync(join(project, 'AGENTS.md'), original);
-  assert.equal(await run({ confirm: 'save' }), 0);
-  assert.equal(asked.some(question => question.startsWith('Type policy')), false);
-  assert.ok(outputs.includes('Existing preflight policy kept unchanged.'));
-  const text = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-  assert.equal(sectionOf(text), sectionOf(original));
-  assert.ok(text.startsWith(original), 'the existing bytes, including the preflight section, are preserved');
-  assert.deepEqual(contextData(text, 'preflight'), { version: 1, checks: { 'path-policy': { severity: 'warn' } } });
-});
-
-test('an existing preflight section with replace mode is flagged in the preview and kept', async t => {
-  const { project, outputs, asked, run } = policySetup(t);
-  writeFileSync(join(project, 'AGENTS.md'), updateContext('', 'preflight', { version: 1, forbiddenGlobs: { mode: 'replace', globs: ['**/*.x'] } }, []));
-  assert.equal(await run({ confirm: 'cancel' }), 0);
-  assert.equal(asked.some(question => question.startsWith('Type policy')), false);
-  assert.ok(outputs.some(message => message.startsWith('Warning: preflight policy forbiddenGlobs.mode is "replace"')));
-});
-
-test('an invalid existing preflight policy aborts before any prompt or write', async t => {
-  const { root, project, asked, run } = policySetup(t);
-  const invalid = '# Rules\n\n<!-- advanced-harness:preflight:start -->\n## Advanced Harness preflight settings\n\n```json\n{\n  "version": 1,\n  "forbidenGlobs": { "mode": "add", "globs": ["**/*.x"] }\n}\n```\n<!-- advanced-harness:preflight:end -->\n';
-  writeFileSync(join(project, 'AGENTS.md'), invalid);
-  await assert.rejects(run({ policy: 'policy', confirm: 'save' }), /AGENTS\.md preflight policy: unknown key "forbidenGlobs"; allowed: version, checks, forbiddenGlobs, prodGlobs, testGlobs, allowlistPath\. No files changed\./);
-  assert.equal(asked.length, 0);
-  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), invalid);
-  assert.equal(existsSync(join(root, 'backups')), false);
-});
-
-test('an alternate --context receives the preflight section; save and cancel both behave', async t => {
-  const { root, project, outputs, run } = policySetup(t);
-  mkdirSync(join(project, 'docs'));
-  const context = join(project, 'docs', 'HARNESS.md');
-  const agents = '# Project guidance\n';
-  const original = '# Original context\n';
-  writeFileSync(join(project, 'AGENTS.md'), agents);
-  writeFileSync(context, original);
-
-  assert.equal(await run({ context: 'docs/HARNESS.md', policy: 'policy', confirm: '' }), 0);
-  assert.equal(readFileSync(context, 'utf8'), original);
-  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents);
-  assert.equal(existsSync(join(root, 'backups')), false);
-  assert.ok(outputs.some(message => message.startsWith('Cancelled. Nothing changed')));
-
-  assert.equal(await run({ context: 'docs/HARNESS.md', policy: 'policy', confirm: 'save' }), 0);
-  const saved = readFileSync(context, 'utf8');
-  assert.deepEqual(contextData(saved, 'preflight'), DEFAULT_PREFLIGHT_POLICY);
-  assert.ok(saved.startsWith(original));
-  assert.equal(sectionOf(readFileSync(join(project, 'AGENTS.md'), 'utf8')), undefined, 'AGENTS.md holds only the reference');
-  assert.ok(readFileSync(join(project, 'AGENTS.md'), 'utf8').includes('docs/HARNESS.md'));
-});
-
-// --- Setup without --context follows AGENTS.md's link (as preflight reads it) ---
-
-/** The link AGENTS.md holds, as written. Setup must not rewrite it. */
-const linkText = 'Read `docs/HARNESS.md` for Advanced Harness project settings before planning.\n';
-
-test('(a) without --context, a valid policy in the linked file is kept unchanged with no prompt; AGENTS.md is byte-identical', async t => {
-  const { project, outputs, asked, run } = policySetup(t);
-  mkdirSync(join(project, 'docs'));
-  writeFileSync(join(project, 'AGENTS.md'), linkText);
-  const context = join(project, 'docs', 'HARNESS.md');
-  const policy = { version: 1, checks: { 'path-policy': { severity: 'warn' } } };
-  const original = updateContext('# Linked rules\n', 'preflight', policy, ['Keep this instruction.']);
-  writeFileSync(context, original);
-
-  assert.equal(await run({ confirm: 'save' }), 0);
-  assert.equal(asked.some(question => question.startsWith('Type policy')), false);
-  assert.ok(outputs.includes('Existing preflight policy kept unchanged.'));
-  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), linkText);
-  assert.equal(sectionOf(readFileSync(join(project, 'AGENTS.md'), 'utf8')), undefined);
-  const saved = readFileSync(context, 'utf8');
-  assert.equal(sectionOf(saved), sectionOf(original));
-  assert.deepEqual(contextData(saved, 'preflight'), policy);
-  assert.ok(saved.startsWith('# Linked rules\n'));
-});
-
-test('(b) without --context, an invalid policy in the linked file aborts before any prompt, with no writes or backups', async t => {
-  const { root, project, asked, run } = policySetup(t);
-  mkdirSync(join(project, 'docs'));
-  writeFileSync(join(project, 'AGENTS.md'), linkText);
-  const context = join(project, 'docs', 'HARNESS.md');
-  const invalid = '# Rules\n\n<!-- advanced-harness:preflight:start -->\n## Advanced Harness preflight settings\n\n```json\n{\n  "version": 1,\n  "forbidenGlobs": { "mode": "add", "globs": ["**/*.x"] }\n}\n```\n<!-- advanced-harness:preflight:end -->\n';
-  writeFileSync(context, invalid);
-
-  await assert.rejects(run({ policy: 'policy', confirm: 'save' }), /docs\/HARNESS\.md preflight policy: unknown key "forbidenGlobs".*No files changed\./);
-  assert.equal(asked.length, 0);
-  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), linkText);
-  assert.equal(readFileSync(context, 'utf8'), invalid);
-  assert.equal(existsSync(join(root, 'backups')), false);
-});
-
-test('(c) without --context, no policy in the linked file: opt-in then save writes the section into docs/HARNESS.md, not AGENTS.md', async t => {
-  const { project, outputs, asked, run } = policySetup(t);
-  mkdirSync(join(project, 'docs'));
-  writeFileSync(join(project, 'AGENTS.md'), linkText);
-  const context = join(project, 'docs', 'HARNESS.md');
-  const original = '# Linked rules\n';
-  writeFileSync(context, original);
-
-  assert.equal(await run({ policy: 'policy', confirm: 'save' }), 0);
-  assert.equal(asked.filter(question => question === policyPrompt).length, 1);
-  assert.ok(outputs.some(message => message === 'Context file: docs/HARNESS.md (linked from AGENTS.md; the link is kept as written)'));
-  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), linkText);
-  assert.equal(sectionOf(readFileSync(join(project, 'AGENTS.md'), 'utf8')), undefined);
-  const saved = readFileSync(context, 'utf8');
-  assert.ok(saved.startsWith(original));
-  assert.deepEqual(contextData(saved, 'preflight'), DEFAULT_PREFLIGHT_POLICY);
-  assert.equal(validateProfile(contextData(saved, 'project')).baseBranch, 'main');
-});
-
-test('(d) without --context, no policy in the linked file: opt-in then cancel writes nothing and creates no backups', async t => {
-  const { root, project, outputs, run } = policySetup(t);
-  mkdirSync(join(project, 'docs'));
-  writeFileSync(join(project, 'AGENTS.md'), linkText);
-  const context = join(project, 'docs', 'HARNESS.md');
-  const original = '# Linked rules\n';
-  writeFileSync(context, original);
-
-  assert.equal(await run({ policy: 'policy', confirm: '' }), 0);
-  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), linkText);
-  assert.equal(readFileSync(context, 'utf8'), original);
-  assert.equal(existsSync(join(root, 'backups')), false);
-  assert.ok(outputs.some(message => message.startsWith('Cancelled. Nothing changed')));
-});
-
-test('(e) without --context, a link that escapes the project stops setup before any prompt, with no writes', async t => {
-  const { root, project, asked, run } = policySetup(t);
-  const agents = 'Read `../outside.md` for Advanced Harness project settings before planning.\n';
-  writeFileSync(join(project, 'AGENTS.md'), agents);
-
-  await assert.rejects(run({ policy: 'policy', confirm: 'save' }), /Project context could not be read: Select a Markdown context file inside the project\. No files changed\./);
-  assert.equal(asked.length, 0);
-  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents);
-  assert.equal(existsSync(join(root, 'outside.md')), false);
-  assert.equal(existsSync(join(root, 'backups')), false);
+  // 2. Conflict case where project and paths sections exist with differing values
+  const valid = profile(root, project);
+  valid.worktreeDirectory = join(root, 'different-wt');
+  mkdirSync(valid.worktreeDirectory, { recursive: true });
+  const withBoth = updateContext(
+    updateContext('', 'paths', {
+      version: 1,
+      worktreeDirectory: wtDir,
+      memoryPath: memFile,
+    }, []),
+    'project',
+    valid,
+    [],
+  );
+  writeFileSync(join(project, 'AGENTS.md'), withBoth);
+  const conflict = resolveProjectLocations(project);
+  assert.equal(conflict.status, 'conflict');
+  assert.match(conflict.reason, /project and paths sections record different shared locations/);
 });

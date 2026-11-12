@@ -11,6 +11,7 @@ import { compileOpenCodeRole, compileOpenCodeRoles } from '../src/opencode-role-
 import { isOpenCodeGuardrailRule, openCodeGuardrailRules } from '../src/security-guardrails.ts';
 import { lowerOpenCodePolicy, type CapabilityPolicy } from '../src/capability-policy.ts';
 import type { PermissionRule } from '../src/permission-reconciliation.ts';
+import { operatorAdvisoryLines, operatorFallbackLines } from './operator-claude-wording.ts';
 
 const agents = new URL('../agents/', import.meta.url);
 const source = (role: typeof nativeRoles[number]) => readFileSync(new URL(`${role}.md`, agents), 'utf8');
@@ -67,6 +68,8 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
     'repairs. (4) Create the task worktree from the updated base. Never discard unrelated changes',
     'or perform other remote Git/API/MCP operations; External owns those. Command patterns are',
     'workflow aids, not a sandbox; do not use scripts/aliases to bypass role ownership.',
+    '',
+    ...operatorAdvisoryLines,
   ].join('\n'));
   const closing = 'local Git/worktrees/memory/cleanup; escalate services and remote Git to External\nthrough Lead.';
   assert.ok(operator.system.includes(closing));
@@ -75,6 +78,14 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
     'the `git fetch` exception (retained but optional; not part of bootstrap; the bootstrap fetch is',
     "External's); External fast-forwards the base during bootstrap; escalate services and all other",
     'remote Git to External through Lead.',
+  ].join('\n'));
+  // #200 / ADR-005: the Claude Code fallback paragraph appended after the closing paragraph.
+  const lastLine = 'Lead; do not broaden permissions, substitute roles/models, or retry automatically.';
+  assert.ok(operator.system.includes(lastLine));
+  operator.system = operator.system.replace(lastLine, [
+    lastLine,
+    '',
+    ...operatorFallbackLines,
   ].join('\n'));
   // #176: Operator reads the shared locations from project context instead of an "agreed" path.
   const agreed = 'Maintain one agreed shared MEMORY.md outside application worktrees. Write serialized';
@@ -120,7 +131,31 @@ function withExternalBootstrap(definitions: Record<typeof nativeRoles[number], N
   return definitions;
 }
 
-const currentNormalizedDefinitions = () => withExternalBootstrap(withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions()))));
+// #221: External inline review comment payload validation
+function withExternalReviewPayload(definitions: Record<typeof nativeRoles[number], NativeDefinition>): Record<typeof nativeRoles[number], NativeDefinition> {
+  const external = definitions.external;
+  const previous = 'remote/service state read-only. If inspection confirms the mutation already completed as\napproved, report the verified outcome to Lead without repeating the push, PR, issue,\ncomment, review, or transition. If inspection shows the mutation did not complete,\npartially applied, diverged, or remains inconclusive, report exact observed versus\nexpected state to Lead and wait for explicit human confirmation before retrying or\nrepairing. Avoid duplicate comments, uploads, PRs, or conflicting pushes.';
+  assert.ok(external.system.includes(previous));
+  external.system = external.system.replace(previous, [
+    'remote/service state read-only. When submitting pull request review comments via GitHub REST',
+    'API, distinguish standalone comments (`POST /repos/{owner}/{repo}/pulls/{pull_number}/comments`)',
+    'from batch reviews (`POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews`): format inline comment',
+    'payloads strictly per API schema. Standalone comments require root-level fields: integer line parameters',
+    'with `-F line=<number>` (never string `-f`), `commit_id` matching the PR head SHA, `path`, `body`, and',
+    '`side` (`RIGHT` for new code, `LEFT` for removed lines). Batch reviews submit inline comments inside the',
+    '`comments[]` array, where each comment object requires `path`, `body`, integer `line` (e.g. within an',
+    'input JSON payload: `{"comments":[{"path":"...","line":<number>,"body":"...","side":"RIGHT"}]}`), and',
+    'optional top-level review `event` (`APPROVE`, `REQUEST_CHANGES`, `COMMENT`). For both endpoints, ensure',
+    'target lines fall within the PR diff hunk. If inspection confirms the mutation already completed as',
+    'approved, report the verified outcome to Lead without repeating the push, PR, issue, comment, review,',
+    'or transition. If inspection shows the mutation did not complete, partially applied, diverged, or remains',
+    'inconclusive, report exact observed versus expected state to Lead and wait for explicit human confirmation',
+    'before retrying or repairing. Avoid duplicate comments, uploads, PRs, or conflicting pushes.',
+  ].join('\n'));
+  return definitions;
+}
+
+const currentNormalizedDefinitions = () => withExternalReviewPayload(withExternalBootstrap(withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions())))));
 
 test('strict role source compiler preserves current normalized OpenCode definitions for all roles', () => {
   const baseline = legacyNormalizedDefinitions();
@@ -133,7 +168,7 @@ test('strict role source compiler preserves current normalized OpenCode definiti
   const currentReviewer = readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8');
   assert.equal(currentDefinitions.reviewer.instructions, currentReviewer.trim(), 'reviewer instructions match the independent current-reviewer snapshot');
   const expectedCurrent = currentNormalizedDefinitions();
-  for (const role of ['lead', 'planner', 'implementer', 'reviewer'] as const) {
+  for (const role of ['lead', 'operator', 'planner', 'implementer', 'reviewer'] as const) {
     expectedCurrent[role].system = currentDefinitions[role].instructions;
   }
   assert.deepEqual(compiled.definitions, expectedCurrent, 'current compiler output preserves historical definitions except the updated role contract bodies and Operator fetch change');

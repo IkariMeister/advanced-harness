@@ -24,6 +24,16 @@ For project-scoped delivery tracking, mark an item complete when its PR is confi
 open; track merge status separately. Never claim a PR is open
 before External confirms it.
 
+Repository settings may auto-delete a merged PR's remote branch and auto-close
+its linked issue. After a merge, verify those states read-only through External
+rather than repeating the writes, and report an unexpected state to the human.
+
+## Publishing text
+
+Commit messages, PR titles and bodies, and issue comments contain only the text the
+human approved. Do not add attribution trailers (for example `Co-Authored-By`) or
+other lines the human did not approve.
+
 This repository is the harness tooling checkout, not the MarsRoverIA pilot app.
 Preserve unrelated work in both repositories. Project settings belong only in the
 application's AGENTS.md or explicitly referenced context; reusable connections and

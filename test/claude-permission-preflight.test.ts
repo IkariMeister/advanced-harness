@@ -43,6 +43,16 @@ test('Claude preflight reports ordered precedence conflicts and role-indexed map
   }
   assert.ok(report.findings.some(item => item.code === 'selector-mapping-unverified' && item.ruleIndexes.includes(external.findIndex(rule => rule.resource.kind === 'native-pattern'))));
   assert.ok(report.findings.every(item => item.message.length > 0 && item.referenceUrls.length > 0));
+  // ADR-005: Operator's Bash grant is still source-policy only; its remote Git and gh patterns stay unverified selectors.
+  const operatorRules = definitions.operator.deployment.opencode.policy.rules;
+  const operatorRemote = operatorRules.flatMap((rule, index) => rule.resource.kind === 'native-pattern' && ['gh *', 'git push *'].includes(rule.resource.value) ? [index] : []);
+  assert.equal(operatorRemote.length, 2);
+  const operatorSelector = report.findings.find(item => item.role === 'operator' && item.code === 'selector-mapping-unverified');
+  const operatorScope = report.findings.find(item => item.role === 'operator' && item.code === 'role-scope-unverified');
+  assert.ok(operatorSelector && operatorRemote.every(index => operatorSelector.ruleIndexes.includes(index)));
+  assert.ok(operatorScope && operatorRemote.every(index => operatorScope.ruleIndexes.includes(index)));
+  assert.equal(report.status, 'blocked');
+  assert.equal(report.runtimeVerified, false);
   const mcpIndexes = external.flatMap((rule, index) => rule.capability === 'mcp.tool' ? [index] : []);
   assert.ok(mcpIndexes.length >= 2);
   const services = mcpIndexes.filter(index => /^(jira|github)_/.test(external[index]!.binding.action));
@@ -99,6 +109,10 @@ test('Claude doctor separates source-policy blockers from installed footprint an
   assert.ok(report.notes.some(note => /separate from the installed configuration footprint/i.test(note)));
   assert.match(HOST_CAPABILITIES['claude-code'].ghPrMergeGuard, /Bash\(gh pr merge\)/);
   assert.ok(report.disclosures.some(note => /Project scope or global ~\/\.claude scope/i.test(note)));
+  // Host disclosure text for the Operator Bash exception (ADR-005) and the fetch denies applying to every role.
+  const claudeDisclosures = HOST_CAPABILITIES['claude-code'].disclosures;
+  assert.ok(claudeDisclosures.some(line => line.includes('Operator has Bash for local Git/worktrees (ADR-005)') && line.includes('advisory')));
+  assert.ok(claudeDisclosures.some(line => line.includes('git fetch --upload-pack/-u for every session and subagent')));
 });
 
 test('Claude doctor detects an explicitly supplied global configuration footprint', async t => {

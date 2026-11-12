@@ -5,9 +5,9 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { diagnoseCodex, disableMultiAgent, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
+import { codexForbiddenPrefixes, compileCodexMergeRule, diagnoseCodex, disableMultiAgent, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
 import { codexChildRoles, codexRoleLauncherSource, codexRolePolicies, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from '../src/codex-role-processes.ts';
-import { assertResumable, buildRoleInvocation, isEntryPoint, main as launcherMain, parseProfile, readSelectedMcpServers, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
+import { assertResumable, buildRoleInvocation, isEntryPoint, listMcpServers, main as launcherMain, parseProfile, readSelectedMcpServers, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 
 const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -25,16 +25,34 @@ const answers = (model: string, final = 'install') => ['', ...codexChildRoles.fl
 const run = (home: string, list: string[], output: string[] = []) =>
   installCodex({ scope: 'global', home, mode: 'role-processes', ask: async () => list.shift() ?? '', output: line => output.push(line), error() {} });
 
-test('role sandbox, network and MCP are derived from the role sources (#45)', () => {
+test('role sandbox, network and MCP are derived from the role sources (#45, #218)', () => {
   assert.deepEqual(policies, {
-    operator: { sandbox: 'workspace-write', network: false, mcp: false },
-    external: { sandbox: 'workspace-write', network: true, mcp: true },
+    operator: { sandbox: 'danger-full-access', network: false, mcp: false },
+    external: { sandbox: 'danger-full-access', network: true, mcp: true },
     researcher: { sandbox: 'read-only', network: false, mcp: false },
     planner: { sandbox: 'read-only', network: false, mcp: false },
     implementer: { sandbox: 'workspace-write', network: false, mcp: false },
     reviewer: { sandbox: 'read-only', network: false, mcp: false },
     qa: { sandbox: 'read-only', network: false, mcp: false },
   });
+});
+
+test('danger-full-access profiles say network is not restricted, and launch and resume both override the sandbox (#218)', () => {
+  const profile = compileCodexRoleProfile('operator', policies.operator, 'gpt-example', 'high', 'Operate.');
+  validateCodexToml(profile, 'operator profile');
+  assert.match(profile, /^# danger-full-access: network is not restricted under this sandbox mode/m);
+  assert.match(profile, /^sandbox_mode = "danger-full-access"$/m);
+  assert.match(profile, /^network_access = false$/m, 'the line stays, and has no effect under danger-full-access');
+  const implementer = compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x');
+  assert.doesNotMatch(implementer, /danger-full-access/, 'workspace-write profiles carry no full-access comment');
+
+  const base = { role: 'operator', profileText: profile, mcpServers: [], mcpAllowed: false, task: 'Create the worktree', schemaPath: 's.json', resultPath: 'r.json' };
+  const launch = buildRoleInvocation(base);
+  assert.ok(launch.includes('sandbox_mode="danger-full-access"'), 'launch overrides the sandbox');
+  assert.ok(!launch.includes('sandbox_mode="workspace-write"'));
+  const resume = buildRoleInvocation({ ...base, resumeId: 'thread-1', task: 'Continue' });
+  assert.ok(resume.includes('sandbox_mode="danger-full-access"'), 'resume overrides the sandbox');
+  assert.ok(!resume.includes('sandbox_mode="workspace-write"'));
 });
 
 test('role profiles are valid TOML that the launcher can re-apply key by key', () => {
@@ -52,7 +70,7 @@ test('launcher re-applies role settings on launch and resume and switches MCP of
   const profileText = compileCodexRoleProfile('reviewer', policies.reviewer, 'gpt-example', 'high', 'Review.');
   const base = { role: 'reviewer', profileText, mcpServers: ['github', 'my server'], mcpAllowed: false, task: 'Review the diff', schemaPath: 's.json', resultPath: 'r.json' };
   const launch = buildRoleInvocation(base);
-  assert.deepEqual(launch.slice(0, 3), ['-p', 'harness-reviewer', 'exec']);
+  assert.deepEqual(launch.slice(0, 5), ['-p', 'harness-reviewer', '--disable', 'plugins', 'exec']);
   assert.ok(launch.includes('sandbox_mode="read-only"'));
   assert.ok(launch.includes('approval_policy="never"'));
   assert.ok(launch.includes('sandbox_workspace_write.network_access=false'));
@@ -61,7 +79,7 @@ test('launcher re-applies role settings on launch and resume and switches MCP of
   assert.deepEqual(launch.slice(-1), ['Review the diff']);
 
   const resume = buildRoleInvocation({ ...base, resumeId: 'thread-1', task: 'Continue' });
-  assert.deepEqual(resume.slice(0, 2), ['exec', 'resume']);
+  assert.deepEqual(resume.slice(0, 4), ['exec', 'resume', '--disable', 'plugins']);
   assert.ok(!resume.includes('-p'), 'resume has no -p; every setting comes from -c');
   assert.ok(resume.includes('sandbox_mode="read-only"'), 'resume cannot fall back to the base sandbox');
   assert.deepEqual(resume.slice(-2), ['thread-1', 'Continue']);
@@ -133,11 +151,14 @@ test('role-process install writes profiles, launcher, schema and Lead block, and
   assert.ok(lead.startsWith('# Personal Codex notes\n'));
   assert.match(lead, /never use in-process subagents/);
   assert.ok(lead.includes(join(codex, 'advanced-harness', 'codex-role.mjs').replace(/\\/g, '\\\\')), 'launch command names the installed launcher');
+  assert.match(lead, /\| `operator` \| danger-full-access \| unrestricted \| off \|/, 'Lead block shows Operator as full access, unrestricted network (#218)');
+  assert.match(lead, /\| `implementer` \| workspace-write \| no \| off \|/);
+  assert.match(lead, /`operator` has network access under danger-full-access, but it must still not push, pull, clone or use `gh`\. Do not ask it to\./);
   const config = readFileSync(join(codex, 'config.toml'), 'utf8');
   assert.match(config, /sandbox_mode = "read-only"/);
   assert.match(config, /approval_policy = "on-request"/);
   assert.match(config, /\[features\]\r?\nmulti_agent = false/);
-  assert.ok(output.some(line => /You approve every launch/.test(line)));
+  assert.ok(output.some(line => /You grant host permission for every launch/.test(line)));
 
   const doctor = await diagnoseCodex({ home });
   assert.equal(doctor.ok, true, doctor.issues.join('\n'));
@@ -160,6 +181,41 @@ test('doctor reports a widened role profile and re-enabled multi_agent', async t
   assert.equal(doctor.ok, false);
   assert.match(doctor.issues.join('\n'), /reviewer sandbox_mode is not read-only/);
   assert.match(doctor.issues.join('\n'), /multi_agent is not false/);
+});
+
+test('doctor flags an Operator profile left on workspace-write, and a widened Lead sandbox, with no writes (#218)', async t => {
+  const { home, codex } = sandbox(t);
+  assert.equal(await run(home, answers('gpt-example')), 0);
+  const operator = join(codex, 'harness-operator.config.toml');
+  writeFileSync(operator, readFileSync(operator, 'utf8').replace('sandbox_mode = "danger-full-access"', 'sandbox_mode = "workspace-write"'));
+  const config = join(codex, 'config.toml');
+  writeFileSync(config, readFileSync(config, 'utf8').replace('sandbox_mode = "read-only"', 'sandbox_mode = "danger-full-access"'));
+  const before = readFileSync(operator, 'utf8');
+  const doctor = await diagnoseCodex({ home });
+  assert.equal(doctor.ok, false);
+  assert.match(doctor.issues.join('\n'), /Codex role operator sandbox_mode is not danger-full-access/);
+  assert.match(doctor.issues.join('\n'), /Codex Lead sandbox_mode is "danger-full-access", not "read-only"/, 'Lead settings are still checked on their own');
+  assert.equal(readFileSync(operator, 'utf8'), before, 'doctor never rewrites a profile');
+});
+
+test('the installer preview names the full-access roles, the rules that still apply, and the launch host permission prompt (#218)', async t => {
+  const box = sandbox(t);
+  const output: string[] = [];
+  assert.equal(await run(box.home, answers('gpt-example'), output), 0);
+  const line = output.find(entry => entry.startsWith('Full-access roles '));
+  assert.ok(line, output.join('\n'));
+  assert.match(line, /^Full-access roles \(operator, external\) run with danger-full-access/);
+  assert.match(line, /destructive-command rules are still installed for them \(enforcement under this mode is unverified\)/);
+  assert.match(line, /do not match \+refspec pushes or the --force-with-lease=<ref> form/);
+  assert.match(line, /each launch still needs your host permission at the Codex Desktop prompt\.$/);
+  assert.equal(output.filter(entry => entry.startsWith('Full-access roles ')).length, 1, 'one line');
+});
+
+test('the managed merge rule keeps its gh pr merge prefix and one rule per forbidden prefix (#218)', () => {
+  const rule = compileCodexMergeRule();
+  assert.ok(rule.startsWith('# BEGIN advanced-harness managed merge rules\n'));
+  assert.ok(rule.includes('prefix_rule(pattern = ["gh", "pr", "merge"], decision = "forbidden")\n'));
+  assert.equal(rule.match(/^prefix_rule\(/gm)?.length, codexForbiddenPrefixes.length);
 });
 
 test('resume is bound to the role that started the thread; unknown or other-role threads never run', t => {
@@ -334,7 +390,7 @@ test('install with dotted features writes a config doctor accepts, and refuses a
   assert.equal(readFileSync(join(inline.codex, 'config.toml'), 'utf8'), config);
 });
 
-test('install warns and doctor fails when Lead settings remove the approval point (#45)', async t => {
+test('install warns and doctor fails when Lead settings remove the host permission point (#45)', async t => {
   const cases: Array<[string, RegExp[]]> = [
     ['sandbox_mode = "danger-full-access"\napproval_policy = "never"\n', [/sandbox_mode is "danger-full-access"/, /approval_policy is "never"/]],
     ['approval_policy = "never"\n', [/approval_policy is "never"/]],
@@ -347,8 +403,8 @@ test('install warns and doctor fails when Lead settings remove the approval poin
     const output: string[] = [];
     assert.equal(await run(box.home, answers('gpt-example'), output), 0);
     const preview = output.join('\n');
-    assert.match(preview, /you may not be asked to approve role launches/);
-    assert.doesNotMatch(preview, /You approve every launch/);
+    assert.match(preview, /you may not be asked for host permission on role launches/);
+    assert.doesNotMatch(preview, /You grant host permission for every launch/);
     const doctor = await diagnoseCodex({ home: box.home });
     assert.equal(doctor.ok, false, config);
     for (const pattern of expected) {
@@ -361,7 +417,7 @@ test('install warns and doctor fails when Lead settings remove the approval poin
   const clean = sandbox(t);
   const output: string[] = [];
   assert.equal(await run(clean.home, answers('gpt-example'), output), 0);
-  assert.match(output.join('\n'), /You approve every launch/);
+  assert.match(output.join('\n'), /You grant host permission for every launch/);
   assert.deepEqual((await diagnoseCodex({ home: clean.home })).issues, []);
 
   writeFileSync(join(clean.codex, 'config.toml'), readFileSync(join(clean.codex, 'config.toml'), 'utf8').replace('approval_policy = "on-request"', 'approval_policy = "never"'));
@@ -380,6 +436,47 @@ test('a task starting with a dash reaches Codex as text, never as a flag (#45)',
     assert.equal(resume.indexOf('--'), resume.length - 3);
   }
   assert.throws(() => buildRoleInvocation({ ...base, task: ' - ' }), /cannot be "-"/);
+});
+
+test('child processes run with Codex plugins disabled, before the -- separator, on launch and resume (#209)', () => {
+  const profileText = compileCodexRoleProfile('external', policies.external, 'm', 'low', 'x');
+  const base = { role: 'external', profileText, mcpServers: ['gh'], mcpAllowed: true, mcpSelected: ['gh'], schemaPath: 's.json', resultPath: 'r.json' };
+  const disabledBeforeSeparator = (args: string[]) => {
+    const flag = args.indexOf('--disable');
+    return flag > 0 && args[flag + 1] === 'plugins' && flag < args.indexOf('--');
+  };
+
+  const launch = buildRoleInvocation({ ...base, task: 'Check the diff' });
+  assert.ok(disabledBeforeSeparator(launch), launch.join(' '));
+  assert.deepEqual(launch.slice(0, 5), ['-p', 'harness-external', '--disable', 'plugins', 'exec']);
+  assert.ok(launch.includes('mcp_servers.gh.enabled=true'), 'the selected config.toml server is still switched on for External');
+
+  const resume = buildRoleInvocation({ ...base, resumeId: 'thread-1', task: 'Continue' });
+  assert.ok(disabledBeforeSeparator(resume), resume.join(' '));
+  assert.deepEqual(resume.slice(0, 4), ['exec', 'resume', '--disable', 'plugins']);
+  assert.ok(resume.includes('mcp_servers.gh.enabled=true'), 'a resume keeps the same MCP set');
+  assert.deepEqual(resume.slice(-3), ['--', 'thread-1', 'Continue']);
+});
+
+test('the MCP listing runs with plugins disabled and names the role and Codex reason when it fails (#209)', () => {
+  const calls: string[][] = [];
+  const names = listMcpServers('external', args => { calls.push(args); return '[{"name":"gh"}]'; });
+  assert.deepEqual(names, ['gh']);
+  assert.deepEqual(calls, [['-p', 'harness-external', '--disable', 'plugins', 'mcp', 'list', '--json']]);
+
+  // The Codex config-load failure from #209: Codex prints its reason on stderr and exits 1.
+  const configError = Object.assign(new Error('Command failed: codex mcp list --json'), { stderr: '\nError loading config: invalid transport in `mcp_servers.codex_app`\n' });
+  assert.throws(
+    () => listMcpServers('researcher', () => { throw configError; }),
+    /could not list the MCP servers for role researcher; no role was launched\. Codex said: Error loading config: invalid transport in `mcp_servers\.codex_app`$/,
+  );
+  // Without stderr the error's own message is the reason; a missing binary still reports ENOENT.
+  assert.throws(
+    () => listMcpServers('qa', () => { throw Object.assign(new Error('spawnSync codex ENOENT'), { stderr: '' }); }),
+    /role qa[\s\S]*Codex said: spawnSync codex ENOENT/,
+  );
+  assert.throws(() => listMcpServers('qa', () => 'not json'), /role qa in an unreadable format/);
+  assert.throws(() => listMcpServers('qa', () => '{}'), /role qa in an unexpected format/);
 });
 
 test('the launcher runs when started through a linked directory, instead of exiting silently (#45)', async t => {
@@ -419,7 +516,7 @@ test('External launches only with a readable MCP selection from the install (#45
   const config = readFileSync(join(box.codex, 'config.toml'), 'utf8');
   assert.match(config, /\[mcp_servers\.gh\]\ncommand = "gh-mcp"\nenabled = false/, 'stays off for Lead and the other roles');
   assert.match(config, /\[mcp_servers\.other\]\ncommand = "other-mcp"\nenabled = true/, 'an unselected server is not edited');
-  assert.match(readFileSync(join(box.codex, 'AGENTS.md'), 'utf8'), /\| `external` \| workspace-write \| yes \| selected servers \|/);
+  assert.match(readFileSync(join(box.codex, 'AGENTS.md'), 'utf8'), /\| `external` \| danger-full-access \| unrestricted \| selected servers \|/);
 
   // Refused before any Codex process: no binary exists at CODEX_BIN, so reaching the listing would fail differently.
   const env = { CODEX_HOME: box.codex, CODEX_BIN: join(box.root, 'no-codex') };

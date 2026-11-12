@@ -22,7 +22,7 @@ The canonical machine-readable rows are in [the capability registry](../src/host
 | Host | Same-role approval transition | Local/remote isolation | Per-role commands | Skills/MCP exposure | Actual model routing |
 | --- | --- | --- | --- | --- | --- |
 | [OpenCode](#opencode) | unverified | advisory | unverified | advisory | unverified |
-| [Claude Code](#claude-code) | unverified | unsupported | unsupported | advisory | unverified |
+| [Claude Code](#claude-code) | unverified | advisory | unsupported | advisory | unverified |
 | [Antigravity](#antigravity) | advisory | advisory | advisory | advisory | unsupported |
 | [Codex](#codex) | unverified | unverified | unverified | advisory | unverified |
 | [Cursor](#cursor) | unsupported | unsupported | unsupported | unsupported | unsupported |
@@ -43,13 +43,13 @@ The canonical machine-readable rows are in [the capability registry](../src/host
 
 ## Claude Code
 
-Host follow-up: [#43](https://github.com/IkariMeister/advanced-harness/issues/43). Missing Bash bootstrap is tracked in [#200](https://github.com/IkariMeister/advanced-harness/issues/200).
+Host follow-up: [#43](https://github.com/IkariMeister/advanced-harness/issues/43). The Operator Bash bootstrap gap in [#200](https://github.com/IkariMeister/advanced-harness/issues/200) is addressed by the Proposed [ADR-005](adr/0005-claude-code-operator-bash.md): Operator gets Bash with advisory remote-Git denies.
 
 | Capability | Status | Scope and limitation | Evidence |
 | --- | --- | --- | --- |
 | Read-only before approval, write/execute after approval for the same role | unverified | Read-only and write roles compile separately; no same-role approval transition is verified. Keep the split required by ADR-002. | [documentation](../docs/adr/0002-consolidate-agent-responsibilities.md); [regression-test](../test/claude-code-compiler.test.ts) |
-| Isolation of local Git from external/remote writes | unsupported | The current mapping cannot express exact per-role Bash resource policies; Operator has no Bash and cannot perform local Git bootstrap (#200). | [documentation](../README.md#agents-and-fixed-per-host-model-presets); [regression-test](../test/claude-permission-preflight.test.ts); [documentation](https://github.com/IkariMeister/advanced-harness/issues/200) |
-| Command execution scoped per role (Reviewer/QA re-run path) | unsupported | Operator, Implementer, Reviewer and QA have no Bash. Reviewer/QA cannot re-run shell checks; request an authorized command-running context through Lead. | [regression-test](../test/claude-code-compiler.test.ts); [documentation](../docs/adr/0002-consolidate-agent-responsibilities.md) |
+| Isolation of local Git from external/remote writes | advisory | Operator has whole-tool Bash for local Git bootstrap (ADR-005, #200); its git push/pull/clone and gh denies are instruction-only and its Bash calls use Claude default prompts. Project settings deny destructive Git and git fetch --upload-pack/-u for every role. Not a sandbox. | [documentation](../docs/adr/0005-claude-code-operator-bash.md); [regression-test](../test/claude-code-compiler.test.ts); [documentation](../README.md#agents-and-fixed-per-host-model-presets) |
+| Command execution scoped per role (Reviewer/QA re-run path) | unsupported | Per-role Bash patterns cannot be expressed; Operator and External receive whole-tool prompted Bash. Implementer, Reviewer and QA have no Bash; Reviewer/QA cannot re-run shell checks; request an authorized command-running context through Lead. | [regression-test](../test/claude-code-compiler.test.ts); [documentation](../docs/adr/0002-consolidate-agent-responsibilities.md) |
 | Skills and MCP tool exposure scoped per role | advisory | Tools use allowlists, but MCP alias identities are unverified and procedure-skill intended-role guidance does not enforce discovery. | [regression-test](../test/claude-permission-preflight.test.ts); [documentation](../skills/README.md) |
 | Per-role model routing | unverified | Explicit per-role aliases or model IDs are syntax-checked; runtime model assignment and availability are not verified (BH-043 #70). | [documentation](../README.md#agents-and-fixed-per-host-model-presets); [regression-test](../test/claude-code-compiler.test.ts) |
 
@@ -74,9 +74,9 @@ Host follow-up: [#45](https://github.com/IkariMeister/advanced-harness/issues/45
 | Capability | Status | Scope and limitation | Evidence |
 | --- | --- | --- | --- |
 | Read-only before approval, write/execute after approval for the same role | unverified | Role-process profiles separate read-only and write roles; a same-role transition and complete isolation are not runtime-verified. Shared-sandbox subagents are not equivalent. | [documentation](../docs/installation.md); [regression-test](../test/codex-role-processes.test.ts) |
-| Isolation of local Git from external/remote writes | unverified | Profiles configure network/MCP differences and command rules; these do not establish complete local/remote isolation across shell and tool routes. | [documentation](../SECURITY.md); [regression-test](../test/codex-role-processes.test.ts) |
-| Command execution scoped per role (Reviewer/QA re-run path) | unverified | Per-process sandbox settings are tested statically; approved role launches and Reviewer/QA re-runs remain unverified. A launcher MCP override failed during startup (#200). | [regression-test](../test/codex-role-processes.test.ts); [live-run](https://github.com/IkariMeister/advanced-harness/issues/200#issuecomment-6716047378); runner: Codex agent, authorized by IkariMeister on 2026-11-08; agent-executed diagnostics, not a human interactive run |
-| Skills and MCP tool exposure scoped per role | advisory | MCP selections are launcher-controlled but runtime isolation is unverified; workflow skills are shared and procedure-skill deployment is not implemented (#45). | [documentation](../skills/README.md); [regression-test](../test/codex-role-processes.test.ts) |
+| Isolation of local Git from external/remote writes | unverified | Operator and External run with danger-full-access, so the sandbox does not restrict their writes or network; Operator's remote-Git and gh denies are instruction-only, and enforcement of the managed rules for those roles is unverified. Profiles configure network/MCP differences and command rules; these do not establish complete local/remote isolation across shell and tool routes. | [documentation](../SECURITY.md); [regression-test](../test/codex-role-processes.test.ts) |
+| Command execution scoped per role (Reviewer/QA re-run path) | unverified | Per-process sandbox settings are tested statically; role launches under host permission and Reviewer/QA re-runs remain unverified. A launcher MCP override failed during startup (#200). | [regression-test](../test/codex-role-processes.test.ts); [live-run](https://github.com/IkariMeister/advanced-harness/issues/200#issuecomment-6716047378); runner: Codex agent, authorized by IkariMeister on 2026-11-08; agent-executed diagnostics, not a human interactive run |
+| Skills and MCP tool exposure scoped per role | advisory | MCP selections are launcher-controlled, and child role processes run with Codex plugins disabled so plugin-provided servers are not selectable (#209), but runtime isolation is unverified; workflow skills are shared and procedure-skill deployment is not implemented (#45). | [documentation](../skills/README.md); [regression-test](../test/codex-role-processes.test.ts) |
 | Per-role model routing | unverified | Each child requires a model and effort, re-applied on resume; successful role inference using those settings is not established (BH-043 #70). | [regression-test](../test/codex-role-processes.test.ts); [regression-test](../test/codex-model-catalog.test.ts); [documentation](../README.md#agents-and-fixed-per-host-model-presets) |
 
 <a id="cursor"></a>
@@ -110,7 +110,7 @@ Doctor prints the selected host's five statuses, scope, evidence references and 
 
 For each changed cell, record the precise boundary, host/mode/version where known, evidence source, what it demonstrates, and remaining limitations. A regression test must point to the test that checks the mapping; it cannot stand in for a live host denial. A live run must identify who executed it and, for agent runs, the human who authorized it. Attribute human interactive evidence to that human and label agent execution separately; never claim to reproduce it without doing so. Contradictory or missing evidence stays unverified until resolved. Do not promote this session's launcher failure into a conclusion about all Codex permission enforcement.
 
-Retain separate Researcher/Implementer and Operator/External roles wherever ADR-002's conditions are unmet. Reviewer reports whether checks were re-run or judged from evidence; unavailable shell access must be routed through Lead to an authorized command-running context, not silently waived. This change does not repair #200, implement #181 preflight, deploy Pi, or change host permissions.
+Retain separate Researcher/Implementer and Operator/External roles wherever ADR-002's conditions are unmet. Reviewer reports whether checks were re-run or judged from evidence; unavailable shell access must be routed through Lead to an authorized command-running context, not silently waived. The Claude Code change under [ADR-005](adr/0005-claude-code-operator-bash.md) addresses only the Operator bootstrap in #200; it does not implement #181 preflight, deploy Pi, or change any other host's permissions.
 
 ## Smoke plan
 

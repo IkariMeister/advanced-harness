@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { parse as parseYaml } from 'yaml';
 import { makeTempRoot } from './temp-directory.ts';
 import { runInstallerFlow } from '../src/installer-flow.ts';
 import { runUpdateFlow } from '../src/update-cli-flow.ts';
 import { diagnoseClaudeCode } from '../src/claude-code-adapter.ts';
 import { diagnoseHost } from '../src/native-diagnostics.ts';
-import { claudeChildRoles, claudeSettingsDeny } from '../src/claude-code-compiler.ts';
+import { claudeChildRoles, claudeManagedTools, claudeSettingsDeny, compileClaudeSubagentFile, mappingsFor } from '../src/claude-code-compiler.ts';
+import { loadRoleDefinitions } from '../src/role-definitions.ts';
 import { nativeRoles } from '../src/native-role-types.ts';
-import { discoverReceiptChain } from '../src/receipt-lineage.ts';
+import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
 
 type Answer = (question: string, suggested?: string) => string;
 
@@ -39,6 +42,11 @@ const install = (h: ReturnType<typeof harness>, host = 'claude-code', scope = 'p
 const backupCount = (recovery: string) => existsSync(recovery) ? readdirSync(recovery).length : 0;
 
 const confirmOnly = (answer: string): Answer => question => question.startsWith('Type yes') ? answer : '';
+
+/** Frontmatter of a compiled Claude subagent or command file. */
+const frontmatterOf = (text: string) => parseYaml(/^---\n([\s\S]*?)\n---\n/.exec(text)![1]!) as Record<string, unknown>;
+const normalizeText = (text: string) => text.replace(/\s+/g, ' ');
+const operatorAdvisory = 'operator: shell "gh *" deny is instruction only; Claude Code does not enforce it.';
 
 test('Enter at the Claude confirmation cancels with no project files, backups, or receipts', async t => {
   const h = harness(t, confirmOnly(''));
@@ -74,6 +82,18 @@ test('typing yes installs the full project footprint, and a repeated run writes 
   const settings = JSON.parse(readFileSync(join(h.project, '.claude', 'settings.json'), 'utf8'));
   assert.equal(settings.agent, 'lead');
   for (const rule of claudeSettingsDeny) assert.ok(settings.permissions.deny.includes(rule));
+  // ADR-005: Operator has Bash; its fetch upload-pack/-u denies are project settings; its remote Git and gh denies are instruction only.
+  for (const rule of ['Bash(git fetch *--upl*)', 'Bash(git fetch -u*)', 'Bash(git fetch * -u*)']) assert.ok(settings.permissions.deny.includes(rule), rule);
+  const operatorFile = readFileSync(join(h.project, '.claude', 'agents', 'operator.md'), 'utf8');
+  assert.ok(String(frontmatterOf(operatorFile).tools).split(', ').includes('Bash'), 'Operator tools include Bash');
+  assert.ok(normalizeText(operatorFile).includes('Some hosts cannot enforce your shell denies per role (on Claude Code, see ADR-005).'));
+  for (const role of ['implementer', 'reviewer', 'qa']) {
+    const meta = frontmatterOf(readFileSync(join(h.project, '.claude', 'agents', `${role}.md`), 'utf8'));
+    assert.ok(!String(meta.tools).split(', ').includes('Bash'), role);
+    assert.ok(String(meta.disallowedTools).split(', ').includes('Bash'), role);
+  }
+  const startIssueFile = normalizeText(readFileSync(join(h.project, '.claude', 'commands', 'start-issue.md'), 'utf8'));
+  assert.ok(startIssueFile.includes('the human creates the task worktree from the updated base'));
   const leadText = readFileSync(join(h.project, '.claude', 'agents', 'lead.md'), 'utf8');
   assert.match(leadText, /tools: Read, Glob, Grep, AskUserQuestion, "?Agent\(operator/);
   for (const child of claudeChildRoles) assert.match(leadText, new RegExp(child));
@@ -89,6 +109,35 @@ test('typing yes installs the full project footprint, and a repeated run writes 
   assert.ok(second.output.some(line => /No selected file needs changes/.test(line)));
   assert.equal(second.prompts.filter(question => question.startsWith('Type yes')).length, 0, 'no confirmation prompt for a no-op');
 });
+
+test('Claude Code install prints the Operator advisory denies before the typed-yes confirmation (ADR-005)', async t => {
+  let advisoryBeforeConfirm = false;
+  const h = harness(t, question => {
+    if (!question.startsWith('Type yes')) return '';
+    advisoryBeforeConfirm = h.output.includes('Advisory on Claude Code (instruction only, not enforced):') && h.output.includes(`  - ${operatorAdvisory}`);
+    return 'yes';
+  });
+  assert.equal(await install(h), 0, h.errors.join('\n'));
+  assert.equal(advisoryBeforeConfirm, true, 'advisory list printed before the final confirmation');
+  assert.ok(h.output.includes('Advisory on Claude Code (instruction only, not enforced):'), 'advisory list is repeated in the completion output');
+});
+
+for (const removed of ['Bash(git fetch *--upl*)', 'Bash(git fetch -u*)', 'Bash(git fetch * -u*)']) {
+  test(`doctor reports a removed Operator fetch deny ${removed} and lists the advisory denies as not enforced (ADR-005)`, async t => {
+    const h = harness(t, confirmOnly('yes'));
+    assert.equal(await install(h), 0);
+    const settingsPath = join(h.project, '.claude', 'settings.json');
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    const healthy = await diagnoseClaudeCode({ project: h.project });
+    assert.equal(healthy.ok, true, healthy.issues.join('\n'));
+    assert.ok(healthy.notes.includes(`Advisory (not enforced): ${operatorAdvisory}`), healthy.notes.join('\n'));
+    settings.permissions.deny = settings.permissions.deny.filter((rule: string) => rule !== removed);
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+    const weakened = await diagnoseClaudeCode({ project: h.project });
+    assert.equal(weakened.ok, false);
+    assert.ok(weakened.issues.includes(`.claude/settings.json is missing deny rule ${removed}.`), weakened.issues.join('\n'));
+  });
+}
 
 test('a customized command is preserved by default and replaced only on explicit overwrite, with a backup', async t => {
   const h = harness(t, confirmOnly('yes'));
@@ -495,4 +544,141 @@ test('Claude Code update uses the same per-role model prompts', async t => {
   assert.equal(status, 0);
   assert.equal(prompts.filter(question => modelPrompt(question)).length, nativeRoles.length);
   assert.equal(frontmatterModel(h, 'operator'), 'sonnet');
+});
+
+// #200 Q1: a Claude Code project install made before #200 has Operator without Bash, no fetch denies, and a receipt that records that state.
+const claudeFetchDenies = ['Bash(git fetch *--upl*)', 'Bash(git fetch -u*)', 'Bash(git fetch * -u*)'];
+const operatorLeadRow = '| `operator` | `haiku` | Read, Glob, Grep, Edit, Write, Bash |';
+const operatorLeadRowBefore = '| `operator` | `haiku` | Read, Glob, Grep, Edit, Write |';
+const operatorLeadBullet = 'Implementer, Reviewer, and QA have no Bash tool. Operator has Bash for local Git and worktrees; its `git push`, `git pull`, `git clone`, and `gh` denies are advisory, not enforced: route remote Git and GitHub work to External.';
+const operatorLeadBulletBefore = 'Operator, Implementer, Reviewer, and QA have no Bash tool.';
+
+/**
+ * Turns a current install into the pre-#200 shape: operator.md generated without Bash, settings without the
+ * three fetch denies, and CLAUDE.md with the older Lead block. The receipt records those older contents as
+ * receipt-owned, the way an earlier installer run would have, so the update must classify them as outdated.
+ */
+async function seedPre200ClaudeInstall(h: ReturnType<typeof harness>): Promise<{ settingsPath: string; operatorPath: string; memoryPath: string }> {
+  assert.equal(await install(h), 0, h.errors.join('\n'));
+  const claudeDirectory = join(h.project, '.claude');
+  const settingsPath = join(claudeDirectory, 'settings.json');
+  const operatorPath = join(claudeDirectory, 'agents', 'operator.md');
+  const memoryPath = join(h.project, 'CLAUDE.md');
+  const currentSettings = readFileSync(settingsPath, 'utf8');
+  const currentMemory = readFileSync(memoryPath, 'utf8');
+  assert.ok(currentMemory.includes(operatorLeadRow) && currentMemory.includes(operatorLeadBullet), 'current Lead block has the #200 wording');
+
+  const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
+  const operatorMapping = mappingsFor(definitions).operator;
+  const withoutBash = ['Read', 'Glob', 'Grep', 'Edit', 'Write'];
+  const pre200Operator = compileClaudeSubagentFile('operator', definitions.operator, {
+    ...operatorMapping,
+    tools: withoutBash,
+    disallowedTools: claudeManagedTools.filter(tool => !withoutBash.includes(tool)),
+  }, String(frontmatterOf(readFileSync(operatorPath, 'utf8')).model));
+  const settingsObject = JSON.parse(currentSettings);
+  settingsObject.permissions.deny = settingsObject.permissions.deny.filter((rule: string) => !claudeFetchDenies.includes(rule));
+  const pre200Settings = JSON.stringify(settingsObject, null, 2) + '\n';
+  const pre200Memory = currentMemory.replace(operatorLeadRow, operatorLeadRowBefore).replace(operatorLeadBullet, operatorLeadBulletBefore);
+  assert.notEqual(pre200Memory, currentMemory);
+
+  const snapshot = discoverReceiptChain(h.recovery, settingsPath, 'claude-code');
+  assert.ok(snapshot.head?.receipt.version === 2, 'the install recorded a v2 receipt');
+  const priorFiles = snapshot.head?.receipt.version === 2 && snapshot.head.receipt.managedFiles ? snapshot.head.receipt.managedFiles : [];
+  const managedFiles = structuredClone(priorFiles).map(file => {
+    const content = file.path.toLowerCase() === operatorPath.toLowerCase() ? pre200Operator
+      : file.path.toLowerCase() === memoryPath.toLowerCase() ? pre200Memory
+      : undefined;
+    return content === undefined ? file : { ...file, after: { content, digest: createHash('sha256').update(content).digest('hex') } };
+  });
+  assert.ok(managedFiles.some(file => file.path.toLowerCase() === operatorPath.toLowerCase()), 'operator.md is receipt-owned');
+
+  writeFileSync(operatorPath, pre200Operator);
+  writeFileSync(settingsPath, pre200Settings);
+  writeFileSync(memoryPath, pre200Memory);
+  const successor = createSuccessorReceipt(snapshot, currentSettings, pre200Settings, {}, undefined, { host: 'claude-code', managedFiles });
+  finalizeSuccessor(writePendingSuccessor(snapshot, successor), pre200Settings);
+  return { settingsPath, operatorPath, memoryPath };
+}
+
+/** Runs the real update flow for a project; the answer callback also sees the output printed so far. */
+const updateClaudeProject = (h: ReturnType<typeof harness>, answer: (question: string, suggested: string | undefined, printed: string[]) => string) => {
+  const prompts: string[] = [];
+  const output: string[] = [];
+  const errors: string[] = [];
+  const run = () => runUpdateFlow({ scope: 'project', project: h.project, host: 'claude-code' }, {
+    ask: async (question: string, suggested?: string) => { prompts.push(question); return answer(question, suggested, output); },
+    output: message => { output.push(message); },
+    error: message => { errors.push(message); },
+    home: h.root,
+    recoveryDirectory: h.recovery,
+    sharedLocations: async () => 'skipped' as const,
+  });
+  return { run, prompts, output, errors };
+};
+
+test('update brings a pre-#200 Claude Code project install to Bash and the fetch denies, with no overwrite prompt, and doctor passes after', async t => {
+  const h = harness(t, confirmOnly('yes'));
+  const { settingsPath, operatorPath, memoryPath } = await seedPre200ClaudeInstall(h);
+  let advisoryBeforeConfirm = false;
+  const updater = updateClaudeProject(h, (question, suggested, printed) => {
+    if (!question.startsWith('Type yes')) return suggested ?? '';
+    advisoryBeforeConfirm = printed.includes('Advisory on Claude Code (instruction only, not enforced):') && printed.includes(`  - ${operatorAdvisory}`);
+    return 'yes';
+  });
+  assert.equal(await updater.run(), 0, updater.errors.join('\n'));
+  assert.ok(advisoryBeforeConfirm, 'advisory block printed before the confirmation prompt');
+  assert.ok(!updater.prompts.some(question => question.startsWith('Overwrite customized/unowned file')), updater.prompts.join('\n'));
+  assert.ok(updater.output.includes('  .claude/agents/operator.md (update)'), 'operator.md is an outdated receipt-owned file');
+
+  assert.ok(String(frontmatterOf(readFileSync(operatorPath, 'utf8')).tools).split(', ').includes('Bash'), 'Operator tools include Bash');
+  const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+  for (const rule of claudeFetchDenies) assert.ok(settings.permissions.deny.includes(rule), rule);
+  const memory = readFileSync(memoryPath, 'utf8');
+  assert.ok(memory.includes(operatorLeadRow), 'CLAUDE.md has the current Operator Lead row');
+  assert.ok(memory.includes(operatorLeadBullet), 'CLAUDE.md has the current Lead bullet');
+  assert.ok(!memory.includes(operatorLeadRowBefore), 'the reverted pre-#200 Operator Lead row is gone');
+  assert.ok(!memory.includes(operatorLeadBulletBefore), 'the reverted pre-#200 Lead bullet is gone');
+  const doctor = await diagnoseClaudeCode({ project: h.project });
+  assert.equal(doctor.ok, true, doctor.issues.join('\n'));
+});
+
+/**
+ * Recursive snapshot of a directory: relative POSIX-style paths mapped to a size and SHA-256 digest for files,
+ * and a `dir` marker for directories (so empty or nested new directories also change the snapshot).
+ * A missing directory snapshots as empty.
+ */
+function snapshotTree(dir: string, base = dir): Record<string, string> {
+  const entries: Record<string, string> = {};
+  if (!existsSync(dir)) return entries;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    const rel = relative(base, full).replace(/\\/g, '/');
+    if (entry.isDirectory()) {
+      entries[`${rel}/`] = 'dir';
+      Object.assign(entries, snapshotTree(full, base));
+    } else {
+      const bytes = readFileSync(full);
+      entries[rel] = `${bytes.length}:${createHash('sha256').update(bytes).digest('hex')}`;
+    }
+  }
+  return entries;
+}
+
+test('cancelling the update of a pre-#200 Claude Code project install leaves every file unchanged with no backup or receipt', async t => {
+  const h = harness(t, confirmOnly('yes'));
+  const { settingsPath, operatorPath, memoryPath } = await seedPre200ClaudeInstall(h);
+  const watched = [settingsPath, operatorPath, memoryPath];
+  const bytesBefore = watched.map(path => readFileSync(path));
+  const backupsBefore = backupCount(h.recovery);
+  const receiptsBefore = readdirSync(h.recovery);
+  const recoveryTreeBefore = snapshotTree(h.recovery);
+  const updater = updateClaudeProject(h, (question, suggested) => question.startsWith('Type yes') ? '' : suggested ?? '');
+  // Enter at the final confirmation cancels: nothing is written, backed up, or receipted.
+  assert.equal(await updater.run(), 1, updater.errors.join('\n'));
+  assert.ok(updater.output.some(line => /Installation canceled by user\. No files written\./.test(line)));
+  watched.forEach((path, index) => assert.deepEqual(readFileSync(path), bytesBefore[index], path));
+  assert.equal(backupCount(h.recovery), backupsBefore, 'no backup written');
+  assert.deepEqual(readdirSync(h.recovery), receiptsBefore, 'no receipt or pending evidence written');
+  assert.deepEqual(snapshotTree(h.recovery), recoveryTreeBefore, 'no file added, changed, or removed anywhere under the recovery directory, including nested paths');
 });

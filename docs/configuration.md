@@ -8,7 +8,6 @@
 | Default GitHub backend/host or MCP alias; optional Jira/design aliases | Global `harness.integrations.json` |
 | Global project defaults: suggested base branch, shell, checks, device preference, and worktree/memory parent directories | `~/.config/advanced-harness/project-defaults.json`, or under `$XDG_CONFIG_HOME` when set (host-neutral) |
 | Repository, chosen optional services, Jira project/status mapping, build/test/device/worktree/memory settings | Project `AGENTS.md` (host-neutral project context, shared across all installed hosts) |
-| Project preflight policy: check enablement and severity, forbidden globs, allowlist path | Marked `preflight` section of the same project context file, read from the trusted ref (see [preflight policy](#preflight-policy)) |
 
 Global preferences contain **no repository names, Jira project keys/status mappings, or credentials**. Credentials stay in host/GitHub CLI stores or environment references. Project settings live in the host-neutral `AGENTS.md` and are preserved without modification across multiple hosts in the same workspace. Each host operates with its own scoped receipts, backups, and configurations without clobbering other hosts.
 
@@ -28,12 +27,30 @@ Workflow and canonical procedure source compilation can emit deterministic host-
 
 `harness:doctor` statically validates canonical procedure skills and checks the expected emitted skill name, description/frontmatter, and intended-role advisory guidance for OpenCode, Claude Code, and Antigravity. It does not require byte-identical bodies, since installed skill bodies can be customized. A missing expected skill is an error only when a harness installation footprint is detected; otherwise the result is reported as not installed/not checked. Existing expected artifacts can still be inspected without a footprint. Unrelated third-party skills are ignored. Role guidance is advisory only: doctor does not discover/enforce role authorization or grant permissions. Codex and Cursor procedure-skill native deployment is unsupported; their canonical sources can still be statically validated. These checks do not establish runtime discovery/invocation or permissions/enforcement. OpenCode runtime/catalog diagnostics are retained separately, and static results are shown even when runtime verification is inconclusive.
 
-Preflight and doctor share a bounded, content-free Gitleaks probe. Preflight invokes
-`gitleaks stdin --report-format json` with added text on stdin. When Gitleaks is not
-installed, preflight uses a built-in high-confidence detector; backend coverage may
-differ. Installed but unusable scanner interfaces and malformed reports are
-inconclusive. Diagnostics contain sanitized rule/location fields and a redaction
-marker only. See [preflight](preflight.md) and [ADR-005](adr/0005-preflight-scope-and-redaction.md).
+Preflight and doctor share a bounded, content-free Gitleaks probe. Doctor names
+whether Gitleaks is available, absent with built-in fallback, or unusable. Preflight
+invokes `gitleaks stdin --report-format json` with added text on stdin, the pinned
+repository config, a neutral working directory, and no inherited `GITLEAKS_*`
+environment variables. When Gitleaks is absent, preflight uses a built-in
+high-confidence detector; backend coverage may differ. Installed but unusable
+scanner interfaces and malformed reports are inconclusive. Diagnostics contain
+sanitized rule/location fields and a redaction marker only.
+
+Project preflight policy is stored in trusted `.harness/preflight.json` with a replacement
+`forbiddenPathGlobs` array and optional justified `gitlinkAcknowledgements`, and
+`.harness/preflight-allowlist.json` with a JSON array
+of justified exact `path`/`rule` exceptions. A line-scoped exception also requires a
+1-based `line` and a `committed`, `staged`, `unstaged`, or `untracked` `origin`.
+Preflight reads these files from the
+`refs/remotes/origin/HEAD`, independently of `--base`; candidate edits block pending
+review and cannot change the policy used for that run. `--base` selects the changeset
+comparison revision only. Acknowledgements require exact clean gitlink path/IDs and
+nonblank justification; additions omit the old ID. Acknowledged incomplete coverage
+is visible and can exit 0 only when no findings or other gaps remain. Dirty or
+uninspectable nested content cannot be acknowledged. Both files are optional; malformed trusted
+policy makes preflight inconclusive before secret scanning. See
+[preflight](preflight.md#project-policy-and-revision-authority) and
+[ADR-007](adr/0007-preflight-scope-and-redaction.md).
 
 | Host | Canonical compilation | Native procedure-skill deployment | Doctor static validation | Runtime / exposure and permissions |
 | --- | --- | --- | --- | --- |
@@ -49,11 +66,11 @@ offline link/path/script/workflow-command checks; this is not semantic glossary 
 
 ### OpenAI Codex selections
 
-**One process per role (#45).** Codex subagents inherit the parent sandbox, approval and MCP settings, so each child role runs as its own `codex exec` process with a profile in `~/.codex/harness-<role>.config.toml`, launched by Lead (your Codex Desktop session) with your approval for every launch. Codex installs at global scope only. Shared-permission and prompt-only fallbacks are not used. Details: [OpenAI Codex installation](installation.md#openai-codex-global-scope-one-process-per-role).
+**One process per role (#45).** Codex subagents inherit the parent sandbox, approval and MCP settings, so each child role runs as its own `codex exec` process with a profile in `~/.codex/harness-<role>.config.toml`, launched by Lead (your Codex Desktop session) with your host permission at the Codex Desktop prompt for every launch. Operator and External run with `danger-full-access` (no sandbox limit on writes or network), Implementer with `workspace-write`, and the other roles with `read-only`. Codex installs at global scope only. Shared-permission and prompt-only fallbacks are not used. Details: [OpenAI Codex installation](installation.md#openai-codex-global-scope-one-process-per-role).
 
-`harness:install --host codex` and `harness:update --host codex` write `~/.codex/` files after explicit confirmation. Every child role requires a model ID and reasoning effort; an existing role's values are the Enter defaults, while a new role requires explicit values. There is no guessed preset or fallback. Choices can come from the live `model/list` catalog, with off-catalog values kept only on an explicit `keep` ([Codex model discovery](installation.md#openai-codex-global-scope-one-process-per-role)). Required answers allow at most three invalid attempts; a closed/rejected prompt aborts before writes. Enter preserves previously selected MCP servers and their disabled-tool entries; enter `-` to clear only selection tracking (it does not re-enable servers or remove disabled tools). Your own content in `~/.codex/AGENTS.md` is kept: the harness changes only its managed Lead block there, and uninstall removes only that block. Workflow skills use `.agents/skills/<name>/SKILL.md`; existing differing skills are preserved because that directory may be shared with other hosts.
+`harness:install --host codex` and `harness:update --host codex` write `~/.codex/` files after explicit confirmation. Every child role requires a model ID and reasoning effort; an existing role's values are the Enter defaults, while a new role requires explicit values. There is no guessed preset or fallback. Choices can come from the live `model/list` catalog, with off-catalog values kept only on an explicit `keep` ([Codex model discovery](installation.md#openai-codex-global-scope-one-process-per-role)). Required answers allow at most three invalid attempts; a closed/rejected prompt aborts before writes. Enter preserves previously selected MCP servers and their disabled-tool entries; enter `-` to clear only selection tracking (it does not re-enable servers or remove disabled tools). Only servers defined in `config.toml` can be selected: child role processes run with Codex plugins disabled, so a plugin-provided MCP server cannot be selected for External (#209). Your own content in `~/.codex/AGENTS.md` is kept: the harness changes only its managed Lead block there, and uninstall removes only that block. Workflow skills use `.agents/skills/<name>/SKILL.md`; existing differing skills are preserved because that directory may be shared with other hosts.
 
-Codex install/update and doctor share one bounded, offset-preserving TOML scanner for basic tables, dotted/quoted keys, scalar values, arrays, and inline tables. Comments, whitespace, line endings, and untouched source slices are preserved. Unsupported multiline strings/arrays, array-of-table forms, and TOML syntax outside this subset are refused rather than normalized. `harness:uninstall --host codex --scope global` restores the receipt-managed files and reverses only the harness's own `config.toml` edits; values changed since install, including a customized `disabled_tools` list, are kept and listed ([Codex uninstall](installation.md#openai-codex-global-scope-one-process-per-role)). Codex runtime behaviour, including an approved role launch, is not yet verified by this harness.
+Codex install/update and doctor share one bounded, offset-preserving TOML scanner for basic tables, dotted/quoted keys, scalar values, arrays, and inline tables. Comments, whitespace, line endings, and untouched source slices are preserved. Unsupported multiline strings/arrays, array-of-table forms, and TOML syntax outside this subset are refused rather than normalized. `harness:uninstall --host codex --scope global` restores the receipt-managed files and reverses only the harness's own `config.toml` edits; values changed since install, including a customized `disabled_tools` list, are kept and listed ([Codex uninstall](installation.md#openai-codex-global-scope-one-process-per-role)). Codex runtime behaviour, including a role launch under host permission, is not yet verified by this harness.
 
 The Codex config scanner remains fail-closed for multiline arrays (no parser expansion
 is attempted). A malformed existing role profile does not block questions for all
@@ -61,7 +78,7 @@ required explicit assignments; defaults are inferred only from a successfully pa
 role. The installer then asks whether to preserve (default) or explicitly overwrite
 the malformed role, retaining its exact bytes when overwrite is declined.
 
-The adapter adds `sandbox_mode = "read-only"` and `approval_policy = "on-request"` only when absent; existing user values are preserved. These shared settings affect Codex as a whole, not individual role identities. They are a conservative generated baseline, **not proof that every write route requires a human approval**. Codex project configuration is subject to the host's project-trust behavior. The direct shell rule rejects identifiable `gh pr merge` / `gh.exe pr merge` prefixes only; scripts, MCP/API calls, and other indirect routes are not universally blocked.
+The adapter adds `sandbox_mode = "read-only"` and `approval_policy = "on-request"` only when absent; existing user values are preserved. These shared settings affect Codex as a whole, not individual role identities. They are a conservative generated baseline, **not proof that every write route requires a human host permission**. Codex project configuration is subject to the host's project-trust behavior. The direct shell rule rejects identifiable `gh pr merge` / `gh.exe pr merge` prefixes only; scripts, MCP/API calls, and other indirect routes are not universally blocked. Because Operator and External run with `danger-full-access`, the managed rules' enforcement for them is unverified, and Operator's `git push`, `git pull`, `git clone`, and `gh` denies are instruction-only.
 
 MCP entries are never invented. The installer asks for actual server IDs already present in the target config and exact tool names, then marks selected server entries `enabled = false` and adds supplied names to `disabled_tools` pending separate route validation. It does not enable/authenticate servers or claim tool-level approval behavior. Existing configuration and credentials are preserved; malformed or unsupported TOML is refused. Cancellation makes no changes or backups, repeated identical updates are idempotent, and updates create cumulative host-scoped recovery receipts. If a write fails, the adapter attempts guarded reverse-order restoration only where live files still match its expected write; concurrent divergent edits are preserved and pending recovery evidence is retained for manual recovery.
 
@@ -105,61 +122,7 @@ Android commands/device/path settings use the same context model:
 npm run harness:setup -- --project "$HOME/Projects/MarsRoverIA"
 ```
 
-`--context` is supported there too. Without `--context`, setup follows an existing link in `AGENTS.md` to its context file, as preflight does, and leaves the link as written; an unsafe or unreadable link stops setup with no files changed. Settings and integrations use independent marked sections and preserve each other. Worktree and memory paths under your home directory are saved as `$HOME/...` so they can be committed; agents read them from context and ask only when they are missing, invalid, or conflicting ([how shared locations resolve](project-setup.md#how-shared-locations-resolve)). Do not store secrets; review any absolute, machine-specific paths before committing. Context must be Markdown inside the project; malformed markers/JSON, unknown fields, symlinks, and concurrent changes are refused. Multi-file writes are preflighted and individually atomic, not a transaction; partial-write failures disclose completed writes/backups without discarding newer work.
-
-### Preflight policy
-
-Preflight guardrails can be set per project in a marked `preflight` section. It sits in the
-same file as the `project` section: `AGENTS.md`, or the context file it links to. Setup
-writes the section only when you opt in (see [project setup](project-setup.md#what-setup-asks)).
-
-```json
-{
-  "version": 1,
-  "checks": { "path-policy": { "enabled": true, "severity": "block" } },
-  "forbiddenGlobs": { "mode": "add", "globs": ["**/*.secret"] }
-}
-```
-
-- **Location and absence.** The section is not part of the `project` profile and is not in
-  global project defaults. With no section, preflight uses built-in check behavior. Nothing
-  is inferred or migrated.
-- **Schema.** `version` must be `1`. `checks` maps a configurable check id to `enabled`
-  (boolean) and `severity` (`block` or `warn`). `forbiddenGlobs` has `mode` (`add` or
-  `replace`) and 1 to 200 unique `globs`. `prodGlobs` and `testGlobs` each take 1 to 200 unique
-  globs and must be set together; BH-070 enforces them. `allowlistPath` is a repo-relative
-  POSIX path that stays inside the project, is not under `.git/` (on Windows, a segment that
-  differs from `.git` only by trailing dots or spaces counts too), has no `:` in any segment,
-  and is not the context file itself. Unknown keys are rejected at every level. Errors name the file and the JSON path.
-- **Glob rules.** Each glob is non-empty and at most 256 characters, uses forward slashes,
-  is relative, has no `..` segment or drive letter, and contains no NUL, CR, or LF. Only `*`,
-  `**`, and `?` are supported; `[`, `]`, `{`, `}`, and `!` are rejected. Matching is
-  case-insensitive, as in path-policy.
-- **Trusted ref, with or without `--base`.** The effective policy is read from the
-  [trusted ref](glossary.md#workflow-and-tracking) `refs/remotes/origin/HEAD`, using the same
-  AGENTS.md or link resolution as the base-context check. A worktree edit to the section is
-  reported as `warn` and takes effect only after it reaches origin/HEAD. If Git confirms the trusted
-  ref is absent and the worktree has a `preflight` section, the result is inconclusive; the hint is
-  `git remote set-head origin --auto`. A Git failure reading the trusted ref (Git cannot run, a
-  corrupt repository, or a ref whose commit is missing) means the policy could not be loaded: every
-  check is inconclusive, even with `--base` and no worktree policy. There is no CLI flag and no environment override.
-- **Invalid policy.** An invalid `preflight` section in the worktree is reported as `warn`
-  ("does not apply") and never takes effect. An invalid section at the trusted ref makes every
-  check inconclusive (`exit 2`).
-- **Base ref.** The policy has no base-ref key. The base ref is still `baseBranch` in project
-  context, or `--base` when given.
-- **Fixed and configurable checks.** Only `path-policy` is configurable. The fixed checks
-  `changeset`, `base-context`, `policy`, `secret-scan`, and `worktree-boundary` cannot be
-  disabled or downgraded. Naming a fixed check gives a "fixed check" error. Naming an unknown
-  id lists the configurable ids.
-- **Global values are suggestions only.** The suggested policy is a code constant
-  (`DEFAULT_PREFLIGHT_POLICY`). Global project defaults never store a policy, and project
-  context decides.
-- **Preflight allowlist.** `allowlistPath` is resolved in the worktree. Links and junctions
-  are refused at any level, and the file must be regular and at most 1 MiB. A missing file
-  is evidence only. The allowlist entry format belongs to BH-068.
-- **Evidence, never approval.** A policy changes which checks run and how their findings are
-  reported. It never approves work or publication.
+`--context` is supported there too. Settings and integrations use independent marked sections and preserve each other. Worktree and memory paths under your home directory are saved as `$HOME/...` so they can be committed; agents read them from context and ask only when they are missing, invalid, or conflicting ([how shared locations resolve](project-setup.md#how-shared-locations-resolve)). Do not store secrets; review any absolute, machine-specific paths before committing. Context must be Markdown inside the project; malformed markers/JSON, unknown fields, symlinks, and concurrent changes are refused. Multi-file writes are preflighted and individually atomic, not a transaction; partial-write failures disclose completed writes/backups without discarding newer work.
 
 ## 3. Optional checks and authentication
 

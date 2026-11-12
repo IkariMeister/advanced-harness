@@ -1,469 +1,361 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { updateContext } from '../src/project-context.ts';
-import { defaultChecks, exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
-import {
-  applySeverity,
-  configurableCheckIds,
-  DEFAULT_PREFLIGHT_POLICY,
-  FIXED_CHECK_IDS,
-  isInsideRealPath,
-  validatePreflightPolicy,
-  type EffectivePolicy,
-  type PreflightPolicy,
-} from '../src/preflight/policy.ts';
-import { trustedCommit, TrustedRefMissingError } from '../src/preflight/trusted-context.ts';
-import type { CheckResult, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
+import { loadProjectPreflightPolicy } from '../src/preflight/policy.ts';
+import { createDefaultChecks, exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
+import { changesetCheck, pathPolicyCheck, policyIntegrityCheck, secretScanCheck } from '../src/preflight/checks.ts';
+import { scanAddedText } from '../src/preflight/secret-scanner.ts';
 import { makeTempRoot } from './temp-directory.ts';
 
-const contextSections = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'];
-const configurableIds = ['path-policy'];
-const file = 'AGENTS.md';
-const schema = (value: unknown, ids: readonly string[] = configurableIds, contextFile?: string) => validatePreflightPolicy(value, { configurableIds: ids, file, ...(contextFile ? { contextFile } : {}) });
-const messageOf = (fn: () => unknown) => {
-  try {
-    fn();
-  } catch (error) {
-    return (error as Error).message;
-  }
-  return undefined;
-};
-
-function git(cwd: string, ...args: string[]): string {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+function git(root: string, ...args: string[]) {
+  const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  return result.stdout.trim();
 }
 
-function simulateOriginHead(root: string): void {
-  git(root, 'update-ref', 'refs/remotes/origin/main', 'main');
-  git(root, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
-}
-
-function profile(root: string, baseBranch = 'main') {
-  const checks = Object.fromEntries(contextSections.map((name) => [name, { status: 'unconfigured' }]));
-  return { version: 1, baseBranch, shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: join(root, '..', 'wt'), memoryPath: join(root, '..', 'mem', 'MEMORY.md') };
-}
-
-/** Project settings plus an optional preflight section, as harness:setup writes them. */
-function contextText(root: string, policy?: unknown): string {
-  const text = updateContext('', 'project', profile(root), []);
-  return policy === undefined ? text : updateContext(text, 'preflight', policy, []);
-}
-
-/**
- * Repo on `main` whose AGENTS.md carries `trustedPolicy` (none when undefined). Simulates origin/HEAD unless
- * `originHead` is false. The task branch is checked out with a clean worktree.
- */
-function policyRepo(trustedPolicy?: unknown, options: { originHead?: boolean } = {}): string {
+function projectRepo(policy?: { forbiddenPathGlobs?: string[]; allowlist?: unknown; gitlinkAcknowledgements?: unknown }): string {
   const root = makeTempRoot('preflight-policy-');
   git(root, 'init', '-q', '-b', 'main');
   git(root, 'config', 'user.email', 'test@example.com');
   git(root, 'config', 'user.name', 'Test');
-  git(root, 'config', 'core.autocrlf', 'false');
-  writeFileSync(join(root, 'AGENTS.md'), contextText(root, trustedPolicy));
-  writeFileSync(join(root, 'keep.txt'), 'keep\n');
-  git(root, 'add', '.');
-  git(root, 'commit', '-q', '-m', 'trusted context on main');
-  if (options.originHead !== false) simulateOriginHead(root);
+  const checks = Object.fromEntries(['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'].map(name => [name, { status: 'unconfigured' }]));
+  const profile = { version: 1, baseBranch: 'main', shell: 'bash', checks, device: { preference: 'ask' }, worktreeDirectory: join(root, '..', 'wt'), memoryPath: join(root, '..', 'mem', 'MEMORY.md') };
+  writeFileSync(join(root, 'AGENTS.md'), updateContext('', 'project', profile, []));
+  if (policy) {
+    mkdirSync(join(root, '.harness'));
+    if (policy.forbiddenPathGlobs !== undefined || policy.gitlinkAcknowledgements !== undefined) writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ ...(policy.forbiddenPathGlobs === undefined ? {} : { forbiddenPathGlobs: policy.forbiddenPathGlobs }), ...(policy.gitlinkAcknowledgements === undefined ? {} : { gitlinkAcknowledgements: policy.gitlinkAcknowledgements }) }));
+    if (policy.allowlist !== undefined) writeFileSync(join(root, '.harness', 'preflight-allowlist.json'), JSON.stringify(policy.allowlist));
+  }
+  git(root, 'add', '.'); git(root, 'commit', '-q', '-m', 'base');
+  git(root, 'update-ref', 'refs/remotes/origin/main', 'main');
+  git(root, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   git(root, 'checkout', '-q', '-b', 'task');
   return root;
 }
 
-const resultOf = (result: { checks: CheckResult[] }, id: string) => result.checks.find((check) => check.id === id);
-const policyEvidence = (result: { checks: CheckResult[] }) => resultOf(result, 'policy')?.evidence.join('\n') ?? '';
+test('trusted preflight policy validates exact justified gitlink acknowledgements including additions', () => {
+  const valid = [
+    { path: 'vendor/old', oldId: 'a'.repeat(40), newId: 'b'.repeat(40), justification: 'Reviewed old and new source.' },
+    { path: 'vendor/new', newId: 'c'.repeat(40), justification: 'Reviewed added source.' },
+    { path: 'vendor/upper', oldId: 'A'.repeat(64), newId: 'B'.repeat(64), justification: 'Reviewed 64 digit IDs.' },
+  ];
+  const root = projectRepo({ gitlinkAcknowledgements: valid });
+  const policy = loadProjectPreflightPolicy(root, 'refs/remotes/origin/HEAD');
+  assert.deepEqual(policy.gitlinkAcknowledgements, [valid[0], valid[1], { ...valid[2], oldId: 'a'.repeat(64), newId: 'b'.repeat(64) }]);
+  assert.deepEqual(loadProjectPreflightPolicy(root, 'refs/remotes/origin/HEAD', { forbiddenPathGlobs: true }).gitlinkAcknowledgements, policy.gitlinkAcknowledgements, 'an explicit path-glob override preserves normalized trusted acknowledgements');
 
-const configurable = (id: string, status: CheckStatus): PreflightCheck => ({ id, policy: { configurable: true }, run: () => ({ status, evidence: [`${id} evidence`] }) });
-
-// --- Schema -----------------------------------------------------------------
-
-test('a minimal and a complete valid policy are accepted, unchanged', () => {
-  assert.deepEqual(schema({ version: 1 }), { version: 1 });
-  const complete: PreflightPolicy = {
-    version: 1,
-    checks: { 'path-policy': { enabled: true, severity: 'warn' } },
-    forbiddenGlobs: { mode: 'add', globs: ['**/*.secret', 'config/*.json'] },
-    prodGlobs: ['src/**'],
-    testGlobs: ['test/**'],
-    allowlistPath: '.harness/allow.json',
-  };
-  assert.equal(schema(complete), complete);
-  assert.equal(schema(DEFAULT_PREFLIGHT_POLICY), DEFAULT_PREFLIGHT_POLICY);
-});
-
-test('each documented schema error names the file and the JSON path', () => {
-  assert.equal(messageOf(() => schema({ version: 1, checks: { 'path-policy': { severity: 'error' } } })), 'AGENTS.md preflight policy: checks.path-policy.severity must be "block" or "warn" (got "error").');
-  assert.equal(messageOf(() => schema({ version: 1, forbidenGlobs: { mode: 'add', globs: ['a'] } })), 'AGENTS.md preflight policy: unknown key "forbidenGlobs"; allowed: version, checks, forbiddenGlobs, prodGlobs, testGlobs, allowlistPath.');
-  assert.equal(messageOf(() => schema({ version: 1, forbiddenGlobs: { mode: 'add', globs: ['**/*.a', 'x/**', 'src/{a,b}/**'] } })), 'AGENTS.md preflight policy: forbiddenGlobs.globs[2] "src/{a,b}/**" uses unsupported syntax "{"; use *, ** or ? only.');
-  assert.equal(messageOf(() => schema({ version: 1, prodGlobs: ['src/**'] })), 'AGENTS.md preflight policy: prodGlobs is set but testGlobs is missing; set both or neither.');
-  assert.equal(messageOf(() => schema({ version: 1, allowlistPath: '../shared/allow.json' })), 'AGENTS.md preflight policy: allowlistPath "../shared/allow.json" leaves the project; use a path inside the repository.');
-});
-
-test('unknown keys are rejected at every level, with the level named', () => {
-  assert.match(messageOf(() => schema({ version: 1, checks: { 'path-policy': { enabled: true, color: 'red' } } })) ?? '', /unknown key "color" at checks\.path-policy; allowed: enabled, severity\./);
-  assert.match(messageOf(() => schema({ version: 1, forbiddenGlobs: { mode: 'add', globs: ['a'], extra: 1 } })) ?? '', /unknown key "extra" at forbiddenGlobs; allowed: mode, globs\./);
-});
-
-test('version, enablement, and mode are checked with actionable messages', () => {
-  assert.equal(messageOf(() => schema({ checks: {} })), 'AGENTS.md preflight policy: version must be 1 (got missing).');
-  assert.equal(messageOf(() => schema({ version: 2 })), 'AGENTS.md preflight policy: version must be 1 (got 2).');
-  assert.match(messageOf(() => schema({ version: 1, checks: { 'path-policy': { enabled: 'yes' } } })) ?? '', /checks\.path-policy\.enabled must be true or false/);
-  assert.match(messageOf(() => schema({ version: 1, forbiddenGlobs: { mode: 'merge', globs: ['a'] } })) ?? '', /forbiddenGlobs\.mode must be "add" or "replace"/);
-});
-
-test('glob rules: non-empty, length, separators, relative, no .., no drive letter, no unsupported syntax, no duplicates, and count', () => {
-  const forbidden = (globs: unknown) => messageOf(() => schema({ version: 1, forbiddenGlobs: { mode: 'add', globs } })) ?? '';
-  assert.match(forbidden(['']), /globs\[0\] must be a non-empty string/);
-  assert.match(forbidden(['a'.repeat(257)]), /globs\[0\] is longer than 256 characters/);
-  assert.match(forbidden(['a\\b']), /must use forward slashes only/);
-  assert.match(forbidden(['/abs/x']), /must not start with "\/"/);
-  assert.match(forbidden(['C:/x']), /must not start with a drive letter/);
-  assert.match(forbidden(['a/../b']), /has a "\.\." segment/);
-  assert.match(forbidden(['a\nb']), /must not contain NUL, CR, or LF/);
-  for (const ch of ['[', ']', '}', '!']) assert.match(forbidden([`x${ch}y`]), new RegExp(`uses unsupported syntax "\\${ch}"`));
-  assert.match(forbidden(['**/*.PEM', '**/*.pem']), /globs\[1\] "\*\*\/\*\.pem" duplicates an earlier glob/);
-  assert.match(forbidden([]), /must list 1 to 200 globs \(got 0 entries\)/);
-  assert.match(forbidden(Array.from({ length: 201 }, (_, i) => `g${i}/**`)), /must list 1 to 200 globs \(got 201 entries\)/);
-  assert.equal(schema({ version: 1, forbiddenGlobs: { mode: 'add', globs: Array.from({ length: 200 }, (_, i) => `g${i}/**`) } }).version, 1);
-});
-
-test('allowlistPath: relative POSIX, inside the project, outside .git, and not the context file itself', () => {
-  const allow = (allowlistPath: string, contextFile?: string) => messageOf(() => schema({ version: 1, allowlistPath }, configurableIds, contextFile)) ?? '';
-  assert.match(allow('/etc/allow.json'), /is absolute/);
-  assert.match(allow('C:/allow.json'), /is absolute/);
-  assert.match(allow('dir\\allow.json'), /must use forward slashes/);
-  assert.match(allow('.git/allow.json'), /is inside \.git\//);
-  assert.match(allow('x/.GIT/allow.json'), /is inside \.git\//);
-  assert.match(allow('AGENTS.md', 'AGENTS.md'), /is the context file itself/);
-  assert.match(allow('./allow.json'), /empty or "\." segment/);
-  assert.equal(schema({ version: 1, allowlistPath: 'AGENTS.md.allow' }, configurableIds, 'AGENTS.md').allowlistPath, 'AGENTS.md.allow');
-});
-
-test('prodGlobs and testGlobs must be set together', () => {
-  assert.equal(messageOf(() => schema({ version: 1, testGlobs: ['test/**'] })), 'AGENTS.md preflight policy: testGlobs is set but prodGlobs is missing; set both or neither.');
-  assert.equal(schema({ version: 1, prodGlobs: ['src/**'], testGlobs: ['test/**'] }).version, 1);
-});
-
-test('fixed checks are never configurable and unknown ids list the configurable ones', () => {
-  for (const id of FIXED_CHECK_IDS) {
-    const message = messageOf(() => schema({ version: 1, checks: { [id]: { enabled: false } } })) ?? '';
-    assert.match(message, new RegExp(`checks\\.${id} is not configurable: ${id} is a fixed check`));
-    assert.match(message, /Configurable checks: path-policy\./);
-  }
-  assert.match(messageOf(() => schema({ version: 1, checks: { 'secret-scan': { severity: 'warn' } } })) ?? '', /checks\.secret-scan is not configurable: secret-scan is a fixed check/);
-  assert.match(messageOf(() => schema({ version: 1, checks: { nope: {} } })) ?? '', /checks\.nope is not a known check id\. Configurable checks: path-policy\./);
-});
-
-test('the configurable ids come from the registry marker, and the setup list agrees with the default registry', () => {
-  assert.deepEqual(configurableCheckIds(defaultChecks), ['path-policy']);
-  assert.deepEqual(configurableCheckIds([configurable('custom', 'pass'), { id: 'plain', run: () => ({ status: 'pass', evidence: [] }) }]), ['custom']);
-});
-
-test('applySeverity moves block and warn in both directions and never changes pass or inconclusive', () => {
-  assert.deepEqual(applySeverity({ status: 'block', evidence: ['x'] }, 'warn'), { status: 'warn', evidence: ['x', 'severity block→warn by project policy (trusted ref)'] });
-  assert.deepEqual(applySeverity({ status: 'warn', evidence: ['x'] }, 'block'), { status: 'block', evidence: ['x', 'severity warn→block by project policy (trusted ref)'] });
-  assert.deepEqual(applySeverity({ status: 'block', evidence: ['x'] }, 'block'), { status: 'block', evidence: ['x'] });
-  assert.deepEqual(applySeverity({ status: 'pass', evidence: ['x'] }, 'block'), { status: 'pass', evidence: ['x'] });
-  assert.deepEqual(applySeverity({ status: 'inconclusive', evidence: ['x'] }, 'warn'), { status: 'inconclusive', evidence: ['x'] });
-  assert.deepEqual(applySeverity({ status: 'warn', evidence: ['x'] }, undefined), { status: 'warn', evidence: ['x'] });
-});
-
-test('fixed-check and unknown-id rejections surface as inconclusive runs, not as a silent skip', async () => {
-  const fixed = policyRepo({ version: 1, checks: { 'secret-scan': { enabled: false } } });
-  const fixedResult = await runPreflight({ worktree: fixed, base: 'main' });
-  assert.equal(exitCodeFor(fixedResult), 2);
-  assert.match(resultOf(fixedResult, 'policy')?.evidence[0] ?? '', /checks\.secret-scan is not configurable: secret-scan is a fixed check/);
-  assert.equal(fixedResult.checks.every((check) => check.status === 'inconclusive'), true);
-
-  const unknown = policyRepo({ version: 1, checks: { 'no-such-check': { severity: 'warn' } } });
-  const unknownResult = await runPreflight({ worktree: unknown, base: 'main' });
-  assert.equal(exitCodeFor(unknownResult), 2);
-  assert.match(resultOf(unknownResult, 'policy')?.evidence[0] ?? '', /not a known check id\. Configurable checks: path-policy/);
-});
-
-// --- Trusted ref ------------------------------------------------------------
-
-test('the trusted policy takes effect with and without --base, and a worktree copy never does', async () => {
-  const root = policyRepo({ version: 1, forbiddenGlobs: { mode: 'replace', globs: ['**/*.nothing'] } });
-  writeFileSync(join(root, '.env'), 'PLACEHOLDER=1\n');
-  for (const options of [{ worktree: root }, { worktree: root, base: 'main' }]) {
-    const result = await runPreflight(options);
-    assert.equal(resultOf(result, 'path-policy')?.status, 'pass', JSON.stringify(result.checks));
-    assert.match(policyEvidence(result), /Policy source: AGENTS\.md at trusted ref refs\/remotes\/origin\/HEAD/);
-    assert.equal(resultOf(result, 'policy')?.status, 'pass');
+  for (const entry of [
+    { path: 'vendor/old', oldId: 'a'.repeat(40), newId: 'b'.repeat(40), justification: '  ' },
+    { path: '../outside', newId: 'c'.repeat(40), justification: 'Reviewed.' },
+    { path: 'vendor/new', newId: 'not-a-commit', justification: 'Reviewed.' },
+    { path: 'vendor/invalid-length', newId: 'a'.repeat(41), justification: 'Reviewed.' },
+  ]) {
+    const invalidRoot = projectRepo({ gitlinkAcknowledgements: [entry] });
+    assert.throws(() => loadProjectPreflightPolicy(invalidRoot, 'refs/remotes/origin/HEAD'), /Gitlink acknowledgement/);
+    assert.throws(() => loadProjectPreflightPolicy(invalidRoot, 'refs/remotes/origin/HEAD', { forbiddenPathGlobs: true }), /Gitlink acknowledgement/, 'an explicit path-glob override does not bypass acknowledgement validation');
   }
 });
 
-test('a weakened worktree policy is reported as warn while the trusted policy stays effective', async () => {
-  const root = policyRepo({ version: 1, forbiddenGlobs: { mode: 'add', globs: ['**/*.secretdoc'] } });
-  writeFileSync(join(root, 'AGENTS.md'), contextText(root, { version: 1, checks: { 'path-policy': { enabled: false } }, forbiddenGlobs: { mode: 'replace', globs: ['**/*.nothing'] } }));
-  writeFileSync(join(root, 'id_rsa'), 'not a key\n');
-  writeFileSync(join(root, 'notes.secretdoc'), 'note\n');
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  const pathPolicy = resultOf(result, 'path-policy');
-  assert.equal(pathPolicy?.status, 'block', JSON.stringify(pathPolicy));
-  assert.ok(pathPolicy!.evidence.some((line) => line.includes('id_rsa')));
-  assert.ok(pathPolicy!.evidence.some((line) => line.includes('notes.secretdoc')));
-  assert.equal(resultOf(result, 'policy')?.status, 'warn');
-  assert.match(policyEvidence(result), /differs from trusted ref refs\/remotes\/origin\/HEAD \(edited\); the change takes effect only after it reaches origin\/HEAD/);
-  assert.match(policyEvidence(result), /Disabled checks: none\./);
-  assert.equal(result.checks.some((check) => check.id === 'path-policy'), true);
+test('trusted base policy replaces path globs, normalizes exact allowlist paths, and hides justifications', async () => {
+  const justification = 'Reviewed approved fixture exception; no production credential.';
+  const root = projectRepo({ forbiddenPathGlobs: ['**/*.bin'], allowlist: [{ path: 'src\\token.ts', rule: 'high-entropy-assignment', justification }] });
+  mkdirSync(join(root, 'src'));
+  writeFileSync(join(root, 'src', 'token.ts'), 'const api_key = "THIS_IS_A_FAKE_SECRET_VALUE_0123456789";\n');
+  writeFileSync(join(root, '.env.local'), 'ordinary text\n');
+  const policy = loadProjectPreflightPolicy(root, 'main');
+  assert.deepEqual(policy.sensitivePathGlobs, ['**/*.bin']);
+  assert.equal(policy.secretExceptions[0]?.path, 'src/token.ts');
+  assert.equal(policy.secretExceptions[0]?.justification, justification);
+  assert.equal(createDefaultChecks().length, 6);
+  const secretScanner: typeof scanAddedText = (changes, dependencies) => scanAddedText(changes, { ...dependencies, probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
+  const result = await runPreflight({ worktree: root, base: 'main', secretScanner });
+  assert.equal(result.checks.find(check => check.id === 'path-policy')?.status, 'pass', 'replacement globs do not retain the default .env rule');
+  assert.equal(result.checks.find(check => check.id === 'secret-scan')?.status, 'pass');
+  assert.equal(result.metrics['secret-scan.exceptionsApplied'], 1);
+  assert.ok(!JSON.stringify(result).includes(justification));
 });
 
-test('a policy in a linked context file is read from the trusted ref; a worktree edit to that file is only reported', async () => {
-  const root = makeTempRoot('preflight-policy-linked-');
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 'test@example.com');
-  git(root, 'config', 'user.name', 'Test');
-  git(root, 'config', 'core.autocrlf', 'false');
-  mkdirSync(join(root, 'docs'));
-  writeFileSync(join(root, 'docs', 'HARNESS.md'), contextText(root, { version: 1, forbiddenGlobs: { mode: 'replace', globs: ['**/*.nothing'] } }));
-  writeFileSync(join(root, 'AGENTS.md'), 'Read `docs/HARNESS.md` for Advanced Harness project settings before planning.\n');
-  git(root, 'add', '.');
-  git(root, 'commit', '-q', '-m', 'linked trusted context on main');
-  simulateOriginHead(root);
-  git(root, 'checkout', '-q', '-b', 'task');
-  // The worktree edit disables path-policy. It must not take effect: the trusted policy keeps path-policy running.
-  writeFileSync(join(root, 'docs', 'HARNESS.md'), contextText(root, { version: 1, checks: { 'path-policy': { enabled: false } } }));
-
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(resultOf(result, 'path-policy')?.status, 'pass', JSON.stringify(result.checks));
-  assert.equal(resultOf(result, 'policy')?.status, 'warn', JSON.stringify(result.checks));
-  assert.match(policyEvidence(result), /Policy source: docs\/HARNESS\.md at trusted ref refs\/remotes\/origin\/HEAD\./);
-  assert.match(policyEvidence(result), /worktree preflight policy \(docs\/HARNESS\.md\) differs from trusted ref refs\/remotes\/origin\/HEAD \(edited\)/);
-  assert.match(policyEvidence(result), /Disabled checks: none\./);
+test('trusted allowlist preserves optional positive line and rejects unknown exception keys', () => {
+  const root = projectRepo({ allowlist: [{ path: './src/token.ts', rule: 'fixture', line: 12, origin: 'staged', justification: 'Reviewed one generated line.' }] });
+  assert.deepEqual(loadProjectPreflightPolicy(root, 'main').secretExceptions, [{ path: 'src/token.ts', rule: 'fixture', line: 12, origin: 'staged', justification: 'Reviewed one generated line.' }]);
+  const invalid = projectRepo({ allowlist: [{ path: 'src/token.ts', rule: 'fixture', line: 12, justification: 'Reviewed.', extra: 'bad' }] });
+  assert.throws(() => loadProjectPreflightPolicy(invalid, 'main'), /unknown setting/);
 });
 
-test('--base does not skip the context read: an oversized worktree AGENTS.md makes every check inconclusive', async () => {
-  const root = policyRepo({ version: 1 });
-  writeFileSync(join(root, 'AGENTS.md'), 'x'.repeat(1024 * 1024 + 1));
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(result), 2, JSON.stringify(result.checks));
-  assert.ok(result.checks.every((check) => check.status === 'inconclusive'), JSON.stringify(result.checks));
-  assert.match(policyEvidence(result), /Context must be a regular text file no larger than 1 MiB/);
+test('line-scoped exceptions require origin and normalized empty paths are rejected', () => {
+  const missingOrigin = projectRepo({ allowlist: [{ path: 'token.ts', rule: 'fixture', line: 1, justification: 'Review.' }] });
+  assert.throws(() => loadProjectPreflightPolicy(missingOrigin, 'main'), /optional positive line with scan origin/);
+  const emptyPath = projectRepo({ allowlist: [{ path: './', rule: 'fixture', justification: 'Review.' }] });
+  assert.throws(() => loadProjectPreflightPolicy(emptyPath, 'main'), /paths must be nonempty/);
+  const originWithoutLine = projectRepo({ allowlist: [{ path: 'token.ts', rule: 'fixture', origin: 'staged', justification: 'Review.' }] });
+  assert.throws(() => loadProjectPreflightPolicy(originWithoutLine, 'main'), /optional positive line with scan origin/);
 });
 
-test('--base does not skip the context read: a symlinked worktree AGENTS.md makes every check inconclusive (skipped without symlink privilege)', async (t) => {
-  const root = policyRepo({ version: 1 });
-  writeFileSync(join(root, 'real.md'), contextText(root, { version: 1 }));
-  rmSync(join(root, 'AGENTS.md'));
-  try { symlinkSync(join(root, 'real.md'), join(root, 'AGENTS.md'), 'file'); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM' || (error as NodeJS.ErrnoException).code === 'EACCES') { t.skip('symlink creation requires OS privilege'); return; } throw error; }
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(result), 2, JSON.stringify(result.checks));
-  assert.ok(result.checks.every((check) => check.status === 'inconclusive'), JSON.stringify(result.checks));
-  assert.match(policyEvidence(result), /Context must be a regular text file no larger than 1 MiB/);
+test('branch policy edits are blocked and cannot weaken trusted checks; explicit options remain authoritative', async () => {
+  const root = projectRepo({ forbiddenPathGlobs: ['**/*.pem'], allowlist: [] });
+  mkdirSync(join(root, '.harness'), { recursive: true });
+  writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ forbiddenPathGlobs: [] }));
+  writeFileSync(join(root, '.harness', 'preflight-allowlist.json'), JSON.stringify([{ path: 'candidate.pem', rule: 'high-entropy-assignment', justification: 'Branch-added suppression attempt.' }]));
+  writeFileSync(join(root, 'candidate.pem'), 'const api_key = "THIS_IS_A_FAKE_SECRET_VALUE_0123456789";\n');
+  const secretScanner: typeof scanAddedText = (changes, dependencies) => scanAddedText(changes, { ...dependencies, probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
+  const trusted = await runPreflight({ worktree: root, base: 'main', secretScanner });
+  assert.equal(trusted.checks.find(check => check.id === 'policy-integrity')?.status, 'block');
+  assert.equal(trusted.checks.find(check => check.id === 'path-policy')?.status, 'block', 'base forbidden-path policy remains in force despite branch edits');
+  assert.equal(trusted.checks.find(check => check.id === 'secret-scan')?.status, 'block', 'branch allowlist edits cannot suppress findings');
+
+  const explicit = await runPreflight({ worktree: root, base: 'main', sensitivePathGlobs: ['**/*.txt'], secretExceptions: [], secretScanner });
+  assert.equal(explicit.checks.find(check => check.id === 'path-policy')?.status, 'pass', 'trusted programmatic glob options take precedence over base policy');
+  assert.equal(explicit.checks.find(check => check.id === 'secret-scan')?.status, 'block', 'explicit empty exceptions are preserved');
+  assert.equal(explicit.checks.find(check => check.id === 'policy-integrity')?.status, 'block');
+
+  git(root, 'checkout', '-q', '-b', 'weaker-base');
+  writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ forbiddenPathGlobs: [] }));
+  git(root, 'add', '.harness/preflight.json'); git(root, 'commit', '-q', '-m', 'weaker comparison base policy');
+  git(root, 'checkout', '-q', 'task');
+  writeFileSync(join(root, 'candidate.pem'), 'ordinary text\n');
+  const weakerBase = await runPreflight({ worktree: root, base: 'weaker-base', secretScanner });
+  assert.equal(weakerBase.checks.find(check => check.id === 'path-policy')?.status, 'block', '--base never selects or weakens trusted origin/HEAD policy');
+  assert.equal(weakerBase.checks.find(check => check.id === 'policy-integrity')?.status, 'block', 'the alternate base cannot authorize its candidate policy edit');
 });
 
-test('a worktree policy added where the trusted ref has none is reported as added, and has no effect', async () => {
-  const root = policyRepo(undefined);
-  writeFileSync(join(root, 'AGENTS.md'), contextText(root, { version: 1, checks: { 'path-policy': { enabled: false } } }));
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(resultOf(result, 'policy')?.status, 'warn');
-  assert.match(policyEvidence(result), /\(added\)/);
-  assert.match(policyEvidence(result), /Policy source: none/);
-  assert.equal(resultOf(result, 'path-policy')?.status, 'pass');
+test('project-context base changes cannot select branch-authored policy', async () => {
+  const root = projectRepo({ forbiddenPathGlobs: ['**/*.pem'], allowlist: [] });
+  writeFileSync(join(root, 'candidate.pem'), 'const api_key = "THIS_IS_A_FAKE_SECRET_VALUE_0123456789";\n');
+  const agentsPath = join(root, 'AGENTS.md');
+  writeFileSync(agentsPath, readFileSync(agentsPath, 'utf8').replace('"baseBranch": "main"', '"baseBranch": "task"'));
+  const secretScanner: typeof scanAddedText = (changes, dependencies) => scanAddedText(changes, { ...dependencies, probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
+  const result = await runPreflight({ worktree: root, secretScanner });
+  assert.equal(result.checks.find(check => check.id === 'base-context')?.status, 'block');
+  assert.equal(result.checks.find(check => check.id === 'path-policy')?.status, 'block', 'implicit policy source stays pinned to the trusted remote default ref');
 });
 
-test('a trusted ref that is unavailable with a worktree policy is inconclusive with the set-head hint', async () => {
-  const root = policyRepo(undefined, { originHead: false });
-  writeFileSync(join(root, 'AGENTS.md'), contextText(root, { version: 1 }));
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
-  assert.ok(result.checks.every((check) => check.status === 'inconclusive'));
-  assert.match(resultOf(result, 'policy')?.evidence[0] ?? '', /git remote set-head origin --auto/);
+test('invalid trusted policy keeps policy-dependent checks inconclusive while independent checks continue', async () => {
+  const root = projectRepo({ forbiddenPathGlobs: [] });
+  writeFileSync(join(root, '.harness', 'preflight.json'), '{broken');
+  git(root, 'add', '.harness/preflight.json'); git(root, 'commit', '-q', '-m', 'invalid trusted policy');
+  git(root, 'update-ref', 'refs/heads/main', 'HEAD');
+  git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const invalid = await runPreflight({ worktree: root, base: 'main' });
+  assert.equal(invalid.checks.find(check => check.id === 'secret-scan')?.status, 'inconclusive');
+  assert.equal(invalid.checks.find(check => check.id === 'path-policy')?.status, 'inconclusive');
+  assert.equal(invalid.checks.find(check => check.id === 'changeset')?.status, 'pass');
+  const explicit = await runPreflight({ worktree: root, base: 'main', sensitivePathGlobs: [], secretExceptions: [] });
+  assert.equal(explicit.checks.find(check => check.id === 'path-policy')?.status, 'inconclusive', 'malformed trusted JSON invalidates policy-dependent checks even when overrides are supplied');
+  assert.equal(explicit.checks.find(check => check.id === 'secret-scan')?.status, 'inconclusive', 'malformed trusted JSON cannot authorize trusted acknowledgements');
+  assert.equal(explicit.checks.find(check => check.id === 'changeset')?.status, 'pass', 'independent checks continue when trusted policy is malformed');
+  assert.equal(explicit.checks.find(check => check.id === 'base-context')?.status, 'pass');
+  let customRan = false;
+  const custom = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'custom', run: () => { customRan = true; return { status: 'pass', evidence: ['ran'] }; } }] });
+  assert.equal(customRan, true);
+  assert.equal(custom.checks[0]?.status, 'pass');
+
+  const conflict = await runPreflight({ worktree: root, checks: [], sensitivePathGlobs: [] });
+  assert.equal(conflict.checks[0]?.status, 'inconclusive');
+  assert.match(conflict.checks[0]?.evidence[0] ?? '', /cannot be combined/);
 });
 
-test('a trusted ref that is unavailable with no worktree policy behaves as before, with a built-in policy result', async () => {
-  const root = policyRepo(undefined, { originHead: false });
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(resultOf(result, 'base-context')?.status, 'pass', JSON.stringify(result));
-  assert.equal(resultOf(result, 'policy')?.status, 'pass');
-  assert.match(policyEvidence(result), /Trusted ref refs\/remotes\/origin\/HEAD is unavailable/);
+test('policy-dependent custom factory checks are guarded while custom same-ID checks run', async () => {
+  const missing = projectRepo();
+  git(missing, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  const directFactory = await runPreflight({ worktree: missing, base: 'main', checks: [pathPolicyCheck(), secretScanCheck()] });
+  assert.deepEqual(directFactory.checks.map(check => check.status), ['inconclusive', 'inconclusive']);
+
+  let sameIdRan = false;
+  const sameId = await runPreflight({ worktree: missing, base: 'main', checks: [{ id: 'secret-scan', run: () => { sameIdRan = true; return { status: 'pass', evidence: ['custom'] }; } }] });
+  assert.equal(sameIdRan, true);
+  assert.equal(sameId.checks[0]?.status, 'pass');
 });
 
-test('(a) a Git failure reading the trusted ref is a load error with --base and no worktree policy: inconclusive (exit 2), not a pass', async () => {
-  const root = policyRepo(undefined);
-  // origin/HEAD still resolves to origin/main, but origin/main now names a commit object that does not exist.
-  writeFileSync(join(root, '.git', 'refs', 'remotes', 'origin', 'main'), '0123456789abcdef0123456789abcdef01234567\n');
-  let caught: unknown;
-  try { trustedCommit(root); } catch (error) { caught = error; }
-  assert.ok(caught instanceof Error && !(caught instanceof TrustedRefMissingError), String(caught));
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
-  assert.ok(result.checks.every((check) => check.status === 'inconclusive'), JSON.stringify(result.checks));
-  assert.match(resultOf(result, 'policy')?.evidence[0] ?? '', /Preflight policy could not be loaded: .*refs\/remotes\/origin\/HEAD/);
-});
-
-test('(b) a confirmed missing trusted ref with no worktree policy is not a load error: it still passes', async () => {
-  const root = policyRepo(undefined, { originHead: false });
-  assert.throws(() => trustedCommit(root), (error: unknown) => error instanceof TrustedRefMissingError);
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(resultOf(result, 'policy')?.status, 'pass', JSON.stringify(result));
-  assert.match(policyEvidence(result), /Policy source: none/);
-  assert.equal(resultOf(result, 'base-context')?.status, 'pass', JSON.stringify(result));
-});
-
-test('an invalid trusted policy makes every check inconclusive with the reason', async () => {
-  const root = policyRepo({ version: 1, checks: { 'path-policy': { severity: 'error' } } });
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(result), 2);
-  assert.ok(result.checks.every((check) => check.status === 'inconclusive'));
-  assert.match(resultOf(result, 'policy')?.evidence[0] ?? '', /Preflight policy could not be loaded: AGENTS\.md preflight policy: checks\.path-policy\.severity must be "block" or "warn" \(got "error"\)\./);
-});
-
-test('an invalid worktree policy is reported as warn and does not apply', async () => {
-  const root = policyRepo(undefined);
-  writeFileSync(join(root, 'AGENTS.md'), contextText(root).replace('<!-- advanced-harness:project:end -->', '<!-- advanced-harness:project:end -->\n\n<!-- advanced-harness:preflight:start -->\n```json\n{"version": 1\n```\n<!-- advanced-harness:preflight:end -->'));
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(resultOf(result, 'policy')?.status, 'warn', JSON.stringify(result.checks));
-  assert.match(policyEvidence(result), /is invalid and does not apply/);
-  assert.equal(resultOf(result, 'path-policy')?.status, 'pass');
-});
-
-// --- Severity, disabling, and built-in evidence -----------------------------
-
-test('a registered check may not take the reserved policy id; the run is inconclusive with the reason', async () => {
-  const root = policyRepo(undefined);
-  const result = await runPreflight({ worktree: root, base: 'main', checks: [configurable('policy', 'pass')] });
-  assert.equal(exitCodeFor(result), 2);
-  assert.deepEqual(result.checks.map((check) => check.id), ['policy']);
+test('custom check failure message is retained when trusted policy is unavailable', async () => {
+  const root = projectRepo();
+  git(root, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  const result = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'custom', run: () => { throw new Error('custom diagnostic'); } }] });
   assert.equal(result.checks[0]?.status, 'inconclusive');
-  assert.deepEqual(result.checks[0]?.evidence, ['Preflight check id "policy" is reserved for the built-in policy result.']);
+  assert.match(result.checks[0]?.evidence.join('\n') ?? '', /custom diagnostic/);
 });
 
-test('severity overrides apply in both directions; pass and inconclusive are untouched', async () => {
-  const root = policyRepo({ version: 1, checks: { custom: { severity: 'warn' }, other: { severity: 'block' }, okPass: { severity: 'block' }, inc: { severity: 'warn' } } });
-  const checks = [configurable('custom', 'block'), configurable('other', 'warn'), configurable('okPass', 'pass'), configurable('inc', 'inconclusive')];
-  const result = await runPreflight({ worktree: root, base: 'main', checks });
-  assert.equal(resultOf(result, 'custom')?.status, 'warn');
-  assert.deepEqual(resultOf(result, 'custom')?.evidence, ['custom evidence', 'severity block→warn by project policy (trusted ref)']);
-  assert.equal(resultOf(result, 'other')?.status, 'block');
-  assert.deepEqual(resultOf(result, 'other')?.evidence, ['other evidence', 'severity warn→block by project policy (trusted ref)']);
-  assert.deepEqual(resultOf(result, 'okPass'), { id: 'okPass', status: 'pass', evidence: ['okPass evidence'] });
-  assert.deepEqual(resultOf(result, 'inc'), { id: 'inc', status: 'inconclusive', evidence: ['inc evidence'] });
-  assert.match(policyEvidence(result), /Severity set by project policy \(trusted ref\): custom=warn\./);
-  assert.equal(exitCodeFor(result), 2);
-});
+test('explicit exceptions replace valid trusted entries but malformed trusted allowlists remain inconclusive', async () => {
+  const valid = projectRepo({ allowlist: [{ path: 'candidate.ts', rule: 'fixture', justification: 'Trusted fixture exception.' }] });
+  const policy = loadProjectPreflightPolicy(valid, 'refs/remotes/origin/HEAD', { secretExceptions: true });
+  assert.deepEqual(policy.secretExceptions, [], 'caller exceptions replace values from a valid trusted allowlist');
 
-test('disabled checks are skipped and listed in the policy evidence', async () => {
-  const root = policyRepo({ version: 1, checks: { custom: { enabled: false } } });
-  const checks = [configurable('custom', 'block'), configurable('other', 'warn')];
-  const result = await runPreflight({ worktree: root, base: 'main', checks });
-  assert.equal(resultOf(result, 'custom'), undefined);
-  assert.equal(resultOf(result, 'other')?.status, 'warn');
-  assert.match(policyEvidence(result), /Disabled by project policy \(trusted ref\); skipped, not run: custom\./);
-  assert.deepEqual(result.checks.map((check) => check.id), ['other', 'policy']);
-});
-
-test('recorded keys no installed check consumes are reported as warn evidence: recorded but not enforced', async () => {
-  const root = policyRepo({ version: 1, prodGlobs: ['src/**'], testGlobs: ['test/**'], allowlistPath: 'missing/allow.json' });
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(resultOf(result, 'policy')?.status, 'warn');
-  assert.match(policyEvidence(result), /Recorded but not enforced by any installed check yet: prodGlobs \(BH-070\), testGlobs \(BH-070\), allowlistPath \(BH-068\)\./);
-  assert.match(policyEvidence(result), /Allowlist missing\/allow\.json: not present; no exceptions apply\./);
-  assert.ok(result.warnings.some((line) => line.startsWith('policy: Recorded but not enforced')));
-});
-
-test('with no policy, the built-in policy result is present, passes, and says so', async () => {
-  const root = policyRepo(undefined);
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(resultOf(result, 'policy')?.status, 'pass');
-  assert.match(policyEvidence(result), /Policy source: none\./);
-  assert.deepEqual(result.checks.map((check) => check.id), ['base-context', 'changeset', 'path-policy', 'policy', 'secret-scan']);
-});
-
-test('the built-in policy result is sorted among the other checks', async () => {
-  const root = policyRepo(undefined);
-  const result = await runPreflight({ worktree: root, base: 'main', checks: [configurable('zeta', 'pass'), configurable('alpha', 'pass')] });
-  assert.deepEqual(result.checks.map((check) => check.id), ['alpha', 'policy', 'zeta']);
-});
-
-// --- Allowlist --------------------------------------------------------------
-
-test('an allowlist file in the worktree is resolved and reported; a missing one is evidence, not an error', async () => {
-  const present = policyRepo({ version: 1, allowlistPath: 'allow.json' });
-  writeFileSync(join(present, 'allow.json'), '[]\n');
-  const presentResult = await runPreflight({ worktree: present, base: 'main' });
-  assert.equal(exitCodeFor(presentResult), 0, JSON.stringify(presentResult.checks));
-  assert.match(policyEvidence(presentResult), /Allowlist allow\.json resolved in the worktree: present\./);
-
-  const missing = policyRepo({ version: 1, allowlistPath: 'config/allow.json' });
-  const missingResult = await runPreflight({ worktree: missing, base: 'main' });
-  assert.match(policyEvidence(missingResult), /Allowlist config\/allow\.json: not present; no exceptions apply\./);
-  assert.notEqual(exitCodeFor(missingResult), 2);
-});
-
-test('an allowlist over 1 MiB is refused as a load error', async () => {
-  const root = policyRepo({ version: 1, allowlistPath: 'big.json' });
-  writeFileSync(join(root, 'big.json'), Buffer.alloc(1024 * 1024 + 1));
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(result), 2);
-  assert.match(resultOf(result, 'policy')?.evidence[0] ?? '', /allowlistPath "big\.json" exceeds 1 MiB/);
-});
-
-test('an allowlist file symlink escaping the worktree is refused (skipped without symlink privilege)', async (t) => {
-  const root = policyRepo({ version: 1, allowlistPath: 'allow.json' });
-  const outside = makeTempRoot('preflight-policy-outside-');
-  writeFileSync(join(outside, 'allow.json'), '[]\n');
-  try { symlinkSync(join(outside, 'allow.json'), join(root, 'allow.json'), 'file'); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM' || (error as NodeJS.ErrnoException).code === 'EACCES') { t.skip('symlink creation requires OS privilege'); return; } throw error; }
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(result), 2);
-  assert.match(resultOf(result, 'policy')?.evidence[0] ?? '', /symlink or junction at allow\.json/);
-});
-
-test('an allowlist path through a directory link escaping the worktree is refused (skipped without link privilege)', async (t) => {
-  const root = policyRepo({ version: 1, allowlistPath: 'lists/allow.json' });
-  const outside = makeTempRoot('preflight-policy-dirlink-');
-  writeFileSync(join(outside, 'allow.json'), '[]\n');
-  try { symlinkSync(outside, join(root, 'lists'), process.platform === 'win32' ? 'junction' : 'dir'); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'EPERM' || (error as NodeJS.ErrnoException).code === 'EACCES') { t.skip('directory links require OS privilege'); return; } throw error; }
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(result), 2);
-  assert.match(resultOf(result, 'policy')?.evidence[0] ?? '', /symlink or junction at lists|resolves outside the worktree/);
-});
-
-test('a parent directory segment in the allowlist path is refused by the schema', async () => {
-  const root = policyRepo({ version: 1, allowlistPath: '../shared/allow.json' });
-  const result = await runPreflight({ worktree: root, base: 'main' });
-  assert.equal(exitCodeFor(result), 2);
-  assert.match(resultOf(result, 'policy')?.evidence[0] ?? '', /leaves the project; use a path inside the repository/);
-});
-
-test('allowlistPath on win32 refuses .git with trailing dots or spaces and refuses any colon; POSIX keeps those names', () => {
-  const check = (allowlistPath: string, platform: NodeJS.Platform) => messageOf(() => validatePreflightPolicy({ version: 1, allowlistPath }, { configurableIds, file, platform })) ?? '';
-  for (const path of ['.git./allow.json', '.git /allow.json', 'x/.GIT. /allow.json', '.git../allow.json']) assert.match(check(path, 'win32'), /is inside \.git\//, path);
-  for (const path of ['.git:stream/allow.json', 'allow.json:Zone.Identifier', 'x/a:b/allow.json']) {
-    assert.match(check(path, 'win32'), /has a ":" in a segment; NTFS streams and drive syntax are refused\./, path);
-    assert.match(check(path, 'linux'), /has a ":" in a segment/, path);
+  for (const [name, contents] of [['malformed JSON', '{broken'], ['null JSON value', 'null'], ['object JSON value', '{}']] as const) {
+    const root = projectRepo({ allowlist: [] });
+    writeFileSync(join(root, '.harness', 'preflight-allowlist.json'), contents);
+    git(root, 'add', '.harness/preflight-allowlist.json');
+    git(root, 'commit', '-q', '-m', `invalid trusted allowlist: ${name}`);
+    git(root, 'update-ref', 'refs/heads/main', 'HEAD');
+    git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    const result = await runPreflight({ worktree: root, base: 'main', secretExceptions: [] });
+    assert.equal(result.checks.find(check => check.id === 'secret-scan')?.status, 'inconclusive', name);
+    assert.equal(result.checks.find(check => check.id === 'path-policy')?.status, 'inconclusive', name);
+    assert.equal(result.checks.find(check => check.id === 'changeset')?.status, 'pass', `independent checks continue for ${name}`);
+    assert.equal(result.checks.find(check => check.id === 'base-context')?.status, 'pass', name);
   }
-  assert.equal(check('.git./allow.json', 'linux'), '');
-  assert.equal(check('.gitignore/allow.json', 'win32'), '');
-  assert.equal(check('x/.github/allow.json', 'win32'), '');
 });
 
-test('containment is platform-aware: win32 identity is case-insensitive and rejects escapes; POSIX is case-sensitive', () => {
-  assert.equal(isInsideRealPath('C:\\Repo\\Allow.json', 'c:\\repo', 'win32'), true);
-  assert.equal(isInsideRealPath('C:\\REPO\\sub\\allow.json', 'c:\\repo', 'win32'), true);
-  assert.equal(isInsideRealPath('C:\\repo\\..\\other\\allow.json', 'C:\\repo', 'win32'), false);
-  assert.equal(isInsideRealPath('D:\\repo\\allow.json', 'C:\\repo', 'win32'), false);
-  assert.equal(isInsideRealPath('/Repo/allow.json', '/repo', 'linux'), false);
-  assert.equal(isInsideRealPath('/repo/allow.json', '/repo', 'linux'), true);
-  assert.equal(isInsideRealPath('/repo', '/repo', 'linux'), true);
+test('custom checks can run with configured project policy but reject explicit policy overrides', async () => {
+  const root = projectRepo({ forbiddenPathGlobs: ['**/*.pem'], allowlist: [] });
+  const customCheck = { id: 'custom', description: 'Independent custom check', run: async () => ({ status: 'pass' as const, summary: 'Custom check ran.', evidence: [] }) };
+  const result = await runPreflight({ worktree: root, base: 'main', checks: [customCheck] });
+  assert.equal(result.checks[0]?.id, 'custom');
+  assert.equal(result.checks[0]?.status, 'pass', JSON.stringify(result));
+
+  const conflict = await runPreflight({ worktree: root, base: 'main', checks: [customCheck], secretExceptions: [] });
+  assert.equal(conflict.checks[0]?.status, 'inconclusive');
+  assert.match(conflict.checks[0]?.evidence[0] ?? '', /cannot be combined/);
 });
 
-// --- Effective policy shape -------------------------------------------------
+test('custom checks still run when trusted policy is missing or invalid', async () => {
+  const missing = projectRepo();
+  git(missing, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  let missingRan = false;
+  const missingResult = await runPreflight({ worktree: missing, base: 'main', checks: [{ id: 'custom', run: () => { missingRan = true; return { status: 'pass', evidence: ['custom ran'] }; } }] });
+  assert.equal(missingRan, true);
+  assert.equal(missingResult.checks[0]?.status, 'pass');
 
-test('the effective policy exposes the trusted-ref source, overrides, and the forbidden globs', async () => {
-  const root = policyRepo({ version: 1, checks: { 'path-policy': { severity: 'warn' } }, forbiddenGlobs: { mode: 'add', globs: ['**/*.x'] } });
-  const seen: EffectivePolicy[] = [];
-  const probe: PreflightCheck = { id: 'probe', policy: { configurable: true, consumes: ['forbiddenGlobs'] }, run: ({ policy }) => { seen.push(policy); return { status: 'pass', evidence: [] }; } };
-  const result = await runPreflight({ worktree: root, base: 'main', checks: [probe, configurable('path-policy', 'pass')] });
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0]!.source, 'trusted-ref');
-  assert.deepEqual(seen[0]!.forbiddenGlobs, { mode: 'add', globs: ['**/*.x'] });
-  assert.deepEqual(seen[0]!.severity, { 'path-policy': 'warn' });
-  assert.deepEqual(seen[0]!.inert, []);
-  assert.equal(resultOf(result, 'probe')?.status, 'pass');
+  const invalid = projectRepo({ forbiddenPathGlobs: [] });
+  writeFileSync(join(invalid, '.harness', 'preflight.json'), '{broken');
+  git(invalid, 'add', '.harness/preflight.json'); git(invalid, 'commit', '-q', '-m', 'invalid trusted policy');
+  git(invalid, 'update-ref', 'refs/heads/main', 'HEAD');
+  git(invalid, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  let invalidRan = false;
+  const invalidResult = await runPreflight({ worktree: invalid, base: 'main', checks: [{ id: 'custom', run: () => { invalidRan = true; return { status: 'pass', evidence: ['custom ran'] }; } }] });
+  assert.equal(invalidRan, true);
+  assert.equal(invalidResult.checks[0]?.status, 'pass');
 });
+
+test('policy-unavailable handling does not short-circuit caller checks with built-in IDs', async () => {
+  const checkIds = ['path-policy', 'secret-scan'] as const;
+  const makeChecks = (calls: string[]) => checkIds.map(id => ({
+    id,
+    run() { calls.push(id); return { status: 'pass' as const, evidence: [`caller ${id} ran`] }; },
+  }));
+
+  const missing = projectRepo();
+  git(missing, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  const missingCalls: string[] = [];
+  const missingResult = await runPreflight({ worktree: missing, base: 'main', checks: makeChecks(missingCalls) });
+  assert.deepEqual(missingCalls.sort(), [...checkIds].sort());
+  assert.deepEqual(missingResult.checks.map(check => check.status), ['pass', 'pass']);
+
+  const invalid = projectRepo({ forbiddenPathGlobs: [] });
+  writeFileSync(join(invalid, '.harness/preflight.json'), '{broken');
+  git(invalid, 'add', '.harness/preflight.json'); git(invalid, 'commit', '-q', '-m', 'invalid trusted policy');
+  git(invalid, 'update-ref', 'refs/heads/main', 'HEAD');
+  git(invalid, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const invalidCalls: string[] = [];
+  const invalidResult = await runPreflight({ worktree: invalid, base: 'main', checks: makeChecks(invalidCalls) });
+  assert.deepEqual(invalidCalls.sort(), [...checkIds].sort());
+  assert.deepEqual(invalidResult.checks.map(check => check.status), ['pass', 'pass']);
+});
+
+test('runPreflight honors trusted committed gitlink acknowledgements for updates and additions', async () => {
+  const root = projectRepo();
+  const updateSource = makeTempRoot('preflight-ack-update-src-');
+  git(updateSource, 'init', '-q', '-b', 'main');
+  git(updateSource, 'config', 'user.email', 'sub@example.com'); git(updateSource, 'config', 'user.name', 'Sub');
+  writeFileSync(join(updateSource, 'source.txt'), 'version A\n');
+  git(updateSource, 'add', '.'); git(updateSource, 'commit', '-q', '-m', 'source A');
+  const idA = gitOutput(updateSource, 'rev-parse', 'HEAD');
+  writeFileSync(join(updateSource, 'source.txt'), 'version B\n');
+  git(updateSource, 'add', '.'); git(updateSource, 'commit', '-q', '-m', 'source B');
+  const idB = gitOutput(updateSource, 'rev-parse', 'HEAD');
+
+  const addSource = makeTempRoot('preflight-ack-add-src-');
+  git(addSource, 'init', '-q', '-b', 'main');
+  git(addSource, 'config', 'user.email', 'sub@example.com'); git(addSource, 'config', 'user.name', 'Sub');
+  writeFileSync(join(addSource, 'source.txt'), 'new source\n');
+  git(addSource, 'add', '.'); git(addSource, 'commit', '-q', '-m', 'new source');
+  const idNew = gitOutput(addSource, 'rev-parse', 'HEAD');
+
+  git(root, 'checkout', '-q', 'main');
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', updateSource.replaceAll('\\', '/'), 'vendor/update');
+  git(join(root, 'vendor/update'), 'checkout', '-q', idA);
+  git(root, 'add', '.'); git(root, 'commit', '-q', '-m', 'base gitlink');
+  mkdirSync(join(root, '.harness'), { recursive: true });
+  const acks = [
+    { path: 'vendor/update', oldId: idA.toUpperCase(), newId: idB.toUpperCase(), justification: 'Reviewed updated upstream source.' },
+    { path: 'vendor/added', newId: idNew.toUpperCase(), justification: 'Reviewed added upstream source.' },
+  ];
+  writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ gitlinkAcknowledgements: acks }));
+  git(root, 'add', '.harness/preflight.json'); git(root, 'commit', '-q', '-m', 'trusted gitlink acknowledgements');
+  git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(root, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  const policyCommit = gitOutput(root, 'rev-parse', 'HEAD');
+  git(root, 'checkout', '-q', 'task'); git(root, 'merge', '-q', '--ff-only', 'main');
+
+  git(join(root, 'vendor/update'), 'checkout', '-q', idB);
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', addSource.replaceAll('\\', '/'), 'vendor/added');
+  git(root, 'add', '.'); git(root, 'commit', '-q', '-m', 'update and add gitlinks');
+  const checks = [changesetCheck, policyIntegrityCheck, secretScanCheck([], () => ({ backend: 'builtin', complete: true, findings: [] }))];
+
+  const clean = await runPreflight({ worktree: root, base: 'main', checks });
+  const cleanScan = clean.checks.find(check => check.id === 'secret-scan')!;
+  assert.equal(cleanScan.status, 'warn', JSON.stringify(clean));
+  assert.equal(exitCodeFor(clean), 0, JSON.stringify(clean));
+  assert.equal(clean.metrics['secret-scan.acknowledgedPaths'], 2, JSON.stringify(clean));
+  assert.match(cleanScan.evidence.join('\n'), /vendor\/update/);
+  assert.match(cleanScan.evidence.join('\n'), /vendor\/added/);
+  assert.ok(cleanScan.evidence.join('\n').includes(policyCommit), 'evidence identifies the exact trusted policy commit');
+
+  writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ gitlinkAcknowledgements: [
+    { path: 'vendor/update', newId: idB, justification: 'Omitted before ID must not acknowledge a modified gitlink.' },
+  ] }));
+  git(root, 'add', '.harness/preflight.json'); git(root, 'commit', '-q', '-m', 'test omitted old gitlink acknowledgement');
+  git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const omittedOldIdResult = await runPreflight({ worktree: root, base: 'main', checks });
+  const omittedOldIdScan = omittedOldIdResult.checks.find(check => check.id === 'secret-scan')!;
+  assert.equal(omittedOldIdResult.metrics['secret-scan.acknowledgedPaths'], 0);
+  assert.equal(omittedOldIdScan.status, 'inconclusive', JSON.stringify(omittedOldIdResult));
+  assert.match(omittedOldIdScan.evidence.join('\n'), /unmatched: 1/);
+
+  writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ gitlinkAcknowledgements: acks }));
+  git(root, 'add', '.harness/preflight.json'); git(root, 'commit', '-q', '-m', 'restore positive gitlink acknowledgements');
+  git(root, 'update-ref', 'refs/remotes/origin/main', policyCommit);
+
+  writeFileSync(join(root, 'vendor/update', 'untracked.txt'), 'nested dirty content\n');
+  const dirty = await runPreflight({ worktree: root, base: 'main', checks });
+  assert.equal(dirty.checks.find(check => check.id === 'secret-scan')?.status, 'inconclusive');
+  assert.equal(exitCodeFor(dirty), 2);
+  assert.match(dirty.checks.find(check => check.id === 'secret-scan')!.evidence.join('\n'), /vendor\/update/);
+  rmSync(join(root, 'vendor/update', 'untracked.txt'));
+
+  writeFileSync(join(root, '.harness/preflight.json'), JSON.stringify({ gitlinkAcknowledgements: [] }));
+  const candidateEdit = await runPreflight({ worktree: root, base: 'main', checks });
+  assert.equal(candidateEdit.checks.find(check => check.id === 'policy-integrity')?.status, 'block');
+  assert.equal(candidateEdit.checks.find(check => check.id === 'secret-scan')?.status, 'warn', 'the candidate acknowledgement edit does not replace trusted acknowledgements');
+  assert.equal(exitCodeFor(candidateEdit), 1);
+  assert.ok(candidateEdit.checks.find(check => check.id === 'secret-scan')!.evidence.join('\n').includes(policyCommit));
+});
+
+test('trusted policy rejects non-regular, oversized, invalid UTF-8, unknown-key, and traversal inputs', async (t) => {
+  const scenarios: { name: string; apply(root: string): void }[] = [
+    { name: 'symlink mode', apply(root) { const hash = spawnSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], { input: '{}', encoding: 'utf8' }); assert.equal(hash.status, 0); git(root, 'update-index', '--cacheinfo', `120000,${hash.stdout.trim()},.harness/preflight.json`); } },
+    { name: 'gitlink mode', apply(root) { git(root, 'update-index', '--add', '--cacheinfo', `160000,${gitOutput(root, 'rev-parse', 'HEAD')},.harness/preflight.json`); } },
+    { name: 'over 1 MiB', apply(root) { writeFileSync(join(root, '.harness', 'preflight.json'), Buffer.alloc(1024 * 1024 + 1, 0x20)); } },
+    { name: 'invalid UTF-8', apply(root) { writeFileSync(join(root, '.harness', 'preflight.json'), Buffer.from([0xff, 0xfe])); } },
+    { name: 'unknown configuration key', apply(root) { writeFileSync(join(root, '.harness', 'preflight.json'), JSON.stringify({ forbiddenPathGlobs: [], weaken: true })); } },
+    { name: 'allowlist traversal path', apply(root) { writeFileSync(join(root, '.harness', 'preflight-allowlist.json'), JSON.stringify([{ path: '../token', rule: 'fixture', justification: 'Reviewed.' }])); } },
+  ];
+  for (const scenario of scenarios) await t.test(scenario.name, async () => {
+    const root = projectRepo({ forbiddenPathGlobs: [], allowlist: [] });
+    scenario.apply(root);
+    if (!scenario.name.includes('mode')) git(root, 'add', '.harness');
+    git(root, 'commit', '-q', '-m', 'invalid trusted policy fixture');
+    git(root, 'update-ref', 'refs/heads/main', 'HEAD');
+    git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    const result = await runPreflight({ worktree: root, base: 'main' });
+    assert.ok(result.checks.some(check => check.id === 'secret-scan' && check.status === 'inconclusive'), JSON.stringify(result));
+    assert.ok(result.checks.some(check => check.id === 'path-policy' && check.status === 'inconclusive'), JSON.stringify(result));
+    assert.ok(result.checks.some(check => check.id === 'changeset' && check.status === 'pass'), JSON.stringify(result));
+  });
+});
+
+function gitOutput(root: string, ...args: string[]): string {
+  const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}

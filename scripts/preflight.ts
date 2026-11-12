@@ -3,13 +3,15 @@ import { basename, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { exitCodeFor, formatHuman, runPreflight } from '../src/preflight/runner.ts';
 
-const usage = `Usage: npm run harness:preflight -- --worktree <path> [--base <ref>] [--json]
+const usage = `Usage: npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--json]
        npm run harness:preflight -- -h | --help
 
 Reports pre-publish evidence for a task worktree. It never records approval.
   --worktree <path>  Task worktree to inspect (required)
   --base <ref>       Base ref; defaults to baseBranch in project context.
                      Required if the project context has no baseBranch.
+  --task <key>       Optional task or issue key (e.g. 182, #182, BH-067)
+                     to verify that HEAD matches the task branch.
   --json             Print the result contract as JSON
   -h, --help         Show this help message
 
@@ -42,7 +44,10 @@ export async function runCli(args: string[], deps: CliDeps = defaultDeps): Promi
     for (let index = 0; index < args.length; index += 1) {
       const flag = args[index]!;
       if (flag === '--json') { json = true; continue; }
-      if (flag !== '--worktree' && flag !== '--base') return fail(`Unknown option: ${flag}`);
+      if (flag === '--ack-gitlink') {
+        return fail('--ack-gitlink was removed. Move acknowledgements into trusted .harness/preflight.json under gitlinkAcknowledgements; see docs/preflight.md.');
+      }
+      if (flag !== '--worktree' && flag !== '--base' && flag !== '--task') return fail(`Unknown option: ${flag}`);
       if (options[flag] !== undefined) return fail(`Duplicate option: ${flag}`);
       const value = args[index + 1];
       if (!value || value.startsWith('--')) return fail(`Missing value for ${flag}`);
@@ -50,7 +55,7 @@ export async function runCli(args: string[], deps: CliDeps = defaultDeps): Promi
       index += 1;
     }
     if (!options['--worktree']) return fail('Missing required --worktree.');
-    const result = await deps.runPreflight({ worktree: options['--worktree'], base: options['--base'] });
+    const result = await deps.runPreflight({ worktree: options['--worktree'], base: options['--base'], task: options['--task'] });
     deps.output(json ? JSON.stringify(result, null, 2) : formatHuman(result));
     return exitCodeFor(result);
   } catch (error) {

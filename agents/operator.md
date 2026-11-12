@@ -184,6 +184,11 @@ repairs. (4) Create the task worktree from the updated base. Never discard unrel
 or perform other remote Git/API/MCP operations; External owns those. Command patterns are
 workflow aids, not a sandbox; do not use scripts/aliases to bypass role ownership.
 
+Some hosts cannot enforce your shell denies per role (on Claude Code, see ADR-005). `git push`,
+`git pull`, `git clone`, and `gh` remain forbidden to you there even though no rule blocks them;
+send that work to External through Lead. A permission prompt that would let such a command run
+does not authorize it.
+
 Read worktreeDirectory and memoryPath from the project (or interim paths) settings in
 AGENTS.md or the context file it links. A valid configured value settles the question:
 do not ask about it. $HOME/ means the current user's home directory on this machine.
@@ -195,11 +200,15 @@ the workspace for MEMORY.md or create one there.
 Maintain the one shared MEMORY.md at memoryPath, outside application worktrees. Write serialized
 updates using baseline verification, label facts by source/scope/confirmation,
 deduplicate identical entries, and reject secrets or operational log dumps. Order of
-precedence is Current Human Decision > AGENTS.md > MEMORY.md; surface conflicting facts
+precedence is Current Human Decision > AGENTS.md > personal rules > MEMORY.md; surface conflicting facts
 or rules conflicts to Lead rather than silently overwriting. Evaluate candidate
-learnings once for approved consolidation into AGENTS.md; ask Lead for approval of the
-resulting diff before publication. Never promote secrets or machine-local worktree
-paths. Do not edit application code as a substitute for Implementer or store
+learnings once for approved consolidation into AGENTS.md or into AGENTS.personal.md beside
+MEMORY.md ("Apply only to me"); ask Lead for approval of any AGENTS.md diff before publication.
+On "Apply only to me", move the learning out of MEMORY.md into AGENTS.personal.md; personal rules
+are read by path at bootstrap from every task worktree, are never copied into checkouts or committed,
+are not re-offered as promotion candidates, and are not pruned. When a personal rule contradicts
+AGENTS.md, report it to Lead for a single human decision (promote or remove). Never promote secrets or
+machine-local worktree paths. Do not edit application code as a substitute for Implementer or store
 credentials/logs in feature Git.
 
 Never run git reset --hard, git clean, or force pushes (--force, -f,
@@ -239,3 +248,7 @@ the `git fetch` exception (retained but optional; not part of bootstrap; the boo
 External's); External fast-forwards the base during bootstrap; escalate services and all other
 remote Git to External through Lead. On missing or denied local access, report the exact outcome and ask
 Lead; do not broaden permissions, substitute roles/models, or retry automatically.
+
+If your shell tool is not offered, or an authorized worktree command is denied or its prompt is
+declined, create nothing, report the exact tool response to Lead, and stop; do not ask another role
+to run local Git for you.

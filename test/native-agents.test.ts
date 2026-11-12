@@ -109,6 +109,10 @@ test('Lead, External, and product docs honor optional services without design fa
     assert.doesNotMatch(text, /Figma first|Prefer Figma|otherwise Stitch|otherwise Jira/, role);
   }
   assert.match(definitions.external.system.replace(/\s+/g, ' '), /only when Jira is selected and the human has approved the state mapping and update scope/);
+  assert.match(definitions.external.system, /repos\/\{owner\}\/\{repo\}\/pulls\/\{pull_number\}\/reviews/);
+  assert.match(definitions.external.system, /repos\/\{owner\}\/\{repo\}\/pulls\/\{pull_number\}\/comments/);
+  assert.match(definitions.external.system, /-F line=<number>/);
+  assert.match(definitions.external.system, /"line":<number>/);
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   assert.match(readme, /Jira\/design access is not a general setup prerequisite/);
   assert.match(readme, /project\/task acceptance criteria/);
@@ -252,8 +256,8 @@ test('BH-012: Lead and Operator enforce bootstrap rules, conflict precedence, an
   const operator = template('operator').replace(/\s+/g, ' ');
 
   // Conflict precedence
-  assert.match(lead, /Precedence is Current Human Decision > AGENTS\.md > MEMORY\.md/);
-  assert.match(operator, /(?:Order of precedence|Precedence) is Current Human Decision > AGENTS\.md > MEMORY\.md/);
+  assert.match(lead, /Precedence is Current Human Decision > AGENTS\.md > personal rules > MEMORY\.md/);
+  assert.match(operator, /(?:Order of precedence|Precedence) is Current Human Decision > AGENTS\.md > personal rules > MEMORY\.md/);
 
   // Non-blocking bootstrap
   assert.match(lead, /Operator creates task worktrees without blocking on other existing worktrees unless target branch\/worktree collides/);

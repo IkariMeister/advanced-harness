@@ -6,21 +6,35 @@ version between releases.
 
 ## Unreleased
 
+### Changed
+
+- Preflight gitlink coverage acknowledgements now come only from trusted
+  `.harness/preflight.json` at local `refs/remotes/origin/HEAD`, independently of
+  `--base`. Exact clean gitlink gaps with nonblank justifications remain visibly
+  incomplete; the legacy `--ack-gitlink` CLI option now reports migration guidance.
+
 ### Added
 
+- Personal project rules destination (BH-076, #208): add private, permanent storage for learnings
+  in `AGENTS.personal.md` stored beside `MEMORY.md` in the project data directory (derived from `memoryPath`),
+  never committed or copied into worktrees. Learning review gains a fourth disposition, "Apply only to me".
+  Order of precedence is `Current Human Decision > AGENTS.md > personal rules > MEMORY.md`.
+  Includes contradiction detection between personal rules and `AGENTS.md` with a single human decision,
+  and exclusion from promotion candidate lists and memory pruning.
+- `worktree-boundary` preflight check (BH-067, #182): enforces that preflight is run in an
+  isolated task worktree under `worktreeDirectory`. The default pipeline now blocks canonical checkouts
+  (where `--git-dir` resolves to the same path as `--git-common-dir`), unconfigured projects (missing
+  `worktreeDirectory`), worktrees outside `worktreeDirectory`, and modifications that change `worktreeDirectory`
+  away from the trusted ref `refs/remotes/origin/HEAD` or when the trusted ref is unavailable (check status `block`).
+  Because `exitCodeFor` prioritizes `inconclusive` (`exit 2`) over `block` (`exit 1`), a missing trusted ref with
+  `--base` omitted yields overall exit 2 (due to `base-context`), while passing `--base <ref>` yields exit 1 (see
+  [docs/preflight.md](docs/preflight.md) for exit-code precedence). Supports optional `--task <key>` to block on
+  branch mismatches or detached `HEAD`. Note that `defaultChecks` now includes `worktreeBoundaryCheck`.
 - `harness:preflight` (BH-066, #181): a pluggable preflight check runner over the task
   worktree changeset (including `changeset` and `base-context` checks), with JSON and human output
   and exit codes 0 pass, 1 blocked, 2 inconclusive. When `--base` is omitted, `base-context` verifies
   the project context and `baseBranch` against the local trusted ref `refs/remotes/origin/HEAD`
-  (no fetch); a missing trusted ref or unreadable context is inconclusive. See [docs/preflight.md](docs/preflight.md).
-- Project-configurable preflight guardrail policy (BH-069, #184): an optional marked `preflight` section in project
-  context sets enablement and severity for `path-policy`, forbidden globs, and the allowlist path. Preflight reads it
-  only from the trusted ref `refs/remotes/origin/HEAD`; worktree edits are reported as warnings until they reach it.
-  `harness:setup` offers the suggested policy on request. Evidence configuration, not approval. See
-  [docs/configuration.md](docs/configuration.md#preflight-policy) and [docs/preflight.md](docs/preflight.md#project-policy).
-  Preflight results now always include a built-in `policy` check row, including early inconclusive results such as a
-  missing worktree, an unresolvable base, an unavailable changeset, or no checks configured, so consumers that match
-  exact check ids will see this extra row.
+  (no fetch); a missing trusted ref or unreadable context is inconclusive (exit 2). See [docs/preflight.md](docs/preflight.md).
 
 ### Changed
 
@@ -33,6 +47,31 @@ version between releases.
   Untouched canonical changes no longer let bootstrap proceed, and a failed fetch no
   longer falls back to branching from the local base. The rule applies only to projects that
   use task worktrees; pinned consumer harness checkouts are unchanged.
+- Claude Code: Operator now has Bash for local Git and task worktree bootstrap, so
+  `/start-issue` can create the worktree there (#200, [ADR-005](docs/adr/0005-claude-code-operator-bash.md),
+  Proposed). Operator's `git fetch --upload-pack` and `-u` denies become project settings
+  deny rules for every session. Its `git push`, `git pull`, `git clone`, and `gh` denies are
+  advisory on Claude Code: instruction only, not enforced. The Operator exception applies only
+  while its shell denies exactly match the ADR-005 list; any missing or extra deny withholds
+  Bash and is reported as unsupported. Implementer, Reviewer, QA, and Lead
+  still have no Bash. If Operator's Bash is unavailable or declined, bootstrap stops for a human
+  to create the worktree or cancel.
+  Upgrade: run `harness:update --host claude-code`. Until you do, `harness:doctor` reports
+  `operator.md` and `CLAUDE.md` as outdated and `.claude/settings.json` as missing the new
+  fetch deny rules.
+- Codex Operator and External role profiles now run with `sandbox_mode = danger-full-access`,
+  derived from the role sources, so `git add`, `git commit` and `gh` are expected to no longer be
+  blocked by the workspace-write sandbox (motivation recorded in #218; not verified by a live run) (#218, [ADR-006](docs/adr/0006-codex-operator-external-full-access.md),
+  Proposed). Lead stays read-only and on request. The destructive-command rules remain
+  installed, but their enforcement for full-access roles is unverified. Existing installs must
+  run `harness:update --host codex`. Manual smoke was waived.
+
+### Fixed
+
+- Codex role processes (listing, launch and resume) now run with Codex plugins disabled,
+  so plugin-provided MCP servers no longer make every role launch fail with "invalid
+  transport" (#209). If listing the MCP servers fails, the launcher now names the role and
+  Codex's reason and starts nothing.
 
 ## v0.3.0 — 2026-11-08
 
@@ -70,7 +109,7 @@ Milestone "Shared Skills": reusable procedure skills that roles share across hos
 - OpenAI Codex install, update, doctor and uninstall at global scope: each child
   role runs as its own `codex exec` process with a source-derived profile, started
   by Lead through a launcher that re-applies the role settings on every launch and
-  resume, with your approval for each launch. Uninstall removes only the Lead block
+  resume, with your host permission at the Codex Desktop prompt for each launch. Uninstall removes only the Lead block
   from a shared `AGENTS.md` and reverses only the
   harness's own `config.toml` edits (#45, #153, #154).
 - `harness:doctor` reports each resolved worktree and shared `MEMORY.md` location

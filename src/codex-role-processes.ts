@@ -6,13 +6,13 @@ import type { RoleDefinition } from './role-definitions.ts';
 
 // Codex per-role process isolation (#45). Codex custom agents inherit the parent's sandbox, approval
 // and MCP settings, so each child role runs as its own `codex exec -p harness-<role>` process and Lead
-// (the Desktop session) only launches them, one approved escalation per launch.
+// (the Desktop session) only launches them, one host-permitted escalation per launch.
 
 export type CodexChildRole = Exclude<NativeRole, 'lead'>;
 export const codexChildRoles = nativeRoles.filter((role): role is CodexChildRole => role !== 'lead');
 
 export interface CodexRolePolicy {
-  sandbox: 'read-only' | 'workspace-write';
+  sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
   network: boolean;
   mcp: boolean;
 }
@@ -20,9 +20,10 @@ export interface CodexRolePolicy {
 const quote = (text: string): string => JSON.stringify(text);
 
 /**
- * Derived from each role's source policy, not chosen per host: file edits (allow/ask) need
- * workspace-write; web or MCP access (External) also needs network and .git writes for push/gh.
- * Every other role is read-only with MCP off.
+ * Derived from each role's source policy, not chosen per host. A role that edits files or has web or MCP
+ * access, and whose shell does not deny `git *`, gets danger-full-access (Operator, External): their contracts
+ * need local Git and remote access that the workspace-write profile does not grant. A role that edits files but
+ * denies `git *` (Implementer) keeps workspace-write. Every other role is read-only with MCP off.
  */
 export function codexRolePolicies(definitions: Record<NativeRole, RoleDefinition>): Record<CodexChildRole, CodexRolePolicy> {
   return Object.fromEntries(codexChildRoles.map(role => {
@@ -30,7 +31,9 @@ export function codexRolePolicies(definitions: Record<NativeRole, RoleDefinition
     const grants = (capability: string) => rules.some(rule => rule.capability === capability && rule.effect !== 'deny');
     const remote = grants('web.fetch') || grants('mcp.tool');
     const edits = rules.filter(rule => rule.capability === 'file.edit' && rule.resource.kind === 'all').at(-1)?.effect;
-    const sandbox = remote || (edits !== undefined && edits !== 'deny') ? 'workspace-write' : 'read-only';
+    const writesFiles = edits !== undefined && edits !== 'deny';
+    const denysGit = rules.some(rule => rule.capability === 'shell.run' && rule.resource.kind === 'native-pattern' && rule.resource.value === 'git *' && rule.effect === 'deny');
+    const sandbox = !(writesFiles || remote) ? 'read-only' : denysGit ? 'workspace-write' : 'danger-full-access';
     return [role, { sandbox, network: remote, mcp: grants('mcp.tool') }];
   })) as Record<CodexChildRole, CodexRolePolicy>;
 }
@@ -41,8 +44,9 @@ export function compileCodexRoleProfile(role: CodexChildRole, policy: CodexRoleP
   const lines = [
     `# Advanced Harness role profile for ${role}; generated, re-applied by the role launcher on every run.`,
     ...(policy.mcp ? ['# advanced-harness: mcp=allowed'] : []),
+    ...(policy.sandbox === 'danger-full-access' ? ['# danger-full-access: network is not restricted under this sandbox mode, so network_access below has no effect.'] : []),
     `sandbox_mode = ${quote(policy.sandbox)}`,
-    // Children are non-interactive; the human approval point is Lead's launch of this process.
+    // Children are non-interactive; the human host-permission point is Lead's launch of this process.
     'approval_policy = "never"',
     `model = ${quote(model.trim())}`,
     `model_reasoning_effort = ${quote(reasoning)}`,
@@ -76,16 +80,18 @@ export function compileCodexLeadBlock(policies: Record<CodexChildRole, CodexRole
     '## Advanced Harness Lead (Codex, one process per role)',
     '',
     'You are Lead. You do not edit files, run project commands, or use MCP tools yourself, and you never use in-process subagents (`spawn_agent`).',
-    'Delegate each role task by running the role launcher, and ask to run it outside the sandbox: the human approves every launch, and that approval is the checkpoint for the role\'s work.',
+    'Delegate each role task by running the role launcher, and ask to run it outside the sandbox: the human grants host permission for every launch at the Codex Desktop prompt, and that prompt is the checkpoint for the role\'s work.',
     '',
     `- New task: \`${launch}\``,
     `- Follow-up in the same role thread: add \`--resume <threadId>\` from the previous launch's output.`,
-    '- Put the whole task in `--task` so the human sees it in the approval prompt. One role and one task per launch.',
+    '- Put the whole task in `--task` so the human sees it in the host permission prompt. One role and one task per launch.',
     '- The launcher prints JSON with `status` (Working, Checking, Ready, Needs your decision), `summary`, `details` and `threadId`. Treat anything else as Needs your decision.',
     '',
     '| Role | Sandbox | Network | MCP |',
     '| :--- | :--- | :--- | :--- |',
-    ...codexChildRoles.map(role => `| \`${role}\` | ${policies[role].sandbox} | ${policies[role].network ? 'yes' : 'no'} | ${policies[role].mcp ? 'selected servers' : 'off'} |`),
+    ...codexChildRoles.map(role => `| \`${role}\` | ${policies[role].sandbox} | ${policies[role].sandbox === 'danger-full-access' ? 'unrestricted' : policies[role].network ? 'yes' : 'no'} | ${policies[role].mcp ? 'selected servers' : 'off'} |`),
+    '',
+    '`operator` has network access under danger-full-access, but it must still not push, pull, clone or use `gh`. Do not ask it to.',
     '',
     'Role settings come from `~/.codex/harness-<role>.config.toml` and are re-applied on every launch and resume. Do not pass your own `-c`, `-s` or `-p` flags and do not call `codex exec` directly.',
     '',
