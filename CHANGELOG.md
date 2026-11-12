@@ -6,6 +6,13 @@ version between releases.
 
 ## Unreleased
 
+### Changed
+
+- Preflight gitlink coverage acknowledgements now come only from trusted
+  `.harness/preflight.json` at local `refs/remotes/origin/HEAD`, independently of
+  `--base`. Exact clean gitlink gaps with nonblank justifications remain visibly
+  incomplete; the legacy `--ack-gitlink` CLI option now reports migration guidance.
+
 ### Added
 
 - `MEMORY.md` pruning during learning review (BH-077, #216): add pruning candidate proposals

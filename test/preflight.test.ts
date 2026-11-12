@@ -1,19 +1,191 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, posix, relative, resolve, win32 } from 'node:path';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { delimiter, dirname, isAbsolute, join, posix, relative, resolve, win32 } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { updateContext } from '../src/project-context.ts';
-import { baseContextCheck, isPathContained, worktreeBoundaryCheck } from '../src/preflight/checks.ts';
-import { collectChangeset } from '../src/preflight/changeset.ts';
-import { exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
+import { baseContextCheck, isPathContained, pathPolicyCheck, secretScanCheck, worktreeBoundaryCheck } from '../src/preflight/checks.ts';
+import { collectChangeset, nestedGitEnvironment } from '../src/preflight/changeset.ts';
+import { exitCodeFor, formatHuman, resolveBase, runPreflight, UnresolvedBaseError } from '../src/preflight/runner.ts';
 import type { Changeset, CheckStatus, PreflightCheck } from '../src/preflight/types.ts';
 import { entryDecision, runCli } from '../scripts/preflight.ts';
+import { MAX_SECRET_SCAN_BYTES, resolveGitleaksExecutable, safeGitleaksRuleId, scanAddedText } from '../src/preflight/secret-scanner.ts';
 import { makeTempRoot } from './temp-directory.ts';
 
 const script = resolve(import.meta.dirname, '../scripts/preflight.ts');
 const contextSections = ['build', 'lint', 'unit', 'roborazzi', 'runtime', 'e2e'];
+
+test('path policy normalizes case and separators, skips deletions, and supports project glob replacement', async () => {
+  const changeset = (entries: Changeset['entries']): Changeset => ({ top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries });
+  const entry = (path: string, status: 'added' | 'deleted' = 'added') => ({ path, status, origin: 'untracked' as const, content: Buffer.from('x') });
+  const run = (entries: Changeset['entries'], globs?: readonly string[]) => pathPolicyCheck(globs).run({ worktree: '/', changeset: changeset(entries) });
+  assert.equal((await run([entry('Secrets\\ID_RSA.pub')])).status, 'block');
+  assert.equal((await run([{ ...entry('safe.txt'), oldPath: 'secret.pem', status: 'renamed' }])).status, 'pass');
+  assert.equal((await run([entry('foo/old.pem', 'deleted')])).status, 'pass');
+  assert.equal((await run([entry('artifact/custom.bin')], ['**/*.bin'])).status, 'block');
+  assert.equal((await run([entry('artifact/custom.bin')], ['**/*.pem'])).status, 'pass');
+});
+
+test('secret scan reports only a redacted rule and location and validates exact exceptions', async () => {
+  const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [{ path: 'src/token.ts', status: 'added', origin: 'untracked', kind: 'file', content: Buffer.from('token'), addedText: 'const api_key = "THIS_IS_A_FAKE_SECRET_VALUE_0123456789"', targetLines: [7] }] };
+  const scanner = (changes: Parameters<typeof scanAddedText>[0]) => scanAddedText(changes, { probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
+  const outcome = await secretScanCheck([], scanner).run({ worktree: '/', changeset });
+  assert.equal(outcome.status, 'block');
+  assert.ok(!outcome.evidence.join('').includes('THIS_IS_A_FAKE_SECRET_VALUE_0123456789'));
+  if (outcome.status === 'block') assert.ok(outcome.evidence.some(line => line === 'high-entropy-assignment at src/token.ts:7 [REDACTED]'));
+  const exception = secretScanCheck([{ path: 'src/token.ts', rule: 'high-entropy-assignment', justification: ' Reviewed placeholder only ' }], scanner);
+  assert.equal((await exception.run({ worktree: '/', changeset })).status, 'pass');
+  const lineScoped = secretScanCheck([{ path: 'src/token.ts', rule: 'high-entropy-assignment', line: 8, origin: 'untracked', justification: 'Only this generated fixture line.' }], scanner);
+  assert.equal((await lineScoped.run({ worktree: '/', changeset })).status, 'block', 'a line-scoped exception does not suppress another line');
+  const exactLine = secretScanCheck([{ path: 'src/token.ts', rule: 'high-entropy-assignment', line: 7, origin: 'untracked', justification: 'Reviewed this exact snapshot line.' }], scanner);
+  assert.equal((await exactLine.run({ worktree: '/', changeset })).status, 'pass');
+  const wrongOrigin = secretScanCheck([{ path: 'src/token.ts', rule: 'high-entropy-assignment', line: 7, origin: 'staged', justification: 'Different origin is not covered.' }], scanner);
+  assert.equal((await wrongOrigin.run({ worktree: '/', changeset })).status, 'block');
+  const gitleaksScanner = () => ({ backend: 'gitleaks' as const, complete: true, findings: [{ rule: safeGitleaksRuleId('custom-rule'), path: 'src/token.ts', line: 7, redacted: true as const }] });
+  const gitleaksException = secretScanCheck([{ path: 'src/token.ts', rule: 'custom-rule', justification: ' Reviewed exact rule ' }], gitleaksScanner);
+  assert.equal((await gitleaksException.run({ worktree: '/', changeset })).status, 'pass');
+  const { addedText: _addedText, ...binaryEntry } = changeset.entries[0]!;
+  const binaryChangeset: Changeset = { ...changeset, entries: [{ ...binaryEntry, addedTextComplete: false }, { ...changeset.entries[0]!, path: 'src/other.ts', addedText: 'ordinary text\n', targetLines: [3], addedTextComplete: true }] };
+  let binaryScannerCalled = false;
+  const binaryOutcome = await secretScanCheck([], (lines) => { binaryScannerCalled = true; assert.deepEqual(lines.map(line => line.path), ['src/other.ts']); return { backend: 'builtin', complete: true, findings: [] }; }).run({ worktree: '/', changeset: binaryChangeset });
+  assert.equal(binaryOutcome.status, 'inconclusive');
+  assert.equal(binaryScannerCalled, true);
+  assert.ok(binaryOutcome.evidence.some(line => line.includes('src/token.ts')));
+  assert.equal(binaryOutcome.metrics?.backendBuiltin, 1);
+  assert.equal(binaryOutcome.metrics?.affectedPaths, 1);
+  const noEligibleText = await secretScanCheck([], () => { throw new Error('scanner must not run'); }).run({ worktree: '/', changeset: { ...changeset, entries: [{ ...binaryEntry, addedTextComplete: false }] } });
+  assert.equal(noEligibleText.status, 'inconclusive');
+  assert.equal(noEligibleText.metrics?.notRun, 1);
+  assert.equal(noEligibleText.metrics?.backendBuiltin, 0);
+  const sanitizedIncomplete = await secretScanCheck([], () => ({ backend: 'unavailable', complete: false, reason: 'private raw scanner diagnostic', findings: [] })).run({ worktree: '/', changeset });
+  assert.equal(sanitizedIncomplete.status, 'inconclusive');
+  assert.ok(sanitizedIncomplete.evidence.includes('Secret scan incomplete: scanner could not complete its bounded probe or scan.'));
+  assert.ok(!sanitizedIncomplete.evidence.join('').includes('private raw scanner diagnostic'));
+  const knownIncomplete = await secretScanCheck([], () => ({ backend: 'gitleaks', complete: false, reason: 'Gitleaks report could not be read.', findings: [] })).run({ worktree: '/', changeset });
+  assert.ok(knownIncomplete.evidence.includes('Secret scan incomplete: Gitleaks report could not be read.'));
+});
+
+test('Gitleaks cleanup failures preserve findings and report a fixed incomplete reason', () => {
+  const scannerChanges = [
+    { path: 'a.txt', line: 1, text: 'first', origin: 'committed' },
+    { path: 'b.txt', line: 1, text: 'second', origin: 'staged' },
+  ];
+  let calls = 0;
+  const run = ((_: string, args: readonly string[]) => {
+    calls += 1;
+    if (calls === 2) return { status: null, error: new Error('secret raw subprocess detail'), stdout: '', stderr: '' } as ReturnType<typeof spawnSync>;
+    const reportPath = args[args.indexOf('--report-path') + 1]!;
+    writeFileSync(reportPath, JSON.stringify([{ RuleID: 'fixture', StartLine: 1 }]));
+    return { status: 1, stdout: '', stderr: '' } as ReturnType<typeof spawnSync>;
+  }) as typeof spawnSync;
+  const cleanupFails = () => { throw new Error('private cleanup path'); };
+  const successfulScanCleanup = scanAddedText(scannerChanges.slice(0, 1), { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run: ((_: string, args: readonly string[]) => { const reportPath = args[args.indexOf('--report-path') + 1]!; writeFileSync(reportPath, '[]'); return { status: 0, stdout: '', stderr: '' } as ReturnType<typeof spawnSync>; }) as typeof spawnSync, createTempDirectory: () => makeTempRoot('gitleaks-cleanup-success-'), removeTempDirectory: cleanupFails });
+  assert.equal(successfulScanCleanup.complete, false);
+  assert.equal(successfulScanCleanup.reason, 'Gitleaks temporary files could not be cleaned up.');
+  assert.deepEqual(successfulScanCleanup.findings, []);
+
+  const failedLater = scanAddedText(scannerChanges, { probe: () => ({ available: true, backend: 'gitleaks', executable: process.execPath }), run, createTempDirectory: () => makeTempRoot('gitleaks-cleanup-failure-'), removeTempDirectory: cleanupFails });
+  assert.equal(failedLater.complete, false);
+  assert.equal(failedLater.reason, 'Gitleaks temporary files could not be cleaned up.');
+  assert.deepEqual(failedLater.findings.map(finding => [finding.rule, finding.path]), [[safeGitleaksRuleId('fixture'), 'a.txt']]);
+  assert.ok(!JSON.stringify(failedLater).includes('secret raw subprocess detail'));
+});
+
+test('secret scanner input retains blank added lines and origin boundaries', async () => {
+  const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [{ path: 'src/a.ts', status: 'modified', origin: 'committed', content: Buffer.from(''), addedText: 'alpha\n\nomega\n', targetLines: [1, 2, 3], addedTextComplete: true }, { path: 'src/a.ts', status: 'modified', origin: 'staged', content: Buffer.from(''), addedText: 'staged\n', targetLines: [4], addedTextComplete: true }] };
+  let received: Parameters<typeof scanAddedText>[0] = [];
+  const check = await secretScanCheck([], (changes) => { received = changes; return { backend: 'builtin', complete: true, findings: [] }; }).run({ worktree: '/', changeset });
+  assert.equal(check.status, 'pass');
+  assert.deepEqual(received.map(item => [item.text, item.origin]), [['alpha', 'committed'], ['', 'committed'], ['omega', 'committed'], ['staged', 'staged']]);
+});
+
+test('trusted gitlink acknowledgement is exact, visible as incomplete coverage, and cannot clear other gaps', async () => {
+  const gitlinkEntry = { path: 'vendor/lib', status: 'modified' as const, origin: 'committed' as const, kind: 'submodule' as const, content: undefined, addedTextComplete: false, gitlink: { oldId: 'a'.repeat(40), newId: 'b'.repeat(40) } };
+  const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [gitlinkEntry] };
+  const acknowledgement = { path: 'vendor/lib', oldId: 'a'.repeat(40), newId: 'b'.repeat(40), justification: 'Reviewed upstream contents.' };
+  const check = secretScanCheck([], () => ({ backend: 'builtin', complete: true, findings: [] }));
+  const accepted = await check.run({ worktree: '/', changeset, gitlinkAcknowledgements: [acknowledgement] });
+  assert.equal(accepted.status, 'warn');
+  assert.equal(accepted.metrics?.acknowledgedPaths, 1);
+  assert.ok(accepted.evidence.some(line => /Acknowledged incomplete coverage: vendor\/lib/.test(line)));
+  const withText = await check.run({ worktree: '/', changeset: { ...changeset, entries: [...changeset.entries, { path: 'ordinary.txt', status: 'added', origin: 'committed', content: Buffer.from('ordinary'), addedText: 'ordinary text', targetLines: [1], addedTextComplete: true }] }, gitlinkAcknowledgements: [acknowledgement] });
+  assert.equal(withText.metrics?.complete, 0, 'acknowledged gitlink coverage remains incomplete even when ordinary text is scanned');
+  assert.equal(exitCodeFor({ approved: true, blocking: [], warnings: withText.evidence, metrics: {}, checks: [{ id: 'secret-scan', status: withText.status, evidence: withText.evidence }] }), 0, 'the sole acknowledged gap retains the approved exit 0 behavior');
+  assert.match(formatHuman({ approved: true, blocking: [], warnings: withText.evidence, metrics: {}, checks: [{ id: 'secret-scan', status: withText.status, evidence: withText.evidence }] }), /Secret scan backend: builtin \(incomplete\)/);
+  assert.equal(JSON.parse(JSON.stringify({ metrics: withText.metrics })).metrics.complete, 0, 'JSON retains incomplete coverage');
+
+  const wrongId = await check.run({ worktree: '/', changeset, gitlinkAcknowledgements: [{ ...acknowledgement, newId: 'c'.repeat(40) }] });
+  assert.equal(wrongId.status, 'inconclusive');
+  assert.ok(wrongId.evidence.some(line => /matched: 0; unmatched: 1/.test(line)));
+
+  const wrongSamePath = { ...acknowledgement, oldId: 'd'.repeat(40) };
+  const correctAndIncorrect = await check.run({ worktree: '/', changeset, gitlinkAcknowledgements: [acknowledgement, wrongSamePath] });
+  assert.equal(correctAndIncorrect.status, 'warn');
+  assert.ok(correctAndIncorrect.evidence.some(line => /Trusted gitlink acknowledgements from policy commit unavailable: 2; matched: 1; unmatched: 1/.test(line)), 'each tuple is counted independently even when its path matches');
+
+  const unrelatedGap = await check.run({ worktree: '/', changeset: { ...changeset, entries: [...changeset.entries, { path: 'ordinary.bin', status: 'added', origin: 'committed', content: undefined, addedTextComplete: false }] }, gitlinkAcknowledgements: [acknowledgement] });
+  assert.equal(unrelatedGap.status, 'inconclusive');
+  assert.ok(unrelatedGap.evidence.some(line => line.includes('ordinary.bin')));
+});
+
+test('an acknowledged gitlink cannot mask a failed secret scanner', async () => {
+  const oldId = 'a'.repeat(40);
+  const newId = 'b'.repeat(40);
+  const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [
+    { path: 'vendor/lib', status: 'modified', origin: 'committed', kind: 'submodule', content: undefined, addedTextComplete: false, gitlink: { oldId, newId } },
+    { path: 'ordinary.txt', status: 'added', origin: 'committed', content: Buffer.from('added'), addedText: 'ordinary text', targetLines: [1], addedTextComplete: true },
+  ] };
+  const acknowledgement = { path: 'vendor/lib', oldId, newId, justification: 'Reviewed upstream source.' };
+  const outcome = await secretScanCheck([], () => ({ backend: 'unavailable', complete: false, reason: 'Gitleaks scan failed.', findings: [] })).run({ worktree: '/', changeset, gitlinkAcknowledgements: [acknowledgement] });
+  assert.equal(outcome.status, 'inconclusive');
+  assert.equal(outcome.metrics?.acknowledgedPaths, 1);
+  const result = {
+    approved: false, blocking: [], warnings: [],
+    metrics: Object.fromEntries(Object.entries(outcome.metrics ?? {}).map(([key, value]) => [`secret-scan.${key}`, value])),
+    checks: [{ id: 'secret-scan', status: outcome.status, evidence: outcome.evidence }],
+  };
+  assert.equal(exitCodeFor(result), 2);
+  assert.match(formatHuman(result), /Preflight: INCONCLUSIVE/);
+  assert.doesNotMatch(formatHuman(result), /PASS \(ACKNOWLEDGED INCOMPLETE COVERAGE\)/);
+});
+
+test('aggregate scan cap applies before either scanner and long paths remain exact behind safe display', async () => {
+  const tooLarge = 'x'.repeat(MAX_SECRET_SCAN_BYTES + 1);
+  const oversized: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [{ path: 'large.txt', status: 'added', origin: 'untracked', kind: 'file', content: Buffer.from(''), addedText: tooLarge, targetLines: [1], addedTextComplete: true }] };
+  let called = false;
+  const oversizedOutcome = await secretScanCheck([], () => { called = true; return { backend: 'builtin' as const, complete: true, findings: [] }; }).run({ worktree: '/', changeset: oversized });
+  assert.equal(oversizedOutcome.status, 'inconclusive');
+  assert.equal(called, false, 'the aggregate limit is enforced before either scanner is invoked');
+
+  const path = `src/${'deep/'.repeat(80)}token.ts`;
+  const changeset: Changeset = { top: '/', base: 'main', baseSource: 'option', mergeBase: '', head: '', entries: [{ path, status: 'added', origin: 'untracked', kind: 'file', content: Buffer.from(''), addedText: 'payload', targetLines: [7], addedTextComplete: true }] };
+  const scanner = () => ({ backend: 'builtin' as const, complete: true, findings: [{ rule: 'fixture-rule', path, line: 7, redacted: true as const }] });
+  const exceptionPath = `./${path.replaceAll('/', '\\')}`;
+  const excepted = await secretScanCheck([{ path: exceptionPath, rule: 'fixture-rule', justification: 'Approved fixture.' }], scanner).run({ worktree: '/', changeset });
+  assert.equal(excepted.status, 'pass');
+  assert.equal(excepted.metrics?.exceptionsApplied, 1, 'exception matching uses the untruncated normalized path');
+  const blocked = await secretScanCheck([], scanner).run({ worktree: '/', changeset });
+  assert.equal(blocked.status, 'block');
+  assert.ok(blocked.evidence.some(line => line.includes('[REDACTED]')));
+  assert.ok(!blocked.evidence.some(line => line.includes(path)), 'display path is safely shortened while finding identity stays complete');
+
+  const controlPath = 'src/first-line\nforged-line.ts';
+  const controlChangeset: Changeset = { ...changeset, entries: [{ ...changeset.entries[0]!, path: controlPath }] };
+  const controlFinding = await secretScanCheck([], () => ({ backend: 'builtin' as const, complete: true, findings: [{ rule: 'fixture-rule', path: controlPath, line: 7, redacted: true as const }] })).run({ worktree: '/', changeset: controlChangeset });
+  assert.equal(controlFinding.status, 'block');
+  assert.ok(controlFinding.evidence.some(line => line.includes('first-line\\u000aforged-line.ts')));
+  assert.ok(controlFinding.evidence.every(line => !line.includes('\n')));
+});
+
+test('built-in secret detector returns sanitized locations only', () => {
+  const result = scanAddedText([{ path: 'a.txt', line: 3, text: '-----BEGIN PRIVATE KEY-----' }], { probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
+  assert.equal(result.complete, true);
+  assert.equal(result.findings[0]?.path, 'a.txt');
+  assert.equal(result.findings[0]?.line, 3);
+  assert.equal(result.findings[0]?.redacted, true);
+  assert.ok(!JSON.stringify(result).includes('BEGIN PRIVATE KEY'));
+});
 
 function git(cwd: string, ...args: string[]): string {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -39,6 +211,13 @@ function repo(): string {
 
 function cli(...args: string[]) {
   return spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
+}
+
+function windowsStandaloneGitExecutable(gitPath: string, isFile: (path: string) => boolean = existsSync): string | undefined {
+  const directory = win32.dirname(gitPath);
+  const inMingwBin = win32.basename(directory).toLowerCase() === 'bin' && win32.basename(win32.dirname(directory)).toLowerCase() === 'mingw64';
+  const candidate = inMingwBin ? gitPath : win32.resolve(gitPath, '..', '..', 'mingw64', 'bin', 'git.exe');
+  return isFile(candidate) ? candidate : undefined;
 }
 
 /** Simulates a clone's origin/HEAD locally (no network): origin/HEAD -> origin/main at the current main. */
@@ -81,6 +260,7 @@ function baseContextOf(result: { checks: { id: string; status: CheckStatus; evid
 
 test('changeset covers committed, staged, unstaged, untracked, renamed, and deleted files with contents', () => {
   const root = repo();
+  simulateOriginHead(root);
   writeFileSync(join(root, 'committed.txt'), 'new\n');
   renameSync(join(root, 'old.txt'), join(root, 'new.txt'));
   rmSync(join(root, 'gone.txt'));
@@ -98,16 +278,27 @@ test('changeset covers committed, staged, unstaged, untracked, renamed, and dele
 
   const { entries } = collectChangeset(root, 'main');
   const find = (path: string) => entries.find((entry) => entry.path === path);
-  assert.deepEqual({ ...find('committed.txt'), content: find('committed.txt')?.content?.toString() }, { path: 'committed.txt', status: 'added', origin: 'committed', kind: 'file', content: 'new\n' });
+  assert.deepEqual({ ...find('committed.txt'), content: find('committed.txt')?.content?.toString() }, { path: 'committed.txt', status: 'added', origin: 'committed', kind: 'file', content: 'new\n', addedText: 'new\n', targetLines: [1], addedTextComplete: true });
+  assert.equal(find('committed.txt')?.addedText, 'new\n');
+  assert.deepEqual(find('committed.txt')?.targetLines, [1]);
   assert.equal(find('new.txt')?.status, 'renamed');
   assert.equal(find('new.txt')?.oldPath, 'old.txt');
   assert.equal(find('gone.txt')?.status, 'deleted');
   assert.equal(find('gone.txt')?.content, undefined);
   assert.equal(find('staged.txt')?.origin, 'staged');
   assert.equal(find('staged.txt')?.content?.toString(), 'staged\n');
+  assert.equal(find('staged.txt')?.addedText, 'staged\n');
+  assert.deepEqual(find('staged.txt')?.targetLines, [1]);
+  assert.equal(find('staged.txt')?.addedTextComplete, true);
   assert.equal(find('edit.txt')?.origin, 'unstaged');
   assert.equal(find('edit.txt')?.content?.toString(), 'v2\n');
+  assert.equal(find('edit.txt')?.addedText, 'v2\n');
+  assert.deepEqual(find('edit.txt')?.targetLines, [1]);
+  assert.equal(find('edit.txt')?.addedTextComplete, true);
   assert.equal(find('dir/untracked.txt')?.origin, 'untracked');
+  assert.equal(find('dir/untracked.txt')?.addedText, 'u\n');
+  assert.deepEqual(find('dir/untracked.txt')?.targetLines, [1]);
+  assert.equal(find('dir/untracked.txt')?.addedTextComplete, true);
   assert.equal(find('file with spaces.txt')?.content?.toString(), 'space\n');
   assert.equal(find('file-[1].txt')?.content?.toString(), 'bracket\n');
   assert.equal(find('café.txt')?.content?.toString(), 'accent\n');
@@ -119,6 +310,7 @@ test('changeset covers committed, staged, unstaged, untracked, renamed, and dele
 
 test('symlinks are reported with their target, not as empty files', (t) => {
   const root = repo();
+  simulateOriginHead(root);
   try { symlinkSync('keep.txt', join(root, 'link')); } catch { t.skip('symlinks unavailable on this machine'); return; }
   const link = collectChangeset(root, 'main').entries.find((entry) => entry.path === 'link');
   assert.equal(link?.kind, 'symlink');
@@ -172,6 +364,7 @@ test('staged deletion and multi-origin modifications are tracked per origin', ()
 
 test('checks run in deterministic id order and aggregate block/warn', async () => {
   const root = repo();
+  simulateOriginHead(root);
   const order: string[] = [];
   const make = (id: string, status: 'pass' | 'warn' | 'block'): PreflightCheck => ({ id, run: () => { order.push(id); return { status, evidence: [`${id} evidence`], metrics: { n: 1 } }; } });
   const result = await runPreflight({ worktree: root, base: 'main', checks: [make('c', 'block'), make('a', 'pass'), make('b', 'warn')] });
@@ -230,6 +423,12 @@ test('missing base, missing ref, non-git directories, and unborn HEAD are inconc
     assert.equal(result.approved, false);
     assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
   }
+});
+
+test('base resolution exposes an explicit typed unresolved-base error', () => {
+  const resolved = resolveBase(repo(), undefined);
+  assert.ok('error' in resolved);
+  if ('error' in resolved) assert.ok(resolved.error instanceof UnresolvedBaseError);
 });
 
 test('base ref defaults to baseBranch from project context, and base-context fails closed on context changes without explicit base', async () => {
@@ -302,6 +501,7 @@ test('submodule entries are reported with kind submodule and no content for comm
   const subEntry = entries.find((e) => e.path === 'mysub' && e.origin === 'committed');
   assert.equal(subEntry?.kind, 'submodule');
   assert.equal(subEntry?.content, undefined);
+  assert.match(subEntry?.gitlink?.newId ?? '', /^[0-9a-f]{40,64}$/i, 'committed gitlinks retain the exact new commit ID');
 
   const unstagedSub = entries.find((e) => e.path === 'mysub' && e.origin === 'unstaged');
   assert.equal(unstagedSub?.kind, 'submodule');
@@ -310,6 +510,195 @@ test('submodule entries are reported with kind submodule and no content for comm
   const untrackedRepo = entries.find((e) => (e.path === 'nested-repo' || e.path === 'nested-repo/'));
   assert.equal(untrackedRepo?.kind, 'submodule');
   assert.equal(untrackedRepo?.content, undefined);
+});
+
+test('changed gitlinks expose exact before and after commit IDs for acknowledgement matching', () => {
+  const root = repo();
+  const sub = makeTempRoot('preflight-gitlink-ids-');
+  git(sub, 'init', '-q', '-b', 'main');
+  git(sub, 'config', 'user.email', 'sub@example.com');
+  git(sub, 'config', 'user.name', 'Sub');
+  writeFileSync(join(sub, 'payload.txt'), 'initial\n');
+  git(sub, 'add', '.'); git(sub, 'commit', '-q', '-m', 'initial submodule commit');
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'vendor/lib');
+  git(join(root, 'vendor/lib'), 'config', 'user.email', 'sub@example.com');
+  git(join(root, 'vendor/lib'), 'config', 'user.name', 'Sub');
+  git(root, 'commit', '-q', '-m', 'add gitlink');
+  const base = git(root, 'rev-parse', 'HEAD');
+  writeFileSync(join(root, 'vendor/lib', 'payload.txt'), 'updated\n');
+  git(join(root, 'vendor/lib'), 'commit', '-q', '-a', '-m', 'advance submodule');
+  git(root, 'add', 'vendor/lib');
+  git(root, 'commit', '-q', '-m', 'advance gitlink');
+  const entry = collectChangeset(root, base).entries.find(change => change.path === 'vendor/lib' && change.origin === 'committed');
+  assert.equal(entry?.kind, 'submodule');
+  assert.match(entry?.gitlink?.oldId ?? '', /^[0-9a-f]{40,64}$/i);
+  assert.match(entry?.gitlink?.newId ?? '', /^[0-9a-f]{40,64}$/i);
+  assert.notEqual(entry?.gitlink?.oldId, entry?.gitlink?.newId);
+  assert.equal(entry?.content, undefined);
+  assert.equal(entry?.addedTextComplete, false);
+});
+
+test('dirty untracked submodule content is a non-acknowledgeable coverage gap with unchanged IDs', async () => {
+  const root = repo();
+  const sub = makeTempRoot('preflight-dirty-submodule-');
+  git(sub, 'init', '-q', '-b', 'main');
+  git(sub, 'config', 'user.email', 'sub@example.com');
+  git(sub, 'config', 'user.name', 'Sub');
+  writeFileSync(join(sub, 'tracked.txt'), 'clean\n');
+  git(sub, 'add', '.'); git(sub, 'commit', '-q', '-m', 'clean submodule');
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'vendor/lib');
+  git(root, 'commit', '-q', '-m', 'add clean submodule');
+  const id = git(join(root, 'vendor/lib'), 'rev-parse', 'HEAD');
+  writeFileSync(join(root, 'vendor/lib', 'untracked-secret.txt'), 'untracked content\n');
+
+  const changeset = collectChangeset(root, 'main');
+  const entry = changeset.entries.find(candidate => candidate.path === 'vendor/lib' && candidate.origin === 'unstaged');
+  assert.deepEqual([entry?.gitlink?.oldId, entry?.gitlink?.newId], [id, id]);
+  assert.equal(entry?.gitlink?.nestedContentDirty, true);
+  const result = await secretScanCheck([], () => ({ backend: 'builtin', complete: true, findings: [] })).run({ worktree: root, changeset, gitlinkAcknowledgements: [{ path: 'vendor/lib', oldId: id, newId: id }] });
+  assert.equal(result.status, 'inconclusive');
+  assert.ok(result.evidence.some(line => line.includes('vendor/lib')));
+});
+
+test('nested Git timeout remains a dirty gap, is cached per path, and receives a scrubbed Git environment', async () => {
+  const root = repo();
+  const sub = makeTempRoot('preflight-timeout-submodule-');
+  git(sub, 'init', '-q', '-b', 'main');
+  git(sub, 'config', 'user.email', 'sub@example.com'); git(sub, 'config', 'user.name', 'Sub');
+  writeFileSync(join(sub, 'tracked.txt'), 'A\n');
+  git(sub, 'add', '.'); git(sub, 'commit', '-q', '-m', 'sub A');
+  const idA = git(sub, 'rev-parse', 'HEAD');
+  writeFileSync(join(sub, 'tracked.txt'), 'B\n');
+  git(sub, 'add', '.'); git(sub, 'commit', '-q', '-m', 'sub B');
+  const idB = git(sub, 'rev-parse', 'HEAD');
+
+  git(root, 'checkout', '-q', 'main');
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'vendor/lib');
+  git(join(root, 'vendor/lib'), 'checkout', '-q', idA);
+  git(root, 'add', '.'); git(root, 'commit', '-q', '-m', 'base submodule');
+  const base = git(root, 'rev-parse', 'HEAD');
+  git(root, 'checkout', '-q', '-b', 'task-timeout');
+  git(join(root, 'vendor/lib'), 'checkout', '-q', idB);
+  git(root, 'add', 'vendor/lib'); git(root, 'commit', '-q', '-m', 'advance submodule');
+  writeFileSync(join(root, 'vendor/lib', 'untracked.txt'), 'dirty nested content\n');
+
+  let calls = 0;
+  let suppliedEnvironment: NodeJS.ProcessEnv | undefined;
+  const seededOverrides = {
+    GIT_DIR: join(root, '.git'), GIT_WORK_TREE: root, GIT_INDEX_FILE: join(root, '.git', 'index'), GIT_COMMON_DIR: join(root, '.git'),
+    GIT_OBJECT_DIRECTORY: join(root, '.git', 'objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: join(root, '.git', 'objects'),
+    GIT_CONFIG: join(root, '.git', 'config'), GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false',
+  };
+  const seededKeys = Object.keys(seededOverrides);
+  const originals = Object.fromEntries(seededKeys.map(key => [key, process.env[key]])) as Record<string, string | undefined>;
+  const runner = (_command: string, _args: readonly string[], options: { maxBuffer: number; timeout: number; env: NodeJS.ProcessEnv }) => {
+    calls += 1;
+    suppliedEnvironment = options.env;
+    const error = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
+    return { error, status: null, stdout: Buffer.alloc(0) };
+  };
+  let changeset: Changeset;
+  try {
+    Object.assign(process.env, seededOverrides);
+    changeset = collectChangeset(root, base, 'option', { nestedStatus: runner });
+  }
+  finally {
+    for (const key of seededKeys) {
+      if (originals[key] === undefined) delete process.env[key]; else process.env[key] = originals[key];
+    }
+  }
+  assert.equal(calls, 1, 'changed gitlinks and the indexed dirty-link scan share the per-path status result');
+  for (const key of Object.keys(seededOverrides)) assert.equal(suppliedEnvironment?.[key], undefined, `${key} is scrubbed from nested Git`);
+  assert.equal(suppliedEnvironment?.GIT_OPTIONAL_LOCKS, '0');
+  const entry = changeset.entries.find(candidate => candidate.path === 'vendor/lib' && candidate.origin === 'committed');
+  assert.equal(entry?.gitlink?.nestedContentDirty, true, 'a timed-out status probe is treated as dirty');
+  const check = await secretScanCheck([], () => ({ backend: 'builtin', complete: true, findings: [] })).run({ worktree: root, changeset, gitlinkAcknowledgements: [{ path: 'vendor/lib', oldId: idA, newId: idB }] });
+  assert.equal(check.status, 'inconclusive');
+  assert.match(check.evidence.join('\n'), /vendor\/lib/);
+});
+
+test('nested Git environment helper removes all inherited Git overrides case-insensitively', () => {
+  const keys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'gIt_trace', 'git_custom_override'] as const;
+  const originals = Object.fromEntries(keys.map(key => [key, process.env[key]])) as Record<typeof keys[number], string | undefined>;
+  const values: Record<typeof keys[number], string> = {
+    GIT_DIR: 'same-repo/.git', GIT_WORK_TREE: 'same-repo', GIT_INDEX_FILE: 'same-repo/.git/index', GIT_COMMON_DIR: 'same-repo/.git',
+    GIT_OBJECT_DIRECTORY: 'same-repo/.git/objects', GIT_ALTERNATE_OBJECT_DIRECTORIES: 'same-repo/.git/objects',
+    GIT_CONFIG: 'same-repo/.git/config', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false',
+    gIt_trace: '1', git_custom_override: 'value',
+  };
+  try {
+    for (const key of keys) process.env[key] = values[key];
+    const scrubbed = nestedGitEnvironment();
+    for (const key of keys) assert.equal(scrubbed[key], undefined, `${key} must be removed for nested Git`);
+    assert.equal(scrubbed.GIT_OPTIONAL_LOCKS, '0');
+  } finally {
+    for (const key of keys) {
+      if (originals[key] === undefined) delete process.env[key]; else process.env[key] = originals[key];
+    }
+  }
+});
+
+test('populated gitlink directory without repository metadata is not acknowledgeable', async () => {
+  const root = repo();
+  const sub = makeTempRoot('preflight-no-git-submodule-');
+  git(sub, 'init', '-q', '-b', 'main');
+  git(sub, 'config', 'user.email', 'sub@example.com');
+  git(sub, 'config', 'user.name', 'Sub');
+  writeFileSync(join(sub, 'tracked.txt'), 'tracked\n');
+  git(sub, 'add', '.'); git(sub, 'commit', '-q', '-m', 'submodule baseline');
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'vendor/lib');
+  git(root, 'commit', '-q', '-m', 'add gitlink');
+  const id = git(join(root, 'vendor/lib'), 'rev-parse', 'HEAD');
+  rmSync(join(root, 'vendor/lib', '.git'), { recursive: true, force: true });
+  writeFileSync(join(root, 'vendor/lib', 'local-only.txt'), 'untracked local content\n');
+
+  const changeset = collectChangeset(root, 'main');
+  const entry = changeset.entries.find(candidate => candidate.path === 'vendor/lib' && candidate.origin === 'unstaged');
+  assert.deepEqual([entry?.gitlink?.oldId, entry?.gitlink?.newId], [id, id]);
+  assert.equal(entry?.gitlink?.nestedContentDirty, true);
+  const result = await secretScanCheck([], () => ({ backend: 'builtin', complete: true, findings: [] })).run({ worktree: root, changeset, gitlinkAcknowledgements: [{ path: 'vendor/lib', oldId: id, newId: id }] });
+  assert.equal(result.status, 'inconclusive');
+});
+
+test('unstaged gitlink before-state comes from the index, not HEAD', async () => {
+  const root = repo();
+  const sub = makeTempRoot('preflight-index-gitlink-');
+  git(sub, 'init', '-q', '-b', 'main');
+  git(sub, 'config', 'user.email', 'sub@example.com');
+  git(sub, 'config', 'user.name', 'Sub');
+  writeFileSync(join(sub, 'payload.txt'), 'A\n');
+  git(sub, 'add', '.'); git(sub, 'commit', '-q', '-m', 'gitlink A');
+  git(root, 'checkout', '-q', 'main');
+  git(root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.replaceAll('\\', '/'), 'vendor/lib');
+  git(join(root, 'vendor/lib'), 'config', 'user.email', 'sub@example.com');
+  git(join(root, 'vendor/lib'), 'config', 'user.name', 'Sub');
+  git(root, 'commit', '-q', '-m', 'baseline gitlink A');
+  const base = git(root, 'rev-parse', 'HEAD');
+  const idA = git(join(root, 'vendor/lib'), 'rev-parse', 'HEAD');
+  git(root, 'checkout', '-q', '-b', 'task-gitlinks');
+
+  writeFileSync(join(root, 'vendor/lib', 'payload.txt'), 'B\n');
+  git(join(root, 'vendor/lib'), 'commit', '-q', '-a', '-m', 'gitlink B');
+  const idB = git(join(root, 'vendor/lib'), 'rev-parse', 'HEAD');
+  git(root, 'add', 'vendor/lib');
+
+  writeFileSync(join(root, 'vendor/lib', 'payload.txt'), 'C\n');
+  git(join(root, 'vendor/lib'), 'commit', '-q', '-a', '-m', 'gitlink C');
+  const idC = git(join(root, 'vendor/lib'), 'rev-parse', 'HEAD');
+  const changeset = collectChangeset(root, base);
+  const staged = changeset.entries.find(entry => entry.path === 'vendor/lib' && entry.origin === 'staged');
+  const unstaged = changeset.entries.find(entry => entry.path === 'vendor/lib' && entry.origin === 'unstaged');
+  assert.deepEqual([staged?.gitlink?.oldId, staged?.gitlink?.newId], [idA, idB]);
+  assert.deepEqual([unstaged?.gitlink?.oldId, unstaged?.gitlink?.newId], [idB, idC]);
+  assert.notEqual(idA, idB);
+  assert.notEqual(idB, idC);
+
+  const unstagedChangeset: Changeset = { ...changeset, entries: [unstaged!] };
+  const check = secretScanCheck([], () => ({ backend: 'builtin', complete: true, findings: [] }));
+  const headBasedAck = await check.run({ worktree: root, changeset: unstagedChangeset, gitlinkAcknowledgements: [{ path: 'vendor/lib', oldId: idA, newId: idC }] });
+  assert.equal(headBasedAck.status, 'inconclusive', 'HEAD A to worktree C cannot acknowledge the index B to worktree C gap');
+  const indexBasedAck = await check.run({ worktree: root, changeset: unstagedChangeset, gitlinkAcknowledgements: [{ path: 'vendor/lib', oldId: idB, newId: idC }] });
+  assert.equal(indexBasedAck.status, 'warn');
 });
 
 test('CLI exit codes and JSON contract', () => {
@@ -392,6 +781,80 @@ test('CLI exit codes and JSON contract', () => {
   assert.equal(exit2Cli.status, 2);
 });
 
+test('CLI rejects the removed gitlink acknowledgement option with trusted-policy migration guidance', async () => {
+  let received: Parameters<typeof runPreflight>[0] | undefined;
+  const captured: string[] = [];
+  const deps = {
+    runPreflight: (options: Parameters<typeof runPreflight>[0]) => { received = options; return Promise.resolve({ approved: true, blocking: [], warnings: [], metrics: {}, checks: [{ id: 'x', status: 'pass' as const, evidence: [] }] }); },
+    output: (message: string) => captured.push(message),
+    error: (message: string) => captured.push(message),
+  };
+  const ack = { path: 'vendor/a', oldId: 'a'.repeat(40), newId: 'b'.repeat(40) };
+  assert.equal(await runCli(['--worktree', '.', '--ack-gitlink', JSON.stringify(ack)], deps), 2);
+  assert.match(captured.at(-1) ?? '', /trusted \.harness\/preflight\.json/);
+  assert.equal(received, undefined);
+});
+
+test('CLI blocks a secret finding while keeping the payload out of human and JSON output', () => {
+  const root = projectRepo();
+  const secret = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdef';
+  writeFileSync(join(root, 'candidate.txt'), `token=${secret}\n`);
+  const human = cli('--worktree', root, '--base', 'main');
+  assert.equal(human.status, 1, human.stderr);
+  assert.match(human.stdout, /Preflight: BLOCKED/);
+  assert.match(human.stdout, /\[REDACTED\]/);
+  assert.ok(!human.stdout.includes(secret));
+  const json = cli('--worktree', root, '--base', 'main', '--json');
+  assert.equal(json.status, 1, json.stderr);
+  assert.ok(!json.stdout.includes(secret));
+  assert.match(json.stdout, /\[REDACTED\]/);
+});
+
+test('CLI secret scan uses controlled PATH with Git and without Gitleaks', () => {
+  const root = projectRepo();
+  const secret = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdef';
+  writeFileSync(join(root, 'candidate.txt'), `token=${secret}\n`);
+  const gitExecutable = (process.env.PATH ?? '').split(delimiter).map(value => value.replace(/^"(.*)"$/, '$1')).map(directory => join(directory, process.platform === 'win32' ? 'git.exe' : 'git')).find(path => existsSync(path));
+  assert.ok(gitExecutable, 'a Git executable is available for the isolated PATH');
+  assert.ok(isAbsolute(gitExecutable), 'the Git executable path must be absolute');
+  const isolatedGitSource = process.platform === 'win32' ? windowsStandaloneGitExecutable(gitExecutable) : gitExecutable;
+  assert.ok(isolatedGitSource, 'Windows Git cmd launcher must have a standalone MinGW git.exe in the installation, or PATH must point directly to mingw64/bin/git.exe');
+  assert.ok(isAbsolute(isolatedGitSource), 'the isolated Git executable path must be absolute');
+  const fixture = mkdtempSync(join(dirname(root), 'preflight-isolated-path-'));
+  try {
+    const bin = join(fixture, 'bin');
+    mkdirSync(bin);
+    const wrapper = join(bin, process.platform === 'win32' ? 'git.exe' : 'git');
+    if (process.platform === 'win32') {
+      copyFileSync(isolatedGitSource, wrapper);
+      const dependencyDirectory = resolve(isolatedGitSource, '..');
+      for (const name of readdirSync(dependencyDirectory)) if (/\.dll$/i.test(name)) copyFileSync(join(dependencyDirectory, name), join(bin, name));
+    }
+    else {
+      const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+      writeFileSync(wrapper, `#!/bin/sh\nexec ${shellQuote(isolatedGitSource)} "$@"\n`);
+      chmodSync(wrapper, 0o755);
+    }
+    const controlledPath = bin;
+    assert.equal(resolveGitleaksExecutable(controlledPath), undefined);
+    const result = spawnSync(process.execPath, [script, '--worktree', root, '--base', 'main'], { encoding: 'utf8', env: { ...process.env, PATH: controlledPath, GIT_CONFIG_NOSYSTEM: '1' } });
+    assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}`);
+    assert.match(result.stdout, /Secret scan backend: builtin \(complete\)\./);
+    assert.match(result.stdout, /candidate\.txt.*\[REDACTED\]/);
+    assert.ok(!result.stdout.includes(secret));
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('Windows isolated Git resolver accepts cmd launcher and direct MinGW executable layouts', () => {
+  const launcher = 'C:\\Tools\\Git\\cmd\\git.exe';
+  const standalone = 'C:\\Tools\\Git\\mingw64\\bin\\git.exe';
+  assert.equal(windowsStandaloneGitExecutable(launcher, path => path === standalone), standalone);
+  assert.equal(windowsStandaloneGitExecutable(standalone, path => path === standalone), standalone);
+  assert.equal(windowsStandaloneGitExecutable('C:\\Tools\\Git\\cmd\\git.exe', () => false), undefined);
+});
+
 test('runCli maps an unexpected runner failure to exit 2 with the unexpected-error message', async () => {
   const output: string[] = [];
   const errors: string[] = [];
@@ -463,13 +926,20 @@ test('a linked context file outside the repository is inconclusive', async () =>
   assert.equal(baseContextOf(result)?.status, 'inconclusive');
 });
 
-test('a missing origin/HEAD is inconclusive with the --base or set-head hint', async () => {
+test('a missing origin/HEAD is inconclusive and directs restoration of the trusted ref', async () => {
   const root = projectRepo({ originHead: false });
   const result = await runPreflight({ worktree: root });
   assert.equal(exitCodeFor(result), 2, JSON.stringify(result));
   const check = baseContextOf(result);
   assert.equal(check?.status, 'inconclusive');
-  assert.match(check!.evidence[0]!, /pass --base <ref> or run `git remote set-head origin --auto`/);
+  const secretScan = result.checks.find(item => item.id === 'secret-scan');
+  assert.match(secretScan!.evidence[0]!, /restore it with `git remote set-head origin --auto`/);
+  assert.doesNotMatch(secretScan!.evidence[0]!, /pass --base/);
+  const explicitBase = await runPreflight({ worktree: root, base: 'main' });
+  const explicitScan = explicitBase.checks.find(item => item.id === 'secret-scan');
+  assert.equal(explicitScan?.status, 'inconclusive');
+  assert.match(explicitScan!.evidence[0]!, /git remote set-head origin --auto/);
+  assert.match(explicitScan!.evidence[0]!, /--base selects the changeset comparison only/);
 });
 
 test('an untouched project context matching origin/HEAD passes, including through a linked context file', async () => {
@@ -989,14 +1459,14 @@ test('worktree-boundary: preflight exit code precedence when trusted ref is miss
   assert.equal(resultNoBase.approved, false);
   assert.equal(exitCodeFor(resultNoBase), 2);
 
-  // 2. With explicit --base: base-context passes (informational), worktree-boundary is block, overall exit 1
+  // 2. Explicit --base does not replace the independent trusted policy ref, so policy-dependent checks remain inconclusive.
   const resultWithBase = await runPreflight({ worktree: taskWt, base: 'main' });
   const baseCheckWithBase = resultWithBase.checks.find((c) => c.id === 'base-context');
   const boundaryCheckWithBase = worktreeBoundaryOf(resultWithBase);
   assert.equal(baseCheckWithBase?.status, 'pass');
   assert.equal(boundaryCheckWithBase?.status, 'block');
   assert.equal(resultWithBase.approved, false);
-  assert.equal(exitCodeFor(resultWithBase), 1);
+  assert.equal(exitCodeFor(resultWithBase), 2);
 });
 
 test('worktree-boundary: trailing slash on configured worktreeDirectory passes without false modification block', async () => {

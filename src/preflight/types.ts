@@ -17,6 +17,13 @@ export type ChangeEntry = {
   origin: ChangeOrigin;
   kind?: 'file' | 'symlink' | 'submodule' | 'other';
   content: Buffer | undefined;
+  /** Added text and new-side line numbers for this origin; binary/non-text entries are omitted. */
+  addedText?: string;
+  targetLines?: number[];
+  /** False when changed bytes cannot be safely represented as added text. */
+  addedTextComplete?: boolean;
+  /** Exact old/new commit IDs when this change is a Git gitlink. */
+  gitlink?: { oldId?: string; newId?: string; nestedContentDirty?: boolean };
 };
 
 export type BaseSource = 'option' | 'project-context';
@@ -35,6 +42,8 @@ export type PreflightContext = {
   worktree: string;
   changeset: Changeset;
   task?: string | undefined;
+  gitlinkAcknowledgements?: readonly { path: string; oldId?: string; newId: string; justification?: string }[] | undefined;
+  trustedPolicyCommit?: string | undefined;
 };
 
 export type CheckOutcome = {

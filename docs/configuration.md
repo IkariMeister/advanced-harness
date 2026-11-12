@@ -27,6 +27,31 @@ Workflow and canonical procedure source compilation can emit deterministic host-
 
 `harness:doctor` statically validates canonical procedure skills and checks the expected emitted skill name, description/frontmatter, and intended-role advisory guidance for OpenCode, Claude Code, and Antigravity. It does not require byte-identical bodies, since installed skill bodies can be customized. A missing expected skill is an error only when a harness installation footprint is detected; otherwise the result is reported as not installed/not checked. Existing expected artifacts can still be inspected without a footprint. Unrelated third-party skills are ignored. Role guidance is advisory only: doctor does not discover/enforce role authorization or grant permissions. Codex and Cursor procedure-skill native deployment is unsupported; their canonical sources can still be statically validated. These checks do not establish runtime discovery/invocation or permissions/enforcement. OpenCode runtime/catalog diagnostics are retained separately, and static results are shown even when runtime verification is inconclusive.
 
+Preflight and doctor share a bounded, content-free Gitleaks probe. Doctor names
+whether Gitleaks is available, absent with built-in fallback, or unusable. Preflight
+invokes `gitleaks stdin --report-format json` with added text on stdin, the pinned
+repository config, a neutral working directory, and no inherited `GITLEAKS_*`
+environment variables. When Gitleaks is absent, preflight uses a built-in
+high-confidence detector; backend coverage may differ. Installed but unusable
+scanner interfaces and malformed reports are inconclusive. Diagnostics contain
+sanitized rule/location fields and a redaction marker only.
+
+Project preflight policy is stored in trusted `.harness/preflight.json` with a replacement
+`forbiddenPathGlobs` array and optional justified `gitlinkAcknowledgements`, and
+`.harness/preflight-allowlist.json` with a JSON array
+of justified exact `path`/`rule` exceptions. A line-scoped exception also requires a
+1-based `line` and a `committed`, `staged`, `unstaged`, or `untracked` `origin`.
+Preflight reads these files from the
+`refs/remotes/origin/HEAD`, independently of `--base`; candidate edits block pending
+review and cannot change the policy used for that run. `--base` selects the changeset
+comparison revision only. Acknowledgements require exact clean gitlink path/IDs and
+nonblank justification; additions omit the old ID. Acknowledged incomplete coverage
+is visible and can exit 0 only when no findings or other gaps remain. Dirty or
+uninspectable nested content cannot be acknowledged. Both files are optional; malformed trusted
+policy makes preflight inconclusive before secret scanning. See
+[preflight](preflight.md#project-policy-and-revision-authority) and
+[ADR-007](adr/0007-preflight-scope-and-redaction.md).
+
 | Host | Canonical compilation | Native procedure-skill deployment | Doctor static validation | Runtime / exposure and permissions |
 | --- | --- | --- | --- | --- |
 | OpenCode V2 | Supported | Supported | Canonical + expected installed artifact | Runtime agent/catalog check is separate; skill exposure does not grant tool permissions. |
