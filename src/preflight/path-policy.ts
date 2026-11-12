@@ -1,6 +1,7 @@
 import type { PreflightCheck } from './types.ts';
 
 const trustedPolicyDependentChecks = new WeakSet<PreflightCheck>();
+// This identity marker is intentionally instance-based; wrapping or copying a built-in check loses its policy-dependent marker.
 export function markTrustedPolicyDependent<T extends PreflightCheck>(check: T): T { trustedPolicyDependentChecks.add(check); return check; }
 export function isTrustedPolicyDependent(check: PreflightCheck): boolean { return trustedPolicyDependentChecks.has(check); }
 

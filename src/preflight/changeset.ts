@@ -85,8 +85,9 @@ function indexGitlinkId(worktree: string, path: string): string | undefined {
 export type NestedStatusRunner = (command: string, args: readonly string[], options: { maxBuffer: number; timeout: number; env: NodeJS.ProcessEnv }) => { error?: Error | null; status: number | null; stdout: Buffer };
 
 export function nestedGitEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...environment, GIT_OPTIONAL_LOCKS: '0' };
-  for (const key of Object.keys(env)) if (key === 'GIT_DIR' || key === 'GIT_WORK_TREE' || key === 'GIT_INDEX_FILE' || key === 'GIT_COMMON_DIR' || key === 'GIT_OBJECT_DIRECTORY' || key === 'GIT_ALTERNATE_OBJECT_DIRECTORIES' || key.startsWith('GIT_CONFIG_')) delete env[key];
+  const env: NodeJS.ProcessEnv = { ...environment };
+  for (const key of Object.keys(env)) if (key.toUpperCase().startsWith('GIT_')) delete env[key];
+  env.GIT_OPTIONAL_LOCKS = '0';
   return env;
 }
 
