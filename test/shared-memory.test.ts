@@ -1746,6 +1746,8 @@ test('applyApprovedMemoryPruning handles Windows path case and preserves POSIX m
     agentsBaselineHash: agentsBaseHash,
   });
   assert.equal(result.receipt.agentsWritten, true);
+  assert.match(readFileSync(agentsPath, 'utf8'), /Promoted edge rule/);
+  assert.equal(readSharedMemory(memoryPath).entries.length, 0);
 
   if (process.platform !== 'win32') {
     assert.equal(statSync(agentsPath).mode & 0o777, 0o640);
@@ -1987,8 +1989,27 @@ test('applyApprovedMemoryPruning cleans up temp file when source AGENTS.md is re
     agentsPath,
   });
 
-  try {
-    applyApprovedMemoryPruning({
+  if (process.platform === 'win32') {
+    let caught: unknown;
+    try {
+      applyApprovedMemoryPruning({
+        plan,
+        approved: true,
+        memoryPath,
+        memoryBaselineHash: readSharedMemory(memoryPath).hash,
+        personalBaselineHash: readPersonalRules(personalPath).hash,
+        expectedPlanHash: plan.planHash,
+        agentsPath,
+        agentsBaselineHash: createHash('sha256').update(initialAgentsText, 'utf8').digest('hex'),
+      });
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught instanceof MemoryPruningApplyError);
+    assert.equal(caught.receipt.failedStep, 'agents');
+    assert.equal(caught.receipt.agentsWritten, false);
+  } else {
+    const result = applyApprovedMemoryPruning({
       plan,
       approved: true,
       memoryPath,
@@ -1998,8 +2019,8 @@ test('applyApprovedMemoryPruning cleans up temp file when source AGENTS.md is re
       agentsPath,
       agentsBaselineHash: createHash('sha256').update(initialAgentsText, 'utf8').digest('hex'),
     });
-  } catch {
-    // Expected on Windows when target is read-only
+    assert.equal(result.receipt.agentsWritten, true);
+    assert.equal(statSync(agentsPath).mode & 0o777, 0o444);
   }
 
   const leftover = readdirSync(dir).filter((f) => f.startsWith('.AGENTS.') && f.endsWith('.tmp'));

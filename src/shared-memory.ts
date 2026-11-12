@@ -1108,6 +1108,7 @@ export function computePruningPlanHash(plan: {
       confirmation: e.confirmation,
       fact: e.fact,
     })),
+    // Case-fold on Windows to match applyApprovedMemoryPruning's path comparison.
     agentsPath: plan.agentsPath
       ? (process.platform === 'win32' ? resolve(plan.agentsPath).toLowerCase() : resolve(plan.agentsPath))
       : '',
@@ -1201,7 +1202,7 @@ export function planMemoryPruning(options: {
     }
   }
 
-  if (promotedToAgents.length > 0 && options.agentsText !== undefined && options.agentsPath === undefined) {
+  if (promotedToAgents.length > 0 && options.agentsText !== undefined && (!options.agentsPath || !options.agentsPath.trim())) {
     throw new Error('Promotion to AGENTS.md requires agentsPath when agentsText is provided.');
   }
 
@@ -1434,7 +1435,7 @@ export function applyApprovedMemoryPruning(options: {
     if (typeof plan.updatedAgentsText !== 'string') {
       throw new Error('Promotion to AGENTS.md requires updatedAgentsText to be defined.');
     }
-    if (plan.agentsPath === undefined) {
+    if (!plan.agentsPath || !plan.agentsPath.trim()) {
       throw new Error('Promotion to AGENTS.md requires agentsPath to be recorded in MemoryPruningPlan.');
     }
     const resolvedOption = resolve(options.agentsPath);
