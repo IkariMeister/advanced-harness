@@ -81,8 +81,9 @@ by trusted project policy and programmatic options. A line-scoped exception also
 requires the changeset `origin` (`committed`, `staged`, `unstaged`, or `untracked`),
 because the displayed line is a 1-based coordinate in that origin's new-file snapshot.
 
-The trusted revision is the policy revision authority: explicit `--base` selects the
-policy commit, while project-context base selection uses local
+The trusted revision is the policy revision authority: the policy is always read from
+local `refs/remotes/origin/HEAD`, with or without `--base`. `--base` selects only the
+changeset comparison revision, and project-context base selection also uses
 `refs/remotes/origin/HEAD`. The root `AGENTS.md` directs maintainers to this policy
 model rather than copying scanner policy into host-neutral instructions. Candidate
 changes to `.harness/preflight.json` or `.harness/preflight-allowlist.json` remain

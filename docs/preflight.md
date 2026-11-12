@@ -159,6 +159,23 @@ comparison revision. That trusted revision is the policy authority for the run. 
 deletes either policy file is blocked by `policy-integrity`; land and review the
 policy change in the trusted base first, then run preflight against that revision.
 The task branch cannot grant itself a new scanner exception or weaken its path rules.
+The full schema is in [configuration](configuration.md#preflight-policy).
+
+### Fixed and configurable checks
+
+Only `path-policy` is a **configurable check**. The trusted policy may enable or disable it, and may change its severity. The other built-in checks are **fixed checks** (`changeset`, `base-context`, `policy-integrity`, `policy`, `secret-scan`, `worktree-boundary`): the policy cannot disable them, re-severity them, or name them under `checks`. A configuration entry for a fixed check, or for an unknown ID, is rejected with the configurable IDs listed.
+
+- **Severity** (`checks.path-policy.severity`) changes only `block` to `warn`, or `warn` to `block`. A `pass` or `inconclusive` result is never changed. Severity applies to the built-in check instance, not to a custom check that reuses its ID.
+- **Disabled checks** (`checks.path-policy.enabled: false`) are omitted from the run and listed on the `policy` result. A disabled check cannot block.
+- **Custom checks** still run beside a configured policy file. The policy's severity and disable settings do not apply to them.
+
+### The policy result
+
+Every run includes a fixed `policy` check. It reports where the policy came from (`.harness/preflight.json` at `refs/remotes/origin/HEAD`, with the short commit), the disabled checks, the severity overrides, the forbidden-glob mode and count, and any programmatic override (`sensitivePathGlobs` or `secretExceptions`). It is `pass` unless a recorded key is not enforced yet: `prodGlobs` and `testGlobs` are recorded for BH-070, and `forbiddenPathGlobs` is inert while `path-policy` is disabled. Those cases are `warn`. The result is marked policy-dependent, so it becomes `inconclusive` when the trusted policy cannot be loaded.
+
+### Forbidden path globs
+
+`forbiddenPathGlobs` in the trusted file is either an array or an object. An array, or `{"mode": "replace", "globs": [...]}`, replaces the built-in list, so `[]` removes the built-in rules. `{"mode": "add", "globs": [...]}` keeps the built-in list and appends your globs. Programmatic `sensitivePathGlobs` replace the list in the same way, and they are reported as overrides.
 
 Gitlink coverage acknowledgements are configured only in trusted
 `.harness/preflight.json`. For a changed gitlink use a normalized repository-relative
@@ -245,10 +262,12 @@ A tooling error is never a pass.
 A check implements `PreflightCheck` from `src/preflight/types.ts`: a unique `id`
 and a `run(context)` that receives the worktree and changeset and returns a
 status, evidence lines, and optional numeric metrics. A thrown error becomes
-`inconclusive`. The built-in `changeset`, `base-context`, and `worktree-boundary`
-checks summarize the changeset, block unverified project context modifications,
-and ensure preflight runs within an isolated task worktree; guardrail checks
-(BH-068..BH-071) plug in alongside them.
+`inconclusive`. The built-in checks are `changeset`, `base-context`, `policy-integrity`, `path-policy`,
+`secret-scan`, `worktree-boundary`, and `policy`. `changeset` summarizes the changeset,
+`base-context` blocks unverified project context modifications, and `worktree-boundary`
+ensures preflight runs within an isolated task worktree. Of these, only `path-policy` is
+configurable. The trusted policy applies only to the built-in instance of a configurable check; a
+caller-supplied check is never configured, whatever fields it sets. The rest are fixed. Guardrail checks (BH-068..BH-071) plug in alongside them.
 
 ## Trusted acknowledgement evidence and status
 

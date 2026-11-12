@@ -15,6 +15,14 @@ version between releases.
 
 ### Added
 
+- Preflight project guardrail policy (BH-069, #184): a trusted `.harness/preflight.json`, read only from
+  local `refs/remotes/origin/HEAD` (with or without `--base`), enables or disables the configurable
+  `path-policy` check, sets its severity (`block` or `warn`), and adds to or replaces the forbidden path
+  globs. The fixed `policy` result row reports the effective policy and warns on recorded keys that are not
+  enforced yet (`prodGlobs`, `testGlobs`). `harness:setup` offers the default file once, in a Git checkout,
+  and only when you type `policy`. See [docs/configuration.md](docs/configuration.md#preflight-policy).
+- `harness:setup` now follows the AGENTS.md link to an existing linked context file, updates the settings there,
+  and keeps the link as written; an explicit `--context` is unchanged.
 - Personal project rules destination (BH-076, #208): add private, permanent storage for learnings
   in `AGENTS.personal.md` stored beside `MEMORY.md` in the project data directory (derived from `memoryPath`),
   never committed or copied into worktrees. Learning review gains a fourth disposition, "Apply only to me".

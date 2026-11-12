@@ -5,8 +5,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
-import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, readLocalProjectContext, resolveProjectLocations, runSetupFlow, saveSetup, setupConfirmation, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
+import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, readLocalProjectContext, readSetupPreflightPolicy, resolveProjectLocations, runSetupFlow, saveSetup, setupConfirmation, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
 import { contextData, updateContext } from '../src/project-context.ts';
+import { DEFAULT_PREFLIGHT_CONFIG } from '../src/preflight/policy.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const root = makeTempRoot('harness-project-setup-');
@@ -479,7 +480,8 @@ test('runSetupFlow in project scope supports non-Git and non-Android directory, 
   const code = await runSetupFlow(
     { scope: 'project' },
     {
-      ask: async () => responses.shift()!,
+      // The policy prompt is answered by its text; this directory has no .git, so it is not asked at all.
+      ask: async question => question.startsWith('Type policy') ? '' : responses.shift()!,
       output: msg => outputs.push(msg),
       error: msg => outputs.push(`ERROR: ${msg}`),
       home,
@@ -582,4 +584,255 @@ test('resolveProjectLocations: handles paths-only fallback and reports conflict 
   const conflict = resolveProjectLocations(project);
   assert.equal(conflict.status, 'conflict');
   assert.match(conflict.reason, /project and paths sections record different shared locations/);
+});
+
+type SetupLog = { asked: { question: string; suggested?: string }[]; outputs: string[] };
+type SetupRunOptions = { context?: string; policy?: string; confirm?: string };
+
+/** Drives the production project-setup flow. Every prompt is answered by its text, never by its position. */
+async function setupRun(root: string, project: string, options: SetupRunOptions = {}, log: SetupLog = { asked: [], outputs: [] }): Promise<number> {
+  return runSetupFlow({ project, ...(options.context === undefined ? {} : { context: options.context }) }, {
+    ask: async (question, suggested) => {
+      log.asked.push({ question, ...(suggested === undefined ? {} : { suggested }) });
+      if (question.startsWith('Type policy')) return options.policy ?? '';
+      if (question.startsWith('Full preview')) return options.confirm ?? 'cancel';
+      if (question.startsWith('Parent directory')) return join(root, 'trees');
+      if (question.startsWith('Shared MEMORY.md')) return join(root, 'memory', 'MEMORY.md');
+      return suggested ?? '';
+    },
+    output: line => log.outputs.push(line),
+    error: line => log.outputs.push(`ERROR: ${line}`),
+    home: join(root, 'home'),
+    xdgConfigHome: join(root, 'xdg'),
+    recoveryDirectory: join(root, 'backups'),
+    cwd: root,
+  });
+}
+
+const policyPrompts = (log: SetupLog) => log.asked.filter(item => item.question.startsWith('Type policy')).length;
+
+test('preflight policy opt-in writes the default config on save and prints the commit guidance', async t => {
+  const { root, project } = fixture(t);
+  const log: SetupLog = { asked: [], outputs: [] };
+  assert.equal(await setupRun(root, project, { policy: 'policy', confirm: 'save' }, log), 0);
+  assert.equal(policyPrompts(log), 1, 'the policy prompt is asked once');
+  assert.equal(readFileSync(join(project, '.harness', 'preflight.json'), 'utf8'), `${JSON.stringify(DEFAULT_PREFLIGHT_CONFIG, null, 2)}\n`);
+  assert.ok(log.outputs.includes(`  ${join(project, '.harness', 'preflight.json')} (new)`), 'the policy file is listed under Files to write');
+  assert.ok(log.outputs.some(line => line.startsWith('Preflight policy saved:') && line.includes('origin/HEAD')));
+  assert.ok(log.outputs.some(line => line.includes('git add -f .harness/preflight.json')));
+});
+
+test('cancelling after the policy opt-in writes nothing and makes no backups', async t => {
+  const { root, project } = fixture(t);
+  const agents = '# Existing rules\n';
+  writeFileSync(join(project, 'AGENTS.md'), agents);
+  const log: SetupLog = { asked: [], outputs: [] };
+  assert.equal(await setupRun(root, project, { policy: 'policy', confirm: 'cancel' }, log), 0);
+  assert.ok(log.asked.some(item => item.question.startsWith('Full preview')), 'the confirmation was reached');
+  assert.equal(existsSync(join(project, '.harness')), false, 'no policy directory or file');
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents, 'AGENTS.md is byte-identical');
+  assert.equal(existsSync(join(root, 'backups')), false, 'no backups');
+  assert.ok(log.outputs.some(line => line.startsWith('Cancelled. Nothing changed')));
+});
+
+test('Enter and every answer other than policy skip the policy file', async t => {
+  for (const answer of ['', 'yes', 'Policy please', 'p']) {
+    const { root, project } = fixture(t);
+    const log: SetupLog = { asked: [], outputs: [] };
+    assert.equal(await setupRun(root, project, { policy: answer, confirm: 'save' }, log), 0);
+    assert.equal(policyPrompts(log), 1, `asked once for "${answer}"`);
+    assert.equal(existsSync(join(project, '.harness')), false, `answer "${answer}" writes no policy`);
+  }
+});
+
+test('a valid existing policy file is kept byte-for-byte without a prompt', async t => {
+  const { root, project } = fixture(t);
+  mkdirSync(join(project, '.harness'));
+  const existing = '{"checks":{"path-policy":{"enabled":true,"severity":"warn"}}}\n';
+  writeFileSync(join(project, '.harness', 'preflight.json'), existing);
+  const log: SetupLog = { asked: [], outputs: [] };
+  assert.equal(await setupRun(root, project, { policy: 'policy', confirm: 'save' }, log), 0);
+  assert.equal(policyPrompts(log), 0, 'no policy prompt');
+  assert.ok(log.outputs.includes('Existing preflight policy kept unchanged.'));
+  assert.equal(readFileSync(join(project, '.harness', 'preflight.json'), 'utf8'), existing);
+});
+
+test('an existing policy that replaces the built-in forbidden globs is kept with a warning; add mode is not warned', async t => {
+  const cases: [unknown, boolean][] = [
+    [{ forbiddenPathGlobs: ['**/*.bin'] }, true],
+    [{ forbiddenPathGlobs: { mode: 'replace', globs: [] } }, true],
+    [{ forbiddenPathGlobs: { mode: 'add', globs: ['**/*.bin'] } }, false],
+  ];
+  for (const [config, warns] of cases) {
+    const { root, project } = fixture(t);
+    mkdirSync(join(project, '.harness'));
+    writeFileSync(join(project, '.harness', 'preflight.json'), JSON.stringify(config));
+    const log: SetupLog = { asked: [], outputs: [] };
+    assert.equal(await setupRun(root, project, { policy: 'policy', confirm: 'save' }, log), 0);
+    assert.equal(log.outputs.some(line => line.startsWith('Warning: .harness/preflight.json replaces the built-in forbidden path globs')), warns, JSON.stringify(config));
+    assert.equal(policyPrompts(log), 0);
+  }
+});
+
+test('an invalid existing policy stops setup before any prompt, with no writes or backups', async t => {
+  const { root, project } = fixture(t);
+  mkdirSync(join(project, '.harness'));
+  const invalid = '{"checks":{"secret-scan":{"enabled":false}}}';
+  writeFileSync(join(project, '.harness', 'preflight.json'), invalid);
+  const log: SetupLog = { asked: [], outputs: [] };
+  await assert.rejects(setupRun(root, project, { policy: 'policy', confirm: 'save' }, log), /fixed check.*No files changed\./);
+  assert.equal(log.asked.length, 0, 'no prompt is shown');
+  assert.equal(readFileSync(join(project, '.harness', 'preflight.json'), 'utf8'), invalid);
+  assert.equal(existsSync(join(project, 'AGENTS.md')), false);
+  assert.equal(existsSync(join(root, 'backups')), false);
+});
+
+test('an alternate --context still writes the root policy file, not one beside the context file', async t => {
+  const { root, project } = fixture(t);
+  mkdirSync(join(project, 'docs'));
+  writeFileSync(join(project, 'docs', 'HARNESS.md'), '# Harness\n');
+  const log: SetupLog = { asked: [], outputs: [] };
+  assert.equal(await setupRun(root, project, { context: 'docs/HARNESS.md', policy: 'policy', confirm: 'save' }, log), 0);
+  assert.equal(existsSync(join(project, '.harness', 'preflight.json')), true);
+  assert.equal(existsSync(join(project, 'docs', '.harness')), false);
+});
+
+test('cancelling with an alternate --context and the policy answer writes nothing, makes no backups, and creates no .harness', async t => {
+  const { root, project } = fixture(t);
+  mkdirSync(join(project, 'docs'));
+  const context = join(project, 'docs', 'HARNESS.md');
+  writeFileSync(context, '# Harness\n');
+  const log: SetupLog = { asked: [], outputs: [] };
+  assert.equal(await setupRun(root, project, { context: 'docs/HARNESS.md', policy: 'policy', confirm: 'cancel' }, log), 0);
+  assert.equal(policyPrompts(log), 1, 'the policy prompt is asked once');
+  assert.ok(log.asked.some(item => item.question.startsWith('Full preview')), 'the confirmation was reached');
+  assert.equal(readFileSync(context, 'utf8'), '# Harness\n', 'the context file is unchanged');
+  assert.equal(existsSync(join(project, 'AGENTS.md')), false, 'nothing is created at the root');
+  assert.equal(existsSync(join(project, '.harness')), false, 'no policy directory or file');
+  assert.equal(existsSync(join(root, 'backups')), false, 'no backups');
+  assert.ok(log.outputs.some(line => line.startsWith('Cancelled. Nothing changed')));
+});
+
+test('a .harness regular file or an oversized policy file stops setup before any prompt', async t => {
+  const { root, project } = fixture(t);
+  writeFileSync(join(project, '.harness'), 'not a directory');
+  assert.throws(() => readSetupPreflightPolicy(project), /\.harness must be a real directory/);
+  rmSync(join(project, '.harness'));
+
+  mkdirSync(join(project, '.harness'));
+  writeFileSync(join(project, '.harness', 'preflight.json'), Buffer.alloc(1024 * 1024 + 1, 0x20));
+  assert.throws(() => readSetupPreflightPolicy(project), /\.harness\/preflight\.json must be a regular text file no larger than 1 MiB/);
+  const log: SetupLog = { asked: [], outputs: [] };
+  await assert.rejects(setupRun(root, project, { policy: 'policy', confirm: 'save' }, log), /No files changed\./);
+  assert.equal(log.asked.length, 0, 'no prompt is shown');
+});
+
+test('a symlinked .harness directory is refused', t => {
+  const { root, project } = fixture(t);
+  const outside = join(root, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'preflight.json'), '{}');
+  try { symlinkSync(outside, join(project, '.harness'), 'junction'); }
+  catch { t.skip('directory symlinks are unavailable on this machine'); return; }
+  assert.throws(() => readSetupPreflightPolicy(project), /\.harness must be a real directory/);
+});
+
+test('a symlinked policy file is refused', t => {
+  const { root, project } = fixture(t);
+  const outside = join(root, 'outside.json');
+  writeFileSync(outside, '{}');
+  mkdirSync(join(project, '.harness'));
+  try { symlinkSync(outside, join(project, '.harness', 'preflight.json'), 'file'); }
+  catch { t.skip('file symlinks are unavailable on this machine'); return; }
+  assert.throws(() => readSetupPreflightPolicy(project), /\.harness\/preflight\.json must be a regular text file/);
+});
+
+test('a duplicate key in an existing policy stops setup before any prompt, naming the file', async t => {
+  const { root, project } = fixture(t);
+  mkdirSync(join(project, '.harness'));
+  writeFileSync(join(project, '.harness', 'preflight.json'), '{"forbiddenPathGlobs":[],"forbiddenPathGlobs":[]}');
+  const log: SetupLog = { asked: [], outputs: [] };
+  await assert.rejects(setupRun(root, project, { policy: 'policy', confirm: 'save' }, log), /Invalid \.harness\/preflight\.json: duplicate key "forbiddenPathGlobs".*No files changed\./);
+  assert.equal(log.asked.length, 0, 'no prompt is shown');
+  assert.equal(existsSync(join(root, 'backups')), false);
+});
+
+test('a directory without .git gets a note and no policy prompt', async t => {
+  const { root } = fixture(t);
+  const plain = join(root, 'plain');
+  mkdirSync(plain);
+  const log: SetupLog = { asked: [], outputs: [] };
+  assert.equal(await setupRun(root, plain, { policy: 'policy', confirm: 'save' }, log), 0);
+  assert.equal(policyPrompts(log), 0);
+  assert.ok(log.outputs.some(line => line.includes('is read at the repository top level')));
+  assert.equal(existsSync(join(plain, '.harness')), false);
+});
+
+test('a valid project section in a linked context file is updated there, and AGENTS.md stays byte-identical', async t => {
+  const { root, project } = fixture(t);
+  mkdirSync(join(project, 'docs'));
+  const linked = join(project, 'docs', 'HARNESS.md');
+  writeFileSync(linked, '# Harness\n');
+  writeFileSync(join(project, 'AGENTS.md'), 'Read `docs/HARNESS.md` for Advanced Harness project settings before planning.\n');
+  const agents = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+  const log: SetupLog = { asked: [], outputs: [] };
+  assert.equal(await setupRun(root, project, { confirm: 'save' }, log), 0);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents, 'AGENTS.md is byte-identical');
+  assert.notEqual(contextData(readFileSync(linked, 'utf8'), 'project'), undefined, 'the settings were saved in the linked file');
+  assert.ok(log.outputs.includes(`Context file: ${linked} (linked from AGENTS.md; the link is kept as written)`));
+  assert.ok(log.outputs.includes(`Project settings saved in context: ${linked}`));
+});
+
+test('cancelling a linked context writes nothing and makes no backups', async t => {
+  const { root, project } = fixture(t);
+  mkdirSync(join(project, 'docs'));
+  const linked = join(project, 'docs', 'HARNESS.md');
+  writeFileSync(linked, '# Harness\n');
+  writeFileSync(join(project, 'AGENTS.md'), 'Read `docs/HARNESS.md` for Advanced Harness project settings before planning.\n');
+  const agents = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+  assert.equal(await setupRun(root, project, { confirm: 'cancel' }), 0);
+  assert.equal(readFileSync(linked, 'utf8'), '# Harness\n');
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents);
+  assert.equal(existsSync(join(root, 'backups')), false);
+});
+
+test('an invalid linked context stops before any prompt, with no writes, backups, or changes', async t => {
+  const { root, project } = fixture(t);
+  mkdirSync(join(project, 'docs'));
+  const linked = join(project, 'docs', 'HARNESS.md');
+  const invalid = updateContext('# Harness\n', 'project', { version: 999 }, []);
+  writeFileSync(linked, invalid);
+  writeFileSync(join(project, 'AGENTS.md'), 'Read `docs/HARNESS.md` for Advanced Harness project settings before planning.\n');
+  const agents = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+  const log: SetupLog = { asked: [], outputs: [] };
+  await assert.rejects(setupRun(root, project, { policy: 'policy', confirm: 'save' }, log), /Project context could not be read: .*No files changed\./);
+  assert.equal(log.asked.length, 0, 'no prompt is shown');
+  assert.equal(readFileSync(linked, 'utf8'), invalid);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents);
+  assert.equal(existsSync(join(root, 'backups')), false);
+});
+
+test('a link that escapes the project stops before any prompt with no writes', async t => {
+  const { root, project } = fixture(t);
+  writeFileSync(join(project, 'AGENTS.md'), 'Read `../outside.md` for Advanced Harness project settings before planning.\n');
+  const agents = readFileSync(join(project, 'AGENTS.md'), 'utf8');
+  const log: SetupLog = { asked: [], outputs: [] };
+  await assert.rejects(setupRun(root, project, { confirm: 'save' }, log), /Project context could not be read: .*inside the project\. No files changed\./);
+  assert.equal(log.asked.length, 0, 'no prompt is shown');
+  assert.equal(existsSync(join(root, 'outside.md')), false);
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents);
+  assert.equal(existsSync(join(root, 'backups')), false);
+});
+
+test('a dangling link is created by setup, marked new in the preview, and kept as written in AGENTS.md', async t => {
+  const { root, project } = fixture(t);
+  const link = 'Read `docs/HARNESS.md` for Advanced Harness project settings before planning.\n';
+  writeFileSync(join(project, 'AGENTS.md'), link);
+  const log: SetupLog = { asked: [], outputs: [] };
+  assert.equal(await setupRun(root, project, { confirm: 'save' }, log), 0);
+  const linked = join(project, 'docs', 'HARNESS.md');
+  assert.ok(log.outputs.includes(`  ${linked} (new)`), 'the linked file is previewed as new');
+  assert.ok(log.outputs.includes(`Context file: ${linked} (linked from AGENTS.md; the link is kept as written)`));
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), link, 'the link is kept as written');
+  assert.notEqual(contextData(readFileSync(linked, 'utf8'), 'project'), undefined, 'setup created the linked file');
 });

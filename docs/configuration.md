@@ -36,21 +36,38 @@ high-confidence detector; backend coverage may differ. Installed but unusable
 scanner interfaces and malformed reports are inconclusive. Diagnostics contain
 sanitized rule/location fields and a redaction marker only.
 
-Project preflight policy is stored in trusted `.harness/preflight.json` with a replacement
-`forbiddenPathGlobs` array and optional justified `gitlinkAcknowledgements`, and
-`.harness/preflight-allowlist.json` with a JSON array
-of justified exact `path`/`rule` exceptions. A line-scoped exception also requires a
-1-based `line` and a `committed`, `staged`, `unstaged`, or `untracked` `origin`.
-Preflight reads these files from the
-`refs/remotes/origin/HEAD`, independently of `--base`; candidate edits block pending
-review and cannot change the policy used for that run. `--base` selects the changeset
-comparison revision only. Acknowledgements require exact clean gitlink path/IDs and
-nonblank justification; additions omit the old ID. Acknowledged incomplete coverage
-is visible and can exit 0 only when no findings or other gaps remain. Dirty or
-uninspectable nested content cannot be acknowledged. Both files are optional; malformed trusted
-policy makes preflight inconclusive before secret scanning. See
-[preflight](preflight.md#project-policy-and-revision-authority) and
-[ADR-007](adr/0007-preflight-scope-and-redaction.md).
+### Preflight policy
+
+Project preflight policy is optional and lives in **`.harness/preflight.json`** at the repository top level. It is independent of `--context`, so an alternate context file does not move it. Preflight reads it only from `refs/remotes/origin/HEAD`: a new or changed policy takes effect after the commit reaches `origin/HEAD`, and a task branch cannot weaken the policy that inspects it. Commit the file. Setup offers the default policy only in a Git checkout that has no valid policy file, and only when you type `policy`; it prints a note and skips the offer outside a Git checkout.
+
+| Input | Source |
+| --- | --- |
+| Changeset (what is inspected) | `--base <ref>` when given; otherwise the project context `baseBranch` |
+| Preflight policy (`.harness/preflight.json`, `.harness/preflight-allowlist.json`) | Always `refs/remotes/origin/HEAD`, with or without `--base` |
+| A policy file edited in the worktree | Never used for the run; any change to a policy file blocks review (`policy-integrity`) |
+
+Schema (unknown keys are rejected at every level; every configuration error names the file, and a duplicate key is rejected rather than resolved to its last value):
+
+- **`version`**: optional. `1` when present; any other value is rejected.
+- **`checks`**: an object keyed by **configurable** check ID. Only `path-policy` is configurable. Each entry takes `enabled` (`true` or `false`) and `severity` (`"block"` or `"warn"`). The fixed checks (`changeset`, `base-context`, `policy-integrity`, `policy`, `secret-scan`, `worktree-boundary`) cannot be configured, and an unknown ID is rejected.
+- **`forbiddenPathGlobs`**: either an array, which replaces the built-in list (`[]` removes it), or `{"mode": "add" | "replace", "globs": [...]}`. `add` keeps the built-in list and appends your globs; `replace` substitutes them. Globs must be safe repository-relative strings: no absolute paths, drive letters, or `..` segments.
+- **`prodGlobs` and `testGlobs`**: given together or not at all, and validated as glob arrays. They are **recorded, not enforced** yet (BH-070). The `policy` result warns while they are present.
+- **`gitlinkAcknowledgements`**: exact clean gitlink path and commit IDs with a nonblank justification; an addition omits `oldId`. Acknowledged incomplete coverage stays visible, and dirty or uninspectable nested content cannot be acknowledged.
+- **`.harness/preflight-allowlist.json`** (optional): a JSON array of justified exact `path`/`rule` secret exceptions. A line-scoped exception also requires a 1-based `line` and a `committed`, `staged`, `unstaged`, or `untracked` `origin`. It never changes forbidden-path policy.
+
+Example:
+
+```json
+{
+  "version": 1,
+  "checks": { "path-policy": { "enabled": true, "severity": "warn" } },
+  "forbiddenPathGlobs": { "mode": "add", "globs": ["**/*.mobileprovision"] }
+}
+```
+
+Malformed or unloadable trusted policy makes the policy-dependent checks inconclusive before secret scanning; independent checks still run. The `policy` result reports the policy source, disabled checks, severity overrides, and forbidden-glob mode, so the effective configuration is visible in every run. Preflight reads the file from `origin/HEAD`, so after you create or edit it, commit it. If `.harness/` is excluded by the harness exclude block (see [installation](installation.md#local-git-exclude-for-harness-scratch-state-bh-038)), stage the file with `git add -f .harness/preflight.json`. See [preflight](preflight.md#project-policy-and-revision-authority) and [ADR-008](adr/0008-project-guardrail-policy.md).
+
+### Host procedure-skill support
 
 | Host | Canonical compilation | Native procedure-skill deployment | Doctor static validation | Runtime / exposure and permissions |
 | --- | --- | --- | --- | --- |
