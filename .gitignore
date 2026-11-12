@@ -11,8 +11,9 @@ dist/
 coverage/
 *.log
 
-# Operational state belongs outside this repository
+# Operational state belongs outside this repository (harness-repo ignores only)
 MEMORY.md
+.AGENTS.*.tmp
 .harness-state/
 
 # OS files
