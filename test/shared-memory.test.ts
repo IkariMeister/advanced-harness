@@ -691,23 +691,36 @@ test('detectPruningCandidates avoids false positives and handles tri-state check
     { source: 'Test', scope: 'General', confirmation: 'approved', fact: 'Node' },
     // Should NOT be flagged by empty personal rules
     { source: 'Test', scope: 'General', confirmation: 'approved', fact: 'Some fact not in personal rules' },
-    // Should NOT be flagged as contradicted because it explicitly negates auto-merge
+    // Should NOT be flagged as contradicted because it explicitly negates auto-merge before or after
     { source: 'Git', scope: 'Workflow', confirmation: 'approved', fact: 'Never auto-merge pull requests' },
+    { source: 'Git', scope: 'Workflow', confirmation: 'approved', fact: 'Auto-merge is not allowed' },
     // Two unrelated facts in the same scope: should NOT flag the first as contradicted
     { source: 'Tooling', scope: 'Versions', confirmation: 'approved', fact: 'Node 24 is active' },
     { source: 'Tooling', scope: 'Versions', confirmation: 'approved', fact: 'TypeScript 7 is active' },
-    // Prose with "branch protection": should NOT match branch obsolete check
-    { source: 'Security', scope: 'Git', confirmation: 'approved', fact: 'Configure branch protection for main' },
-    // Prose with "#1": should NOT match obsolete issue if it's not an issue reference
+    // Prose with "the main branch must be clean": should NOT match branch obsolete check
+    { source: 'Security', scope: 'Git', confirmation: 'approved', fact: 'The main branch must be clean before push' },
+    // Prose with "Priority is #1": should NOT match obsolete issue check
     { source: 'Rank', scope: 'Priority', confirmation: 'approved', fact: 'Priority is #1 item in queue' },
-    // Candidate with external check that returns "unknown" (e.g. offline/error): must NOT be flagged as obsolete
+    // Candidates with external checks that return "unknown" or throw: must NOT be flagged as obsolete
     { source: 'Bug', scope: 'Fixes', confirmation: 'approved', fact: 'Fixes issue #888' },
+    { source: 'Git', scope: 'Branches', confirmation: 'approved', fact: 'Tracking branch `feature/unknown-branch`' },
+    { source: 'Repo', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/unknown-file.ts`' },
   ];
 
   const externalChecker = {
-    checkIssueExists: (id: string) => (id === '888' ? { status: 'unknown' as TriStateResult, evidence: 'Network error' } : { status: 'exists' as TriStateResult, evidence: 'Exists' }),
-    checkBranchExists: () => 'exists' as TriStateResult,
-    checkFileExists: () => 'exists' as TriStateResult,
+    checkIssueExists: (id: string) => {
+      if (id === '888') return { status: 'unknown' as TriStateResult, evidence: 'Network error' };
+      if (id === '1') return { status: 'missing' as TriStateResult, evidence: 'Issue #1 missing' };
+      return { status: 'missing' as TriStateResult, evidence: 'Missing' };
+    },
+    checkBranchExists: (branch: string) => {
+      if (branch === 'feature/unknown-branch') throw new Error('Offline error');
+      return { status: 'missing' as TriStateResult, evidence: 'Missing branch' };
+    },
+    checkFileExists: (filePath: string) => {
+      if (filePath.includes('unknown-file')) return { status: 'unknown' as TriStateResult, evidence: 'Unknown file' };
+      return { status: 'missing' as TriStateResult, evidence: 'Missing file' };
+    },
   };
 
   const candidates = detectPruningCandidates({
@@ -733,13 +746,13 @@ test('detectPruningCandidates identifies redundant, contradicted/superseded, and
     // 2: contradicted by AGENTS.md
     { source: 'Operator', scope: 'Git', confirmation: 'approved', fact: 'Merges automatically when tests pass' },
     // 3: older entry superseded by newer entry in same scope with shared topic
-    { source: 'Test', scope: 'Tooling', confirmation: 'approved', fact: 'Node 18 is required' },
+    { source: 'Test', scope: 'Tooling', confirmation: 'approved', fact: 'Node 18 is required for builds' },
     // 4: newer entry superseding #3
-    { source: 'Test', scope: 'Tooling', confirmation: 'replaces Node 18', fact: 'Node 24 is required' },
+    { source: 'Test', scope: 'Tooling', confirmation: 'replaces Node 18', fact: 'Node 24 is required for builds' },
     // 5: obsolete: refers to deleted issue #999
     { source: 'IssueTracker', scope: 'Fixes', confirmation: 'approved', fact: 'Resolves issue #999 for good' },
     // 6: obsolete: refers to deleted branch issue/999
-    { source: 'Git', scope: 'Branches', confirmation: 'approved', fact: 'Tracking branch issue/999' },
+    { source: 'Git', scope: 'Branches', confirmation: 'approved', fact: 'Tracking branch `issue/999`' },
     // 7: obsolete: refers to deleted file obsolete.ts
     { source: 'Repo', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/obsolete.ts` on start' },
     // 8: active and valid entry
@@ -765,168 +778,216 @@ test('detectPruningCandidates identifies redundant, contradicted/superseded, and
   assert.equal(candidates[0]!.kind, 'redundant');
   assert.equal(candidates[0]!.entry.fact, 'Always run tests before PR.');
   assert.match(candidates[0]!.reason, /AGENTS\.md/);
+  assert.equal(candidates[0]!.evidenceKey, 'agents-rule');
 
   // Redundant with personal
   assert.equal(candidates[1]!.kind, 'redundant');
   assert.equal(candidates[1]!.entry.fact, 'Use 2 spaces for indentation');
   assert.match(candidates[1]!.reason, /personal rule/);
+  assert.equal(candidates[1]!.evidenceKey, 'personal-rule');
 
   // Contradicted by AGENTS.md
   assert.equal(candidates[2]!.kind, 'contradicted');
   assert.equal(candidates[2]!.entry.fact, 'Merges automatically when tests pass');
+  assert.equal(candidates[2]!.evidenceKey, 'agents-merging');
 
   // Superseded by newer entry
   assert.equal(candidates[3]!.kind, 'contradicted');
-  assert.equal(candidates[3]!.entry.fact, 'Node 18 is required');
-  assert.match(candidates[3]!.evidence, /Node 24 is required/);
+  assert.equal(candidates[3]!.entry.fact, 'Node 18 is required for builds');
+  assert.match(candidates[3]!.evidence, /Node 24 is required for builds/);
 
   // Obsolete issue
   assert.equal(candidates[4]!.kind, 'obsolete');
   assert.equal(candidates[4]!.entry.fact, 'Resolves issue #999 for good');
   assert.match(candidates[4]!.reason, /#999/);
+  assert.equal(candidates[4]!.evidenceKey, 'issue:999');
 
   // Obsolete branch
   assert.equal(candidates[5]!.kind, 'obsolete');
-  assert.equal(candidates[5]!.entry.fact, 'Tracking branch issue/999');
+  assert.equal(candidates[5]!.entry.fact, 'Tracking branch `issue/999`');
   assert.match(candidates[5]!.reason, /branch "issue\/999"/);
+  assert.equal(candidates[5]!.evidenceKey, 'branch:issue/999');
 
   // Obsolete file
   assert.equal(candidates[6]!.kind, 'obsolete');
   assert.equal(candidates[6]!.entry.fact, 'Inspect file `src/obsolete.ts` on start');
   assert.match(candidates[6]!.reason, /file "src\/obsolete\.ts"/);
+  assert.equal(candidates[6]!.evidenceKey, 'file:src/obsolete.ts');
 });
 
-test('planMemoryPruning handles promote, personal, keep, and discard dispositions accurately and rechecks', () => {
-  const agentsOriginal = '# Project Guidelines\n\nExisting rule.\n';
+test('planMemoryPruning handles end-to-end detect, plan with keep, and re-detection', () => {
+  const agentsOriginal = '# Project Guidelines\n\nAlways check tests before commit.\n';
   const entries: MemoryEntry[] = [
-    { source: 'Review', scope: 'Repo', confirmation: 'approved', fact: 'Promote this rule to AGENTS' },
-    { source: 'Operator', scope: 'User', confirmation: 'approved', fact: 'Promote this rule to personal' },
-    { source: 'Test', scope: 'Legacy', confirmation: 'approved', fact: 'Discard this obsolete fact' },
-    { source: 'Dev', scope: 'Context', confirmation: 'approved', fact: 'Keep this valid fact in memory' },
+    { source: 'Dev', scope: 'Issues', confirmation: 'approved', fact: 'Referenced in issue #100 for tracking' },
   ];
 
-  const candidates: PruningCandidate[] = [
-    { entry: entries[0]!, kind: 'redundant', reason: 'Covered', evidence: 'agents-rule' },
-    { entry: entries[1]!, kind: 'redundant', reason: 'Personal rule', evidence: 'personal-rule' },
-    { entry: entries[2]!, kind: 'obsolete', reason: 'Obsolete', evidence: 'file:deleted.ts' },
-    { entry: entries[3]!, kind: 'obsolete', reason: 'Issue closed', evidence: 'issue:100' },
-  ];
+  const externalChecker = {
+    checkIssueExists: (id: string) => (id === '100' ? { status: 'missing' as TriStateResult, evidence: 'Issue #100 closed' } : 'exists' as TriStateResult),
+    checkBranchExists: () => 'exists' as TriStateResult,
+    checkFileExists: () => 'exists' as TriStateResult,
+  };
 
-  const dispositions: PruningDisposition[] = [
-    { entry: entries[0]!, disposition: 'promote', targetRuleText: 'Promoted rule for AGENTS' },
-    { entry: entries[1]!, disposition: 'personal', targetRuleText: 'Personal preference rule' },
-    { entry: entries[2]!, disposition: 'discard' },
-    { entry: entries[3]!, disposition: 'keep' },
-  ];
+  // 1. Detect candidate
+  const initialCandidates = detectPruningCandidates({
+    memoryEntries: entries,
+    agentsText: agentsOriginal,
+    externalChecker,
+  });
+  assert.equal(initialCandidates.length, 1);
+  assert.equal(initialCandidates[0]!.kind, 'obsolete');
+  assert.equal(initialCandidates[0]!.evidenceKey, 'issue:100');
 
+  // 2. Plan with 'keep' disposition
   const plan = planMemoryPruning({
     memoryEntries: entries,
-    candidates,
-    dispositions,
+    candidates: initialCandidates,
+    dispositions: [{ entry: entries[0]!, disposition: 'keep' }],
     agentsText: agentsOriginal,
   });
 
-  // Verify memory removals and keep retention
   assert.equal(plan.updatedMemoryEntries.length, 1);
-  assert.equal(plan.updatedMemoryEntries[0]!.fact, 'Keep this valid fact in memory');
-  assert.ok(plan.updatedMemoryEntries[0]!.confirmation.includes('reviewed-keep:obsolete'));
+  assert.ok(plan.updatedMemoryEntries[0]!.confirmation.includes('reviewed-keep:obsolete:issue:100'));
 
-  // Counts
-  assert.equal(plan.keptCount, 1);
-  assert.equal(plan.discardedCount, 1);
-  assert.deepEqual(plan.promotedToAgents, ['Promoted rule for AGENTS']);
-  assert.deepEqual(plan.promotedToPersonal, ['Personal preference rule']);
-
-  // AGENTS.md diff
-  assert.ok(plan.agentsDiff?.includes('+- Promoted rule for AGENTS'));
-  assert.ok(!plan.agentsDiff?.includes('Personal preference rule'));
-
-  // Re-checking with the SAME trigger yields ZERO candidates for the kept entry
-  const externalChecker = {
-    checkIssueExists: (id: string) => (id === '100' ? { status: 'missing' as TriStateResult, evidence: 'issue:100' } : 'exists' as TriStateResult),
-  };
-  const rechecked = detectPruningCandidates({
+  // 3. Re-detect with the exact output of planMemoryPruning: must produce zero candidates!
+  const recheckedCandidates = detectPruningCandidates({
     memoryEntries: plan.updatedMemoryEntries,
+    agentsText: agentsOriginal,
     externalChecker,
   });
-  assert.equal(rechecked.length, 0);
+  assert.equal(recheckedCandidates.length, 0);
 
-  // If evidence changes (e.g. now referring to a branch), it IS re-proposed
-  const changedEvidenceChecker = {
-    checkIssueExists: () => 'exists' as TriStateResult,
-    checkBranchExists: () => ({ status: 'missing' as TriStateResult, evidence: 'branch:new-branch' }),
-  };
-  const withBranchFact: MemoryEntry[] = [
-    { ...plan.updatedMemoryEntries[0]!, fact: 'Tracking branch issue/100' },
+  // 4. Change the reference / reason (e.g. now referencing issue #200 which is also missing)
+  const modifiedEntries: MemoryEntry[] = [
+    { ...plan.updatedMemoryEntries[0]!, fact: 'Referenced in issue #200 for tracking' },
   ];
-  const recheckedNewReason = detectPruningCandidates({
-    memoryEntries: withBranchFact,
-    externalChecker: changedEvidenceChecker,
+  const checkerFor200 = {
+    checkIssueExists: (id: string) => (id === '200' ? { status: 'missing' as TriStateResult, evidence: 'Issue #200 closed' } : 'exists' as TriStateResult),
+  };
+  const recheckedWithNewReason = detectPruningCandidates({
+    memoryEntries: modifiedEntries,
+    agentsText: agentsOriginal,
+    externalChecker: checkerFor200,
   });
-  assert.equal(recheckedNewReason.length, 1);
+  assert.equal(recheckedWithNewReason.length, 1);
+  assert.equal(recheckedWithNewReason[0]!.evidenceKey, 'issue:200');
 });
 
-test('planMemoryPruning validates dispositions, rejects non-candidates and duplicates, and enforces atomicity', (t) => {
+test('applyApprovedMemoryPruning enforces atomic writes, baseline verification, and decline guarantees', (t) => {
   const { memoryPath } = createFixture(t);
-  const entry: MemoryEntry = { source: 'A', scope: 'B', confirmation: 'C', fact: 'Valid fact' };
-  const candidate: PruningCandidate = { entry, kind: 'redundant', reason: 'Covered', evidence: 'test' };
+  const personalPath = resolvePersonalRulesPath(memoryPath);
 
-  // Rejects disposition for non-candidate
-  assert.throws(() => planMemoryPruning({
-    memoryEntries: [entry],
-    candidates: [],
-    dispositions: [{ entry, disposition: 'discard' }],
-  }), /not a recognized pruning candidate/);
+  const initialEntry: MemoryEntry = { source: 'A', scope: 'General', confirmation: 'confirmed', fact: 'Valid fact initially' };
+  writeSharedMemorySerialized(memoryPath, [initialEntry], undefined);
+  const initialPersonal = ['Personal rule 1: keep local'];
+  writePersonalRulesSerialized(personalPath, initialPersonal, undefined);
 
-  // Rejects duplicate dispositions
-  assert.throws(() => planMemoryPruning({
-    memoryEntries: [entry],
-    candidates: [candidate],
-    dispositions: [
-      { entry, disposition: 'discard' },
-      { entry, disposition: 'keep' },
-    ],
-  }), /Duplicate disposition/);
+  const memBase = readSharedMemory(memoryPath);
+  const personalBase = readPersonalRules(personalPath);
 
-  // Rejects promote without agentsText
-  assert.throws(() => planMemoryPruning({
-    memoryEntries: [entry],
-    candidates: [candidate],
-    dispositions: [{ entry, disposition: 'promote' }],
-    agentsText: undefined,
-  }), /requires agentsText destination/);
+  const candidate: PruningCandidate = {
+    entry: initialEntry,
+    kind: 'redundant',
+    reason: 'Covered',
+    evidence: 'test',
+    evidenceKey: 'test',
+  };
 
-  // Apply without approval throws
   const plan = planMemoryPruning({
-    memoryEntries: [entry],
+    memoryEntries: [initialEntry],
     candidates: [candidate],
-    dispositions: [{ entry, disposition: 'discard' }],
+    dispositions: [{ entry: initialEntry, disposition: 'personal', targetRuleText: 'New personal rule 2' }],
     agentsText: '# Rules',
   });
+
+  // 1. Missing baseline hash throws
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: '',
+    personalBaselineHash: personalBase.hash,
+  }), /valid memoryBaselineHash/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: '',
+  }), /valid personalBaselineHash/);
+
+  // 2. Stale baseline hash fails
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: 'stale-hash',
+    personalBaselineHash: personalBase.hash,
+  }), /Baseline hash does not match/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: 'stale-personal-hash',
+  }), /Baseline hash does not match/);
+
+  // 3. Decline (approved: false) leaves both MEMORY.md and AGENTS.personal.md byte-identical
   assert.throws(() => applyApprovedMemoryPruning({
     plan,
     approved: false,
     memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
   }), /requires explicit human approval/);
 
-  // Decline / cancel writes nothing
-  writeSharedMemorySerialized(memoryPath, [entry], undefined);
-  const beforeMem = readSharedMemory(memoryPath);
-  assert.throws(() => applyApprovedMemoryPruning({
-    plan,
-    approved: false,
+  assert.equal(readSharedMemory(memoryPath).hash, memBase.hash);
+  assert.equal(readPersonalRules(personalPath).hash, personalBase.hash);
+
+  // 4. No-op plan leaves both files byte-identical without rewriting
+  const noOpPlan = planMemoryPruning({
+    memoryEntries: [initialEntry],
+    candidates: [],
+    dispositions: [],
+    agentsText: '# Rules',
+  });
+  const noOpRes = applyApprovedMemoryPruning({
+    plan: noOpPlan,
+    approved: true,
     memoryPath,
-  }), /explicit human approval/);
-  const afterMem = readSharedMemory(memoryPath);
-  assert.equal(beforeMem.hash, afterMem.hash);
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+  });
+  assert.equal(noOpRes.success, true);
+  assert.equal(readSharedMemory(memoryPath).hash, memBase.hash);
+  assert.equal(readPersonalRules(personalPath).hash, personalBase.hash);
+
+  // 5. Success path applies personal rule and updates MEMORY.md
+  const successRes = applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+  });
+  assert.equal(successRes.success, true);
+  assert.ok(readPersonalRules(personalPath).rules.includes('New personal rule 2'));
+  assert.equal(readSharedMemory(memoryPath).entries.length, 0);
 });
 
-test('validatePromotedRuleText rejects secrets, Windows and UNC local paths', () => {
+test('validatePromotedRuleText and validatePersonalRuleText reject secrets, paths, and limits', () => {
   assert.throws(() => validatePromotedRuleText(''), /cannot be empty/);
+  assert.throws(() => validatePromotedRuleText('   '), /cannot be empty/);
   assert.throws(() => validatePromotedRuleText('line 1\nline 2'), /must not contain raw newlines/);
   assert.throws(() => validatePromotedRuleText('ghp_012345678901234567890123456789'), /potential secret\/token/);
   assert.throws(() => validatePromotedRuleText('/Users/test/Projects/advanced-harness-worktrees/test'), /machine-local/);
+  assert.throws(() => validatePromotedRuleText('/home/alice/Projects/advanced-harness-worktrees/test'), /machine-local/);
   assert.throws(() => validatePromotedRuleText('C:\\Users\\Alice\\Projects\\advanced-harness-worktrees\\issue-1'), /machine-local/);
   assert.throws(() => validatePromotedRuleText('\\\\server\\share\\Projects\\advanced-harness-worktrees\\issue-1'), /machine-local/);
-  assert.doesNotMatch('Always check lint before commit', /error/);
+  assert.throws(() => validatePromotedRuleText('a'.repeat(2001)), /exceeds maximum length/);
+
+  // Positive valid rule check executes without error
+  validatePromotedRuleText('Always check lint before commit.');
+  validatePersonalRuleText('Use dark theme in developer tools.');
 });

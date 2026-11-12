@@ -12,10 +12,11 @@ version between releases.
   at end-of-task learning review across three kinds: redundant (covered by rules in `AGENTS.md`
   or `AGENTS.personal.md`), contradicted or superseded (by newer entries or rules), and
   obsolete (refers to issues, branches, or files that no longer exist, with remote evidence
-  relayed through Lead from External). Learnings leave `MEMORY.md` upon approved promotion to any tier
-  (`AGENTS.md` or `AGENTS.personal.md`) or on discard. Kept entries are marked as reviewed with
-  their specific kind and evidence key so they are not re-proposed without a new reason. Operators remain
-  the sole serialized writer of `MEMORY.md`; declining or cancelling writes nothing.
+  relayed through Lead from External; references with `unknown` status or check errors are never proposed).
+  Learnings leave `MEMORY.md` upon approved promotion to any tier (`AGENTS.md` or `AGENTS.personal.md`) or on discard.
+  Kept entries are marked with a visible `reviewed-keep:<kind>:<evidenceKey>` marker so they are not re-proposed
+  without a new reason. Operators remain the sole serialized writer of `MEMORY.md`; declining or cancelling writes
+  nothing. Extends shared rule validation to enforce non-empty, single-line, and 2000-character limits on promotion.
 - Personal project rules destination (BH-076, #208): add private, permanent storage for learnings
   in `AGENTS.personal.md` stored beside `MEMORY.md` in the project data directory (derived from `memoryPath`),
   never committed or copied into worktrees. Learning review gains a fourth disposition, "Apply only to me".

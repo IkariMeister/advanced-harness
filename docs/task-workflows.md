@@ -104,9 +104,10 @@ applicable project instructions and shared memory.
 10. Evaluate candidate memory learnings once for approved consolidation into `AGENTS.md`
     or personal project instructions (`AGENTS.personal.md`) (promote, keep in memory,
     discard, or "Apply only to me"), and review proposed `MEMORY.md` pruning candidates
-    (redundant, contradicted/superseded, or obsolete); approve resulting diff before publication,
+    (redundant, contradicted/superseded, or obsolete, verified via tri-state evidence where unknown
+    or error states are never proposed); approve resulting diff before publication,
     rejecting secrets and operational paths. On approved promotion or discard, the entry leaves
-    `MEMORY.md`; kept entries are marked as reviewed and are not re-proposed without a new reason.
+    `MEMORY.md`; kept entries are marked with a visible `reviewed-keep` marker and are not re-proposed without a new reason.
     A human's confirmation that the PR is merged
     triggers External to verify the merge and is itself authorization for Operator to perform
     safe final cleanup after safety checks; a detected merge alone is not. External reports

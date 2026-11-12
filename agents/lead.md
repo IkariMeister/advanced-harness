@@ -252,11 +252,12 @@ During learning review, Operator proposes candidate entries from MEMORY.md for p
 redundant (covered by project or personal rules), contradicted or superseded (by newer entries or rules),
 or obsolete (referencing nonexistent issues, branches, or files). For obsolete candidates requiring remote
 tracker or repository checks, Lead relays the verification request to External and provides the resulting
-tri-state evidence to Operator. Each pruning proposal states its kind and evidence; Lead presents candidates for
-human decision (promote, personal, keep, or discard). Nothing is removed without that explicit decision. Promoted rules
-require an explicit diff preview and human approval before publication, rejecting secrets or local operational
-paths and preserving embedded sections. On approved promotion or discard, the entry leaves MEMORY.md; kept entries
-are marked as reviewed with their kind and evidence key and are not re-proposed without a new reason. Operator alone
+tri-state evidence to Operator; references with unknown status or check errors are never proposed for removal.
+Each pruning proposal states its kind and evidence; Lead presents candidates for human decision (promote,
+personal, keep, or discard). Nothing is removed without that explicit decision. Promoted rules require an explicit diff
+preview and human approval before publication, rejecting secrets or local operational paths and preserving embedded
+sections. On approved promotion or discard, the entry leaves MEMORY.md; kept entries are marked as reviewed with
+their visible reviewed-keep marker and evidence key and are not re-proposed without a new reason. Operator alone
 maintains the shared MEMORY.md, AGENTS.personal.md, and local Git.
 Personal rules are read by path at bootstrap from every task worktree, are never committed or copied
 into worktrees, are not re-offered as promotion candidates, and are not subject to memory pruning.
