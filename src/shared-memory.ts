@@ -49,6 +49,7 @@ export type MemoryPruningPlan = {
   promotedToPersonal: string[];
   keptCount: number;
   discardedCount: number;
+  agentsBaselineHash?: string | undefined;
   updatedAgentsText?: string | undefined;
   agentsDiff?: string | undefined;
   planHash: string;
@@ -1056,29 +1057,44 @@ export function computePruningPlanHash(plan: {
   keptCount: number;
   discardedCount: number;
   updatedMemoryEntries: readonly MemoryEntry[];
+  agentsBaselineHash?: string | undefined;
   updatedAgentsText?: string | undefined;
   agentsDiff?: string | undefined;
 }): string {
   const planDigestInput = JSON.stringify({
     candidates: plan.candidates.map((c) => ({
       kind: c.kind,
+      reason: c.reason,
+      evidence: c.evidence,
       evidenceKey: c.evidenceKey,
-      fact: c.entry.fact,
-      scope: c.entry.scope,
+      entry: {
+        source: c.entry.source,
+        scope: c.entry.scope,
+        confirmation: c.entry.confirmation,
+        fact: c.entry.fact,
+      },
     })),
     dispositions: plan.dispositions.map((d) => ({
       disposition: d.disposition,
-      fact: d.entry.fact,
       targetRuleText: d.targetRuleText,
+      entry: {
+        source: d.entry.source,
+        scope: d.entry.scope,
+        confirmation: d.entry.confirmation,
+        fact: d.entry.fact,
+      },
     })),
     promotedToAgents: plan.promotedToAgents,
     promotedToPersonal: plan.promotedToPersonal,
     keptCount: plan.keptCount,
     discardedCount: plan.discardedCount,
     updatedMemoryEntries: plan.updatedMemoryEntries.map((e) => ({
-      fact: e.fact,
+      source: e.source,
+      scope: e.scope,
       confirmation: e.confirmation,
+      fact: e.fact,
     })),
+    agentsBaselineHash: plan.agentsBaselineHash ?? '',
     updatedAgentsText: plan.updatedAgentsText ?? '',
     agentsDiff: plan.agentsDiff ?? '',
   });
@@ -1167,6 +1183,11 @@ export function planMemoryPruning(options: {
     }
   }
 
+  const agentsBaselineHash =
+    options.agentsText !== undefined
+      ? createHash('sha256').update(options.agentsText).digest('hex')
+      : undefined;
+
   let updatedAgentsText: string | undefined;
   let agentsDiff: string | undefined;
 
@@ -1193,6 +1214,7 @@ export function planMemoryPruning(options: {
     keptCount,
     discardedCount,
     updatedMemoryEntries: updatedMemory,
+    agentsBaselineHash,
     updatedAgentsText,
     agentsDiff,
   });
@@ -1205,6 +1227,7 @@ export function planMemoryPruning(options: {
     promotedToPersonal,
     keptCount,
     discardedCount,
+    agentsBaselineHash,
     updatedAgentsText,
     agentsDiff,
     planHash,
@@ -1218,6 +1241,8 @@ export type PruningApplyReceipt = {
   agentsHash?: string | undefined;
   personalHash?: string | undefined;
   memoryHash?: string | undefined;
+  failedStep?: 'agents' | 'personal' | 'memory' | undefined;
+  cause?: string | undefined;
 };
 
 export class MemoryPruningApplyError extends Error {
@@ -1229,6 +1254,93 @@ export class MemoryPruningApplyError extends Error {
   }
 }
 
+function readAgentsFileChecked(agentsPath: string): {
+  exists: boolean;
+  raw: string;
+  hash: string;
+  mode: number | undefined;
+} {
+  const target = resolve(agentsPath);
+  if (!existsSync(target)) {
+    return {
+      exists: false,
+      raw: '',
+      hash: createHash('sha256').update('').digest('hex'),
+      mode: undefined,
+    };
+  }
+  const stat = lstatSync(target);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error('AGENTS.md path must be a regular file, not a symlink or directory.');
+  }
+  const raw = readFileSync(target, 'utf8');
+  return {
+    exists: true,
+    raw,
+    hash: createHash('sha256').update(raw).digest('hex'),
+    mode: stat.mode,
+  };
+}
+
+function writeAgentsFileSerialized(
+  agentsPath: string,
+  updatedAgentsText: string,
+  baselineHash: string
+): { hash: string } {
+  const target = resolve(agentsPath);
+  const parent = dirname(target);
+  if (!existsSync(parent)) {
+    throw new Error('AGENTS.md parent directory does not exist.');
+  }
+  const parentStat = lstatSync(parent);
+  if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+    throw new Error('AGENTS.md parent path must be an existing directory.');
+  }
+
+  const lockPath = `${target}.lock`;
+  let lockFd: number;
+  try {
+    lockFd = openSync(lockPath, 'wx');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Error('Concurrent modification detected on AGENTS.md. Another writer holds the lock.');
+    }
+    throw err;
+  }
+
+  const tempPath = join(parent, `.AGENTS.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
+  try {
+    const current = readAgentsFileChecked(target);
+    if (current.hash !== baselineHash) {
+      throw new Error('Concurrent modification detected on AGENTS.md. Baseline hash does not match current file on disk.');
+    }
+    writeFileSync(tempPath, updatedAgentsText, {
+      encoding: 'utf8',
+      ...(current.mode !== undefined ? { mode: current.mode } : {}),
+    });
+    renameSync(tempPath, target);
+    const written = readAgentsFileChecked(target);
+    return { hash: written.hash };
+  } catch (err) {
+    if (existsSync(tempPath)) {
+      try { unlinkSync(tempPath); } catch {}
+    }
+    throw err;
+  } finally {
+    closeSync(lockFd);
+    try { unlinkSync(lockPath); } catch {}
+  }
+}
+
+/**
+ * Applies an approved memory pruning plan across AGENTS.md, AGENTS.personal.md, and MEMORY.md.
+ *
+ * Each individual file write is lock-serialized and uses a per-file atomic temp-file rename,
+ * preserving existing file mode and rejecting symlinks or non-regular files. Across multiple files,
+ * the sequence (AGENTS.md -> AGENTS.personal.md -> MEMORY.md) is ordered rather than a single
+ * cross-file transaction; any failure throws `MemoryPruningApplyError` with a structured
+ * `PruningApplyReceipt` recording which files were modified, which step failed, and the cause.
+ */
 export function applyApprovedMemoryPruning(options: {
   plan: MemoryPruningPlan;
   approved: boolean;
@@ -1273,13 +1385,20 @@ export function applyApprovedMemoryPruning(options: {
     throw new Error('Approval plan hash does not match current MemoryPruningPlan hash.');
   }
 
-  // If promotions to AGENTS.md exist, enforce that agentsPath, agentsBaselineHash, and updatedAgentsText are provided
+  // If promotions to AGENTS.md exist, enforce that agentsPath, agentsBaselineHash, and updatedAgentsText are provided and match plan
   if (plan.promotedToAgents.length > 0) {
-    if (!options.agentsPath || typeof options.agentsBaselineHash !== 'string') {
+    if (!options.agentsPath || typeof options.agentsBaselineHash !== 'string' || !options.agentsBaselineHash) {
       throw new Error('Promotion to AGENTS.md requires valid agentsPath and agentsBaselineHash to enforce write ordering.');
     }
     if (typeof plan.updatedAgentsText !== 'string') {
       throw new Error('Promotion to AGENTS.md requires updatedAgentsText to be defined.');
+    }
+    if (plan.agentsBaselineHash === undefined || options.agentsBaselineHash !== plan.agentsBaselineHash) {
+      throw new Error('AGENTS.md baseline hash does not match the baseline hash recorded in MemoryPruningPlan.');
+    }
+  } else if (options.agentsBaselineHash !== undefined && plan.agentsBaselineHash !== undefined) {
+    if (options.agentsBaselineHash !== plan.agentsBaselineHash) {
+      throw new Error('AGENTS.md baseline hash does not match the baseline hash recorded in MemoryPruningPlan.');
     }
   }
 
@@ -1309,7 +1428,7 @@ export function applyApprovedMemoryPruning(options: {
     };
   }
 
-  // Pre-validate all baseline hashes before any mutation to guarantee atomicity and failure preservation
+  // Pre-validate all baseline hashes before any mutation to fail fast before entering write sequence
   const currentMem = readSharedMemory(memoryPath);
   if (currentMem.hash !== options.memoryBaselineHash) {
     throw new Error('Concurrent modification detected on shared MEMORY.md. Baseline hash does not match current file on disk.');
@@ -1319,9 +1438,8 @@ export function applyApprovedMemoryPruning(options: {
     throw new Error('Concurrent modification detected on AGENTS.personal.md. Baseline hash does not match current file on disk.');
   }
   if (options.agentsPath && options.agentsBaselineHash !== undefined) {
-    const currentAgentsRaw = existsSync(options.agentsPath) ? readFileSync(options.agentsPath, 'utf8') : '';
-    const currentAgentsHash = createHash('sha256').update(currentAgentsRaw).digest('hex');
-    if (currentAgentsHash !== options.agentsBaselineHash) {
+    const currentAgents = readAgentsFileChecked(options.agentsPath);
+    if (currentAgents.hash !== options.agentsBaselineHash) {
       throw new Error('Concurrent modification detected on AGENTS.md. Baseline hash does not match current file on disk.');
     }
   }
@@ -1332,29 +1450,20 @@ export function applyApprovedMemoryPruning(options: {
     memoryWritten: false,
   };
 
+  let currentStep: 'agents' | 'personal' | 'memory' = 'agents';
   try {
-    // 1. If AGENTS.md promotions exist, write AGENTS.md first via atomic temp file + rename
-    if (plan.promotedToAgents.length > 0 && options.agentsPath && plan.updatedAgentsText !== undefined) {
-      const agentsTarget = resolve(options.agentsPath);
-      const agentsParent = dirname(agentsTarget);
-      if (!existsSync(agentsParent)) mkdirSync(agentsParent, { recursive: true });
-      const tempAgentsPath = join(agentsParent, `.AGENTS.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
-      try {
-        writeFileSync(tempAgentsPath, plan.updatedAgentsText, 'utf8');
-        renameSync(tempAgentsPath, agentsTarget);
-        receipt.agentsWritten = true;
-        receipt.agentsHash = createHash('sha256').update(plan.updatedAgentsText).digest('hex');
-      } catch (writeErr) {
-        if (existsSync(tempAgentsPath)) {
-          try { unlinkSync(tempAgentsPath); } catch {}
-        }
-        throw writeErr;
-      }
+    // 1. If AGENTS.md promotions exist, write AGENTS.md first via lock-serialized temp file + rename
+    if (plan.promotedToAgents.length > 0 && options.agentsPath && plan.updatedAgentsText !== undefined && options.agentsBaselineHash !== undefined) {
+      currentStep = 'agents';
+      const agentsRes = writeAgentsFileSerialized(options.agentsPath, plan.updatedAgentsText, options.agentsBaselineHash);
+      receipt.agentsWritten = true;
+      receipt.agentsHash = agentsRes.hash;
     }
 
     // 2. If personal rules are being added, append to AGENTS.personal.md
     let personalHash: string | undefined;
     if (plan.promotedToPersonal.length > 0) {
+      currentStep = 'personal';
       const existingPersonal = readPersonalRules(personalPath);
       const combinedRules = [...existingPersonal.rules, ...plan.promotedToPersonal];
       const res = writePersonalRulesSerialized(personalPath, combinedRules, options.personalBaselineHash);
@@ -1364,6 +1473,7 @@ export function applyApprovedMemoryPruning(options: {
     }
 
     // 3. Update MEMORY.md last, removing promoted/discarded entries and updating kept entries
+    currentStep = 'memory';
     const memRes = writeSharedMemorySerialized(memoryPath, plan.updatedMemoryEntries, options.memoryBaselineHash);
     receipt.memoryWritten = true;
     receipt.memoryHash = memRes.hash;
@@ -1377,10 +1487,14 @@ export function applyApprovedMemoryPruning(options: {
       receipt,
     };
   } catch (err) {
-    throw new MemoryPruningApplyError(
-      `Partial failure during memory pruning write sequence: ${(err as Error).message}`,
-      receipt
-    );
+    const cause = (err as Error).message;
+    receipt.failedStep = currentStep;
+    receipt.cause = cause;
+    const anyWritten = receipt.agentsWritten || receipt.personalWritten || receipt.memoryWritten;
+    const prefix = anyWritten
+      ? `Partial failure during memory pruning write sequence at ${currentStep}`
+      : `Memory pruning write failed at ${currentStep} (no files were modified)`;
+    throw new MemoryPruningApplyError(`${prefix}: ${cause}`, receipt);
   }
 }
 

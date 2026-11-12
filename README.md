@@ -30,7 +30,7 @@ The TypeScript code covers native installation for OpenCode V2, Google Antigravi
 - Customizable agents, explicit model/reasoning assignments, and machine-local provider mappings.
 - Host-scoped V2 receipts, backups, and uninstall tracking footprint per `(target, host)`.
 - One active feature per project as an operational convention; no custom locking service.
-- Local memory shared across a project's worktrees; no cross-machine unfinished-state synchronization required.
+- Local memory (`MEMORY.md`) shared across a project's worktrees with end-of-task learning review and pruning (ordered multi-file writes across `AGENTS.md`, `AGENTS.personal.md`, and `MEMORY.md` with per-file lock-serialized atomic rename, plan-hash verification, partial-failure receipts, and `reviewed-keep` markers capped at 5 tags per entry with oldest-first eviction so an evicted tag's candidate can be re-proposed); no cross-machine unfinished-state synchronization required.
 - Initial stack: Android, Jetpack Compose, Gradle, Roborazzi, and the existing private E2E framework.
 - Reusable integrations are configured globally; each project may independently select GitHub CLI/MCP, Jira, one design source, or none. Missing services are raised only when a task needs them. Do not combine Figma and Stitch silently.
 - Windows connection: ChatGPT sign-in in OpenCode. Mac connection: LiteLLM with explicit deployment mappings.

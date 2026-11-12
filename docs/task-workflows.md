@@ -106,10 +106,10 @@ applicable project instructions and shared memory.
     discard, or "Apply only to me"), and review proposed `MEMORY.md` pruning candidates
     (redundant, contradicted/superseded, or obsolete, verified via tri-state evidence where unknown
     or error states are never proposed); approve resulting diff before publication,
-    rejecting secrets and operational paths. Multi-file writes are ordered, with a partial-failure receipt,
-    not atomic (`AGENTS.md` and/or `AGENTS.personal.md` write first before `MEMORY.md` removal, requiring plan-hash verification);
-    partial failures report what completed so the human can decide recovery. On approved promotion or discard, the entry leaves
-    `MEMORY.md`; kept entries are marked with a visible `reviewed-keep` marker and are not re-proposed without a new reason.
+    rejecting secrets and operational paths. Each individual file write is lock-serialized with a per-file atomic temp-file rename,
+    while multi-file writes are ordered, with a partial-failure receipt, not atomic across files (`AGENTS.md` and/or `AGENTS.personal.md` write first before `MEMORY.md` removal, verifying file baselines and the plan hash);
+    partial failures report completed writes, the failed step, and the cause so the human can decide recovery (such as re-planning from the updated baselines). On approved promotion or discard, the entry leaves
+    `MEMORY.md`; kept entries are marked with a visible `reviewed-keep` marker (capped at 5 tags per entry with oldest-first eviction, so an older kept candidate can be re-proposed if a 6th distinct keep tag evicts its tag) and are not re-proposed without a new reason or tag eviction.
     A human's confirmation that the PR is merged
     triggers External to verify the merge and is itself authorization for Operator to perform
     safe final cleanup after safety checks; a detected merge alone is not. External reports

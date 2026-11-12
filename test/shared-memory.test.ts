@@ -582,7 +582,7 @@ test('personal rules: resolvePersonalRulesPath, parsing, formatting, serialized 
   }, /Concurrent modification detected on AGENTS.personal.md/);
 
   // Validate personal rule text rejects secrets and machine-local worktree paths
-  assert.throws(() => validatePersonalRuleText('github_pat_11AAAAAAA0123456789_abcdefghijklmnopqrstuvwxyz'), /potential secret or credential/);
+  assert.throws(() => validatePersonalRuleText('github_pat_11AAAAAAA0123456789_abcdefghijklmnopqrstuvwxyz'), /Personal rule contains potential secret\/token patterns/);
   assert.throws(() => validatePersonalRuleText('C:\\Users\\Alice\\Projects\\advanced-harness-worktrees\\issue-1'), /machine-local worktree or operational paths/);
   assert.throws(() => validatePersonalRuleText(''), /cannot be empty/);
   assert.throws(() => validatePersonalRuleText('Multi\nline'), /must not contain raw newlines/);
@@ -635,7 +635,7 @@ test('planRulePromotion handles "personal" disposition and validates rules', () 
     memoryEntries: entries,
     agentsText: agentsOriginal,
     dispositions: [{ type: 'personal', entry: entries[2]!, targetRuleText: 'ghp_012345678901234567890123456789' }],
-  }), /potential secret or credential/);
+  }), /Personal rule contains potential secret\/token patterns/);
 
   assert.throws(() => planRulePromotion({
     memoryEntries: entries,
@@ -897,7 +897,7 @@ test('planMemoryPruning handles end-to-end detect, plan with keep, discard, prom
   assert.ok(!plan.updatedMemoryEntries.some((e) => e.fact.includes('Obsolete note with issue #99')));
   assert.ok(!plan.updatedMemoryEntries.some((e) => e.fact.includes('Always check tests before commit.')));
   assert.ok(plan.updatedAgentsText?.includes('Always check tests before commit.'));
-  assert.ok(plan.agentsDiff?.includes('+ - Always check tests before commit.') || plan.agentsDiff?.includes('Always check tests before commit.'));
+  assert.ok(plan.agentsDiff?.includes('+- Always check tests before commit.'));
 
   // 3. Re-detect with the exact output of planMemoryPruning: must produce zero candidates!
   const recheckedCandidates = detectPruningCandidates({
@@ -1035,10 +1035,12 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
   const agentsPath = join(projectRoot, 'AGENTS.md');
 
   const initialEntry: MemoryEntry = { source: 'A', scope: 'General', confirmation: 'confirmed', fact: 'Valid fact initially' };
-  writeSharedMemorySerialized(memoryPath, [initialEntry], undefined);
+  const retainedEntry: MemoryEntry = { source: 'B', scope: 'RetainedScope', confirmation: 'confirmed', fact: 'Retained fact stays' };
+  writeSharedMemorySerialized(memoryPath, [initialEntry, retainedEntry], undefined);
   const initialPersonal = ['Personal rule 1: keep local'];
   writePersonalRulesSerialized(personalPath, initialPersonal, undefined);
-  writeFileSync(agentsPath, '# Existing AGENTS\n\nRule 0.\n', 'utf8');
+  const initialAgentsText = '# Existing AGENTS\n\nRule 0.\n';
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
 
   const memBase = readSharedMemory(memoryPath);
   const personalBase = readPersonalRules(personalPath);
@@ -1053,10 +1055,10 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
   };
 
   const plan = planMemoryPruning({
-    memoryEntries: [initialEntry],
+    memoryEntries: [initialEntry, retainedEntry],
     candidates: [candidate],
     dispositions: [{ entry: initialEntry, disposition: 'personal', targetRuleText: 'New personal rule 2' }],
-    agentsText: '# Rules',
+    agentsText: initialAgentsText,
   });
 
   // 1. Missing baseline hashes or expectedPlanHash throw (F-25)
@@ -1087,7 +1089,7 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     expectedPlanHash: '',
   }), /valid expectedPlanHash/);
 
-  // 2. Mismatched or tampered planHash throws (F-25)
+  // 2. Mismatched or tampered planHash throws (F-25, F-31)
   assert.throws(() => applyApprovedMemoryPruning({
     plan,
     approved: true,
@@ -1097,13 +1099,13 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     expectedPlanHash: 'tampered-plan-hash',
   }), /Approval plan hash does not match/);
 
-  // Tampered plan content retaining old planHash throws (recomputed mismatch) (F-25)
-  const tamperedPlan = {
+  // Tampered plan content retaining old planHash throws (recomputed mismatch) (F-25, F-31)
+  const tamperedPersonalPlan = {
     ...plan,
     promotedToPersonal: ['Tampered unapproved rule'],
   };
   assert.throws(() => applyApprovedMemoryPruning({
-    plan: tamperedPlan,
+    plan: tamperedPersonalPlan,
     approved: true,
     memoryPath,
     memoryBaselineHash: memBase.hash,
@@ -1111,7 +1113,63 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     expectedPlanHash: plan.planHash,
   }), /planHash does not match computed hash of plan content/);
 
-  // 3. Hand-built plan with promotedToAgents but missing updatedAgentsText throws before writing (F-26)
+  // Mutating updatedMemoryEntries[0].source throws (F-31)
+  const tamperedSourcePlan = {
+    ...plan,
+    updatedMemoryEntries: plan.updatedMemoryEntries.map((e, i) => (i === 0 ? { ...e, source: 'TamperedSource' } : e)),
+  };
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: tamperedSourcePlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // Mutating updatedMemoryEntries[0].scope throws (F-31)
+  const tamperedScopePlan = {
+    ...plan,
+    updatedMemoryEntries: plan.updatedMemoryEntries.map((e, i) => (i === 0 ? { ...e, scope: 'TamperedScope' } : e)),
+  };
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: tamperedScopePlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // Mutating updatedAgentsText throws (F-31)
+  const tamperedAgentsTextPlan = {
+    ...plan,
+    updatedAgentsText: '# Tampered AGENTS\n',
+  };
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: tamperedAgentsTextPlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // Mutating agentsDiff throws (F-31)
+  const tamperedAgentsDiffPlan = {
+    ...plan,
+    agentsDiff: '--- a/AGENTS.md\n+++ b/AGENTS.md\n+Tampered\n',
+  };
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: tamperedAgentsDiffPlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // 3. Hand-built plan with promotedToAgents but missing updatedAgentsText throws before writing and leaves files unchanged (F-26, F-33)
   const planWithMissingAgentsText = {
     ...plan,
     promotedToAgents: ['Rule to promote'],
@@ -1128,8 +1186,11 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     agentsPath,
     agentsBaselineHash: agentsBaseHash,
   }), /Promotion to AGENTS\.md requires updatedAgentsText/);
+  assert.equal(readSharedMemory(memoryPath).hash, memBase.hash);
+  assert.equal(readPersonalRules(personalPath).hash, personalBase.hash);
+  assert.equal(createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex'), agentsBaseHash);
 
-  // 4. Stale baseline hash fails
+  // 4. Stale baseline hash or mismatched plan.agentsBaselineHash fails (F-32, F-33)
   assert.throws(() => applyApprovedMemoryPruning({
     plan,
     approved: true,
@@ -1148,7 +1209,41 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     expectedPlanHash: plan.planHash,
   }), /Baseline hash does not match/);
 
-  // 5. Decline (approved: false) leaves both MEMORY.md and AGENTS.personal.md byte-identical
+  // Pairing an older plan with a newer AGENTS.md disk baseline throws (F-32)
+  const promotePlanForBaselineTest = planMemoryPruning({
+    memoryEntries: [initialEntry, retainedEntry],
+    candidates: [candidate],
+    dispositions: [{ entry: initialEntry, disposition: 'promote', targetRuleText: 'Promoted rule for baseline test' }],
+    agentsText: initialAgentsText,
+  });
+  writeFileSync(agentsPath, '# Existing AGENTS\n\nRule 0.\nNew concurrent edit.\n', 'utf8');
+  const newerDiskAgentsHash = createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex');
+  // Passing the old baseline hash fails against disk
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: promotePlanForBaselineTest,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promotePlanForBaselineTest.planHash,
+    agentsPath,
+    agentsBaselineHash: agentsBaseHash,
+  }), /Concurrent modification detected on AGENTS\.md/);
+  // Passing the newer disk hash fails against plan.agentsBaselineHash (F-32)
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: promotePlanForBaselineTest,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promotePlanForBaselineTest.planHash,
+    agentsPath,
+    agentsBaselineHash: newerDiskAgentsHash,
+  }), /AGENTS\.md baseline hash does not match the baseline hash recorded in MemoryPruningPlan/);
+  // Restore AGENTS.md to initialAgentsText
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+
+  // 5. Decline (approved: false) leaves files byte-identical
   assert.throws(() => applyApprovedMemoryPruning({
     plan,
     approved: false,
@@ -1163,10 +1258,10 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
 
   // 6. No-op plan leaves both files byte-identical without rewriting
   const noOpPlan = planMemoryPruning({
-    memoryEntries: [initialEntry],
+    memoryEntries: [initialEntry, retainedEntry],
     candidates: [],
     dispositions: [],
-    agentsText: '# Rules',
+    agentsText: initialAgentsText,
   });
   const noOpRes = applyApprovedMemoryPruning({
     plan: noOpPlan,
@@ -1180,7 +1275,8 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
   assert.equal(readSharedMemory(memoryPath).hash, memBase.hash);
   assert.equal(readPersonalRules(personalPath).hash, personalBase.hash);
 
-  // 7. Success path applies personal rule and updates MEMORY.md, retaining pre-existing personal rules
+  // 7. Success path:
+  // 7a. Personal rule promotion + MEMORY.md update
   const successRes = applyApprovedMemoryPruning({
     plan,
     approved: true,
@@ -1193,43 +1289,110 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
   const updatedPersonal = readPersonalRules(personalPath);
   assert.ok(updatedPersonal.rules.includes('Personal rule 1: keep local'));
   assert.ok(updatedPersonal.rules.includes('New personal rule 2'));
+  assert.equal(successRes.receipt.personalWritten, true);
+  assert.equal(successRes.receipt.memoryWritten, true);
+  assert.equal(successRes.receipt.personalHash, updatedPersonal.hash);
   const updatedMem = readSharedMemory(memoryPath);
-  assert.equal(updatedMem.entries.length, 0);
+  assert.equal(updatedMem.entries.length, 1);
+  assert.equal(updatedMem.entries[0]!.fact, 'Retained fact stays');
+  assert.equal(successRes.receipt.memoryHash, updatedMem.hash);
 
-  // 8. Partial failures across write positions (F-27):
-  // 8a. AGENTS.md written, then personal rule write fails (e.g. invalid personal rule in plan or lock)
-  const thirdEntry: MemoryEntry = { source: 'C', scope: 'General', confirmation: 'confirmed', fact: 'Fact 3' };
-  writeSharedMemorySerialized(memoryPath, [thirdEntry], undefined);
-  const memHashBefore8a = readSharedMemory(memoryPath).hash;
-  const personalHashBefore8a = readPersonalRules(personalPath).hash;
-  const agentsHashBefore8a = createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex');
-
-  const multiWritePlan = planMemoryPruning({
-    memoryEntries: [thirdEntry],
-    candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
-    dispositions: [
-      { entry: thirdEntry, disposition: 'promote', targetRuleText: 'Promoted rule from 8a' },
-    ],
+  // 7b. Successful AGENTS.md promotion write path: verifies content, receipt.agentsHash, and no leftover .tmp/.lock (F-33, F-35)
+  const memBefore7b = readSharedMemory(memoryPath);
+  const personalBefore7b = readPersonalRules(personalPath);
+  const agentsPlan7b = planMemoryPruning({
+    memoryEntries: [retainedEntry],
+    candidates: [{ entry: retainedEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k-7b' }],
+    dispositions: [{ entry: retainedEntry, disposition: 'promote', targetRuleText: 'Always verify receipts after apply.' }],
     agentsText: readFileSync(agentsPath, 'utf8'),
   });
+  const res7b = applyApprovedMemoryPruning({
+    plan: agentsPlan7b,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBefore7b.hash,
+    personalBaselineHash: personalBefore7b.hash,
+    expectedPlanHash: agentsPlan7b.planHash,
+    agentsPath,
+    agentsBaselineHash: agentsPlan7b.agentsBaselineHash,
+  });
+  assert.equal(res7b.success, true);
+  assert.equal(res7b.receipt.agentsWritten, true);
+  assert.equal(res7b.receipt.personalWritten, false);
+  assert.equal(res7b.receipt.memoryWritten, true);
+  const writtenAgentsDisk = readFileSync(agentsPath, 'utf8');
+  assert.equal(writtenAgentsDisk, agentsPlan7b.updatedAgentsText);
+  const expectedAgentsDiskHash = createHash('sha256').update(writtenAgentsDisk).digest('hex');
+  assert.equal(res7b.receipt.agentsHash, expectedAgentsDiskHash);
+  assert.equal(res7b.agentsHash, expectedAgentsDiskHash);
+  const leftoverFiles = readdirSync(projectRoot).filter((f) => f.endsWith('.tmp') || f.endsWith('.lock'));
+  assert.deepEqual(leftoverFiles, []);
 
-  // Lock AGENTS.personal.md so AGENTS.md writes successfully but personal fails
+  // 8. Partial failures and no-files-modified failures across write positions (F-27, F-33, F-35, F-37):
+  const thirdEntry: MemoryEntry = { source: 'C', scope: 'General', confirmation: 'confirmed', fact: 'Fact 3' };
+  const fourthEntry: MemoryEntry = { source: 'D', scope: 'General', confirmation: 'confirmed', fact: 'Fact 4' };
+
+  // 8.0. Failure at step 1 ('agents' locked) before any file is written reports "no files were modified" and failedStep === 'agents' (F-35, F-37)
+  writeSharedMemorySerialized(memoryPath, [thirdEntry], undefined);
+  const memHash80 = readSharedMemory(memoryPath).hash;
+  const personalHash80 = readPersonalRules(personalPath).hash;
+  const agentsText80 = readFileSync(agentsPath, 'utf8');
+  const plan80 = planMemoryPruning({
+    memoryEntries: [thirdEntry],
+    candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
+    dispositions: [{ entry: thirdEntry, disposition: 'promote', targetRuleText: 'Rule blocked by lock' }],
+    agentsText: agentsText80,
+  });
+  const agentsLockFd = openSync(`${agentsPath}.lock`, 'wx');
+  try {
+    let err80: any;
+    try {
+      applyApprovedMemoryPruning({
+        plan: plan80,
+        approved: true,
+        memoryPath,
+        memoryBaselineHash: memHash80,
+        personalBaselineHash: personalHash80,
+        expectedPlanHash: plan80.planHash,
+        agentsPath,
+        agentsBaselineHash: plan80.agentsBaselineHash,
+      });
+    } catch (err) {
+      err80 = err;
+    }
+    assert.ok(err80 instanceof MemoryPruningApplyError);
+    assert.match(err80.message, /no files were modified/);
+    assert.equal(err80.receipt.failedStep, 'agents');
+    assert.match(err80.receipt.cause ?? '', /Another writer holds the lock/);
+    assert.equal(err80.receipt.agentsWritten, false);
+    assert.equal(err80.receipt.personalWritten, false);
+    assert.equal(err80.receipt.memoryWritten, false);
+  } finally {
+    closeSync(agentsLockFd);
+    unlinkSync(`${agentsPath}.lock`);
+  }
+
+  // 8a. AGENTS.md written, then personal rule write fails (locked)
+  const memHashBefore8a = readSharedMemory(memoryPath).hash;
+  const personalHashBefore8a = readPersonalRules(personalPath).hash;
+  const agentsTextBefore8a = readFileSync(agentsPath, 'utf8');
+
   const personalLockFd = openSync(`${personalPath}.lock`, 'wx');
   try {
     let err8a: any;
     try {
-      // Intentionally add a personal promotion to trigger personal write
       const planWithBoth = planMemoryPruning({
-        memoryEntries: [thirdEntry],
-        candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
+        memoryEntries: [thirdEntry, fourthEntry],
+        candidates: [
+          { entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' },
+          { entry: fourthEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k4' },
+        ],
         dispositions: [
           { entry: thirdEntry, disposition: 'promote', targetRuleText: 'Promoted rule from 8a' },
+          { entry: fourthEntry, disposition: 'personal', targetRuleText: 'Personal rule causing failure' },
         ],
-        agentsText: readFileSync(agentsPath, 'utf8'),
+        agentsText: agentsTextBefore8a,
       });
-      // Manually push personal rule into plan
-      planWithBoth.promotedToPersonal.push('Personal rule causing failure');
-      planWithBoth.planHash = computePruningPlanHash(planWithBoth);
 
       applyApprovedMemoryPruning({
         plan: planWithBoth,
@@ -1239,13 +1402,20 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
         personalBaselineHash: personalHashBefore8a,
         expectedPlanHash: planWithBoth.planHash,
         agentsPath,
-        agentsBaselineHash: agentsHashBefore8a,
+        agentsBaselineHash: planWithBoth.agentsBaselineHash,
       });
     } catch (err) {
       err8a = err;
     }
     assert.ok(err8a instanceof MemoryPruningApplyError);
+    assert.match(err8a.message, /Partial failure during memory pruning write sequence at personal/);
+    assert.equal(err8a.receipt.failedStep, 'personal');
+    assert.match(err8a.receipt.cause ?? '', /Another writer holds the lock/);
     assert.equal(err8a.receipt.agentsWritten, true);
+    assert.equal(
+      err8a.receipt.agentsHash,
+      createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex')
+    );
     assert.equal(err8a.receipt.personalWritten, false);
     assert.equal(err8a.receipt.memoryWritten, false);
   } finally {
@@ -1253,21 +1423,21 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
     unlinkSync(`${personalPath}.lock`);
   }
 
-  // 8b. AGENTS.md written, personal written, then MEMORY.md fails (locked)
-  const currentAgentsHashAfter8a = createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex');
+  // 8b. AGENTS.md written, then MEMORY.md fails (locked) (F-33)
+  const agentsTextAfter8a = readFileSync(agentsPath, 'utf8');
   const currentPersonalHashAfter8a = readPersonalRules(personalPath).hash;
   const currentMemHashAfter8a = readSharedMemory(memoryPath).hash;
 
   const plan8b = planMemoryPruning({
-    memoryEntries: [thirdEntry],
+    memoryEntries: [thirdEntry, fourthEntry],
     candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
     dispositions: [
-      { entry: thirdEntry, disposition: 'personal', targetRuleText: 'New personal rule 8b' },
+      { entry: thirdEntry, disposition: 'promote', targetRuleText: 'Promoted rule from 8b' },
     ],
-    agentsText: readFileSync(agentsPath, 'utf8'),
+    agentsText: agentsTextAfter8a,
   });
 
-  const memLockFd = openSync(`${memoryPath}.lock`, 'wx');
+  const memLockFd8b = openSync(`${memoryPath}.lock`, 'wx');
   try {
     let err8b: any;
     try {
@@ -1278,17 +1448,82 @@ test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline veri
         memoryBaselineHash: currentMemHashAfter8a,
         personalBaselineHash: currentPersonalHashAfter8a,
         expectedPlanHash: plan8b.planHash,
+        agentsPath,
+        agentsBaselineHash: plan8b.agentsBaselineHash,
       });
     } catch (err) {
       err8b = err;
     }
     assert.ok(err8b instanceof MemoryPruningApplyError);
-    assert.equal(err8b.receipt.personalWritten, true);
+    assert.match(err8b.message, /Partial failure during memory pruning write sequence at memory/);
+    assert.equal(err8b.receipt.failedStep, 'memory');
+    assert.match(err8b.receipt.cause ?? '', /Another writer holds the lock/);
+    assert.equal(err8b.receipt.agentsWritten, true);
+    assert.equal(
+      err8b.receipt.agentsHash,
+      createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex')
+    );
+    assert.equal(err8b.receipt.personalWritten, false);
     assert.equal(err8b.receipt.memoryWritten, false);
   } finally {
-    closeSync(memLockFd);
+    closeSync(memLockFd8b);
     unlinkSync(`${memoryPath}.lock`);
   }
+
+  // 8c. Personal written, then MEMORY.md fails (locked)
+  const agentsTextAfter8b = readFileSync(agentsPath, 'utf8');
+  const currentPersonalHashAfter8b = readPersonalRules(personalPath).hash;
+  const currentMemHashAfter8b = readSharedMemory(memoryPath).hash;
+
+  const plan8c = planMemoryPruning({
+    memoryEntries: [thirdEntry, fourthEntry],
+    candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
+    dispositions: [
+      { entry: thirdEntry, disposition: 'personal', targetRuleText: 'New personal rule 8c' },
+    ],
+    agentsText: agentsTextAfter8b,
+  });
+
+  const memLockFd8c = openSync(`${memoryPath}.lock`, 'wx');
+  try {
+    let err8c: any;
+    try {
+      applyApprovedMemoryPruning({
+        plan: plan8c,
+        approved: true,
+        memoryPath,
+        memoryBaselineHash: currentMemHashAfter8b,
+        personalBaselineHash: currentPersonalHashAfter8b,
+        expectedPlanHash: plan8c.planHash,
+      });
+    } catch (err) {
+      err8c = err;
+    }
+    assert.ok(err8c instanceof MemoryPruningApplyError);
+    assert.match(err8c.message, /Partial failure during memory pruning write sequence at memory/);
+    assert.equal(err8c.receipt.failedStep, 'memory');
+    assert.equal(err8c.receipt.agentsWritten, false);
+    assert.equal(err8c.receipt.personalWritten, true);
+    assert.equal(err8c.receipt.personalHash, readPersonalRules(personalPath).hash);
+    assert.equal(err8c.receipt.memoryWritten, false);
+  } finally {
+    closeSync(memLockFd8c);
+    unlinkSync(`${memoryPath}.lock`);
+  }
+
+  // 8d. Rejects directory at agentsPath (non-regular file guard) (F-35)
+  const dirAsAgentsPath = join(projectRoot, 'AGENTS_DIR');
+  mkdirSync(dirAsAgentsPath, { recursive: true });
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: plan8b,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: currentMemHashAfter8b,
+    personalBaselineHash: readPersonalRules(personalPath).hash,
+    expectedPlanHash: plan8b.planHash,
+    agentsPath: dirAsAgentsPath,
+    agentsBaselineHash: plan8b.agentsBaselineHash,
+  }), /AGENTS\.md path must be a regular file/);
 });
 
 test('markEntryReviewed caps keep tags and evicts oldest, preserving case and rejecting invalid keys', () => {

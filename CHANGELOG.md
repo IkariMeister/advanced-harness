@@ -14,10 +14,14 @@ version between releases.
   obsolete (refers to issues, branches, or files that no longer exist, with remote evidence
   relayed through Lead from External; references with `unknown` status or check errors are never proposed).
   Learnings leave `MEMORY.md` upon approved promotion to any tier (`AGENTS.md` or `AGENTS.personal.md`) or on discard.
-  Multi-file writes are ordered and verify `expectedPlanHash` against the plan before modifying files; writes to `AGENTS.md`
-  are atomic via temporary file rename. Partial failures yield a structured `receipt` for human recovery.
-  Kept entries are marked with a visible `reviewed-keep:<kind>:<evidenceKey>` marker (capped at 5 tags with oldest-first eviction)
-  so they are not re-proposed without a new reason. Operators remain the sole serialized writer of `MEMORY.md`; declining or cancelling writes
+  Each individual file write (`AGENTS.md`, `AGENTS.personal.md`, `MEMORY.md`) is lock-serialized and uses a per-file atomic
+  temp-file rename (preserving file mode and rejecting symlinks or non-regular files), while the multi-file sequence is ordered
+  and non-atomic across files, verifying file baselines and the plan hash before modifying files and yielding a structured
+  partial-failure receipt (with completed writes, failed step, and cause) for human recovery.
+  Kept entries are marked with a visible `reviewed-keep:<kind>:<evidenceKey>` marker (capped at 5 tags per entry with oldest-first
+  eviction, so an older kept candidate can be re-proposed if a 6th distinct keep tag evicts its tag)
+  so they are not re-proposed without a new reason or tag eviction. Operators remain the sole serialized writer of `MEMORY.md`,
+  `AGENTS.personal.md`, and pruning-promoted `AGENTS.md` updates; declining or cancelling writes
   nothing. Extends shared rule validation to enforce non-empty, single-line, and 2000-character limits on promotion.
 - Personal project rules destination (BH-076, #208): add private, permanent storage for learnings
   in `AGENTS.personal.md` stored beside `MEMORY.md` in the project data directory (derived from `memoryPath`),
