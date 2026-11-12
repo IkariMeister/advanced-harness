@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { updateContext } from '../src/project-context.ts';
 import { applySeverity, DEFAULT_PREFLIGHT_CONFIG, effectiveForbiddenGlobs, loadProjectPreflightPolicy, validatePreflightConfig } from '../src/preflight/policy.ts';
-import { createDefaultChecks, exitCodeFor, runPreflight } from '../src/preflight/runner.ts';
+import { createDefaultChecks, exitCodeFor, runPreflight, type PreflightOptions } from '../src/preflight/runner.ts';
 import { changesetCheck, pathPolicyCheck, policyIntegrityCheck, secretScanCheck } from '../src/preflight/checks.ts';
 import { scanAddedText } from '../src/preflight/secret-scanner.ts';
 import type { PreflightCheck } from '../src/preflight/types.ts';
@@ -161,12 +161,13 @@ test('policy-dependent custom factory checks are guarded while custom same-ID ch
   const missing = projectRepo();
   git(missing, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
   const directFactory = await runPreflight({ worktree: missing, base: 'main', checks: [pathPolicyCheck(), secretScanCheck()] });
-  assert.deepEqual(directFactory.checks.map(check => check.status), ['inconclusive', 'inconclusive']);
+  assert.deepEqual(directFactory.checks.filter(check => check.id !== 'policy').map(check => check.status), ['inconclusive', 'inconclusive']);
+  assert.equal(policyRow(directFactory)?.status, 'inconclusive', 'the policy row is reported even when the caller supplies its own checks');
 
   let sameIdRan = false;
   const sameId = await runPreflight({ worktree: missing, base: 'main', checks: [{ id: 'secret-scan', run: () => { sameIdRan = true; return { status: 'pass', evidence: ['custom'] }; } }] });
   assert.equal(sameIdRan, true);
-  assert.equal(sameId.checks[0]?.status, 'pass');
+  assert.equal(sameId.checks.find(check => check.id === 'secret-scan')?.status, 'pass');
 });
 
 test('custom check failure message is retained when trusted policy is unavailable', async () => {
@@ -240,7 +241,8 @@ test('policy-unavailable handling does not short-circuit caller checks with buil
   const missingCalls: string[] = [];
   const missingResult = await runPreflight({ worktree: missing, base: 'main', checks: makeChecks(missingCalls) });
   assert.deepEqual(missingCalls.sort(), [...checkIds].sort());
-  assert.deepEqual(missingResult.checks.map(check => check.status), ['pass', 'pass']);
+  assert.deepEqual(missingResult.checks.filter(check => check.id !== 'policy').map(check => check.status), ['pass', 'pass']);
+  assert.equal(policyRow(missingResult)?.status, 'inconclusive');
 
   const invalid = projectRepo({ forbiddenPathGlobs: [] });
   writeFileSync(join(invalid, '.harness/preflight.json'), '{broken');
@@ -250,7 +252,8 @@ test('policy-unavailable handling does not short-circuit caller checks with buil
   const invalidCalls: string[] = [];
   const invalidResult = await runPreflight({ worktree: invalid, base: 'main', checks: makeChecks(invalidCalls) });
   assert.deepEqual(invalidCalls.sort(), [...checkIds].sort());
-  assert.deepEqual(invalidResult.checks.map(check => check.status), ['pass', 'pass']);
+  assert.deepEqual(invalidResult.checks.filter(check => check.id !== 'policy').map(check => check.status), ['pass', 'pass']);
+  assert.equal(policyRow(invalidResult)?.status, 'inconclusive');
 });
 
 test('runPreflight honors trusted committed gitlink acknowledgements for updates and additions', async () => {
@@ -609,6 +612,60 @@ test('custom checks run beside a configured policy file, and the policy does not
   ] });
   assert.equal(result.checks.find(check => check.id === 'path-policy')?.status, 'block', 'an unmarked custom check is neither disabled nor re-severitied');
   assert.equal(result.checks.find(check => check.id === 'custom')?.status, 'pass');
+});
+
+test('a custom check list still gets exactly one policy row, including when the trusted policy is unavailable', async () => {
+  const custom = [{ id: 'custom', run: () => ({ status: 'pass' as const, evidence: ['custom pass'] }) }];
+  const root = policyRepo({ forbiddenPathGlobs: ['**/*.pem'] });
+  const result = await runPreflight({ worktree: root, base: 'main', checks: custom });
+  assert.equal(result.checks.filter(check => check.id === 'policy').length, 1, JSON.stringify(result));
+  assert.equal(policyRow(result)?.status, 'pass');
+  assert.equal(result.checks.find(check => check.id === 'custom')?.status, 'pass');
+  assert.equal(exitCodeFor(result), 0);
+
+  const missing = policyRepo({ forbiddenPathGlobs: ['**/*.pem'] });
+  git(missing, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  const unavailable = await runPreflight({ worktree: missing, base: 'main', checks: custom });
+  assert.equal(unavailable.checks.filter(check => check.id === 'policy').length, 1, JSON.stringify(unavailable));
+  assert.equal(policyRow(unavailable)?.status, 'inconclusive');
+  assert.match(policyRow(unavailable)?.evidence.join('\n') ?? '', /git remote set-head origin --auto/);
+  assert.equal(unavailable.checks.find(check => check.id === 'custom')?.status, 'pass', 'the caller check still runs');
+  assert.equal(exitCodeFor(unavailable), 2);
+});
+
+test('a caller-supplied check with the reserved id policy is inconclusive, runs nothing, and the policy row appears once', async () => {
+  const root = policyRepo({ forbiddenPathGlobs: ['**/*.pem'] });
+  let ran = false;
+  const result = await runPreflight({ worktree: root, base: 'main', checks: [
+    { id: 'policy', run: () => { ran = true; return { status: 'pass' as const, evidence: ['caller policy'] }; } },
+    { id: 'custom', run: () => { ran = true; return { status: 'pass' as const, evidence: ['custom'] }; } },
+  ] });
+  assert.equal(ran, false, 'a reserved-id run executes no caller check');
+  assert.equal(result.checks.filter(check => check.id === 'policy').length, 1, JSON.stringify(result));
+  assert.deepEqual(policyRow(result)?.evidence, ['Preflight check id "policy" is reserved for the built-in policy result.']);
+  assert.equal(policyRow(result)?.status, 'inconclusive');
+  assert.equal(result.checks.find(check => check.id === 'custom')?.status, 'inconclusive');
+  assert.equal(result.approved, false);
+  assert.equal(exitCodeFor(result), 2);
+});
+
+test('early inconclusive returns report the policy row exactly once, with default and custom check lists', async () => {
+  const root = policyRepo({ forbiddenPathGlobs: ['**/*.pem'] });
+  const custom = [{ id: 'custom', run: () => ({ status: 'pass' as const, evidence: ['ran'] }) }];
+  const cases: [string, PreflightOptions][] = [
+    ['worktree not found, default checks', { worktree: join(root, 'does-not-exist') }],
+    ['worktree not found, custom checks', { worktree: join(root, 'does-not-exist'), checks: custom }],
+    ['base error, default checks', { worktree: makeTempRoot('preflight-policy-nobase-') }],
+    ['changeset error, custom checks', { worktree: makeTempRoot('preflight-policy-nogit-'), base: 'main', checks: custom }],
+    ['no checks configured', { worktree: root, base: 'main', checks: [] }],
+    ['policy override conflict', { worktree: root, base: 'main', checks: custom, sensitivePathGlobs: [] }],
+  ];
+  for (const [name, options] of cases) {
+    const result = await runPreflight(options);
+    assert.equal(result.checks.filter(check => check.id === 'policy').length, 1, `${name}: ${JSON.stringify(result)}`);
+    assert.equal(policyRow(result)?.status, 'inconclusive', name);
+    assert.equal(exitCodeFor(result), 2, name);
+  }
 });
 
 function gitOutput(root: string, ...args: string[]): string {

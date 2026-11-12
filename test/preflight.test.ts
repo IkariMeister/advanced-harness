@@ -369,11 +369,11 @@ test('checks run in deterministic id order and aggregate block/warn', async () =
   const make = (id: string, status: 'pass' | 'warn' | 'block'): PreflightCheck => ({ id, run: () => { order.push(id); return { status, evidence: [`${id} evidence`], metrics: { n: 1 } }; } });
   const result = await runPreflight({ worktree: root, base: 'main', checks: [make('c', 'block'), make('a', 'pass'), make('b', 'warn')] });
   assert.deepEqual(order, ['a', 'b', 'c']);
-  assert.deepEqual(result.checks.map((check) => check.id), ['a', 'b', 'c']);
+  assert.deepEqual(result.checks.map((check) => check.id), ['a', 'b', 'c', 'policy']);
   assert.equal(result.approved, false);
   assert.deepEqual(result.blocking, ['c: c evidence']);
   assert.deepEqual(result.warnings, ['b: b evidence']);
-  assert.deepEqual(result.metrics, { 'a.n': 1, 'b.n': 1, 'c.n': 1 });
+  assert.deepEqual(Object.fromEntries(Object.entries(result.metrics).filter(([key]) => !key.startsWith('policy.'))), { 'a.n': 1, 'b.n': 1, 'c.n': 1 });
   assert.equal(exitCodeFor(result), 1);
 });
 
@@ -394,7 +394,7 @@ test('empty check list, unknown status, and duplicate check ids are inconclusive
   const unknownRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'u', run: () => ({ status: 'weird' as unknown as CheckStatus, evidence: ['weird'] }) }] });
   assert.equal(unknownRes.approved, false);
   assert.equal(exitCodeFor(unknownRes), 2);
-  assert.equal(unknownRes.checks[0]?.status, 'inconclusive');
+  assert.equal(unknownRes.checks.find((check) => check.id === 'u')?.status, 'inconclusive');
 
   const dupRes = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'dup', run: () => ({ status: 'pass', evidence: [] }) }, { id: 'dup', run: () => ({ status: 'pass', evidence: [] }) }] });
   assert.equal(dupRes.approved, false);
@@ -404,7 +404,7 @@ test('empty check list, unknown status, and duplicate check ids are inconclusive
 test('a throwing check is inconclusive, not a pass', async () => {
   const root = repo();
   const result = await runPreflight({ worktree: root, base: 'main', checks: [{ id: 'x', run: () => { throw new Error('boom'); } }] });
-  assert.equal(result.checks[0]?.status, 'inconclusive');
+  assert.equal(result.checks.find((check) => check.id === 'x')?.status, 'inconclusive');
   assert.equal(result.approved, false);
   assert.equal(exitCodeFor(result), 2);
 });

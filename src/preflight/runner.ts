@@ -26,7 +26,7 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
 }
 
 export type PreflightOptions = { worktree: string; base?: string | undefined; task?: string | undefined; checks?: readonly PreflightCheck[]; sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText };
-type ExecuteChecksOptions = { worktree: string; changeset: Changeset; checks: readonly PreflightCheck[]; task?: string | undefined; policy?: ProjectPreflightPolicy | undefined; unavailableReason?: string | undefined };
+type ExecuteChecksOptions = { worktree: string; changeset: Changeset; checks: readonly PreflightCheck[]; custom: boolean; task?: string | undefined; policy?: ProjectPreflightPolicy | undefined; unavailableReason?: string | undefined };
 export type DefaultCheckOptions = { policy?: ProjectPreflightPolicy | undefined; sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText };
 
 /**
@@ -43,9 +43,17 @@ export function createDefaultChecks(options: DefaultCheckOptions = {}): readonly
 }
 export const defaultChecks = createDefaultChecks();
 
+/** The fixed policy result ID. A caller-supplied check may not use it. */
+const POLICY_CHECK_ID = 'policy';
+const RESERVED_POLICY_ID_REASON = `Preflight check id "${POLICY_CHECK_ID}" is reserved for the built-in policy result.`;
+
+/**
+ * Every listed check is inconclusive with the same reason, as an early return or a duplicate-ID failure needs.
+ * The fixed policy row is reported exactly once, whether or not the listed checks already include it.
+ */
 function inconclusiveAll(checks: readonly PreflightCheck[], reason: string): PreflightResult {
-  const list = checks.length ? checks : [{ id: 'preflight' } as PreflightCheck];
-  const results = list.map((check) => ({ id: check.id, status: 'inconclusive' as const, evidence: [reason] }));
+  const ids = [...checks.map((check) => check.id).filter((id) => id !== POLICY_CHECK_ID), POLICY_CHECK_ID];
+  const results = ids.map((id) => ({ id, status: 'inconclusive' as const, evidence: [reason] }));
   return { approved: false, blocking: [], warnings: [], metrics: {}, checks: results };
 }
 
@@ -63,8 +71,11 @@ function adjustedStatus(check: PreflightCheck, reported: CheckStatus, policy: Pr
   return REPORTABLE_STATUSES.includes(adjusted) ? adjusted : 'inconclusive';
 }
 
-async function executeChecks({ worktree, changeset, checks, task, policy, unavailableReason }: ExecuteChecksOptions): Promise<PreflightResult> {
-  if (!checks.length) return inconclusiveAll(checks, 'No checks configured to run.');
+async function executeChecks({ worktree, changeset, checks: callerChecks, custom, task, policy, unavailableReason }: ExecuteChecksOptions): Promise<PreflightResult> {
+  if (!callerChecks.length) return inconclusiveAll(callerChecks, 'No checks configured to run.');
+  // Caller-supplied checks get the fixed policy row appended here. Built-in defaults already include it.
+  if (custom && callerChecks.some((check) => check.id === POLICY_CHECK_ID)) return inconclusiveAll(callerChecks, RESERVED_POLICY_ID_REASON);
+  const checks = custom ? [...callerChecks, policyCheck(policy ?? builtInPreflightPolicy())] : callerChecks;
   const ordered = [...checks].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   const seen = new Set<string>();
   for (const check of ordered) {
@@ -116,20 +127,21 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
   try { changeset = collectChangeset(worktree, base.ref, base.source); } catch (error) {
     return inconclusiveAll(options.checks ?? defaultChecks, `Changeset unavailable: ${error instanceof Error ? error.message : String(error)}`);
   }
+  const custom = options.checks !== undefined;
   let policy: ProjectPreflightPolicy;
   try {
     policy = loadProjectPreflightPolicy(changeset.top, TRUSTED_REF, { forbiddenPathGlobs: options.sensitivePathGlobs !== undefined, secretExceptions: options.secretExceptions !== undefined });
   } catch (error) {
     if (error instanceof PreflightPolicyError && error.code === 'base-unavailable') {
       const reason = `Trusted preflight policy ref ${TRUSTED_REF} is unavailable; restore it with \`git remote set-head origin --auto\`. Passing --base selects the changeset comparison only; it does not replace trusted policy.`;
-      return executeChecks({ worktree, changeset, checks: options.checks ?? defaultChecks, task: options.task, unavailableReason: reason });
+      return executeChecks({ worktree, changeset, checks: options.checks ?? defaultChecks, custom, task: options.task, unavailableReason: reason });
     }
     if (error instanceof PreflightPolicyError && error.code === 'git-failure') {
       const reason = `Trusted preflight policy ref ${TRUSTED_REF} could not be read: ${error.message}`;
-      return executeChecks({ worktree, changeset, checks: options.checks ?? defaultChecks, task: options.task, unavailableReason: reason });
+      return executeChecks({ worktree, changeset, checks: options.checks ?? defaultChecks, custom, task: options.task, unavailableReason: reason });
     }
     const detail = error instanceof PreflightPolicyError ? error.message : 'validation failed.';
-    return executeChecks({ worktree, changeset, checks: options.checks ?? defaultChecks, task: options.task, unavailableReason: `Project preflight policy is invalid: ${detail}` });
+    return executeChecks({ worktree, changeset, checks: options.checks ?? defaultChecks, custom, task: options.task, unavailableReason: `Project preflight policy is invalid: ${detail}` });
   }
   const effective = withProgrammaticOverrides(policy, options);
   let rawChecks: readonly PreflightCheck[];
@@ -143,7 +155,7 @@ export async function runPreflight(options: PreflightOptions): Promise<Preflight
   } catch (error) {
     return inconclusiveAll(options.checks ?? defaultChecks, `Preflight policy is invalid: ${error instanceof Error ? error.message : 'validation failed.'}`);
   }
-  return executeChecks({ worktree, changeset, checks: rawChecks, task: options.task, policy: effective });
+  return executeChecks({ worktree, changeset, checks: rawChecks, custom, task: options.task, policy: effective });
 }
 
 export function exitCodeFor(result: PreflightResult): PreflightExitCode {

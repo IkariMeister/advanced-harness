@@ -267,7 +267,7 @@ status, evidence lines, and optional numeric metrics. A thrown error becomes
 `base-context` blocks unverified project context modifications, and `worktree-boundary`
 ensures preflight runs within an isolated task worktree. Of these, only `path-policy` is
 configurable. The trusted policy applies only to the built-in instance of a configurable check; a
-caller-supplied check is never configured, whatever fields it sets. The rest are fixed. Guardrail checks (BH-068..BH-071) plug in alongside them.
+caller-supplied check is never configured, whatever fields it sets. The rest are fixed. Guardrail checks (BH-068..BH-071) plug in alongside them. The id `policy` is reserved for the built-in `policy` result: a caller check using it makes the run inconclusive. Custom `checks` lists still get the fixed `policy` result, which is inconclusive when the trusted policy cannot be loaded.
 
 ## Trusted acknowledgement evidence and status
 

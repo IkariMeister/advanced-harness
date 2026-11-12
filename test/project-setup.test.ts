@@ -768,17 +768,56 @@ test('a directory without .git gets a note and no policy prompt', async t => {
   assert.equal(existsSync(join(plain, '.harness')), false);
 });
 
-test('a valid project section in a linked context file is updated there, and AGENTS.md stays byte-identical', async t => {
+test('a valid project section in a linked context file is the source of suggestions, is saved back there, and AGENTS.md stays byte-identical', async t => {
   const { root, project } = fixture(t);
   mkdirSync(join(project, 'docs'));
   const linked = join(project, 'docs', 'HARNESS.md');
-  writeFileSync(linked, '# Harness\n');
+  // Non-default values: the defaults are base branch "main", shell by platform, device "physical-first", and no build command.
+  const seeded: ProjectProfile = {
+    ...profile(root, project),
+    baseBranch: 'release',
+    shell: 'cmd',
+    checks: { ...profile(root, project).checks, build: { status: 'configured', command: 'gradlew.bat :app:assembleSeedDebug' } },
+    device: { preference: 'emulator', serial: 'emulator-5554' },
+  };
+  writeFileSync(linked, updateContext('# Harness\n', 'project', seeded, []));
   writeFileSync(join(project, 'AGENTS.md'), 'Read `docs/HARNESS.md` for Advanced Harness project settings before planning.\n');
   const agents = readFileSync(join(project, 'AGENTS.md'), 'utf8');
   const log: SetupLog = { asked: [], outputs: [] };
-  assert.equal(await setupRun(root, project, { confirm: 'save' }, log), 0);
-  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents, 'AGENTS.md is byte-identical');
-  assert.notEqual(contextData(readFileSync(linked, 'utf8'), 'project'), undefined, 'the settings were saved in the linked file');
+  // No --context: the linked file is found through AGENTS.md. Every prompt takes its suggestion (Enter), except the
+  // full-preview confirmation, which must be typed as `save` to write anything.
+  const code = await runSetupFlow({ project }, {
+    ask: async (question, suggested) => {
+      log.asked.push({ question, ...(suggested === undefined ? {} : { suggested }) });
+      if (question.startsWith('Full preview')) return 'save';
+      return suggested ?? '';
+    },
+    output: line => log.outputs.push(line),
+    error: line => log.outputs.push(`ERROR: ${line}`),
+    home: join(root, 'home'),
+    xdgConfigHome: join(root, 'xdg'),
+    recoveryDirectory: join(root, 'backups'),
+    cwd: root,
+  });
+  assert.equal(code, 0);
+
+  const suggestedFor = (prefix: string) => log.asked.find(item => item.question.startsWith(prefix))?.suggested;
+  assert.equal(suggestedFor('Base branch'), 'release', 'the seeded base branch is suggested');
+  assert.equal(suggestedFor('Command shell'), 'cmd', 'the seeded shell is suggested');
+  assert.equal(suggestedFor('build: confirm command'), 'gradlew.bat :app:assembleSeedDebug', 'the seeded build command is suggested');
+  assert.equal(suggestedFor('Device preference'), 'emulator', 'the seeded device preference is suggested');
+  assert.equal(suggestedFor('Optional device serial'), 'emulator-5554', 'the seeded device serial is suggested');
+
+  const saved = validateProfile(contextData(readFileSync(linked, 'utf8'), 'project'));
+  assert.equal(saved.baseBranch, 'release', 'the saved linked file keeps the base branch');
+  assert.equal(saved.shell, 'cmd', 'the saved linked file keeps the shell');
+  assert.deepEqual(saved.checks.build, { status: 'configured', command: 'gradlew.bat :app:assembleSeedDebug' }, 'the saved linked file keeps the build command');
+  assert.deepEqual(saved.device, { preference: 'emulator', serial: 'emulator-5554' }, 'the saved linked file keeps the device settings');
+  assert.equal(saved.worktreeDirectory, seeded.worktreeDirectory);
+  assert.equal(saved.memoryPath, seeded.memoryPath);
+
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), agents, 'AGENTS.md is byte-identical, so the link is preserved');
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8').includes('advanced-harness:project:start'), false, 'no project section was written into AGENTS.md');
   assert.ok(log.outputs.includes(`Context file: ${linked} (linked from AGENTS.md; the link is kept as written)`));
   assert.ok(log.outputs.includes(`Project settings saved in context: ${linked}`));
 });
