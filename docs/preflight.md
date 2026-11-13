@@ -5,8 +5,10 @@ evidence only: no result, file, or tracker stamp counts as plan or publish
 approval. The human approves.
 
 ```text
-npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--json]
+npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--criteria <file>] [--justify-no-tests "<text>"] [--json]
 ```
+
+Each value flag may appear once and needs a value; a missing or repeated flag is a usage error (exit 2). `--justify-no-tests` also refuses a blank value.
 
 ## Base ref and trust model
 
@@ -105,7 +107,7 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   `root.pem` and `certs/root.pem`. By contrast, `*.pem` matches root-level files
   only. Brackets and braces are literal characters, not character classes or
   alternation syntax: `file[1].pem` matches that bracketed name literally.
-  Preflight reads `.harness/preflight.json` (`forbiddenPathGlobs` and
+  Preflight reads `.harness/preflight.json` (`checks`, `forbiddenPathGlobs`, `prodGlobs`, `testGlobs`, and
   `gitlinkAcknowledgements`) and `.harness/preflight-allowlist.json` from
   `refs/remotes/origin/HEAD`, independently of `--base`. It never reads
   candidate working-tree policy contents. Changes to either policy file in
@@ -163,15 +165,15 @@ The full schema is in [configuration](configuration.md#preflight-policy).
 
 ### Fixed and configurable checks
 
-Only `path-policy` is a **configurable check**. The trusted policy may enable or disable it, and may change its severity. The other built-in checks are **fixed checks** (`changeset`, `base-context`, `policy-integrity`, `policy`, `secret-scan`, `worktree-boundary`): the policy cannot disable them, re-severity them, or name them under `checks`. A configuration entry for a fixed check, or for an unknown ID, is rejected with the configurable IDs listed.
+`path-policy` and `test-change` are **configurable checks**. The trusted policy may enable or disable them, and may change their severity. The other built-in checks are **fixed checks** (`changeset`, `base-context`, `policy-integrity`, `policy`, `secret-scan`, `worktree-boundary`, `acceptance-criteria`): the policy cannot disable them, re-severity them, or name them under `checks`. A configuration entry for a fixed check, or for an unknown ID, is rejected with the configurable IDs listed. `acceptance-criteria` is fixed because its input is per-run task evidence from `--criteria`, not repository policy.
 
-- **Severity** (`checks.path-policy.severity`) changes only `block` to `warn`, or `warn` to `block`. A `pass` or `inconclusive` result is never changed. Severity applies to the built-in check instance, not to a custom check that reuses its ID.
-- **Disabled checks** (`checks.path-policy.enabled: false`) are omitted from the run and listed on the `policy` result. A disabled check cannot block.
+- **Severity** (`checks.path-policy.severity` or `checks.test-change.severity`) changes only `block` to `warn`, or `warn` to `block`. A `pass` or `inconclusive` result is never changed. Severity applies to the built-in check instance, not to a custom check that reuses its ID.
+- **Disabled checks** (`checks.path-policy.enabled: false` or `checks.test-change.enabled: false`) are omitted from the run and listed on the `policy` result. A disabled check cannot block.
 - **Custom checks** still run beside a configured policy file. The policy's severity and disable settings do not apply to them.
 
 ### The policy result
 
-Every run includes a fixed `policy` check. It reports where the policy came from (`.harness/preflight.json` at `refs/remotes/origin/HEAD`, with the short commit), the disabled checks, the severity overrides, the forbidden-glob mode and count, and any programmatic override (`sensitivePathGlobs` or `secretExceptions`). It is `pass` unless a recorded key is not enforced yet: `prodGlobs` and `testGlobs` are recorded for BH-070, and `forbiddenPathGlobs` is inert while `path-policy` is disabled. Those cases are `warn`. The result is marked policy-dependent, so it becomes `inconclusive` when the trusted policy cannot be loaded.
+Every run includes a fixed `policy` check. It reports where the policy came from (`.harness/preflight.json` at `refs/remotes/origin/HEAD`, with the short commit), the disabled checks, the severity overrides, the forbidden-glob mode and count, and any programmatic override (`sensitivePathGlobs` or `secretExceptions`). It is `pass` unless a recorded key is inert: `prodGlobs` and `testGlobs` are inert while `test-change` is disabled, and `forbiddenPathGlobs` is inert while `path-policy` is disabled. It also warns when `test-change` is configured (severity `block`, or `enabled: true`) without both `prodGlobs` and `testGlobs`, because the check then does not run. Those cases are `warn`. The result is marked policy-dependent, so it becomes `inconclusive` when the trusted policy cannot be loaded.
 
 ### Forbidden path globs
 
@@ -196,6 +198,34 @@ visibly labeled. Dirty or uninspectable nested content cannot be acknowledged.
 Acknowledgements cannot suppress findings or other incomplete paths. The former
 `--ack-gitlink` option is rejected with migration guidance. Policy edits in the
 candidate changeset remain blocked until reviewed and present at trusted `origin/HEAD`.
+
+## Test change, acceptance criteria, and justified bypass
+
+**`test-change`** (configurable, BH-070) reads the trusted `prodGlobs` and `testGlobs`, which are given together. It warns when a changed production file exists and no changed test file does. It passes when a test file changed or no production file changed. With either glob missing it passes with the evidence `prodGlobs/testGlobs not configured; check not run`. With no `test-change` setting and no globs, the policy row stays `pass`. When `test-change` is configured (severity `block`, or `enabled: true`) and a glob is missing, the policy row warns, as described under [the policy result](#the-policy-result).
+
+- A changed path is any `path` in the changeset, plus the `oldPath` of a rename. A deletion counts as a production change when its path matches a production glob. A deleted test file is not a test change, and neither is the old path of a rename: the evidence lists those paths as `Removed test paths do not count as test changes`. A copy's source is not a change, because it stays in place.
+- A path that matches a test glob is a test, even if a production glob also matches it.
+- Matching uses the same case-insensitive glob rules as `path-policy`, on forward-slash paths. Changed paths that differ only by case are one path on Windows.
+- Severity (`checks.test-change.severity`) can turn the warning into a block. `enabled: false` skips the check.
+
+```json
+{ "prodGlobs": ["src/**"], "testGlobs": ["test/**", "**/*.test.ts"], "checks": { "test-change": { "severity": "block" } } }
+```
+
+**Justified bypass** (`--justify-no-tests "<text>"`). When `test-change` would block, this option turns that block into a warning. The text must be nonblank, and it is recorded verbatim whether or not it was needed. The human output shows it on a `Justified bypass (not approval)` line, where control characters are escaped and the text is bounded to 240 characters, so a justification cannot forge an output line. The verdict reads `PASS (JUSTIFIED BYPASS)` only when the bypass changed a block and no other check blocks. The JSON result gains a `bypass` array, `[{ "check": "test-change", "justification": "<text>", "applied": true }]`, which keeps the text verbatim. `applied` is `true` only when a block became a warning; otherwise it is `false`, and the status is unchanged. The bypass applies only to a `block`. An `inconclusive` test-change, for example when the trusted ref is unavailable, is not bypassed. A caller-supplied check named `test-change` is never downgraded by severity or by the bypass. A bypass is never approval. `approved` still derives only from check statuses. A bypassed block is a warning, so `approved` follows the same rule as any other warning. A run that stops early (for example, an unavailable worktree) records no bypass.
+
+When a run has acknowledged incomplete coverage, the verdict reads `PASS (ACKNOWLEDGED INCOMPLETE COVERAGE)`, which takes precedence over `PASS (JUSTIFIED BYPASS)`; the `Justified bypass` line still prints. Custom programmatic `checks` ignore criteria: a `checks` list replaces the built-in set, so the `acceptance-criteria` row is absent from that run.
+
+**`acceptance-criteria`** (fixed) reads the file given by `--criteria <file>`. The file's shape is:
+
+```json
+{ "items": [ { "text": "Tests cover the new check", "done": true }, { "text": "Docs updated", "done": false } ] }
+```
+
+- Pending items make the check `warn`, and the evidence lists the pending texts. Control characters are escaped, and the list and each text are bounded.
+- A fully checked list makes it `pass`. Checked boxes are the human's recorded progress, not approval. Text such as `APPROVED`, a fully checked list, and a stamp file in the changeset do not change `approved`.
+- Without `--criteria` it passes with the evidence `no task context supplied`.
+- A missing file, malformed JSON, a repeated key, a shape that is not exactly the one above, an empty `items` array, or a file over 1 MiB makes it `inconclusive` (exit 2). The shape is strict: unknown keys are refused, and each `text` must be a nonblank string and each `done` a boolean.
 
 ## Worktree boundary check
 
@@ -236,7 +266,9 @@ in the canonical checkout:
 ```
 
 In the JSON result contract, `approved` is a boolean summarizing whether all executed
-checks passed or warned (i.e. no check had a `block` or `inconclusive` status).
+checks passed or warned (i.e. no check had a `block` or `inconclusive` status). The optional
+`bypass` array appears when `--justify-no-tests` was supplied to a run that executed checks; it names
+the check, the verbatim justification, and whether it changed a block (`applied`). It is evidence, not approval.
 Programmatic consumers must treat `approved` strictly as an automated check verdict:
 it is evidence only and **never** represents human or plan approval.
 
@@ -263,9 +295,9 @@ A check implements `PreflightCheck` from `src/preflight/types.ts`: a unique `id`
 and a `run(context)` that receives the worktree and changeset and returns a
 status, evidence lines, and optional numeric metrics. A thrown error becomes
 `inconclusive`. The built-in checks are `changeset`, `base-context`, `policy-integrity`, `path-policy`,
-`secret-scan`, `worktree-boundary`, and `policy`. `changeset` summarizes the changeset,
+`secret-scan`, `test-change`, `worktree-boundary`, `acceptance-criteria`, and `policy`. `changeset` summarizes the changeset,
 `base-context` blocks unverified project context modifications, and `worktree-boundary`
-ensures preflight runs within an isolated task worktree. Of these, only `path-policy` is
+ensures preflight runs within an isolated task worktree. Of these, only `path-policy` and `test-change` are
 configurable. The trusted policy applies only to the built-in instance of a configurable check; a
 caller-supplied check is never configured, whatever fields it sets. The rest are fixed. Guardrail checks (BH-068..BH-071) plug in alongside them. The id `policy` is reserved for the built-in `policy` result: a caller check using it makes the run inconclusive. Custom `checks` lists still get the fixed `policy` result, which is inconclusive when the trusted policy cannot be loaded.
 

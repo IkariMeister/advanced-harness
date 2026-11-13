@@ -5,16 +5,18 @@ const configurableBuiltInChecks = new WeakSet<PreflightCheck>();
 // This identity marker is intentionally instance-based; wrapping or copying a built-in check loses its policy-dependent marker.
 export function markTrustedPolicyDependent<T extends PreflightCheck>(check: T): T { trustedPolicyDependentChecks.add(check); return check; }
 export function isTrustedPolicyDependent(check: PreflightCheck): boolean { return trustedPolicyDependentChecks.has(check); }
-/** Registered only by this module's built-in factory (`pathPolicyCheck`). A caller-supplied object cannot register itself. */
-function markConfigurableBuiltIn<T extends PreflightCheck>(check: T): T { configurableBuiltInChecks.add(check); return check; }
+/** Registered only by built-in factories (`pathPolicyCheck`, `testChangeCheck`). A caller-supplied object cannot register itself. */
+export function markConfigurableBuiltIn<T extends PreflightCheck>(check: T): T { configurableBuiltInChecks.add(check); return check; }
 /** True only for a built-in configurable check instance, so the trusted policy may enable, disable, or re-severity it. */
 export function isConfigurableBuiltIn(check: PreflightCheck): boolean { return configurableBuiltInChecks.has(check); }
 
 export const DEFAULT_SENSITIVE_PATH_GLOBS = ['**/.env*', '**/id_rsa*', '**/.DS_Store', '**/keys/**', '**/keystores/**', '**/*.key', '**/*.pem', '**/*.p12', '**/*.pfx', '**/*.jks', '**/*.keystore', '**/build/**', '**/dist/**'] as const;
-export function validateSensitivePathGlobs(value: unknown): asserts value is readonly string[] {
-  if (!Array.isArray(value) || value.some(glob => typeof glob !== 'string' || !glob.trim() || glob.length > 300 || /[\u0000-\u001f\u007f]/.test(glob) || glob.startsWith('/') || /^[a-z]:/i.test(glob) || glob.replaceAll('\\', '/').split('/').includes('..'))) throw new Error('forbiddenPathGlobs must be an array of safe repository-relative glob strings.');
+/** `name` is the setting the error names: forbiddenPathGlobs by default, or prodGlobs/testGlobs for test-change. */
+export function validateSensitivePathGlobs(value: unknown, name = 'forbiddenPathGlobs'): asserts value is readonly string[] {
+  if (!Array.isArray(value) || value.some(glob => typeof glob !== 'string' || !glob.trim() || glob.length > 300 || /[\u0000-\u001f\u007f]/.test(glob) || glob.startsWith('/') || /^[a-z]:/i.test(glob) || glob.replaceAll('\\', '/').split('/').includes('..'))) throw new Error(`${name} must be an array of safe repository-relative glob strings.`);
 }
-function matchesGlob(path: string, glob: string): boolean {
+/** Case-insensitive glob match on forward-slash paths. Shared by path-policy and test-change so both read globs alike. */
+export function matchesGlob(path: string, glob: string): boolean {
   const p = path.replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
   const g = glob.replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
   let source = '';

@@ -153,7 +153,7 @@ It prints the harness checkout version and whether it is on a release tag (no ne
 Collect pre-publish evidence for a task worktree:
 
 ```text
-npm run harness:preflight -- --worktree "path/to/task-worktree" [--base <ref>] [--json]
+npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--criteria <file>] [--justify-no-tests "<text>"] [--json]
 ```
 
 It inspects the changeset (`merge-base(base, HEAD)...HEAD` plus staged, unstaged, and untracked files) and runs built-in checks. `--base` selects the comparison revision; policy is independently loaded from local `refs/remotes/origin/HEAD` without fetching. It exits 0 pass, 1 blocked, or 2 inconclusive. A clean gitlink gap can be acknowledged in trusted `.harness/preflight.json` with exact IDs and a nonblank justification; it remains visibly incomplete, and exit 0 is allowed only when no findings or other gaps remain. Dirty or uninspectable nested content cannot be acknowledged. The legacy `--ack-gitlink` flag is rejected with migration guidance. The trusted `.harness/preflight.json` can enable or disable the configurable `path-policy` check and set its severity (`block` or `warn`); every run reports the effective policy in a fixed `policy` result row. See [docs/preflight.md](docs/preflight.md) and [configuration](docs/configuration.md#preflight-policy).
