@@ -856,3 +856,54 @@ test('update flow shows a -dev harness checkout version and compares by commit',
   assert.ok(questions.some(q => q.startsWith('Check remote repository for newer versions on origin/main?')));
   assert.ok(!output.some(line => line.startsWith('Checking remote')));
 });
+
+test('Antigravity update upgrades legacy Lead-rule installation, preserves child tiers into agent frontmatter, and tracks agents in successor receipt', async t => {
+  const root = makeTempRoot('antigravity-legacy-upgrade-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'project');
+  const recovery = join(root, 'recovery');
+  mkdirSync(join(project, '.agents', 'rules'), { recursive: true });
+  writeFileSync(join(project, '.agents', 'hooks.json'), JSON.stringify({ hooks: {} }, null, 2) + '\n');
+  writeFileSync(join(project, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: {} }, null, 2) + '\n');
+  writeFileSync(
+    join(project, '.agents', 'rules', 'advanced-harness-lead.md'),
+    [
+      '# Advanced Harness Lead',
+      '',
+      '| Role | Tier |',
+      '| --- | --- |',
+      '| **operator** | `flash_lite` |',
+      '| **external** | `flash_lite` |',
+      '| **researcher** | `pro` |',
+      '| **planner** | `pro` |',
+      '| **implementer** | `flash` |',
+      '| **reviewer** | `pro` |',
+      '| **qa** | `flash` |',
+      '',
+    ].join('\n'),
+  );
+
+  const outputs: string[] = [];
+  const errors: string[] = [];
+  const status = await runUpdateFlow(
+    { host: 'antigravity', scope: 'project', project, checkRemote: false },
+    {
+      ask: async prompt => (/proceed|apply|install|update|overwrite/i.test(prompt) ? 'yes' : ''),
+      output: text => outputs.push(text),
+      error: text => errors.push(text),
+      home: root,
+      recoveryDirectory: recovery,
+      agentsDirectory: join(process.cwd(), 'agents'),
+      workflowCommandsDirectory: join(process.cwd(), 'commands'),
+    },
+  );
+
+  assert.equal(status, 0, `Unexpected errors: ${errors.join('; ')}`);
+  const researcherAgent = readFileSync(join(project, '.agents', 'agents', 'researcher.md'), 'utf8');
+  assert.match(researcherAgent, /^---\r?\n[\s\S]*?model:\s*pro\b[\s\S]*?\r?\n---/);
+
+  const chain = discoverReceiptChain(recovery, join(project, '.agents', 'hooks.json'), 'antigravity');
+  const managedPaths = (chain.head?.receipt.managedFiles ?? []).map(f => f.path.replace(/\\/g, '/'));
+  assert.ok(managedPaths.some(p => p.endsWith('/.agents/agents/researcher.md')));
+  assert.ok(managedPaths.some(p => p.endsWith('/.agents/agents/implementer.md')));
+});
