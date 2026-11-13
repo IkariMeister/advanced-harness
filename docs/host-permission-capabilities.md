@@ -23,7 +23,7 @@ The canonical machine-readable rows are in [the capability registry](../src/host
 | --- | --- | --- | --- | --- | --- |
 | [OpenCode](#opencode) | unverified | advisory | unverified | advisory | unverified |
 | [Claude Code](#claude-code) | unverified | advisory | unsupported | advisory | unverified |
-| [Antigravity](#antigravity) | advisory | advisory | advisory | advisory | unsupported |
+| [Antigravity](#antigravity) | advisory | advisory | advisory | advisory | declarative |
 | [Codex](#codex) | unverified | unverified | unverified | advisory | unverified |
 | [Cursor](#cursor) | unsupported | unsupported | unsupported | unsupported | unsupported |
 
@@ -59,11 +59,11 @@ Host follow-up: [#43](https://github.com/IkariMeister/advanced-harness/issues/43
 
 | Capability | Status | Scope and limitation | Evidence |
 | --- | --- | --- | --- |
-| Read-only before approval, write/execute after approval for the same role | advisory | Lead instructions select role tool groups; no independently verified same-role approval boundary is established. | [documentation](../README.md#agents-and-fixed-per-host-model-presets); [regression-test](../test/antigravity-compiler.test.ts) |
+| Read-only before approval, write/execute after approval for the same role | advisory | Lead instructions and declarative agent files (`.agents/agents`, `~/.gemini/config/agents`) with `mainAgent`/`subagent` symmetry select role tool groups; no independently verified same-role approval boundary is established. | [documentation](../README.md#agents-and-fixed-per-host-model-presets); [regression-test](../test/antigravity-compiler.test.ts) |
 | Isolation of local Git from external/remote writes | advisory | Local/external ownership is instructional. Direct-command hooks are not isolation against indirect scripts or other processes. | [documentation](../SECURITY.md); [regression-test](../test/antigravity-compiler.test.ts) |
-| Command execution scoped per role (Reviewer/QA re-run path) | advisory | Compiled write-tool groups include run_command; Lead must apply them. Emitted rules do not prove runtime Reviewer/QA command access. | [regression-test](../test/antigravity-compiler.test.ts); [documentation](../docs/installation.md) |
+| Command execution scoped per role (Reviewer/QA re-run path) | advisory | Declarative agent files set `commandExecutionPolicy` and compiled write-tool groups include `run_command`; Lead must apply them. Emitted files do not prove runtime Reviewer/QA command access. | [regression-test](../test/antigravity-compiler.test.ts); [documentation](../docs/installation.md) |
 | Skills and MCP tool exposure scoped per role | advisory | MCP/tool-group ownership and procedure-skill intended-role discovery are guidance rather than independently established role isolation. | [documentation](../skills/README.md); [regression-test](../test/antigravity-compiler.test.ts) |
-| Per-role model routing | unsupported | Runtime tiers and desired-model labels are available; exact per-role model binding is unsupported (BH-043 #70). | [documentation](../docs/configuration.md#4-antigravity-desired-model-preferences); [regression-test](../test/antigravity-model-preferences.test.ts) |
+| Per-role model routing | declarative | Each child `subagent` binds an exact model in YAML frontmatter (`model: <provider/model>`); `mainAgent` (Lead) uses the session model. Model discovery remains unsupported. | [documentation](../docs/configuration.md#4-antigravity-desired-model-preferences); [regression-test](../test/antigravity-compiler.test.ts) |
 
 <a id="codex"></a>
 

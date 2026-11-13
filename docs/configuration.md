@@ -221,6 +221,8 @@ no preference, context, backup, or receipt writes. Updates preserve the earliest
 managed-file before-state in the existing receipt lifecycle; malformed preference
 data, concurrent changes, or uninstall conflicts stop rather than overwrite.
 
-These preferences do not automate switching the Lead or child model. Child runtime
-tiers are selected explicitly at install/update; exact per-role model binding and
-catalog discovery are unsupported on Antigravity, and entitlement remains unverified.
+These preferences do not automate switching the Lead's session model. For child roles,
+Antigravity supports declarative custom agent files (`.agents/agents/*.md` in project
+scope, `~/.gemini/config/agents/*.md` in global scope) with `mainAgent`/`subagent`
+symmetry, `commandExecutionPolicy`, and per-agent `model:` binding in YAML frontmatter.
+Model discovery remains unsupported on Antigravity, and entitlement remains unverified.

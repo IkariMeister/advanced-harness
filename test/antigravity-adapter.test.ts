@@ -150,6 +150,8 @@ test('installAntigravity performs full installation and preserves existing unrel
 
     // Verify deployed files
     assert.ok(existsSync(join(tempProject, '.agents', 'rules', 'advanced-harness-lead.md')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'agents', 'lead.md')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'agents', 'implementer.md')));
     assert.ok(existsSync(join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs')));
     assert.ok(existsSync(join(tempProject, '.agents', 'hooks.json')));
     assert.ok(existsSync(join(tempProject, '.agents', 'mcp_config.json')));
@@ -343,6 +345,8 @@ test('runInstallerFlow delegates clean installation and isolates writes to suppl
     assert.equal(code, 0);
     assert.ok(existsSync(join(tempProject, '.agents', 'hooks.json')));
     assert.ok(existsSync(join(tempProject, '.agents', 'rules', 'advanced-harness-lead.md')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'agents', 'lead.md')));
+    assert.ok(existsSync(join(tempProject, '.agents', 'agents', 'implementer.md')));
     assert.ok(existsSync(join(tempProject, '.agents', 'scripts', 'antigravity-merge-guard.mjs')));
 
     // Check that receipts were written to recoveryDir inside tempHome and NOT the user's real home

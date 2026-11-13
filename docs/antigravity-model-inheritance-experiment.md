@@ -1,7 +1,10 @@
 # Experimental Antigravity model-inheritance handoff
 
-**Status:** documentation-only experimental workflow. This is not a supported
-per-role exact-model assignment feature and does not fulfill or close issue #70.
+**Status:** documentation-only experimental workflow (historical reference). Antigravity
+now supports declarative custom agent files (`.agents/agents/*.md` / `~/.gemini/config/agents/*.md`)
+with `mainAgent`/`subagent` symmetry, `commandExecutionPolicy`, and per-agent `model:`
+binding in YAML frontmatter for child roles (while `mainAgent`/Lead uses the session model
+and model discovery remains unsupported).
 
 Antigravity's [subagents documentation](https://antigravity.google/docs/subagents/)
 describes model tiers including `inherit`, `flash`, and `pro`. The exact-model

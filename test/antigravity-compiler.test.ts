@@ -121,6 +121,7 @@ test('compileAntigravityCustomAgents compiles lead as mainAgent and 7 child role
     assert.match(child.content, /^mainAgent: false$/m);
     assert.match(child.content, /^subagent: true$/m);
     assert.match(child.content, /^commandExecutionPolicy: (off|prompt|auto)$/m);
+    assert.match(child.content, /^model: \S+$/m);
   }
 });
 
