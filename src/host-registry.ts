@@ -214,9 +214,9 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
     },
     ghPrMergeGuard: 'PreToolUse lifecycle hook (scripts/antigravity-merge-guard.mjs) inspects run_command calls and blocks gh pr merge / gh.exe pr merge with deny',
     modelSupport: {
-      selection: 'per-role',
+      selection: 'per-role-explicit',
       discovery: 'unsupported',
-      limitation: 'Each child role binds an exact model in its YAML frontmatter (model: <provider/model>); Lead uses the session model. Model discovery is unsupported.',
+      limitation: 'Each child role binds a runtime tier (inherit/flash_lite/flash/pro) in its YAML frontmatter; Lead uses inherit (the session model). Exact per-role model binding and model discovery are unsupported. Desired-model preferences are non-enforcing labels.',
     },
     disclosures: [
       'Lead orchestrates 7 child roles dynamically via define_subagent/invoke_subagent rules.',

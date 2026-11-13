@@ -146,6 +146,9 @@ test('HOST_CAPABILITIES distinguishes deployed OpenCode enforcement from deferre
   assert.equal(HOST_CAPABILITIES.antigravity.isolationModel, 'lead-driven-subagents');
   assert.equal(HOST_CAPABILITIES.antigravity.permissionModel, 'hooks-and-subagent-tool-groups');
   assert.match(HOST_CAPABILITIES.antigravity.ghPrMergeGuard, /PreToolUse/);
+  assert.equal(HOST_CAPABILITIES.antigravity.modelSupport.selection, 'per-role-explicit');
+  assert.ok(HOST_CAPABILITIES.antigravity.configLocations.project.includes('.agents/agents'));
+  assert.ok(HOST_CAPABILITIES.antigravity.configLocations.global.includes('~/.gemini/config/agents'));
 
   assert.equal(HOST_CAPABILITIES['claude-code'].isolationModel, 'native-subagents');
   assert.equal(HOST_CAPABILITIES['claude-code'].permissionModel, 'settings-permissions-and-disallowed-tools');
