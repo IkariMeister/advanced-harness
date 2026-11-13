@@ -209,14 +209,14 @@ export const HOST_CAPABILITIES: Record<HostId, HostCapabilityProfile> = {
     isolationModel: 'lead-driven-subagents',
     permissionModel: 'hooks-and-subagent-tool-groups',
     configLocations: {
-      project: ['.agents/rules', '.agents/skills', '.agents/scripts/antigravity-merge-guard.mjs', '.agents/hooks.json', '.agents/mcp_config.json'],
-      global: ['~/.gemini/config/rules', '~/.gemini/config/skills', '~/.gemini/config/scripts/antigravity-merge-guard.mjs', '~/.gemini/config/hooks.json', '~/.gemini/config/mcp_config.json'],
+      project: ['.agents/rules', '.agents/skills', '.agents/agents', '.agents/scripts/antigravity-merge-guard.mjs', '.agents/hooks.json', '.agents/mcp_config.json'],
+      global: ['~/.gemini/config/rules', '~/.gemini/config/skills', '~/.gemini/config/agents', '~/.gemini/config/scripts/antigravity-merge-guard.mjs', '~/.gemini/config/hooks.json', '~/.gemini/config/mcp_config.json'],
     },
     ghPrMergeGuard: 'PreToolUse lifecycle hook (scripts/antigravity-merge-guard.mjs) inspects run_command calls and blocks gh pr merge / gh.exe pr merge with deny',
     modelSupport: {
-      selection: 'per-role-tier',
+      selection: 'per-role',
       discovery: 'unsupported',
-      limitation: 'Each child role takes an explicit runtime tier (inherit/flash_lite/flash/pro); Lead uses the session model. Exact per-role model binding and model discovery are unsupported. Desired-model preferences are non-enforcing labels.',
+      limitation: 'Each child role binds an exact model in its YAML frontmatter (model: <provider/model>); Lead uses the session model. Model discovery is unsupported.',
     },
     disclosures: [
       'Lead orchestrates 7 child roles dynamically via define_subagent/invoke_subagent rules.',
