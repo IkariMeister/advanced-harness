@@ -103,7 +103,7 @@ test('compileLeadOrchestrationRule references declarative subagents without defi
   assert.match(rule.content, /\*\*Documentation & Verification Tracking:\*\*/);
 });
 
-test('compileAntigravityCustomAgents compiles lead as mainAgent and 7 child roles as subagents', () => {
+test('compileAntigravityCustomAgents compiles all 8 roles with mainAgent/subagent symmetry and preserves child instructions', () => {
   const agents = compileAntigravityCustomAgents(roles);
   assert.equal(agents.length, 8);
 
@@ -111,17 +111,34 @@ test('compileAntigravityCustomAgents compiles lead as mainAgent and 7 child role
   assert.ok(lead);
   assert.equal(lead.path, '.agents/agents/lead.md');
   assert.match(lead.content, /^mainAgent: true$/m);
-  assert.match(lead.content, /^subagent: false$/m);
+  assert.match(lead.content, /^subagent: true$/m);
   assert.match(lead.content, /^model: inherit$/m);
 
   for (const childRole of ['operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const) {
     const child = agents.find(a => a.role === childRole);
     assert.ok(child, `missing ${childRole}`);
     assert.equal(child.path, `.agents/agents/${childRole}.md`);
-    assert.match(child.content, /^mainAgent: false$/m);
+    assert.match(child.content, /^mainAgent: true$/m);
     assert.match(child.content, /^subagent: true$/m);
     assert.match(child.content, /^commandExecutionPolicy: (off|prompt|auto)$/m);
   }
+
+  const snapshot = requireReviewerSnapshot();
+  const start = snapshot.indexOf('## Risk-tiered review\n');
+  const end = snapshot.indexOf('\n## Checks and reporting', start);
+  assert.ok(start >= 0 && end > start, 'static reviewer snapshot contains rubric boundaries');
+  const expectedRubric = snapshot.slice(start + '## Risk-tiered review\n'.length, end).trim();
+
+  const reviewer = agents.find(a => a.role === 'reviewer')!;
+  assert.ok(reviewer.content.includes(expectedRubric), 'reviewer custom agent preserves independent rubric text');
+  assert.match(reviewer.content, /\*\*re-run\*\* versus \*\*judged from evidence only\*\*/);
+  assert.match(reviewer.content, /Check documentation accuracy, completeness, and alignment/);
+
+  const planner = agents.find(a => a.role === 'planner')!;
+  assert.match(planner.content, /an ADR remains Proposed until accepted through the project's approval process, and file writes are performed by Implementer after approval/);
+
+  const implementer = agents.find(a => a.role === 'implementer')!;
+  assert.match(implementer.content, /records an explicit documentation-impact assessment when impact is uncertain or when no documentation changes are needed; escalates material deviations from an approved ADR to Lead/);
 });
 
 function expectedReviewerWithAdversarialLines(): string {

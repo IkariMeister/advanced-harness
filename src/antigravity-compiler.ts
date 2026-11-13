@@ -235,7 +235,7 @@ export function compileAntigravityCustomAgent(
   const isLead = role === 'lead';
   const model = isLead ? 'inherit' : (preset?.tier ?? compileAntigravitySubagentSpec(role, definition, preset).model);
   const tools = agentToolsForRole(role);
-  const skills = definition.skills ?? [];
+  const skills: string[] = [];
   const commandExecutionPolicy = commandExecutionPolicyForRole(role);
   const body = isLead ? definition.instructions : compileAntigravitySubagentSpec(role, definition, preset).instructionSummary;
 
@@ -243,8 +243,8 @@ export function compileAntigravityCustomAgent(
     '---',
     `name: ${role}`,
     `description: ${yamlString(definition.description)}`,
-    `mainAgent: ${isLead}`,
-    `subagent: ${!isLead}`,
+    `mainAgent: true`,
+    `subagent: true`,
     `model: ${model}`,
     `tools:`,
     ...tools.map(tool => `  - ${tool}`),
