@@ -19,12 +19,16 @@ function parseOptions(): Record<string, string> | undefined {
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
     const value = args[index + 1];
-    if (!flag || !['--project', '--opencode', '--server', '--host', '--scope'].includes(flag)) return fail(`Unknown option: ${flag ?? ''}. Run --help.`);
+    if (!flag || !['--project', '--opencode', '--server', '--host', '--scope', '--timeout'].includes(flag)) return fail(`Unknown option: ${flag ?? ''}. Run --help.`);
     if (options[flag]) return fail(`Duplicate option: ${flag}. Run --help.`);
     if (!value || value.startsWith('--')) return fail(`Missing value for ${flag}. Run --help.`);
     options[flag] = value;
   }
   if (options['--scope'] && !['global', 'project'].includes(options['--scope'])) return fail('Invalid --scope; use global or project. Run --help.');
+  if (options['--timeout']) {
+    const parsed = Number(options['--timeout']);
+    if (!Number.isInteger(parsed) || parsed <= 0) return fail('Invalid --timeout; use a positive integer in milliseconds. Run --help.');
+  }
   if (options['--host']) {
     try { parseHostSelection(options['--host']); } catch (error) { return fail(error instanceof Error ? error.message : 'Invalid --host. Run --help.'); }
   }
@@ -41,7 +45,7 @@ function fail(message: string): undefined {
 }
 
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:doctor -- [--scope <global|project>] [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--project <directory>] [--opencode <CLI path>] [--server <URL>]');
+  console.log('Usage: npm run harness:doctor -- [--scope <global|project>] [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--project <directory>] [--opencode <CLI path>] [--server <URL>] [--timeout <ms>]');
   console.log('Inspects config and runtime agent/model catalogs for all specified or detected hosts. May start the OpenCode service; never reloads it, edits config, or sends model requests.');
   console.log('--scope global inspects only global configuration; --scope project inspects only the project. Without --scope, both are inspected.');
 } else {
@@ -94,7 +98,7 @@ if (args.includes('--help')) {
           } else {
             try {
               console.log('Querying OpenCode runtime; this may start its service. No reload/restart will be performed.');
-              const report = await verifyRuntime({ directory, ...(options['--opencode'] ? { executable: options['--opencode'] } : {}), ...(options['--server'] ? { server: options['--server'] } : {}) }, expectedAgents(sources));
+              const report = await verifyRuntime({ directory, ...(options['--opencode'] ? { executable: options['--opencode'] } : {}), ...(options['--server'] ? { server: options['--server'] } : {}), ...(options['--timeout'] ? { timeoutMs: Number(options['--timeout']) } : {}) }, expectedAgents(sources));
               printReport(report);
               if (!report.ok) allOk = false;
             } catch (err) {
