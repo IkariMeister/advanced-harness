@@ -15,6 +15,17 @@ version between releases.
 
 ### Added
 
+- Preflight `test-change` check (BH-070, #185): a configurable check that warns when changed production files
+  match the trusted `prodGlobs` and no changed file matches the trusted `testGlobs`, and passes otherwise.
+  A deleted test file does not count, and a path's state is its final state across origins (committed, staged,
+  unstaged, untracked): a later deletion removes an earlier modification, and a later re-add counts. Recursive
+  `**` and `**/` globs match line terminators (CR, LF, U+2028, U+2029) in `path-policy` and `test-change`.
+  `--justify-no-tests "<text>"` turns a `test-change` block into a warning
+  when one occurs; the JSON result gains a `bypass` array that records the text and whether it changed a block
+  (`applied`). It is evidence, not approval. `runPreflight` refuses an empty, whitespace-only, or non-string `justifyNoTests`
+  as inconclusive, with no bypass recorded, and keeps a valid text verbatim. `--criteria <file>` reads acceptance criteria for the fixed
+  `acceptance-criteria` check, where pending items warn. See
+  [docs/preflight.md](docs/preflight.md#test-change-acceptance-criteria-and-justified-bypass).
 - `MEMORY.md` pruning during learning review (BH-077, #216): add pruning candidate proposals
   at end-of-task learning review across three kinds: redundant (covered by rules in `AGENTS.md`
   or `AGENTS.personal.md`), contradicted or superseded (by newer entries or rules), and
@@ -35,8 +46,8 @@ version between releases.
 - Preflight project guardrail policy (BH-069, #184): a trusted `.harness/preflight.json`, read only from
   local `refs/remotes/origin/HEAD` (with or without `--base`), enables or disables the configurable
   `path-policy` check, sets its severity (`block` or `warn`), and adds to or replaces the forbidden path
-  globs. The fixed `policy` result row reports the effective policy and warns on recorded keys that are not
-  enforced yet (`prodGlobs`, `testGlobs`). `harness:setup` offers the default file once, in a Git checkout,
+  globs. The fixed `policy` result row reports the effective policy and warns on recorded keys that are inert,
+  such as `prodGlobs` and `testGlobs` while `test-change` is disabled. `harness:setup` offers the default file once, in a Git checkout,
   and only when you type `policy`. See [docs/configuration.md](docs/configuration.md#preflight-policy).
 - `harness:setup` now follows the AGENTS.md link to an existing linked context file, updates the settings there,
   and keeps the link as written; an explicit `--context` is unchanged.

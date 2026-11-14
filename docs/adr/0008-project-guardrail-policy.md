@@ -44,9 +44,9 @@ This needs no trusted ref, but it lets a changeset weaken the checks that inspec
 ## Decision
 
 1. **Location and schema.** The policy is `.harness/preflight.json`, with optional `version` (1 or omitted), `checks`, `forbiddenPathGlobs`, `prodGlobs` and `testGlobs` (set together or not at all), and `gitlinkAcknowledgements`. Unknown keys are rejected at every level, including inside `checks.<id>` and the `forbiddenPathGlobs` object, and duplicate keys are rejected rather than resolved to the last value. The justified secret exceptions remain in `.harness/preflight-allowlist.json`, which has the same duplicate-key rule.
-2. **Fixed and configurable checks.** The fixed checks are `changeset`, `base-context`, `policy-integrity`, `policy`, `secret-scan`, and `worktree-boundary`. They cannot be disabled, re-severitied, or named under `checks`. `policy-integrity` always reports a changed policy file as a review blocker. The configurable set is `path-policy` only. A configuration entry may set `enabled` (a boolean) and `severity` (`block` or `warn`) on a configurable check.
+2. **Fixed and configurable checks.** The fixed checks are `changeset`, `base-context`, `policy-integrity`, `policy`, `secret-scan`, `worktree-boundary`, and (added by BH-070, see Amendment) `acceptance-criteria`. They cannot be disabled, re-severitied, or named under `checks`. `policy-integrity` always reports a changed policy file as a review blocker. The configurable set is `path-policy` and (added by BH-070) `test-change`. A configuration entry may set `enabled` (a boolean) and `severity` (`block` or `warn`) on a configurable check.
 3. **Severity.** Severity applies only to a built-in configurable check instance, never by ID or by a field that a caller-supplied check sets. It changes `block` to `warn` and `warn` to `block`. `pass` and `inconclusive` are never changed. Custom checks are not affected by the policy's severity or disable settings, and they may run beside a policy file.
-4. **Policy result.** A fixed `policy` result is always reported. It states the source (file, trusted ref, and commit), disabled checks, severity overrides, the forbidden-glob mode and count, and any programmatic override. It returns `warn` when a recorded key is not enforced by any installed check: `prodGlobs` and `testGlobs` today, and `forbiddenPathGlobs` while `path-policy` is disabled.
+4. **Policy result.** A fixed `policy` result is always reported. It states the source (file, trusted ref, and commit), disabled checks, severity overrides, the forbidden-glob mode and count, and any programmatic override. It returns `warn` when a recorded key is not enforced by any installed check: `forbiddenPathGlobs` while `path-policy` is disabled, and (amended by BH-070, see Amendment) `prodGlobs` and `testGlobs` while `test-change` is disabled.
 5. **Forbidden-path globs.** An array in the file, or `{"mode": "replace", "globs": [...]}`, replaces the built-in list. `{"mode": "add", "globs": [...]}` keeps the built-in list and appends to it. Globs must be safe repository-relative strings.
 6. **Trust anchor.** The effective policy is always read from `refs/remotes/origin/HEAD`, with or without `--base`. `--base` selects only the changeset comparison. A missing ref is inconclusive for policy-dependent checks, and so is any other Git failure reading it. This is consistent with [ADR-007](0007-preflight-scope-and-redaction.md), which states the same rule.
 7. **Setup.** Setup offers the default policy once, and only in a Git checkout without a valid existing file. Only the answer `policy` adds it. Setup writes `.harness/preflight.json` at the repository top level regardless of `--context`.
@@ -57,11 +57,21 @@ This needs no trusted ref, but it lets a changeset weaken the checks that inspec
 
 **Negative:** A new or changed policy takes effect only after it reaches `origin/HEAD`. Until then preflight reports the difference through `policy-integrity` and the worktree copy is not used. Projects without a configured `origin/HEAD` cannot use a policy file at all, and their policy-dependent checks are inconclusive.
 
-**Neutral:** Configurable checks are a small, explicit set. Adding a configurable check is a code change that registers its built-in instance, not a schema change. `prodGlobs` and `testGlobs` are reserved for BH-070 and are recorded without effect in this release.
+**Neutral:** Configurable checks are a small, explicit set. Adding a configurable check is a code change that registers its built-in instance, not a schema change. `prodGlobs` and `testGlobs` are reserved for BH-070 and are recorded without effect in this release. (Superseded by the Amendment: from BH-070 they are enforced by `test-change`.)
 
 ## Adoption
 
 This ADR is delivered with its implementation for BH-069 (#184) in the same change, after the human approved the plan. The implementation covers the schema and loader, the trusted-ref helper shared with base-context and worktree-boundary, the policy result, the setup opt-in, and the documentation. Rollback reverts those implementation changes. It does not modify machine configuration. Projects that never add `.harness/preflight.json` see no change apart from the new `policy` result line.
+
+## Amendment: BH-070 (#185)
+
+This amendment records the BH-070 change. It does not change the status of this ADR, which only the human decision and project process may change.
+
+- **`prodGlobs` and `testGlobs` are enforced.** The configurable `test-change` check warns when production files change and no test file does, passes when a test file changes or no production file changes, and passes with a not-run note when the globs are absent. `checks.test-change.severity` may set `block`. Decision 4's "recorded key" rule now applies to these globs only while `test-change` is disabled. The policy result also warns when `test-change` is configured but prodGlobs/testGlobs are not set.
+- **`acceptance-criteria` is a fixed check.** Its input is the per-run `--criteria` file, which is task evidence and not repository policy. A branch cannot reshape it through `checks`, so it is fixed like `policy-integrity`. Its pending items warn, and a fully checked list is only a pass. It never sets approval.
+- **Justified bypass is per run, not policy.** The `--justify-no-tests` text is supplied on the command line. It can change a `test-change` block to a warning, and the text is recorded in the result with `applied` set only when a block changed. It is never written to `.harness/preflight.json`, and it does not change `approved` except through the resulting status.
+
+Consequences of the amendment: a project that sets `checks.test-change.severity` to `block` gets a blocking result for a production-only change, and a human may bypass it with a stated reason. A bypassed block is a warning, so under the status rule `approved` can be true with that warning, as with any other warning.
 
 ## Reconsideration
 
