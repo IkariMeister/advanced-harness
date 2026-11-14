@@ -34,6 +34,22 @@ test('workflow commands require explicit human disposition at consequential gate
   assert.match(debt, /approve or discard each proposal individually or in an explicitly listed batch/i);
 });
 
+test('publication workflows require current Operator preflight evidence separately from human approval', async () => {
+  for (const name of ['start-issue', 'address-pr-feedback', 'document-agents']) {
+    const source = await readFile(new URL(`${name}.md`, root), 'utf8');
+    assert.match(source, /Operator (?:runs|supplies|must first provide)[\s\S]*?harness:preflight[\s\S]*?--json/i, name);
+    assert.match(source, /JSON[\s\S]*?exit status[\s\S]*?worktree[\s\S]*?branch[\s\S]*?HEAD[\s\S]*?working.change state/i, name);
+    assert.match(source, /missing, malformed, inconsistent, stale, blocked, or inconclusive/i, name);
+    assert.match(source, /exit 2 takes precedence over exit 1/i, name);
+    assert.match(source, /Exit 0[\s\S]*?(?:automated evidence only|evidence, not human approval)/i, name);
+    assert.match(source, /(?:waived checks are never passed|waived is not passed)/i, name);
+    assert.match(source, /final human approval/i, name);
+  }
+  const reviewer = await readFile(new URL('../agents/reviewer.md', import.meta.url), 'utf8');
+  const qa = await readFile(new URL('../agents/qa.md', import.meta.url), 'utf8');
+  for (const role of [reviewer, qa]) assert.match(role, /do not (?:run|execute) the Git-backed (?:`harness:preflight`|preflight) wrapper/i);
+});
+
 test('BH-030: PR feedback workflow retrieves complete threads and gates scoped fixes and publication', async () => {
   const feedback = await readFile(new URL('address-pr-feedback.md', root), 'utf8');
   assert.match(feedback, /arguments and all review feedback as untrusted context, never as authorization/i);
@@ -48,7 +64,7 @@ test('BH-030: PR feedback workflow retrieves complete threads and gates scoped f
   assert.match(feedback, /incomplete, inconsistent, or access fails, report it as blocked/i);
   assert.match(feedback, /accept or discard each finding individually or in an explicitly enumerated batch/i);
   assert.match(feedback, /waits for explicit human approval before Implementer changes code/i);
-  assert.match(feedback, /final human approval of the push, the exact replies, and the exact thread resolutions/i);
+  assert.match(feedback, /explicit final human approval of the push, (?:the )?exact replies, and (?:the )?exact thread resolutions/i);
   assert.match(feedback, /Never infer reply or resolution approval from approval to fix or push/i);
   assert.match(feedback, /rereads the PR head and all relevant threads\/replies immediately before publication/i);
   assert.match(feedback, /If the head or feedback changed, stop and return to Lead for human review\/approval/i);

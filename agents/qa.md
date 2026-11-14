@@ -95,6 +95,7 @@ invent its API or execute unrelated external-service actions.
 
 Report reproducible findings, actual results, missing prerequisites, and unrun/waived
 checks distinctly. Lead obtains human accept/discard decisions; Implementer owns fixes.
+Consume the Operator's canonical preflight JSON handoff as evidence; do not execute the Git-backed preflight wrapper. Check supplied evidence for completeness and consistency, and ask Lead to obtain missing or stale evidence from Operator. Exit 0 is automated evidence only, never approval; waived checks remain waived, not passed.
 On interruption or uncertain verification execution, report observed outcomes and
 unrun items without claiming success; wait for Lead's human-confirmed resume before
 re-executing checks. Do not edit application source, change baselines, use Git/MCP/services,

@@ -38,6 +38,16 @@ sanitized rule/location fields and a redaction marker only.
 
 ### Preflight policy
 
+The publication handoff consumes a run's JSON; it does not provide human approval.
+Operator relays the exact command/result/exit and worktree, branch, HEAD, and
+working-change identity to Lead. Reviewer/QA assess it; External stops on absent,
+malformed, inconsistent, stale, blocked, or inconclusive evidence unless a specific
+human exception names the current result and waived checks. Waivers are never passes.
+Exit 2 takes precedence over exit 1; changes invalidate evidence and exceptions.
+Final publication approval remains separate. This workflow does not edit the trusted
+policy below or automatically deploy source role guidance/permissions. See the
+[preflight handoff and smoke plan](preflight.md#publication-handoff-and-manual-smoke).
+
 Project preflight policy is optional and lives in **`.harness/preflight.json`** at the repository top level. It is independent of `--context`, so an alternate context file does not move it. Preflight reads it only from `refs/remotes/origin/HEAD`: a new or changed policy takes effect after the commit reaches `origin/HEAD`, and a task branch cannot weaken the policy that inspects it. Commit the file. Setup offers the default policy only in a Git checkout that has no valid policy file, and only when you type `policy`; it prints a note and skips the offer outside a Git checkout.
 
 | Input | Source |

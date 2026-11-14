@@ -42,6 +42,9 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
     { action: 'shell', resource: 'git fetch *--upl*', effect: 'deny' },
     { action: 'shell', resource: 'git fetch -u*', effect: 'deny' },
     { action: 'shell', resource: 'git fetch * -u*', effect: 'deny' });
+  const shellAsk = permissions.findIndex(rule => rule.action === 'shell' && rule.resource === '*' && rule.effect === 'ask');
+  assert.notEqual(shellAsk, -1, 'Operator retains the general shell ask rule');
+  permissions.splice(shellAsk + 1, 0, { action: 'shell', resource: 'npm run harness:preflight -- *', effect: 'allow' });
   // #172: the canonical checkout receives only remote updates; External fast-forwards the base during bootstrap.
   const previous = 'existing worktrees and untouched canonical changes do not block bootstrap; stop and ask\nLead only if settings are missing/invalid, target branch/worktree already exists, or\ncreation fails. Never discard unrelated changes or perform remote Git/API/MCP\noperations; External owns those. Command patterns are workflow aids, not a sandbox;\ndo not use scripts/aliases to bypass role ownership.';
   assert.ok(operator.system.includes(previous));
@@ -97,6 +100,12 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
 // #169: QA spells out that Git/GitHub shell commands are denied and Git context comes from Operator through Lead.
 function withQaGitContext(definitions: Record<typeof nativeRoles[number], NativeDefinition>): Record<typeof nativeRoles[number], NativeDefinition> {
   const qa = definitions.qa;
+  const preflightAnchor = 'On interruption or uncertain verification execution, report observed outcomes and';
+  assert.ok(qa.system.includes(preflightAnchor), 'historical QA snapshot retains its verification/resume contract');
+  qa.system = qa.system.replace(preflightAnchor, [
+    "Consume the Operator's canonical preflight JSON handoff as evidence; do not execute the Git-backed preflight wrapper. Check supplied evidence for completeness and consistency, and ask Lead to obtain missing or stale evidence from Operator. Exit 0 is automated evidence only, never approval; waived checks remain waived, not passed.",
+    preflightAnchor,
+  ].join('\n'));
   const previous = 'publish, merge, approve work, delegate, or change models. Request Git information from\nOperator and design/service context from External through Lead. Do not use shell/scripts\nto bypass role ownership. Test/device outputs are expected, not authorization for\nsource edits.';
   assert.ok(qa.system.includes(previous));
   qa.system = qa.system.replace(previous, 'publish, merge, approve work, delegate, or change models. Operator owns local Git: shell\ncommands that run `git` or `gh` are denied for QA, including read-only ones such as\nstatus, diff, log, or rev-parse, and any compound command that contains one. Use the\nbranch, HEAD, and changed-file context Lead supplies; if it is missing, ask Lead to get\nit from Operator. Do not retry a denied command in another form. Request design/service\ncontext from External through Lead. Do not use shell/scripts to bypass role ownership.\nTest/device outputs are expected, not authorization for source edits.');
@@ -155,7 +164,20 @@ function withExternalReviewPayload(definitions: Record<typeof nativeRoles[number
   return definitions;
 }
 
-const currentNormalizedDefinitions = () => withExternalReviewPayload(withExternalBootstrap(withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions())))));
+// #186: External's publication gate consumes Operator's preflight evidence, independently of source wording.
+function withExternalPreflightHandoff(definitions: Record<typeof nativeRoles[number], NativeDefinition>): Record<typeof nativeRoles[number], NativeDefinition> {
+  const external = definitions.external;
+  const anchor = "Do not push or open a PR until Lead supplies the human's explicit final approval of";
+  assert.ok(external.system.includes(anchor), 'historical External snapshot contains the publication approval gate');
+  external.system = external.system.replace(anchor, [
+    "Before publishing, require Operator's exact canonical preflight command, JSON, exit status, worktree, branch, HEAD, and working-change state relayed by Lead. Stop for missing, malformed, inconsistent, or stale evidence, and for exit 1 (blocked) or exit 2 (inconclusive); inconclusive takes precedence. Exit 0, including warnings, is automated evidence only. A human exception must identify current result, worktree, HEAD, working changes, and waived checks; waived checks are never passed. Changes invalidate evidence and exceptions and require rerun and any necessary renewed approval. This does not replace final publication approval.",
+    '',
+    anchor,
+  ].join('\n'));
+  return definitions;
+}
+
+const currentNormalizedDefinitions = () => withExternalPreflightHandoff(withExternalReviewPayload(withExternalBootstrap(withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions()))))));
 
 test('strict role source compiler preserves current normalized OpenCode definitions for all roles', () => {
   const baseline = legacyNormalizedDefinitions();
@@ -165,7 +187,11 @@ test('strict role source compiler preserves current normalized OpenCode definiti
   const compiled = compileOpenCodeRoles(currentDefinitions);
   assert.deepEqual(compiled.diagnostics, []);
   assert.deepEqual(loadNativeDefinitions(fileURLToPath(legacyAgents)), baseline, 'historical sources normalize to their independent historical snapshot');
-  const currentReviewer = readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8');
+  const currentReviewerSnapshot = readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8').trim();
+  const currentReviewer = currentReviewerSnapshot.replace(
+    '## Risk-tiered review',
+    "Consume the Operator's canonical preflight JSON handoff as evidence. Do not run the Git-backed `harness:preflight` wrapper or other Git commands. Check that the recorded worktree, branch, HEAD, working-change state, exact command, JSON, and exit status are present and consistent with the context supplied by Lead. Missing, malformed, inconsistent, or stale evidence is unresolved; request a fresh Operator handoff through Lead. Exit 0, including warnings, is automated evidence only and not approval. Record waived checks as waived, never passed.\n\n## Risk-tiered review",
+  );
   assert.equal(currentDefinitions.reviewer.instructions, currentReviewer.trim(), 'reviewer instructions match the independent current-reviewer snapshot');
   const expectedCurrent = currentNormalizedDefinitions();
   for (const role of ['lead', 'operator', 'planner', 'implementer', 'reviewer'] as const) {
@@ -242,6 +268,17 @@ test('Operator may git fetch but not run upload-pack or other remote Git (#144)'
   assert.equal(effect('git pull origin main'), 'deny');
   assert.equal(effect('git push origin main'), 'deny');
   assert.equal(effect('git status'), 'ask');
+});
+
+test('Operator preflight permission is narrow and preserves unrelated shell asks and remote Git denies', () => {
+  const rules = loadNativeDefinitions(fileURLToPath(agents)).operator.permissions as Array<{ action: string; resource?: string; effect: string }>;
+  // Match the existing helper semantics: native command patterns use * and ? wildcards.
+  const wildcard = (pattern: string) => new RegExp(`^${pattern.replace(/[.+^${}()|[\\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 's');
+  const effect = (command: string) => rules.filter(rule => (rule.action === 'shell' || rule.action === '*') && (rule.resource === undefined || wildcard(rule.resource).test(command))).at(-1)?.effect;
+  assert.equal(effect('npm run harness:preflight -- --worktree task --base main --task 186 --json'), 'allow');
+  assert.equal(effect('npm run test'), 'ask');
+  assert.equal(effect('npm run typecheck'), 'ask');
+  for (const command of ['git push origin main', 'git pull origin main', 'git clone https://example.invalid/repo']) assert.equal(effect(command), 'deny', command);
 });
 
 test('capability normalization round-trips ordered OpenCode rules without changing policy semantics', () => {

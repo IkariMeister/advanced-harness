@@ -257,6 +257,50 @@ configured or if a check returns an unknown status, the result is inconclusive.
 
 A tooling error is never a pass.
 
+## Publication handoff and manual smoke
+
+Preflight is evidence, not a publication gate enforced by code. Operator runs the
+exact command for the task and gives Lead its JSON and exit status plus the worktree,
+branch, HEAD, and working-change state. Reviewer and QA assess that handoff instead
+of rerunning the Git-backed wrapper. Missing, malformed, inconsistent, stale,
+blocked, or inconclusive evidence stops publication unless a specific human
+exception identifies the current result and state and names the waived checks.
+Waived checks remain waived, never passed. Exit 0 (including warnings and
+`approved: true`) never substitutes for human approval. Any change after the run
+invalidates both evidence and an exception and requires a fresh Operator run.
+Lead obtains final human publication approval separately; only then may External
+publish. This handoff does not change trusted policy files, create a token/database,
+or automatically deploy role permissions or prompts.
+
+### CLI fixture smoke (offline)
+
+Prerequisites: a disposable local Git fixture with configured trusted policy and
+worktree boundary, the built harness checkout, and no publication authorization.
+Do not use a production repository or alter its trusted policy for this smoke.
+
+1. Run the documented `harness:preflight` command with `--json` on a clean valid
+   task fixture. Expect exit 0 and a parseable JSON result; warnings may be present,
+   and neither exit 0 nor `approved` means human approval.
+2. Introduce a deterministic blocking finding in the disposable fixture. Expect exit
+   1 and blocking JSON; a caller must not treat that result as publishable.
+3. Make a required Git/tool check unavailable or use a fixture with unresolved
+   required context. Expect exit 2 and inconclusive JSON, never a pass.
+4. Combine a block finding with an inconclusive check. Expect exit 2 because
+   inconclusive takes precedence; retain both check results in the JSON.
+5. Change the fixture after capturing a valid result. Expect the recorded worktree/
+   branch/HEAD/working-change identity no longer to match; require a fresh run.
+
+Record each case passed/failed/blocked/unrun from actual results. Do not publish.
+
+### Separate live role pilot (not run)
+
+A live role pilot requires separate scoped human approval for deployment/launch and
+the approved services and repository. After that approval, exercise Operator's real
+JSON handoff, Reviewer/QA consumption without Git commands, stale-state rejection,
+scoped waiver recording, and External stopping absent separate final publication
+approval. Static prompt/tests do not prove actual role responses or enforcement.
+This pilot is pending; no live-role result is claimed here.
+
 ## Adding checks
 
 A check implements `PreflightCheck` from `src/preflight/types.ts`: a unique `id`

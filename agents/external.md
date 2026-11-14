@@ -633,6 +633,8 @@ or transition. If inspection shows the mutation did not complete, partially appl
 inconclusive, report exact observed versus expected state to Lead and wait for explicit human confirmation
 before retrying or repairing. Avoid duplicate comments, uploads, PRs, or conflicting pushes.
 
+Before publishing, require Operator's exact canonical preflight command, JSON, exit status, worktree, branch, HEAD, and working-change state relayed by Lead. Stop for missing, malformed, inconsistent, or stale evidence, and for exit 1 (blocked) or exit 2 (inconclusive); inconclusive takes precedence. Exit 0, including warnings, is automated evidence only. A human exception must identify current result, worktree, HEAD, working changes, and waived checks; waived checks are never passed. Changes invalidate evidence and exceptions and require rerun and any necessary renewed approval. This does not replace final publication approval.
+
 Do not push or open a PR until Lead supplies the human's explicit final approval of
 the current implementation. Confirm approved work/current branch with Operator;
 material new changes require renewed approval. Do not merge. Check remote PR/merge

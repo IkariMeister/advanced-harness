@@ -53,6 +53,11 @@ test('native operational roles expose shell and keep edit defaults role-scoped',
   }
   assert.ok(hasRule('implementer', 'edit', '*', 'allow'));
   assert.ok(hasRule('operator', 'edit', '*', 'ask'));
+  assert.ok(hasRule('operator', 'shell', 'npm run harness:preflight -- *', 'allow'));
+  assert.ok(hasRule('operator', 'shell', '*', 'ask'));
+  for (const command of ['npm test', 'npm run typecheck', 'git push', 'git pull', 'git clone']) {
+    assert.ok(!permissionRules('operator').some(rule => rule.action === 'shell' && rule.effect === 'allow' && rule.resource === command), command);
+  }
   for (const role of ['external', 'reviewer', 'qa'] as const) assert.ok(!permissionRules(role).some(rule => rule.action === 'edit'), role);
 });
 
@@ -137,6 +142,23 @@ test('QA keeps Git with Operator: Git/GitHub shell is denied and Lead supplies t
   assert.match(qa, /ask Lead to get it from Operator/);
   assert.match(qa, /Do not retry a denied command in another form/);
   assert.match(template('lead').replace(/\s+/g, ' '), /When delegating to Reviewer or QA, include the local Git context Operator reported/);
+});
+
+test('Operator owns narrow preflight handoff while Reviewer and QA consume evidence without Git wrapper execution', () => {
+  const operator = template('operator').replace(/\s+/g, ' ');
+  const reviewer = template('reviewer').replace(/\s+/g, ' ');
+  const qa = template('qa').replace(/\s+/g, ' ');
+  assert.match(operator, /npm run harness:preflight -- --worktree <path> --base <confirmed-base> --task <key> --json/);
+  assert.match(operator, /Relay exact command, JSON, exit status, worktree, branch, HEAD, and working-change state to Lead/);
+  assert.match(operator, /sole narrow npm exception, not generic npm permission/);
+  assert.match(operator, /Exit 0 \(warnings included\) is automated evidence only/);
+  assert.match(operator, /exit 2 is inconclusive, taking precedence over any block finding/);
+  assert.match(operator, /Reviewer and QA consume this handoff; they do not run the Git-backed wrapper/);
+  for (const role of [reviewer, qa]) {
+    assert.match(role, /Operator's canonical preflight JSON handoff/);
+    assert.match(role, /do not (?:run|execute) the Git-backed (?:`harness:preflight`|preflight) wrapper/i);
+    assert.match(role, /waived checks? (?:as waived, never passed|remain waived, not passed)/);
+  }
 });
 
 test('all native roles distinguish offered tools, configured policy, invocation, and ownership', () => {

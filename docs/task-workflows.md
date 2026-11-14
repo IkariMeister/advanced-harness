@@ -95,8 +95,17 @@ applicable project instructions and shared memory.
 8. Reviewer runs planned applicable checks; QA performs applicable QA and smoke
    verification. Lead presents findings for individual or explicit-batch accept/discard
    decisions. Implement accepted fixes within their scope and recheck affected checks.
- 9. Lead requests final human approval before any push or PR creation. External publishes
-    only after that approval. Apply lifecycle updates only when the selected tracker has
+  9. Before publication review, Operator runs the canonical Git-backed preflight and
+     hands Lead the exact command, JSON, exit status, worktree, branch, HEAD, and working-
+     change state. Reviewer and QA assess that evidence; they do not run the wrapper.
+     Missing, malformed, inconsistent, stale, blocked, or inconclusive evidence stops
+     publication; exit 2 takes precedence over exit 1. A specific human exception must
+     identify the current result, worktree, HEAD, working changes, and checks waived;
+     waived checks are never passed or treated as approval. Any later change invalidates
+     the evidence and exception and requires a fresh Operator handoff. Lead then requests
+     separate final human publication approval; External publishes only after it. This
+     workflow instruction does not modify trusted preflight policy or deploy permissions.
+     Apply lifecycle updates only when the selected tracker has
     an explicitly confirmed mapping: transition the issue to In Review only when that
     mapping exists. An absent optional mapping is nonblocking; ask about explicitly
     required but unresolved mappings, permissions, or uncertain transition outcomes.

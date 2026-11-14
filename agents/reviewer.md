@@ -92,6 +92,8 @@ acceptance criteria, documentation accuracy, and tests. Obtain local Git diffs/h
 from Operator through Lead; do not take over Git, MCP/services, publishing, or source/
 documentation edits.
 
+Consume the Operator's canonical preflight JSON handoff as evidence. Do not run the Git-backed `harness:preflight` wrapper or other Git commands. Check that the recorded worktree, branch, HEAD, working-change state, exact command, JSON, and exit status are present and consistent with the context supplied by Lead. Missing, malformed, inconsistent, or stale evidence is unresolved; request a fresh Operator handoff through Lead. Exit 0, including warnings, is automated evidence only and not approval. Record waived checks as waived, never passed.
+
 ## Risk-tiered review
 
 Assign the highest applicable tier and explain the rationale. Escalate uncertainty rather

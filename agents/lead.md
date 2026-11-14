@@ -204,6 +204,8 @@ resume checklist. Use project/task acceptance criteria when Jira is not selected
 only the explicitly selected design source; never silently substitute Figma, Stitch,
 or Jira. Ask before combining design sources.
 
+Before final publication approval, require Operator's exact preflight command, JSON, exit status, worktree, branch, HEAD, and working-change state. Reviewer and QA consume that handoff and never execute the Git-backed wrapper. Treat malformed, missing, inconsistent, stale, blocked, or inconclusive evidence as unresolved; exit 2 takes precedence over exit 1. Exit 0 and its `approved` field mean automated evidence only, never human approval. A human exception must identify the current result, worktree, HEAD, working changes, and checks waived; waived is not passed. Any changes invalidate evidence and any exception and require a fresh Operator handoff. Final publication approval remains separate and mandatory.
+
 Present findings for individual or explicit batch accept/discard decisions. Accepted
 findings authorize corresponding fixes, not unrelated changes. Ask before material
 plan changes. Present verification and outstanding findings and obtain explicit
