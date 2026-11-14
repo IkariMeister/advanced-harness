@@ -95,7 +95,7 @@ The check requires you to type **`inspect`** before querying `/api/mcp` via Open
 
 Connection results distinguish `connected`, `needs_auth`, `disabled`, `pending`, `failed`, and `missing`. Raw API errors/settings are suppressed to protect secrets. Exit **0** means both selected servers report connected, **1** means a selected connection is not ready, and **2** means API/transport verification is inconclusive. No state is stored as a verified access result.
 
-If needed, `--check --opencode <CLI path>` selects the executable; `--check --server <URL>` uses the same explicit server as your UI. Those flags apply only to checks. `OPENCODE_BIN`, `~/` expansion, `cwd`-relative `--opencode` resolution, the 15 s query timeout, credential-free error categories, and desktop CLI autodiscovery follow `harness:doctor` behavior ([installation](installation.md#after-installation)). All setup/check runs require an interactive terminal; piped confirmation is refused.
+If needed, `--check --opencode <CLI path>` selects the executable; `--check --server <URL>` uses the same explicit server as your UI. Those flags apply only to checks. `OPENCODE_BIN`, `~/` expansion, `INIT_CWD`/`cwd`-relative `--opencode` resolution, the 15 s per-query timeout, credential-free error categories, and desktop CLI autodiscovery follow `harness:doctor` behavior ([installation](installation.md#after-installation)). All setup/check runs require an interactive terminal; piped confirmation is refused.
 
 ## Discover tools and validate access
 

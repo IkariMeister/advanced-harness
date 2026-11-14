@@ -8,6 +8,7 @@ version between releases.
 
 ### Changed
 
+- `harness:doctor` and OpenCode CLI diagnostics (Refs #239): `--opencode` and `OPENCODE_BIN` now expand leading `~/` (and `~\`) and resolve relative paths containing separators against `INIT_CWD` or `process.cwd()` instead of `--project`, `cliQuery` classifies failures into credential-free categories (missing executable, non-executable/config path, `maxBuffer` overflow, timeout, non-zero exit status, non-JSON output) while printing only the final path segment, and `harness:doctor` adds `--timeout <ms>` (`1..2147483647`, default `15000` per query).
 - Preflight gitlink coverage acknowledgements now come only from trusted
   `.harness/preflight.json` at local `refs/remotes/origin/HEAD`, independently of
   `--base`. Exact clean gitlink gaps with nonblank justifications remain visibly
