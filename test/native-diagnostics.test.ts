@@ -263,21 +263,59 @@ test('relative --opencode resolves against INIT_CWD or cwd rather than --project
 });
 
 test('harness:doctor resolves --project and its omitted default against INIT_CWD when set', t => {
-  const { home, xdg, project, run } = sandboxedDoctor(t);
+  const { home, xdg, project } = sandboxedDoctor(t);
   const initRoot = mkdtempSync(join(tmpdir(), 'harness-doctor-init-cwd-'));
   t.after(() => rmSync(initRoot, { recursive: true, force: true }));
   const nestedProject = join(initRoot, 'nested-project');
   mkdirSync(nestedProject, { recursive: true });
   const script = fileURLToPath(new URL('../scripts/diagnose-native-harness.ts', import.meta.url));
   const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: xdg, INIT_CWD: initRoot };
-  const runWithInitCwd = (cliArgs: string[]) => execFileSync(process.execPath, [script, ...cliArgs], { env, encoding: 'utf8', stdio: 'pipe' });
+  const runWithInitCwd = (cliArgs: string[], overrideInitCwd: string = initRoot) => execFileSync(
+    process.execPath,
+    [script, ...cliArgs],
+    { env: { ...env, INIT_CWD: overrideInitCwd }, encoding: 'utf8', stdio: 'pipe' },
+  );
 
   const omitted = runWithInitCwd(['--host', 'opencode', '--scope', 'project']);
   assert.match(omitted, new RegExp(`Checking location: ${initRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
 
   const relative = runWithInitCwd(['--host', 'opencode', '--scope', 'project', '--project', './nested-project']);
   assert.match(relative, new RegExp(`Checking location: ${nestedProject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-  assert.ok(run(['--host', 'opencode', '--scope', 'project', '--project', project]).status === 0);
+
+  const missingInitCwd = join(initRoot, 'definitely-missing-init-cwd');
+  assert.throws(() => runWithInitCwd(['--host', 'opencode', '--scope', 'project'], missingInitCwd), error => {
+    const result = error as { status: number; stderr: Buffer };
+    assert.equal(result.status, 2);
+    assert.match(result.stderr.toString(), /Select an existing project directory/);
+    return true;
+  });
+
+  const absoluteWins = runWithInitCwd(['--host', 'opencode', '--scope', 'project', '--project', project], missingInitCwd);
+  assert.match(absoluteWins, new RegExp(`Checking location: ${project.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+});
+
+test('cliQuery shared caller resolves relative executable against INIT_CWD rather than options.directory', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'opencode-cliquery-init-cwd-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const initRoot = join(root, 'caller-init');
+  const projectDir = join(root, 'target-project');
+  mkdirSync(initRoot, { recursive: true });
+  mkdirSync(projectDir, { recursive: true });
+
+  const previousInitCwd = process.env.INIT_CWD;
+  try {
+    process.env.INIT_CWD = initRoot;
+    const query = cliQuery({ directory: projectDir, executable: './bin/shared-opencode-cli' });
+    await assert.rejects(
+      query('/api/model'),
+      error => error instanceof Error
+        && /executable was not found \("shared-opencode-cli"\)/.test(error.message)
+        && !error.message.includes(initRoot),
+    );
+  } finally {
+    if (previousInitCwd === undefined) delete process.env.INIT_CWD;
+    else process.env.INIT_CWD = previousInitCwd;
+  }
 });
 
 test('Windows executable discovery uses a controlled LOCALAPPDATA fixture and falls back when absent', { skip: process.platform !== 'win32' }, async t => {
