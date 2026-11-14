@@ -12,11 +12,15 @@ import {
   validateMemoryEntry,
   parseMemoryEntryLine,
   parseSharedMemory,
+  parseSharedMemoryState,
   formatSharedMemory,
   deduplicateMemoryEntries,
   detectMemoryConflicts,
   readSharedMemory,
   writeSharedMemorySerialized,
+  advanceMemoryTaskCount,
+  markMemoryEntriesUsed,
+  STALE_TASK_THRESHOLD,
   planRulePromotion,
   applyApprovedRulePromotion,
   resolvePersonalRulesPath,
@@ -2025,4 +2029,153 @@ test('applyApprovedMemoryPruning cleans up temp file when source AGENTS.md is re
 
   const leftover = readdirSync(dir).filter((f) => f.startsWith('.AGENTS.') && f.endsWith('.tmp'));
   assert.deepEqual(leftover, []);
+});
+
+test('stale pruning: task count serialization, backfill, usage tracking, 20-task threshold, keep restart, and decline no-op', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-stale-pruning-'));
+  try {
+    const memoryPath = join(dir, 'MEMORY.md');
+    const agentsPath = join(dir, 'AGENTS.md');
+    const personalPath = resolvePersonalRulesPath(memoryPath);
+
+    writeFileSync(agentsPath, '# Project Rules\n\n- Keep existing rule.\n', 'utf8');
+
+    // Legacy MEMORY.md without task count or per-entry task metadata
+    const legacyEntry1 = {
+      source: 'Implementer',
+      scope: 'Build',
+      confirmation: 'confirmed',
+      fact: 'Use Gradle daemon for local builds.',
+    };
+    const legacyEntry2 = {
+      source: 'Reviewer',
+      scope: 'Tests',
+      confirmation: 'confirmed',
+      fact: 'Run unit tests before opening PR.',
+    };
+    writeSharedMemorySerialized(memoryPath, [legacyEntry1, legacyEntry2], undefined);
+
+    const initialRead = readSharedMemory(memoryPath);
+    assert.equal(initialRead.taskCount, 0);
+    assert.equal(initialRead.hasTaskCount, false);
+    assert.equal(initialRead.entries[0]?.addedAtTask, undefined);
+    assert.equal(initialRead.entries[0]?.lastUsedAtTask, undefined);
+
+    // First task run backfills pre-existing entries so none are treated as stale at once
+    const task1 = advanceMemoryTaskCount({
+      taskCount: initialRead.taskCount,
+      entries: initialRead.entries,
+    });
+    assert.equal(task1.taskCount, 1);
+    assert.equal(task1.entries[0]?.addedAtTask, 1);
+    assert.equal(task1.entries[0]?.lastUsedAtTask, 1);
+    assert.equal(task1.entries[1]?.addedAtTask, 1);
+    assert.equal(task1.entries[1]?.lastUsedAtTask, 1);
+
+    // Even if threshold were checked at task 1, nothing is stale
+    assert.deepEqual(
+      detectPruningCandidates({
+        memoryEntries: task1.entries,
+        currentTaskCount: task1.taskCount,
+      }),
+      []
+    );
+
+    // Persist task count and backfilled entries
+    const write1 = writeSharedMemorySerialized(memoryPath, task1.entries, initialRead.hash, {
+      taskCount: task1.taskCount,
+    });
+    const parsedState = parseSharedMemoryState(readFileSync(memoryPath, 'utf8'));
+    assert.equal(parsedState.taskCount, 1);
+    assert.equal(parsedState.hasTaskCount, true);
+    assert.equal(parsedState.entries[0]?.addedAtTask, 1);
+    assert.equal(parsedState.entries[0]?.lastUsedAtTask, 1);
+
+    // Mark entry1 as used at task 10; entry2 remains unused since task 1
+    let currentEntries = markMemoryEntriesUsed(parsedState.entries, [parsedState.entries[0]!], 10);
+    assert.equal(currentEntries[0]?.lastUsedAtTask, 10);
+    assert.equal(currentEntries[1]?.lastUsedAtTask, 1);
+
+    // At task 20 (19 tasks since task 1), neither entry is stale yet
+    assert.equal(STALE_TASK_THRESHOLD, 20);
+    assert.deepEqual(
+      detectPruningCandidates({
+        memoryEntries: currentEntries,
+        currentTaskCount: 20,
+      }),
+      []
+    );
+
+    // At task 21 (20 tasks since task 1), entry2 is proposed as stale; entry1 (used at 10) is not
+    const candidatesAt21 = detectPruningCandidates({
+      memoryEntries: currentEntries,
+      currentTaskCount: 21,
+    });
+    assert.equal(candidatesAt21.length, 1);
+    assert.equal(candidatesAt21[0]?.kind, 'stale');
+    assert.equal(candidatesAt21[0]?.entry.fact, legacyEntry2.fact);
+    assert.equal(candidatesAt21[0]?.evidenceKey, 'unused-since-1');
+
+    // Keep disposition restarts entry2's count at 21 and marks reviewed-keep
+    const keepPlan = planMemoryPruning({
+      memoryEntries: currentEntries,
+      candidates: candidatesAt21,
+      dispositions: [{ entry: candidatesAt21[0]!.entry, disposition: 'keep' }],
+      currentTaskCount: 21,
+    });
+
+    // Declining/cancelling writes nothing
+    const preDeclineHash = write1.hash;
+    assert.throws(
+      () =>
+        applyApprovedMemoryPruning({
+          plan: keepPlan,
+          approved: false,
+          memoryPath,
+          memoryBaselineHash: preDeclineHash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: keepPlan.planHash,
+        }),
+      /requires explicit human approval/
+    );
+    assert.equal(readSharedMemory(memoryPath).hash, preDeclineHash);
+
+    // Apply approved keep plan (persisting taskCount: 21 via writeSharedMemorySerialized first)
+    const beforeKeepWrite = writeSharedMemorySerialized(memoryPath, currentEntries, preDeclineHash, {
+      taskCount: 21,
+    });
+    const keepApplied = applyApprovedMemoryPruning({
+      plan: keepPlan,
+      approved: true,
+      memoryPath,
+      memoryBaselineHash: beforeKeepWrite.hash,
+      personalBaselineHash: readPersonalRules(personalPath).hash,
+      expectedPlanHash: keepPlan.planHash,
+    });
+    assert.equal(keepApplied.success, true);
+
+    const afterKeep = readSharedMemory(memoryPath);
+    assert.equal(afterKeep.taskCount, 21);
+    const keptEntry2 = afterKeep.entries.find((e) => e.fact === legacyEntry2.fact)!;
+    assert.equal(keptEntry2.lastUsedAtTask, 21);
+    assert.match(keptEntry2.confirmation, /\(reviewed-keep:stale:unused-since-1\)/);
+
+    // At task 40 (19 tasks since 21), keptEntry2 is NOT proposed again; entry1 (last used at 10) IS proposed at 30+
+    const candidatesOnlyEntry2 = detectPruningCandidates({
+      memoryEntries: [keptEntry2],
+      currentTaskCount: 40,
+    });
+    assert.deepEqual(candidatesOnlyEntry2, []);
+
+    // At task 41 (another 20 tasks since 21), keptEntry2 IS proposed again with new evidenceKey
+    const candidatesAt41 = detectPruningCandidates({
+      memoryEntries: [keptEntry2],
+      currentTaskCount: 41,
+    });
+    assert.equal(candidatesAt41.length, 1);
+    assert.equal(candidatesAt41[0]?.kind, 'stale');
+    assert.equal(candidatesAt41[0]?.evidenceKey, 'unused-since-21');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

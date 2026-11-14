@@ -7,7 +7,11 @@ export type MemoryEntry = {
   scope: string;
   confirmation: string;
   fact: string;
+  addedAtTask?: number | undefined;
+  lastUsedAtTask?: number | undefined;
 };
+
+export const STALE_TASK_THRESHOLD = 20;
 
 export type BootstrapContext = {
   projectRoot: string;
@@ -23,7 +27,7 @@ export type BootstrapReadiness = {
 
 export type RuleDispositionType = 'promote' | 'keep-memory' | 'discard' | 'personal';
 
-export type PruningKind = 'redundant' | 'contradicted' | 'obsolete';
+export type PruningKind = 'redundant' | 'contradicted' | 'obsolete' | 'stale';
 
 export type PruningCandidate = {
   entry: MemoryEntry;
@@ -219,34 +223,56 @@ export function validateMemoryEntry(entry: MemoryEntry): void {
   if (fact.length > 2000) {
     throw new Error('Memory entry fact exceeds maximum length (2000 characters). Operational log dumps are not permitted in MEMORY.md.');
   }
+
+  for (const [label, value] of [['addedAtTask', entry.addedAtTask], ['lastUsedAtTask', entry.lastUsedAtTask]] as const) {
+    if (value !== undefined && (typeof value !== 'number' || !Number.isInteger(value) || value < 0)) {
+      throw new Error(`Memory entry ${label} must be a non-negative integer.`);
+    }
+  }
 }
 
 export function parseMemoryEntryLine(line: string): MemoryEntry | undefined {
   const trimmed = line.trim();
   if (!trimmed.startsWith('-')) return undefined;
-  const match = trimmed.match(/^-\s*\[Source:\s*([^;]+?)\s*;\s*scope:\s*([^;]+?)\s*;\s*confirmation:\s*([^\]]+?)\s*\]\s+(.+)$/);
+  const match = trimmed.match(/^-\s*\[Source:\s*([^;]+?)\s*;\s*scope:\s*([^;]+?)\s*;\s*confirmation:\s*([^\];]+?)(?:\s*;\s*added-task:\s*(\d+)\s*;\s*last-used-task:\s*(\d+))?\s*\]\s+(.+)$/);
   if (!match) return undefined;
   const entry: MemoryEntry = {
     source: match[1]!.trim(),
     scope: match[2]!.trim(),
     confirmation: match[3]!.trim(),
-    fact: match[4]!.trim(),
+    fact: match[6]!.trim(),
+    ...(match[4] !== undefined ? { addedAtTask: Number(match[4]) } : {}),
+    ...(match[5] !== undefined ? { lastUsedAtTask: Number(match[5]) } : {}),
   };
   validateMemoryEntry(entry);
   return entry;
 }
 
-export function parseSharedMemory(text: string): MemoryEntry[] {
+export type SharedMemoryState = {
+  taskCount: number;
+  hasTaskCount: boolean;
+  entries: MemoryEntry[];
+};
+
+export function parseSharedMemoryState(text: string): SharedMemoryState {
   const lines = text.split(/\r\n|\n/);
   if (lines[0]?.startsWith('\uFEFF')) lines[0] = lines[0].slice(1);
   const entries: MemoryEntry[] = [];
   let headerSeen = false;
+  let taskCount = 0;
+  let hasTaskCount = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (line.includes('\r')) throw new Error(`Unsupported shared MEMORY.md content on line ${i + 1}.`);
     if (!line.trim()) continue;
     if (line.trim() === '# Shared Operator memory' && !headerSeen && entries.length === 0) {
       headerSeen = true;
+      continue;
+    }
+    const taskCountMatch = line.trim().match(/^Task count:\s*(\d+)$/);
+    if (taskCountMatch && !hasTaskCount && entries.length === 0) {
+      taskCount = Number(taskCountMatch[1]);
+      hasTaskCount = true;
       continue;
     }
     try {
@@ -260,14 +286,32 @@ export function parseSharedMemory(text: string): MemoryEntry[] {
     }
     throw new Error(`Unsupported shared MEMORY.md content on line ${i + 1}.`);
   }
-  return entries;
+  return { taskCount, hasTaskCount, entries };
 }
 
-export function formatSharedMemory(entries: readonly MemoryEntry[]): string {
-  const lines = ['# Shared Operator memory', ''];
+export function parseSharedMemory(text: string): MemoryEntry[] {
+  return parseSharedMemoryState(text).entries;
+}
+
+export function formatSharedMemory(
+  entries: readonly MemoryEntry[],
+  options?: { taskCount?: number | undefined }
+): string {
+  const lines = ['# Shared Operator memory'];
+  if (options?.taskCount !== undefined) {
+    if (!Number.isInteger(options.taskCount) || options.taskCount < 0) {
+      throw new Error('Task count must be a non-negative integer.');
+    }
+    lines.push(`Task count: ${options.taskCount}`);
+  }
+  lines.push('');
   for (const entry of entries) {
     validateMemoryEntry(entry);
-    lines.push(`- [Source: ${entry.source}; scope: ${entry.scope}; confirmation: ${entry.confirmation}] ${entry.fact}`);
+    const taskMeta =
+      entry.addedAtTask !== undefined && entry.lastUsedAtTask !== undefined
+        ? `; added-task: ${entry.addedAtTask}; last-used-task: ${entry.lastUsedAtTask}`
+        : '';
+    lines.push(`- [Source: ${entry.source}; scope: ${entry.scope}; confirmation: ${entry.confirmation}${taskMeta}] ${entry.fact}`);
   }
   return lines.join('\n') + '\n';
 }
@@ -332,6 +376,8 @@ export function detectMemoryConflicts(
 export function readSharedMemory(memoryPath: string): {
   exists: boolean;
   entries: MemoryEntry[];
+  taskCount: number;
+  hasTaskCount: boolean;
   raw: string;
   hash: string;
 } {
@@ -344,6 +390,8 @@ export function readSharedMemory(memoryPath: string): {
       return {
         exists: false,
         entries: [],
+        taskCount: 0,
+        hasTaskCount: false,
         raw: '',
         hash: createHash('sha256').update('').digest('hex'),
       };
@@ -360,11 +408,13 @@ export function readSharedMemory(memoryPath: string): {
 
   const raw = readFileSync(target, 'utf8');
   const hash = createHash('sha256').update(raw).digest('hex');
-  const entries = parseSharedMemory(raw);
+  const state = parseSharedMemoryState(raw);
 
   return {
     exists: true,
-    entries,
+    entries: state.entries,
+    taskCount: state.taskCount,
+    hasTaskCount: state.hasTaskCount,
     raw,
     hash,
   };
@@ -373,7 +423,8 @@ export function readSharedMemory(memoryPath: string): {
 export function writeSharedMemorySerialized(
   memoryPath: string,
   entries: readonly MemoryEntry[],
-  baselineHash: string | undefined
+  baselineHash: string | undefined,
+  options?: { taskCount?: number | undefined }
 ): { success: boolean; hash: string } {
   const target = resolve(memoryPath);
   const parent = dirname(target);
@@ -392,7 +443,12 @@ export function writeSharedMemorySerialized(
       throw new Error('Concurrent modification detected on shared MEMORY.md. Baseline hash does not match current file on disk.');
     }
     const deduplicated = deduplicateMemoryEntries(entries);
-    const formatted = formatSharedMemory(deduplicated);
+    const taskCount = options?.taskCount !== undefined
+      ? options.taskCount
+      : current.hasTaskCount
+        ? current.taskCount
+        : undefined;
+    const formatted = formatSharedMemory(deduplicated, taskCount !== undefined ? { taskCount } : undefined);
     const newHash = createHash('sha256').update(formatted).digest('hex');
     writeFileSync(tempPath, formatted, 'utf8');
     renameSync(tempPath, target);
@@ -407,6 +463,51 @@ export function writeSharedMemorySerialized(
     closeSync(lockFd);
     try { unlinkSync(lockPath); } catch {}
   }
+}
+
+/**
+ * Advances the project task counter by 1 and backfills any pre-existing entries
+ * that lack `addedAtTask` or `lastUsedAtTask` so none are treated as stale at once.
+ */
+export function advanceMemoryTaskCount(state: {
+  taskCount: number;
+  entries: readonly MemoryEntry[];
+}): { taskCount: number; entries: MemoryEntry[] } {
+  const nextTaskCount = state.taskCount + 1;
+  const entries = state.entries.map((entry) => {
+    validateMemoryEntry(entry);
+    return {
+      ...entry,
+      addedAtTask: entry.addedAtTask ?? nextTaskCount,
+      lastUsedAtTask: entry.lastUsedAtTask ?? nextTaskCount,
+    };
+  });
+  return { taskCount: nextTaskCount, entries };
+}
+
+/**
+ * Updates `lastUsedAtTask` to `currentTaskCount` for every entry matching `usedEntries`.
+ */
+export function markMemoryEntriesUsed(
+  entries: readonly MemoryEntry[],
+  usedEntries: readonly MemoryEntry[],
+  currentTaskCount: number
+): MemoryEntry[] {
+  if (!Number.isInteger(currentTaskCount) || currentTaskCount < 0) {
+    throw new Error('currentTaskCount must be a non-negative integer.');
+  }
+  const usedKeys = new Set(usedEntries.map((e) => memoryEntryIdentityKey(e)));
+  return entries.map((entry) => {
+    validateMemoryEntry(entry);
+    if (!usedKeys.has(memoryEntryIdentityKey(entry))) {
+      return entry;
+    }
+    return {
+      ...entry,
+      addedAtTask: entry.addedAtTask ?? currentTaskCount,
+      lastUsedAtTask: currentTaskCount,
+    };
+  });
 }
 
 export function planRulePromotion(options: {
@@ -791,6 +892,8 @@ export function detectPruningCandidates(options: {
   agentsText?: string | undefined;
   personalRules?: readonly string[] | undefined;
   externalChecker?: PruningExternalChecker | undefined;
+  currentTaskCount?: number | undefined;
+  staleThreshold?: number | undefined;
 }): PruningCandidate[] {
   const candidates: PruningCandidate[] = [];
   const rawAgents = options.agentsText ?? '';
@@ -798,6 +901,16 @@ export function detectPruningCandidates(options: {
   const personalNorm = (options.personalRules ?? [])
     .map((r) => normalizeKey(r))
     .filter((r) => r.length > 0);
+  const staleThreshold = options.staleThreshold ?? STALE_TASK_THRESHOLD;
+  if (!Number.isInteger(staleThreshold) || staleThreshold < 1) {
+    throw new Error('staleThreshold must be a positive integer.');
+  }
+  if (
+    options.currentTaskCount !== undefined &&
+    (!Number.isInteger(options.currentTaskCount) || options.currentTaskCount < 0)
+  ) {
+    throw new Error('currentTaskCount must be a non-negative integer.');
+  }
 
   for (let idx = 0; idx < options.memoryEntries.length; idx++) {
     const entry = options.memoryEntries[idx]!;
@@ -978,6 +1091,24 @@ export function detectPruningCandidates(options: {
         }
       }
     }
+
+    // 4. Check for Stale (unused for >= staleThreshold tasks since lastUsedAtTask)
+    if (options.currentTaskCount !== undefined && entry.lastUsedAtTask !== undefined) {
+      const tasksUnused = options.currentTaskCount - entry.lastUsedAtTask;
+      if (tasksUnused >= staleThreshold) {
+        const evidenceKey = `unused-since-${entry.lastUsedAtTask}`;
+        if (!isAlreadyReviewed(entry, 'stale', evidenceKey)) {
+          candidates.push({
+            entry,
+            kind: 'stale',
+            reason: `Unused for ${tasksUnused} tasks (threshold: ${staleThreshold}).`,
+            evidence: `Last confirmed or applied at task ${entry.lastUsedAtTask}; current task count is ${options.currentTaskCount}.`,
+            evidenceKey,
+          });
+          continue;
+        }
+      }
+    }
   }
 
   return candidates;
@@ -1086,6 +1217,8 @@ export function computePruningPlanHash(plan: {
         scope: c.entry.scope,
         confirmation: c.entry.confirmation,
         fact: c.entry.fact,
+        addedAtTask: c.entry.addedAtTask ?? null,
+        lastUsedAtTask: c.entry.lastUsedAtTask ?? null,
       },
     })),
     dispositions: plan.dispositions.map((d) => ({
@@ -1096,6 +1229,8 @@ export function computePruningPlanHash(plan: {
         scope: d.entry.scope,
         confirmation: d.entry.confirmation,
         fact: d.entry.fact,
+        addedAtTask: d.entry.addedAtTask ?? null,
+        lastUsedAtTask: d.entry.lastUsedAtTask ?? null,
       },
     })),
     promotedToAgents: plan.promotedToAgents,
@@ -1107,6 +1242,8 @@ export function computePruningPlanHash(plan: {
       scope: e.scope,
       confirmation: e.confirmation,
       fact: e.fact,
+      addedAtTask: e.addedAtTask ?? null,
+      lastUsedAtTask: e.lastUsedAtTask ?? null,
     })),
     // Case-fold on Windows to match applyApprovedMemoryPruning's path comparison.
     agentsPath: plan.agentsPath
@@ -1125,7 +1262,14 @@ export function planMemoryPruning(options: {
   dispositions: readonly PruningDisposition[];
   agentsText?: string | undefined;
   agentsPath?: string | undefined;
+  currentTaskCount?: number | undefined;
 }): MemoryPruningPlan {
+  if (
+    options.currentTaskCount !== undefined &&
+    (!Number.isInteger(options.currentTaskCount) || options.currentTaskCount < 0)
+  ) {
+    throw new Error('currentTaskCount must be a non-negative integer.');
+  }
   // Validate candidate set and disposition keys against memoryEntries
   const memoryEntryKeys = new Set(options.memoryEntries.map((e) => memoryEntryIdentityKey(e)));
   for (const c of options.candidates) {
@@ -1195,9 +1339,17 @@ export function planMemoryPruning(options: {
       // Leaves MEMORY.md upon discard
     } else if (disp.disposition === 'keep') {
       keptCount++;
-      // Kept entry is marked as reviewed for this candidate's specific kind and evidence key
+      // Kept entry is marked as reviewed for this candidate's specific kind and evidence key;
+      // for stale candidates, keeping restarts its task count at currentTaskCount.
       const candidate = candidateMap.get(key);
-      const reviewed = candidate ? markEntryReviewed(entry, candidate) : entry;
+      let reviewed = candidate ? markEntryReviewed(entry, candidate) : entry;
+      if (candidate?.kind === 'stale' && options.currentTaskCount !== undefined) {
+        reviewed = {
+          ...reviewed,
+          addedAtTask: reviewed.addedAtTask ?? options.currentTaskCount,
+          lastUsedAtTask: options.currentTaskCount,
+        };
+      }
       updatedMemory.push(reviewed);
     }
   }

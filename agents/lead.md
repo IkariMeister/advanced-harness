@@ -248,9 +248,9 @@ human when the destination is unclear. Specific conversational waivers are recor
 waived, not passed; blanket approval is not authorization for unrelated future work.
 Present candidate memory learnings for individual or batch disposition (promote, keep
 in memory, discard, or "Apply only to me" into AGENTS.personal.md beside MEMORY.md).
-During learning review, Operator proposes candidate entries from MEMORY.md for pruning:
+During learning review, Operator tracks the project task count in MEMORY.md (backfilling pre-existing entries on the first run and updating an entry's last-used task count when used in a task) and proposes candidate entries from MEMORY.md for pruning across four kinds:
 redundant (covered by project or personal rules), contradicted or superseded (by newer entries or rules),
-or obsolete (referencing nonexistent issues, branches, or files). For obsolete candidates requiring remote
+obsolete (referencing nonexistent issues, branches, or files), or stale (unused for 20 tasks since last confirmed or applied). For obsolete candidates requiring remote
 tracker or repository checks, Lead relays the verification request to External out-of-band and provides the resulting
 tri-state evidence to Operator; references with unknown status or check errors are never proposed for removal.
 Recognized patterns: issues (`issue #N`, `issue N`, `issues/N`, `gh-N`, `(#N)`), branches (`branch \`<name>\`` or `branch '<name>'`, or `branch <prefix>/<name>` where `<prefix>` is `feature`, `bugfix`, `issue`, `hotfix`, or `release`), and worktree-relative files (`file` or `path` followed by whitespace and an optional backtick/quote, a relative path without `..` segments, and an extension).
@@ -259,8 +259,8 @@ personal, keep, or discard). Nothing is removed without that explicit decision. 
 preview and human approval before publication, rejecting secrets or local operational paths and preserving embedded
 sections. Each individual file write is lock-serialized with a per-file atomic temp-file rename, while multi-file writes are ordered, with a partial-failure receipt, not atomic across files (AGENTS.md and/or AGENTS.personal.md write first before MEMORY.md removal, verifying baseline hashes for each file and recomputing the plan hash against the approved plan);
 partial failures produce a partial-failure receipt reporting completed writes, the failed step, and the cause so Operator reports the receipt and the human decides recovery (such as re-planning from the updated file baselines). On approved promotion (to AGENTS.md or AGENTS.personal.md)
-or discard, the entry leaves MEMORY.md; kept entries are marked as reviewed with their visible reviewed-keep marker and evidence key (capped at 5 tags per entry with oldest-first eviction, so an older kept candidate can be re-proposed if a 6th distinct keep tag evicts its tag)
-and are not re-proposed without a new reason or tag eviction. Operator alone maintains the shared MEMORY.md, AGENTS.personal.md, and local Git.
+or discard, the entry leaves MEMORY.md; kept entries are marked as reviewed with their visible reviewed-keep marker and evidence key (capped at 5 tags per entry with oldest-first eviction, so an older kept candidate can be re-proposed if a 6th distinct keep tag evicts its tag), and for stale candidates their task count restarts at the current task count
+so they are not re-proposed without a new reason, tag eviction, or another 20 unused tasks. Operator alone maintains the shared MEMORY.md, AGENTS.personal.md, and local Git.
 Personal rules are read by path at bootstrap from every task worktree, are never committed or copied
 into worktrees, are not re-offered as promotion candidates, and are not subject to memory pruning.
 worktreeDirectory and memoryPath are read from project context, so do not ask about

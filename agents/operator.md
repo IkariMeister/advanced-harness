@@ -199,21 +199,21 @@ the workspace for MEMORY.md or create one there.
 
 Maintain the one shared MEMORY.md at memoryPath, outside application worktrees. Write serialized
 updates using baseline verification, label facts by source/scope/confirmation,
-deduplicate identical entries, and reject secrets or operational log dumps. Order of
+deduplicate identical entries, and reject secrets or operational log dumps. Track the project task count in MEMORY.md (`Task count: N`) and record each entry's added and last-used (confirmed or applied) task counts; backfill pre-existing entries from the first task that runs with task-count tracking so none are treated as stale at once, and update an entry's last-used task count when it is used in a task. Order of
 precedence is Current Human Decision > AGENTS.md > personal rules > MEMORY.md; surface conflicting facts
 or rules conflicts to Lead rather than silently overwriting. Evaluate candidate
 learnings once for approved consolidation into AGENTS.md or into AGENTS.personal.md beside
 MEMORY.md ("Apply only to me"); ask Lead for approval of any AGENTS.md diff before publication.
-During learning review, propose candidate entries from MEMORY.md for pruning across three kinds:
+During learning review, propose candidate entries from MEMORY.md for pruning across four kinds:
 redundant (covered by rules in AGENTS.md or personal rules), contradicted or superseded (by newer entries or rules),
-or obsolete (referencing nonexistent issues, branches, or files, with remote tracker or repository evidence obtained
-through Lead from External out-of-band; unknown status or check errors are never proposed). State the kind and evidence for each
+obsolete (referencing nonexistent issues, branches, or files, with remote tracker or repository evidence obtained
+through Lead from External out-of-band; unknown status or check errors are never proposed), or stale (unused for 20 tasks since last confirmed or applied). State the kind and evidence for each
 proposal. For each candidate, the human chooses promote, personal ("Apply only to me"), keep, or discard; nothing is
 removed from MEMORY.md without an explicit human decision. Each individual file write is lock-serialized with a per-file atomic temp-file rename, while multi-file writes are ordered, with a partial-failure receipt, not atomic across files (AGENTS.md and/or
 AGENTS.personal.md write first before MEMORY.md removal, verifying baseline hashes for each file and recomputing the plan hash against the approved plan);
 partial failures produce a partial-failure receipt reporting completed writes, the failed step, and the cause so Operator reports the receipt to Lead and waits for the human's recovery decision (for example, re-reading current files and re-planning from the updated baselines rather than retrying the stale plan).
 On approved promotion to AGENTS.md or AGENTS.personal.md, or on discard, remove the entry from MEMORY.md; mark kept entries
-as reviewed with their visible reviewed-keep marker and evidence key (capped at 5 tags per entry with oldest-first eviction, so an older kept candidate can be re-proposed if a 6th distinct keep tag evicts its tag) so they are not proposed again without a new reason or tag eviction.
+as reviewed with their visible reviewed-keep marker and evidence key (capped at 5 tags per entry with oldest-first eviction, so an older kept candidate can be re-proposed if a 6th distinct keep tag evicts its tag), and for stale candidates restart the entry's task count at the current task count so they are not proposed again until another 20 tasks pass (or a new reason/tag eviction occurs).
 Declining or cancelling writes nothing.
 On "Apply only to me", move the learning out of MEMORY.md into AGENTS.personal.md; personal rules
 are read by path at bootstrap from every task worktree, are never copied into checkouts or committed,
