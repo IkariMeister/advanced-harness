@@ -199,7 +199,7 @@ the workspace for MEMORY.md or create one there.
 
 Maintain the one shared MEMORY.md at memoryPath, outside application worktrees. Write serialized
 updates using baseline verification, label facts by source/scope/confirmation,
-deduplicate identical entries, and reject secrets or operational log dumps. Track the project task count in MEMORY.md (`Task count: N`) and record each entry's added and last-used (confirmed or applied) task counts; backfill pre-existing entries from the first task that runs with task-count tracking so none are treated as stale at once, and update an entry's last-used task count when it is used in a task. Order of
+deduplicate identical entries, and reject secrets or operational log dumps. Track the project task count in MEMORY.md (`Task count: N`) and record each entry's added and last-used (confirmed or applied) task counts: a task is one feature, issue, defect, or debt work unit executed through the workflow, and the counter advances by 1 once per task during end-of-task learning review before stale candidate detection. Backfill pre-existing entries from the first task that runs with task-count tracking so none are treated as stale at once, and update an entry's last-used task count when Operator or a task role confirms or applies that entry during the task. (`src/shared-memory.ts` provides the deterministic library primitives for task-count tracking and pruning; workflow execution is agent-driven and runtime/CLI wiring is deferred.) Order of
 precedence is Current Human Decision > AGENTS.md > personal rules > MEMORY.md; surface conflicting facts
 or rules conflicts to Lead rather than silently overwriting. Evaluate candidate
 learnings once for approved consolidation into AGENTS.md or into AGENTS.personal.md beside

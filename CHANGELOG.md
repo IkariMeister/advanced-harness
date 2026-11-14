@@ -15,6 +15,16 @@ version between releases.
 
 ### Added
 
+- Stale `MEMORY.md` pruning by task age (BH-078, #217): extend `MEMORY.md` pruning with a
+  fourth candidate kind, `stale`, for entries unused for 20 tasks (`STALE_TASK_THRESHOLD`)
+  since they were last confirmed or applied. Adds a project-level `Task count: N` metadata
+  line and per-entry `added-task` / `last-used-task` fields to `MEMORY.md` (minimum
+  compatible harness version `0.4.0-dev`; legacy `MEMORY.md` files without task metadata
+  continue to parse and are backfilled on the first task run). Keeping a `stale` candidate
+  restarts its count at `currentTaskCount`; declining or cancelling writes nothing.
+  `src/shared-memory.ts` provides the deterministic library primitives (`advanceMemoryTaskCount`,
+  `markMemoryEntriesUsed`, `detectPruningCandidates`, `planMemoryPruning`,
+  `applyApprovedMemoryPruning`) with runtime/CLI wiring deferred.
 - `MEMORY.md` pruning during learning review (BH-077, #216): add pruning candidate proposals
   at end-of-task learning review across three kinds: redundant (covered by rules in `AGENTS.md`
   or `AGENTS.personal.md`), contradicted or superseded (by newer entries or rules), and

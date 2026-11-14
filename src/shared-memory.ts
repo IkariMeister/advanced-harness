@@ -57,6 +57,7 @@ export type MemoryPruningPlan = {
   agentsBaselineHash?: string | undefined;
   updatedAgentsText?: string | undefined;
   agentsDiff?: string | undefined;
+  currentTaskCount?: number | undefined;
   planHash: string;
 };
 
@@ -234,7 +235,7 @@ export function validateMemoryEntry(entry: MemoryEntry): void {
 export function parseMemoryEntryLine(line: string): MemoryEntry | undefined {
   const trimmed = line.trim();
   if (!trimmed.startsWith('-')) return undefined;
-  const match = trimmed.match(/^-\s*\[Source:\s*([^;]+?)\s*;\s*scope:\s*([^;]+?)\s*;\s*confirmation:\s*([^\];]+?)(?:\s*;\s*added-task:\s*(\d+)\s*;\s*last-used-task:\s*(\d+))?\s*\]\s+(.+)$/);
+  const match = trimmed.match(/^-\s*\[Source:\s*([^;]+?)\s*;\s*scope:\s*([^;]+?)\s*;\s*confirmation:\s*([^\];]+?)(?:\s*;\s*added-task:\s*(\d+))?(?:\s*;\s*last-used-task:\s*(\d+))?\s*\]\s+(.+)$/);
   if (!match) return undefined;
   const entry: MemoryEntry = {
     source: match[1]!.trim(),
@@ -270,7 +271,10 @@ export function parseSharedMemoryState(text: string): SharedMemoryState {
       continue;
     }
     const taskCountMatch = line.trim().match(/^Task count:\s*(\d+)$/);
-    if (taskCountMatch && !hasTaskCount && entries.length === 0) {
+    if (taskCountMatch) {
+      if (hasTaskCount) {
+        throw new Error(`Duplicate Task count line in shared MEMORY.md on line ${i + 1}.`);
+      }
       taskCount = Number(taskCountMatch[1]);
       hasTaskCount = true;
       continue;
@@ -307,10 +311,10 @@ export function formatSharedMemory(
   lines.push('');
   for (const entry of entries) {
     validateMemoryEntry(entry);
-    const taskMeta =
-      entry.addedAtTask !== undefined && entry.lastUsedAtTask !== undefined
-        ? `; added-task: ${entry.addedAtTask}; last-used-task: ${entry.lastUsedAtTask}`
-        : '';
+    const taskMetaParts: string[] = [];
+    if (entry.addedAtTask !== undefined) taskMetaParts.push(`added-task: ${entry.addedAtTask}`);
+    if (entry.lastUsedAtTask !== undefined) taskMetaParts.push(`last-used-task: ${entry.lastUsedAtTask}`);
+    const taskMeta = taskMetaParts.length > 0 ? `; ${taskMetaParts.join('; ')}` : '';
     lines.push(`- [Source: ${entry.source}; scope: ${entry.scope}; confirmation: ${entry.confirmation}${taskMeta}] ${entry.fact}`);
   }
   return lines.join('\n') + '\n';
@@ -321,15 +325,25 @@ function normalizeKey(str: string): string {
 }
 
 export function deduplicateMemoryEntries(entries: readonly MemoryEntry[]): MemoryEntry[] {
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   const result: MemoryEntry[] = [];
 
   for (const entry of entries) {
     validateMemoryEntry(entry);
     const key = `${normalizeKey(entry.scope)}|${normalizeKey(entry.fact)}|${normalizeKey(entry.confirmation)}|${normalizeKey(entry.source)}`;
-    if (!seen.has(key)) {
-      seen.add(key);
+    const existingIdx = seen.get(key);
+    if (existingIdx === undefined) {
+      seen.set(key, result.length);
       result.push(entry);
+    } else {
+      const existing = result[existingIdx]!;
+      const addedCandidates = [existing.addedAtTask, entry.addedAtTask].filter((v): v is number => v !== undefined);
+      const lastUsedCandidates = [existing.lastUsedAtTask, entry.lastUsedAtTask].filter((v): v is number => v !== undefined);
+      result[existingIdx] = {
+        ...existing,
+        ...(addedCandidates.length > 0 ? { addedAtTask: Math.min(...addedCandidates) } : {}),
+        ...(lastUsedCandidates.length > 0 ? { lastUsedAtTask: Math.max(...lastUsedCandidates) } : {}),
+      };
     }
   }
   return result;
@@ -485,8 +499,14 @@ export function advanceMemoryTaskCount(state: {
   return { taskCount: nextTaskCount, entries };
 }
 
+function baseMemoryIdentityKey(entry: MemoryEntry): string {
+  const baseConfirmation = entry.confirmation.replace(/\s*\(reviewed-keep:[^)]+\)/g, '').trim();
+  return `${entry.source.trim()}|${entry.scope.trim()}|${baseConfirmation}|${entry.fact.trim()}`;
+}
+
 /**
  * Updates `lastUsedAtTask` to `currentTaskCount` for every entry matching `usedEntries`.
+ * Matches by base confirmation (ignoring `(reviewed-keep:...)` tags) so usage tracking survives a keep.
  */
 export function markMemoryEntriesUsed(
   entries: readonly MemoryEntry[],
@@ -496,10 +516,10 @@ export function markMemoryEntriesUsed(
   if (!Number.isInteger(currentTaskCount) || currentTaskCount < 0) {
     throw new Error('currentTaskCount must be a non-negative integer.');
   }
-  const usedKeys = new Set(usedEntries.map((e) => memoryEntryIdentityKey(e)));
+  const usedKeys = new Set(usedEntries.map((e) => baseMemoryIdentityKey(e)));
   return entries.map((entry) => {
     validateMemoryEntry(entry);
-    if (!usedKeys.has(memoryEntryIdentityKey(entry))) {
+    if (!usedKeys.has(baseMemoryIdentityKey(entry))) {
       return entry;
     }
     return {
@@ -1169,8 +1189,8 @@ function isAlreadyReviewed(entry: MemoryEntry, kind: PruningKind, evidenceKey: s
 
 export function markEntryReviewed(entry: MemoryEntry, candidate: PruningCandidate): MemoryEntry {
   const cleanKey = candidate.evidenceKey.trim();
-  if (/[)\r\n]/.test(cleanKey)) {
-    throw new Error(`Evidence key cannot contain closing parenthesis or newlines: "${cleanKey}".`);
+  if (/[)\r\n;\]]/.test(cleanKey)) {
+    throw new Error(`Evidence key cannot contain closing parenthesis, brackets, semicolons, or newlines: "${cleanKey}".`);
   }
   const newTag = `reviewed-keep:${candidate.kind}:${cleanKey}`;
   const existingTags = parseReviewedKeepTags(entry.confirmation);
@@ -1205,6 +1225,7 @@ export function computePruningPlanHash(plan: {
   agentsBaselineHash?: string | undefined;
   updatedAgentsText?: string | undefined;
   agentsDiff?: string | undefined;
+  currentTaskCount?: number | undefined;
 }): string {
   const planDigestInput = JSON.stringify({
     candidates: plan.candidates.map((c) => ({
@@ -1252,6 +1273,7 @@ export function computePruningPlanHash(plan: {
     agentsBaselineHash: plan.agentsBaselineHash ?? '',
     updatedAgentsText: plan.updatedAgentsText ?? '',
     agentsDiff: plan.agentsDiff ?? '',
+    currentTaskCount: plan.currentTaskCount ?? null,
   });
   return createHash('sha256').update(planDigestInput).digest('hex');
 }
@@ -1397,6 +1419,7 @@ export function planMemoryPruning(options: {
     agentsBaselineHash,
     updatedAgentsText,
     agentsDiff,
+    currentTaskCount: options.currentTaskCount,
   });
 
   return {
@@ -1411,6 +1434,7 @@ export function planMemoryPruning(options: {
     agentsBaselineHash,
     updatedAgentsText,
     agentsDiff,
+    ...(options.currentTaskCount !== undefined ? { currentTaskCount: options.currentTaskCount } : {}),
     planHash,
   };
 }
@@ -1641,6 +1665,9 @@ export function applyApprovedMemoryPruning(options: {
   if (currentMem.hash !== options.memoryBaselineHash) {
     throw new Error('Concurrent modification detected on shared MEMORY.md. Baseline hash does not match current file on disk.');
   }
+  if (plan.currentTaskCount !== undefined && plan.currentTaskCount < currentMem.taskCount) {
+    throw new Error('Cannot apply memory pruning plan with a currentTaskCount older than the on-disk MEMORY.md task count.');
+  }
   const currentPersonal = readPersonalRules(personalPath);
   if (currentPersonal.hash !== options.personalBaselineHash) {
     throw new Error('Concurrent modification detected on AGENTS.personal.md. Baseline hash does not match current file on disk.');
@@ -1700,7 +1727,12 @@ export function applyApprovedMemoryPruning(options: {
 
     // 3. Update MEMORY.md last, removing promoted/discarded entries and updating kept entries
     currentStep = 'memory';
-    const memRes = writeSharedMemorySerialized(memoryPath, plan.updatedMemoryEntries, options.memoryBaselineHash);
+    const memRes = writeSharedMemorySerialized(
+      memoryPath,
+      plan.updatedMemoryEntries,
+      options.memoryBaselineHash,
+      plan.currentTaskCount !== undefined ? { taskCount: plan.currentTaskCount } : undefined
+    );
     receipt.memoryWritten = true;
     receipt.memoryHash = memRes.hash;
 
