@@ -383,6 +383,9 @@ test('inconclusive takes precedence over block in exit codes', async () => {
   const result = await runPreflight({ worktree: root, base: 'main', checks: [make('b', 'block'), make('a', 'inconclusive')] });
   assert.equal(result.approved, false);
   assert.equal(exitCodeFor(result), 2);
+  assert.deepEqual(result.checks.map(check => [check.id, check.status]), [['a', 'inconclusive'], ['b', 'block'], ['policy', 'inconclusive']]);
+  assert.deepEqual(result.blocking, ['b: b evidence']);
+  assert.equal(result.approved, false, 'a retained blocking finding cannot turn a mixed result into an automated approval');
 });
 
 test('empty check list, unknown status, and duplicate check ids are inconclusive', async () => {

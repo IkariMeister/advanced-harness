@@ -1,12 +1,92 @@
 # Preflight
 
-`harness:preflight` collects pre-publish evidence for a task worktree. It reports
-evidence only: no result, file, or tracker stamp counts as plan or publish
-approval. The human approves.
+## Publication handoff and manual smoke
+
+This is the single authoritative publication handoff contract. It is workflow
+guidance, not an enforced code gate. Installed prompts do not ship the documentation
+tree: navigate to repository-qualified [`docs/preflight.md`](#publication-handoff-and-manual-smoke) in
+the matching confirmed harness checkout. If the checkout/version or guide cannot be
+confirmed, stop and ask Lead; do not silently fetch another version. The link is
+repository navigation for the source tree; installed-role lookup must use the local
+confirmed checkout rather than this link target as a version-selection mechanism.
+
+### Operator evidence handoff
+
+Operator runs the canonical command **from that confirmed harness checkout** while
+`--worktree` targets the task worktree:
 
 ```text
-npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--json]
+npm run harness:preflight -- --worktree <task-worktree-path> --base <confirmed-base> --task <key> --json
 ```
+
+Operator relays the exact command, JSON, exit status, worktree, branch, HEAD, and
+working-change state. Reviewer and QA consume the handoff and do not run the
+Git-backed wrapper. If shell is not offered, the command is denied, or its permission
+prompt is declined, report the exact outcome and escalate to Lead; do not bypass by
+another role or tool route. A human may run the exact command and provide an
+attributed result. Alternatively, a scoped exception must be an explicit human
+message in the conversation, quoted in the handoff, naming the current result/state
+and exact checks waived. Missing execution is never a fabricated result.
+
+### Result, freshness, and publication rules
+
+The JSON `approved` field is an automated verdict only, never human or plan approval.
+Exit 2 takes precedence over exit 1 when any check is inconclusive, even when a
+blocking finding remains; the automated verdict is false. Operator must never hand
+off missing, malformed, inconsistent, stale, blocked, or inconclusive evidence as
+publishable. Any local change after the run invalidates evidence and an exception;
+obtain a fresh Operator handoff. Waived checks are waived, never passed. Final human
+publication approval remains separate and mandatory.
+
+Immediately before an authorized push, External compares the authoritative remote
+branch/PR with the expected prior remote head. This is not an equality check against
+the unpublished local HEAD: legitimate new local work may be ahead of the prior
+remote head. Stop if the expected prior head, remote state, feedback, local changes,
+or any other relevant context is unexpected or uncertain. After pushing, verify the
+remote head equals the approved handoff HEAD. For uncertain writes, inspect state
+read-only and never retry automatically. This workflow does not change trusted
+preflight policy, JSON identity schema, or installed prompts/permissions.
+
+### Manual smoke procedure
+
+This section describes a procedure, not an execution record. Per-task manual testing
+may be explicitly waived; record a waiver in the conversation as waived, never
+passed. A waiver does not waive automated checks.
+
+Prerequisites: an explicitly authorized manual run, the matching confirmed harness
+checkout and authorized role launch, an interactive TTY, and an authorized disposable
+local Git fixture with trusted policy and a task worktree. Do not use a production
+repository, deploy/install to a real project, or make live GitHub/service writes
+without separate explicit human approval. Stop before execution if a prerequisite is
+missing; do not use a substitute role or route.
+
+1. Give the workflow an ambiguous issue/PR/repository target. Expect clarification
+   before any mutation; no files, backups, commits, or service writes occur.
+2. In the disposable PR-feedback fixture, exercise pagination for the thread
+   collection and each nested reply collection. Expect every reply's verbatim text
+   and available identity/head metadata retained. Simulate incomplete or inconsistent
+   retrieval; expect an explicit stop, not a claim that feedback is absent.
+3. Cancel at the plan/fix confirmation. Expect no worktree/application files,
+   backups, commits, or service/remote writes from the cancelled operation.
+4. Accept only one enumerated finding and approve its scoped plan. Expect only that
+   corresponding fix to be authorized; publication remains paused pending review and
+   separate final human approval. Discarded findings receive no fix.
+5. Make the preflight shell unavailable, deny the command, or decline its permission
+   prompt. Expect the exact observed outcome reported to Lead, no role/tool bypass,
+   and no invented result. If the human runs the exact command, attribute the supplied
+   output to that human; a scoped exception must quote the explicit message and name
+   current state/checks waived.
+6. Change local files, remote PR/head state, or review feedback after evidence capture.
+   Expect stale-state stop and a fresh handoff/review. Also use a fixture where remote
+   remains at the expected old head while the approved local task HEAD is newer; this
+   legitimate unpublished difference alone must not be misclassified as stale.
+7. Supply missing, malformed, inconsistent, blocked, or inconclusive evidence. Expect
+   publication to stop. For a mixed block plus inconclusive result, expect exit 2,
+   retained findings/statuses, and a false automated verdict.
+
+No production or remote write is part of this smoke procedure. Do not record an
+unrun or waived case as passed, and do not add operational test logs to repository
+documentation.
 
 ## Base ref and trust model
 
@@ -256,41 +336,6 @@ configured or if a check returns an unknown status, the result is inconclusive.
 `exitCodeFor` evaluates `inconclusive` before `block`: an inconclusive result on any check yields overall exit code 2 even if another check reports `block`. For example, when `refs/remotes/origin/HEAD` is missing and `--base` is omitted, `base-context` is `inconclusive` while `worktree-boundary` reports `block`, resulting in overall exit code 2. Passing `--base <ref>` allows `base-context` to pass, yielding exit code 1 from the blocked `worktree-boundary` check.
 
 A tooling error is never a pass.
-
-## Publication handoff and manual smoke
-
-Preflight is evidence, not a publication gate enforced by code. Operator runs the
-exact command for the task and gives Lead its JSON and exit status plus the worktree,
-branch, HEAD, and working-change state. Reviewer and QA assess that handoff instead
-of rerunning the Git-backed wrapper. Missing, malformed, inconsistent, stale,
-blocked, or inconclusive evidence stops publication unless a specific human
-exception identifies the current result and state and names the waived checks.
-Waived checks remain waived, never passed. Exit 0 (including warnings and
-`approved: true`) never substitutes for human approval. Any change after the run
-invalidates both evidence and an exception and requires a fresh Operator run.
-Lead obtains final human publication approval separately; only then may External
-publish. This handoff does not change trusted policy files, create a token/database,
-or automatically deploy role permissions or prompts.
-
-### CLI fixture smoke (offline)
-
-Prerequisites: a disposable local Git fixture with configured trusted policy and
-worktree boundary, the built harness checkout, and no publication authorization.
-Do not use a production repository or alter its trusted policy for this smoke.
-
-1. Run the documented `harness:preflight` command with `--json` on a clean valid
-   task fixture. Expect exit 0 and a parseable JSON result; warnings may be present,
-   and neither exit 0 nor `approved` means human approval.
-2. Introduce a deterministic blocking finding in the disposable fixture. Expect exit
-   1 and blocking JSON; a caller must not treat that result as publishable.
-3. Make a required Git/tool check unavailable or use a fixture with unresolved
-   required context. Expect exit 2 and inconclusive JSON, never a pass.
-4. Combine a block finding with an inconclusive check. Expect exit 2 because
-   inconclusive takes precedence; retain both check results in the JSON.
-5. Change the fixture after capturing a valid result. Expect the recorded worktree/
-   branch/HEAD/working-change identity no longer to match; require a fresh run.
-
-Record each case passed/failed/blocked/unrun from actual results. Do not publish.
 
 ### Separate live role pilot (not run)
 

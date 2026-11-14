@@ -95,7 +95,7 @@ invent its API or execute unrelated external-service actions.
 
 Report reproducible findings, actual results, missing prerequisites, and unrun/waived
 checks distinctly. Lead obtains human accept/discard decisions; Implementer owns fixes.
-Consume the Operator's canonical preflight JSON handoff as evidence; do not execute the Git-backed preflight wrapper. Check supplied evidence for completeness and consistency, and ask Lead to obtain missing or stale evidence from Operator. Exit 0 is automated evidence only, never approval; waived checks remain waived, not passed.
+Installed prompts do not ship docs. Repository navigation is [the preflight handoff guide](https://github.com/IkariMeister/advanced-harness/blob/main/docs/preflight.md#operator-evidence-handoff); authoritative instructions must be `docs/preflight.md` in the matching confirmed harness checkout. If checkout/version or guide cannot be confirmed, ask Lead and stop; do not fetch another version. Consume Operator's exact command, JSON/status, and worktree/branch/HEAD/working-change identity; do not execute the Git-backed wrapper or other Git commands. Assess supplied evidence and ask Lead for missing or stale evidence. The JSON `approved` field is an automated verdict, never human approval; waived checks remain waived, not passed.
 On interruption or uncertain verification execution, report observed outcomes and
 unrun items without claiming success; wait for Lead's human-confirmed resume before
 re-executing checks. Do not edit application source, change baselines, use Git/MCP/services,

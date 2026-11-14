@@ -3,7 +3,7 @@
 **Status:** Proposed\
 **Date:** 2026-11-09\
 **Project:** Advanced Harness\
-**Decision scope:** The preflight changeset and its sensitive-path and secret findings, plus ownership and interpretation of pre-publish evidence. This decision does not make an automated result publication authority: Operator owns execution and conversational handoff; External owns publication decisions under the human approval workflow. Final publication approval remains a separate human decision.
+**Decision scope:** The preflight changeset and its sensitive-path and secret findings. Publication evidence ownership is addressed separately in [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md).
 
 ## Context
 
@@ -31,29 +31,6 @@ Preflight builds the scoped payload, uses Gitleaks where its stdin/report contra
 is available, and otherwise uses a built-in high-confidence detector only when
 Gitleaks is absent. This preserves operation without the optional tool while
 reporting that detector coverage can differ.
-
-### C. Require every role to run preflight independently
-
-Rejected: Reviewer and QA would repeat Git-backed inspection with redundant local
-state and duplicate ownership, while their role contracts consume Operator's Git
-context rather than owning Git. Repetition would not turn an automated verdict into
-human approval.
-
-### D. Let an approval controller gate publication
-
-Rejected: this would reintroduce a separate enforcement/controller system contrary
-to the approved OpenCode-native conversational workflow. It would imply stronger
-atomicity and enforcement than the tool/role model provides.
-
-### E. Operator runs once and hands the exact result to Lead
-
-Chosen for workflow ownership: Operator runs the Git-backed wrapper and supplies
-the exact invocation, JSON, exit status, and worktree/branch/HEAD/working-change
-context. Reviewer and QA inspect that evidence and request a fresh Operator result
-through Lead when absent or stale. External must stop when evidence is missing,
-malformed, inconsistent, stale, blocked, or inconclusive, unless a specific human
-exception identifies the current state and checks waived. Final publication approval
-is still separately required.
 
 ## Decision
 
@@ -142,15 +119,7 @@ One monotonic ten-second budget covers both capability probing and all scan runs
 On Windows, only `gitleaks.exe` found in quoted or unquoted absolute `PATH`
 directories is invoked; resolved absolute executable paths are used directly.
 
-The handoff is advisory and non-atomic: local changes may occur after inspection
-or while evidence is being relayed. Operator, Lead, Reviewer, QA, and External
-compare the recorded worktree, branch, HEAD, and working-change state; any subsequent
-change invalidates the evidence and any scoped exception, requiring a fresh Operator
-run and any necessary renewed approval. Exit 0 (including warnings) and the JSON
-`approved` value mean only that automated checks permit an evidence verdict; neither
-is human approval. Exit 2 remains inconclusive and takes precedence over exit 1.
-Scoped exceptions record waived checks as waived, never passed; they do not edit
-preflight policy or create a token/database.
+Publication evidence handoff ownership and interpretation are specified in ADR-009.
 
 ## Adoption
 
@@ -162,13 +131,10 @@ machine configuration or install Gitleaks.
 
 ## Reconsideration
 
-Revisit if Gitleaks changes its supported stdin/output interface, observed
-false-positive/false-negative rates justify a different fallback or scope, or the
-Operator-to-Lead handoff repeatedly proves too stale, ambiguous, or burdensome in
-the pilot to support reliable publication decisions. Any replacement must preserve
-the approved conversational approval model rather than silently introducing an
-approval controller. Validate through a separate approved live role pilot; static
-tests do not establish runtime compliance.
+Revisit if Gitleaks changes its supported stdin/output interface or observed
+false-positive/false-negative rates justify a different fallback or scope. Validate
+through a separate approved live role pilot; static tests do not establish runtime
+compliance. Handoff reconsideration belongs to ADR-009.
 
 ## References
 

@@ -37,17 +37,42 @@ test('workflow commands require explicit human disposition at consequential gate
 test('publication workflows require current Operator preflight evidence separately from human approval', async () => {
   for (const name of ['start-issue', 'address-pr-feedback', 'document-agents']) {
     const source = await readFile(new URL(`${name}.md`, root), 'utf8');
-    assert.match(source, /Operator (?:runs|supplies|must first provide)[\s\S]*?harness:preflight[\s\S]*?--json/i, name);
-    assert.match(source, /JSON[\s\S]*?exit status[\s\S]*?worktree[\s\S]*?branch[\s\S]*?HEAD[\s\S]*?working.change state/i, name);
-    assert.match(source, /missing, malformed, inconsistent, stale, blocked, or inconclusive/i, name);
-    assert.match(source, /exit 2 takes precedence over exit 1/i, name);
-    assert.match(source, /Exit 0[\s\S]*?(?:automated evidence only|evidence, not human approval)/i, name);
-    assert.match(source, /(?:waived checks are never passed|waived is not passed)/i, name);
-    assert.match(source, /final human approval/i, name);
+    const generated = await readFile(new URL(`../.opencode/commands/${name}.md`, import.meta.url), 'utf8');
+    assert.equal(generated, source, `${name} generated command stays in parity with canonical source`);
+    assert.match(source, /preflight\.md#operator-evidence-handoff/i, name);
+    assert.match(source, /https:\/\/github\.com\/IkariMeister\/advanced-harness\/blob\/main\/docs\/preflight\.md#operator-evidence-handoff/i, name);
+    assert.match(source, /authoritative instructions must be `docs\/preflight\.md` in the matching confirmed harness checkout/i, name);
+    assert.match(source, /matching confirmed harness checkout/i, name);
+    assert.match(source, /installed prompts do not ship docs/i, name);
+    assert.match(source, /stop and ask Lead, never fetch silently/i, name);
+    assert.match(source, /worktree, branch, HEAD, and working-change identity/i, name);
+    assert.match(source, /scoped exception quotes the explicit human message/i, name);
+    assert.match(source, /final human (?:publication )?approval/i, name);
   }
+  const guide = await readFile(new URL('../docs/preflight.md', import.meta.url), 'utf8');
+  assert.match(guide, /\[`docs\/preflight\.md`\]\(#publication-handoff-and-manual-smoke\)/);
+  assert.equal((guide.match(/^## Publication handoff and manual smoke$/gm) ?? []).length, 1);
+  assert.match(guide, /exit 2 takes precedence over exit 1/i);
+  assert.match(guide, /The JSON `approved` field is an automated verdict only/);
+  assert.match(guide, /a scoped exception must be an explicit human\s+message in the conversation/);
+  assert.match(guide, /A human may run the exact command and provide an\s+attributed result/);
+  for (const requirement of [
+    /missing, malformed, inconsistent, stale, blocked, or inconclusive evidence as\s+publishable/,
+    /expected prior remote head/,
+    /remote head equals the approved handoff HEAD/,
+    /authorized disposable\s+local Git fixture/,
+    /interactive TTY/,
+    /pagination for the thread\s+collection and each nested reply collection/,
+    /no worktree\/application files,\s+backups, commits, or service\/remote writes/,
+    /only that\s+corresponding fix.*publication remains paused/s,
+    /no role\/tool bypass/,
+    /old head while the approved local task HEAD is newer/,
+    /Operator must never hand\s+off missing, malformed, inconsistent, stale, blocked, or inconclusive evidence/,
+    /waived, never\s+passed/
+  ]) assert.match(guide, requirement);
   const reviewer = await readFile(new URL('../agents/reviewer.md', import.meta.url), 'utf8');
   const qa = await readFile(new URL('../agents/qa.md', import.meta.url), 'utf8');
-  for (const role of [reviewer, qa]) assert.match(role, /do not (?:run|execute) the Git-backed (?:`harness:preflight`|preflight) wrapper/i);
+  for (const role of [reviewer, qa]) assert.match(role, /do not (?:run|execute) the Git-backed wrapper/i);
 });
 
 test('BH-030: PR feedback workflow retrieves complete threads and gates scoped fixes and publication', async () => {
@@ -64,10 +89,9 @@ test('BH-030: PR feedback workflow retrieves complete threads and gates scoped f
   assert.match(feedback, /incomplete, inconsistent, or access fails, report it as blocked/i);
   assert.match(feedback, /accept or discard each finding individually or in an explicitly enumerated batch/i);
   assert.match(feedback, /waits for explicit human approval before Implementer changes code/i);
-  assert.match(feedback, /explicit final human approval of the push, (?:the )?exact replies, and (?:the )?exact thread resolutions/i);
-  assert.match(feedback, /Never infer reply or resolution approval from approval to fix or push/i);
-  assert.match(feedback, /rereads the PR head and all relevant threads\/replies immediately before publication/i);
-  assert.match(feedback, /If the head or feedback changed, stop and return to Lead for human review\/approval/i);
+  assert.match(feedback, /explicit final human approval of push, exact replies, and exact thread resolutions/i);
+  assert.match(feedback, /Never infer reply\/resolution approval from fix approval/i);
+  assert.match(feedback, /rereads PR head and all relevant threads\/replies; changed state stops for review/i);
   assert.match(feedback, /record verified completed writes without repeating them/i);
   assert.match(feedback, /wait for explicit human approval before retrying/i);
   assert.match(feedback, /Never merge, force-push, delete branches, or clean up as an implied step/i);
@@ -106,7 +130,7 @@ test('BH-042: document-agents scopes, analyzes, gates writes, and reuses shared 
   assert.match(doc, /adds no Documentation agent or role on any host/i);
   assert.match(doc, /accepts or discards each individually or in an explicitly enumerated batch/i);
   // Publication
-  assert.match(doc, /final human approval before any push or PR/i);
+  assert.match(doc, /separate final human publication approval/i);
   assert.match(doc, /Never merge/i);
 });
 
