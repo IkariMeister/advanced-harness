@@ -244,14 +244,40 @@ test('relative --opencode resolves against INIT_CWD or cwd rather than --project
     assert.notEqual(findOpenCode('./bin/opencode'), join(realpathSync(projectDir), 'bin', 'opencode'));
     assert.equal(findOpenCode('opencode'), 'opencode');
 
+    process.env.INIT_CWD = '';
+    assert.equal(findOpenCode('./bin/opencode'), join(realpathSync(cwdDir), 'bin', 'opencode'));
+
+    process.env.INIT_CWD = 'relative-init-cwd';
+    assert.equal(findOpenCode('./bin/opencode'), join(realpathSync(cwdDir), 'relative-init-cwd', 'bin', 'opencode'));
+
     process.env.INIT_CWD = initCwdDir;
+    const { homedir } = await import('node:os');
     assert.equal(findOpenCode('./bin/opencode'), join(initCwdDir, 'bin', 'opencode'));
+    assert.equal(findOpenCode('~\\bin\\opencode'), join(homedir(), 'bin', 'opencode'));
     assert.equal(findOpenCode('opencode'), 'opencode');
   } finally {
     process.chdir(previousCwd);
     if (previousInitCwd === undefined) delete process.env.INIT_CWD;
     else process.env.INIT_CWD = previousInitCwd;
   }
+});
+
+test('harness:doctor resolves --project and its omitted default against INIT_CWD when set', t => {
+  const { home, xdg, project, run } = sandboxedDoctor(t);
+  const initRoot = mkdtempSync(join(tmpdir(), 'harness-doctor-init-cwd-'));
+  t.after(() => rmSync(initRoot, { recursive: true, force: true }));
+  const nestedProject = join(initRoot, 'nested-project');
+  mkdirSync(nestedProject, { recursive: true });
+  const script = fileURLToPath(new URL('../scripts/diagnose-native-harness.ts', import.meta.url));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: xdg, INIT_CWD: initRoot };
+  const runWithInitCwd = (cliArgs: string[]) => execFileSync(process.execPath, [script, ...cliArgs], { env, encoding: 'utf8', stdio: 'pipe' });
+
+  const omitted = runWithInitCwd(['--host', 'opencode', '--scope', 'project']);
+  assert.match(omitted, new RegExp(`Checking location: ${initRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+
+  const relative = runWithInitCwd(['--host', 'opencode', '--scope', 'project', '--project', './nested-project']);
+  assert.match(relative, new RegExp(`Checking location: ${nestedProject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.ok(run(['--host', 'opencode', '--scope', 'project', '--project', project]).status === 0);
 });
 
 test('Windows executable discovery uses a controlled LOCALAPPDATA fixture and falls back when absent', { skip: process.platform !== 'win32' }, async t => {
