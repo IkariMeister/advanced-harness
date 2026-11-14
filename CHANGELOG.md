@@ -24,7 +24,8 @@ version between releases.
   restarts its count at `currentTaskCount`; declining or cancelling writes nothing.
   `src/shared-memory.ts` provides the deterministic library primitives (`advanceMemoryTaskCount`,
   `markMemoryEntriesUsed`, `detectPruningCandidates`, `planMemoryPruning`,
-  `applyApprovedMemoryPruning`) with runtime/CLI wiring deferred.
+  `applyApprovedMemoryPruning`), satisfying #217 acceptance criteria 1 and 2 at the library
+  level while runtime/CLI wiring remains deferred.
 - `MEMORY.md` pruning during learning review (BH-077, #216): add pruning candidate proposals
   at end-of-task learning review across three kinds: redundant (covered by rules in `AGENTS.md`
   or `AGENTS.personal.md`), contradicted or superseded (by newer entries or rules), and

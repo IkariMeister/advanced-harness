@@ -226,8 +226,8 @@ export function validateMemoryEntry(entry: MemoryEntry): void {
   }
 
   for (const [label, value] of [['addedAtTask', entry.addedAtTask], ['lastUsedAtTask', entry.lastUsedAtTask]] as const) {
-    if (value !== undefined && (typeof value !== 'number' || !Number.isInteger(value) || value < 0)) {
-      throw new Error(`Memory entry ${label} must be a non-negative integer.`);
+    if (value !== undefined && (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)) {
+      throw new Error(`Memory entry ${label} must be a safe non-negative integer.`);
     }
   }
 }
@@ -237,13 +237,21 @@ export function parseMemoryEntryLine(line: string): MemoryEntry | undefined {
   if (!trimmed.startsWith('-')) return undefined;
   const match = trimmed.match(/^-\s*\[Source:\s*([^;]+?)\s*;\s*scope:\s*([^;]+?)\s*;\s*confirmation:\s*([^\];]+?)(?:\s*;\s*added-task:\s*(\d+))?(?:\s*;\s*last-used-task:\s*(\d+))?\s*\]\s+(.+)$/);
   if (!match) return undefined;
+  const addedAtTask = match[4] !== undefined ? Number(match[4]) : undefined;
+  const lastUsedAtTask = match[5] !== undefined ? Number(match[5]) : undefined;
+  if (addedAtTask !== undefined && !Number.isSafeInteger(addedAtTask)) {
+    throw new Error('Memory entry added-task exceeds safe integer range.');
+  }
+  if (lastUsedAtTask !== undefined && !Number.isSafeInteger(lastUsedAtTask)) {
+    throw new Error('Memory entry last-used-task exceeds safe integer range.');
+  }
   const entry: MemoryEntry = {
     source: match[1]!.trim(),
     scope: match[2]!.trim(),
     confirmation: match[3]!.trim(),
     fact: match[6]!.trim(),
-    ...(match[4] !== undefined ? { addedAtTask: Number(match[4]) } : {}),
-    ...(match[5] !== undefined ? { lastUsedAtTask: Number(match[5]) } : {}),
+    ...(addedAtTask !== undefined ? { addedAtTask } : {}),
+    ...(lastUsedAtTask !== undefined ? { lastUsedAtTask } : {}),
   };
   validateMemoryEntry(entry);
   return entry;
@@ -255,6 +263,12 @@ export type SharedMemoryState = {
   entries: MemoryEntry[];
 };
 
+/**
+ * Parses `MEMORY.md` including the optional `Task count: N` metadata line and
+ * per-entry `added-task` / `last-used-task` fields introduced in harness 0.4.0-dev.
+ * Legacy `MEMORY.md` files without task metadata parse cleanly with `taskCount: 0`;
+ * older harnesses reading files with this metadata may reject the new line or fields.
+ */
 export function parseSharedMemoryState(text: string): SharedMemoryState {
   const lines = text.split(/\r\n|\n/);
   if (lines[0]?.startsWith('\uFEFF')) lines[0] = lines[0].slice(1);
@@ -275,7 +289,11 @@ export function parseSharedMemoryState(text: string): SharedMemoryState {
       if (hasTaskCount) {
         throw new Error(`Duplicate Task count line in shared MEMORY.md on line ${i + 1}.`);
       }
-      taskCount = Number(taskCountMatch[1]);
+      const parsedCount = Number(taskCountMatch[1]);
+      if (!Number.isSafeInteger(parsedCount)) {
+        throw new Error(`Task count in shared MEMORY.md exceeds safe integer range on line ${i + 1}.`);
+      }
+      taskCount = parsedCount;
       hasTaskCount = true;
       continue;
     }
@@ -457,11 +475,18 @@ export function writeSharedMemorySerialized(
       throw new Error('Concurrent modification detected on shared MEMORY.md. Baseline hash does not match current file on disk.');
     }
     const deduplicated = deduplicateMemoryEntries(entries);
+    const maxEntryTask = deduplicated.reduce((max, e) => {
+      const a = e.addedAtTask ?? -1;
+      const u = e.lastUsedAtTask ?? -1;
+      return Math.max(max, a, u);
+    }, -1);
     const taskCount = options?.taskCount !== undefined
       ? options.taskCount
       : current.hasTaskCount
         ? current.taskCount
-        : undefined;
+        : maxEntryTask >= 0
+          ? maxEntryTask
+          : undefined;
     const formatted = formatSharedMemory(deduplicated, taskCount !== undefined ? { taskCount } : undefined);
     const newHash = createHash('sha256').update(formatted).digest('hex');
     writeFileSync(tempPath, formatted, 'utf8');
@@ -1112,17 +1137,18 @@ export function detectPruningCandidates(options: {
       }
     }
 
-    // 4. Check for Stale (unused for >= staleThreshold tasks since lastUsedAtTask)
-    if (options.currentTaskCount !== undefined && entry.lastUsedAtTask !== undefined) {
-      const tasksUnused = options.currentTaskCount - entry.lastUsedAtTask;
+    // 4. Check for Stale (unused for >= staleThreshold tasks since lastUsedAtTask, falling back to addedAtTask)
+    const referenceTask = entry.lastUsedAtTask ?? entry.addedAtTask;
+    if (options.currentTaskCount !== undefined && referenceTask !== undefined) {
+      const tasksUnused = options.currentTaskCount - referenceTask;
       if (tasksUnused >= staleThreshold) {
-        const evidenceKey = `unused-since-${entry.lastUsedAtTask}`;
+        const evidenceKey = `unused-since-${referenceTask}`;
         if (!isAlreadyReviewed(entry, 'stale', evidenceKey)) {
           candidates.push({
             entry,
             kind: 'stale',
             reason: `Unused for ${tasksUnused} tasks (threshold: ${staleThreshold}).`,
-            evidence: `Last confirmed or applied at task ${entry.lastUsedAtTask}; current task count is ${options.currentTaskCount}.`,
+            evidence: `Last confirmed or applied at task ${referenceTask}; current task count is ${options.currentTaskCount}.`,
             evidenceKey,
           });
           continue;
@@ -1361,19 +1387,22 @@ export function planMemoryPruning(options: {
       // Leaves MEMORY.md upon discard
     } else if (disp.disposition === 'keep') {
       keptCount++;
-      // Kept entry is marked as reviewed for this candidate's specific kind and evidence key;
-      // for stale candidates, keeping restarts its task count at currentTaskCount.
+      // For stale candidates, keeping restarts lastUsedAtTask at currentTaskCount without adding a
+      // reviewed-keep tag (avoiding evicting other reviewed-keep tags under the 5-tag cap).
+      // Non-stale candidates record their reviewed-keep:<kind>:<evidenceKey> marker.
       const candidate = candidateMap.get(key);
-      let reviewed = candidate ? markEntryReviewed(entry, candidate) : entry;
+      let reviewed: MemoryEntry;
       if (candidate?.kind === 'stale') {
         if (options.currentTaskCount === undefined) {
           throw new Error('Keeping a stale pruning candidate requires currentTaskCount to restart its task count.');
         }
         reviewed = {
-          ...reviewed,
-          addedAtTask: reviewed.addedAtTask ?? options.currentTaskCount,
+          ...entry,
+          addedAtTask: entry.addedAtTask ?? options.currentTaskCount,
           lastUsedAtTask: options.currentTaskCount,
         };
+      } else {
+        reviewed = candidate ? markEntryReviewed(entry, candidate) : entry;
       }
       updatedMemory.push(reviewed);
     }
@@ -1665,8 +1694,24 @@ export function applyApprovedMemoryPruning(options: {
   if (currentMem.hash !== options.memoryBaselineHash) {
     throw new Error('Concurrent modification detected on shared MEMORY.md. Baseline hash does not match current file on disk.');
   }
-  if (plan.currentTaskCount !== undefined && plan.currentTaskCount < currentMem.taskCount) {
-    throw new Error('Cannot apply memory pruning plan with a currentTaskCount older than the on-disk MEMORY.md task count.');
+  if (plan.currentTaskCount !== undefined) {
+    if (!Number.isSafeInteger(plan.currentTaskCount) || plan.currentTaskCount < 0) {
+      throw new Error('Memory pruning plan currentTaskCount must be a safe non-negative integer.');
+    }
+    if (plan.currentTaskCount < currentMem.taskCount) {
+      throw new Error('Cannot apply memory pruning plan with a currentTaskCount older than the on-disk MEMORY.md task count.');
+    }
+    if (plan.currentTaskCount - currentMem.taskCount > 1000) {
+      throw new Error('Cannot apply memory pruning plan whose currentTaskCount jumps more than 1000 tasks ahead of on-disk MEMORY.md.');
+    }
+    for (const e of plan.updatedMemoryEntries) {
+      if (
+        (e.addedAtTask !== undefined && e.addedAtTask > plan.currentTaskCount) ||
+        (e.lastUsedAtTask !== undefined && e.lastUsedAtTask > plan.currentTaskCount)
+      ) {
+        throw new Error('Cannot apply memory pruning plan where an entry task count exceeds plan currentTaskCount.');
+      }
+    }
   }
   const currentPersonal = readPersonalRules(personalPath);
   if (currentPersonal.hash !== options.personalBaselineHash) {
