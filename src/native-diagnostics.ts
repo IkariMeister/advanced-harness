@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -82,11 +82,27 @@ export function decodeRows(response: unknown, directory: string, kind: keyof Sna
   return rows;
 }
 
+export const DEFAULT_CLI_TIMEOUT_MS = 15000;
+export const MAX_CLI_TIMEOUT_MS = 2147483647;
+
+export function parseCliTimeoutMs(raw: string): number | undefined {
+  if (!/^\d+$/.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_CLI_TIMEOUT_MS ? parsed : undefined;
+}
+
+export function effectiveTimeoutMs(timeoutMs?: number): number {
+  return typeof timeoutMs === 'number' && Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= MAX_CLI_TIMEOUT_MS
+    ? timeoutMs
+    : DEFAULT_CLI_TIMEOUT_MS;
+}
+
 function normalizeExecutablePath(value: string): string {
   const expanded = (value.startsWith('~/') || value.startsWith('~\\'))
     ? join(homedir(), value.slice(2))
     : value;
-  return (expanded.includes('/') || expanded.includes('\\')) ? resolve(expanded) : expanded;
+  const baseDir = process.env.INIT_CWD || process.cwd();
+  return (expanded.includes('/') || expanded.includes('\\')) ? resolve(baseDir, expanded) : expanded;
 }
 
 export function findOpenCode(explicit?: string): string {
@@ -99,8 +115,15 @@ export function findOpenCode(explicit?: string): string {
 
 const SUPPRESSED_SUFFIX = 'Raw output suppressed to protect credentials.';
 
+function executableLabel(executable: string): string {
+  // Split on both POSIX and Windows separators; accepted residual risk: the
+  // filename itself could still reflect user-supplied text.
+  const segments = executable.split(/[\\/]+/).filter(Boolean);
+  return segments[segments.length - 1] || executable;
+}
+
 export function classifyCliQueryError(error: unknown, executable: string, timeoutMs: number): DiagnosticError {
-  const label = basename(executable) || executable;
+  const label = executableLabel(executable);
   if (error instanceof SyntaxError) {
     return new DiagnosticError(`OpenCode API check returned non-JSON output. Verify OpenCode V2 CLI compatibility (opencode api get) and server connection (--server). ${SUPPRESSED_SUFFIX}`);
   }
@@ -134,9 +157,7 @@ export function classifyCliQueryError(error: unknown, executable: string, timeou
 
 export function cliQuery(options: RuntimeOptions): Query {
   const executable = findOpenCode(options.executable);
-  const timeoutMs = typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
-    ? options.timeoutMs
-    : 15000;
+  const timeoutMs = effectiveTimeoutMs(options.timeoutMs);
   return async path => {
     const args = ['api', ...(options.server ? ['--server', options.server] : []), 'get', `${path}?location[directory]=${encodeURIComponent(resolve(options.directory))}`];
     try {

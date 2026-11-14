@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assessRuntime, classifyCliQueryError, cliQuery, decodeRows, diagnoseHost, expectedAgents, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
+import { assessRuntime, classifyCliQueryError, cliQuery, DEFAULT_CLI_TIMEOUT_MS, decodeRows, diagnoseHost, effectiveTimeoutMs, expectedAgents, MAX_CLI_TIMEOUT_MS, parseCliTimeoutMs, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
 import { hostPermissionMatrix, permissionCapabilities } from '../src/host-permission-capabilities.ts';
 import { nativeRoles } from '../src/native-installer.ts';
 import { clearRegisteredAdapters, getHostAdapter, registerHostAdapter, supportedHosts, type HostAdapter } from '../src/host-registry.ts';
@@ -177,19 +177,34 @@ test('CLI transport errors suppress potentially sensitive raw stderr and classif
     const timedOut = cliQuery({ directory: root, executable: process.execPath, timeoutMs: 350 });
     await assert.rejects(timedOut('/api/agent'), error => error instanceof Error && /timed out after 350ms/.test(error.message) && /Raw output suppressed/.test(error.message));
 
-    writeFileSync(apiScript, "console.log('not-json');\n");
-    const zeroTimeoutFallback = cliQuery({ directory: root, executable: process.execPath, timeoutMs: 0 });
-    await assert.rejects(zeroTimeoutFallback('/api/agent'), error => error instanceof Error && /non-JSON output/.test(error.message));
+    const winPathErr = classifyCliQueryError({ code: 'ENOENT' }, String.raw`C:\Users\secret-user\opencode.exe`, 15000);
+    assert.match(winPathErr.message, /executable was not found \("opencode\.exe"\)/);
+    assert.ok(!winPathErr.message.includes('secret-user'));
+
+    assert.equal(effectiveTimeoutMs(undefined), DEFAULT_CLI_TIMEOUT_MS);
+    for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5, MAX_CLI_TIMEOUT_MS + 1]) {
+      assert.equal(effectiveTimeoutMs(invalid), DEFAULT_CLI_TIMEOUT_MS, String(invalid));
+    }
+    assert.equal(effectiveTimeoutMs(1), 1);
+    assert.equal(effectiveTimeoutMs(MAX_CLI_TIMEOUT_MS), MAX_CLI_TIMEOUT_MS);
+
+    for (const raw of ['0', '-1', '1e3', '0x10', ' 5 ', 'abc', String(MAX_CLI_TIMEOUT_MS + 1)]) {
+      assert.equal(parseCliTimeoutMs(raw), undefined, raw);
+    }
+    assert.equal(parseCliTimeoutMs('1'), 1);
+    assert.equal(parseCliTimeoutMs(String(MAX_CLI_TIMEOUT_MS)), MAX_CLI_TIMEOUT_MS);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('doctor CLI precedence, ~/ expansion, and cwd-relative executable resolution', async () => {
+test('doctor CLI precedence, ~/ expansion, and INIT_CWD/cwd-relative executable resolution', async () => {
   const { findOpenCode } = await import('../src/native-diagnostics.ts');
   const { homedir } = await import('node:os');
-  const previous = process.env.OPENCODE_BIN;
+  const previousBin = process.env.OPENCODE_BIN;
+  const previousInitCwd = process.env.INIT_CWD;
   try {
+    delete process.env.INIT_CWD;
     process.env.OPENCODE_BIN = '~/bin/opencode';
     assert.equal(findOpenCode('~/custom/opencode'), join(homedir(), 'custom', 'opencode'));
     assert.equal(findOpenCode(), join(homedir(), 'bin', 'opencode'));
@@ -202,28 +217,40 @@ test('doctor CLI precedence, ~/ expansion, and cwd-relative executable resolutio
     const discovered = findOpenCode();
     assert.equal(discovered, process.platform === 'win32' ? (discovered.endsWith('opencode-cli.exe') ? discovered : 'opencode') : 'opencode');
   } finally {
-    if (previous === undefined) delete process.env.OPENCODE_BIN;
-    else process.env.OPENCODE_BIN = previous;
+    if (previousBin === undefined) delete process.env.OPENCODE_BIN;
+    else process.env.OPENCODE_BIN = previousBin;
+    if (previousInitCwd === undefined) delete process.env.INIT_CWD;
+    else process.env.INIT_CWD = previousInitCwd;
   }
 });
 
-test('relative --opencode resolves against cwd rather than --project, while bare names stay bare', async t => {
+test('relative --opencode resolves against INIT_CWD or cwd rather than --project, while bare names stay bare', async t => {
   const root = mkdtempSync(join(tmpdir(), 'opencode-cwd-vs-project-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const cwdDir = join(root, 'caller-cwd');
+  const initCwdDir = join(root, 'npm-init-cwd');
   const projectDir = join(root, 'target-project');
   mkdirSync(join(cwdDir, 'bin'), { recursive: true });
+  mkdirSync(join(initCwdDir, 'bin'), { recursive: true });
   mkdirSync(projectDir, { recursive: true });
 
   const previousCwd = process.cwd();
+  const previousInitCwd = process.env.INIT_CWD;
   try {
+    delete process.env.INIT_CWD;
     process.chdir(cwdDir);
     const { findOpenCode } = await import('../src/native-diagnostics.ts');
-    assert.equal(findOpenCode('./bin/opencode'), join(cwdDir, 'bin', 'opencode'));
-    assert.notEqual(findOpenCode('./bin/opencode'), join(projectDir, 'bin', 'opencode'));
+    assert.equal(findOpenCode('./bin/opencode'), join(realpathSync(cwdDir), 'bin', 'opencode'));
+    assert.notEqual(findOpenCode('./bin/opencode'), join(realpathSync(projectDir), 'bin', 'opencode'));
+    assert.equal(findOpenCode('opencode'), 'opencode');
+
+    process.env.INIT_CWD = initCwdDir;
+    assert.equal(findOpenCode('./bin/opencode'), join(initCwdDir, 'bin', 'opencode'));
     assert.equal(findOpenCode('opencode'), 'opencode');
   } finally {
     process.chdir(previousCwd);
+    if (previousInitCwd === undefined) delete process.env.INIT_CWD;
+    else process.env.INIT_CWD = previousInitCwd;
   }
 });
 
@@ -284,6 +311,10 @@ test('doctor surfaces CLI option errors instead of a generic inconclusive messag
     [['--project', project, '--project', project], /Duplicate option: --project/],
     [['--scope'], /Missing value for --scope/],
     [['--timeout', '0'], /Invalid --timeout/],
+    [['--timeout', '1e3'], /Invalid --timeout/],
+    [['--timeout', '0x10'], /Invalid --timeout/],
+    [['--timeout', ' 5 '], /Invalid --timeout/],
+    [['--timeout', '3000000000'], /Invalid --timeout/],
     [['--timeout', 'abc'], /Invalid --timeout/],
     [['--host', 'not-a-host'], /not-a-host/],
   ] as const) {

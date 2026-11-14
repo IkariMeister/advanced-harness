@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverConfigurations } from '../src/native-installer.ts';
-import { DiagnosticError, expectedAgents, printReport, verifyRuntime, diagnoseHost, printHostDiagnosticReport } from '../src/native-diagnostics.ts';
+import { DiagnosticError, expectedAgents, parseCliTimeoutMs, printReport, verifyRuntime, diagnoseHost, printHostDiagnosticReport } from '../src/native-diagnostics.ts';
 import { detectInstalledHosts, parseHostSelection, type HostId } from '../src/host-registry.ts';
 import { describeHarnessCheckout } from '../src/harness-version.ts';
 import { diagnoseProcedureSkills } from '../src/procedure-skill-diagnostics.ts';
@@ -25,9 +25,8 @@ function parseOptions(): Record<string, string> | undefined {
     options[flag] = value;
   }
   if (options['--scope'] && !['global', 'project'].includes(options['--scope'])) return fail('Invalid --scope; use global or project. Run --help.');
-  if (options['--timeout']) {
-    const parsed = Number(options['--timeout']);
-    if (!Number.isInteger(parsed) || parsed <= 0) return fail('Invalid --timeout; use a positive integer in milliseconds. Run --help.');
+  if (options['--timeout'] && parseCliTimeoutMs(options['--timeout']) === undefined) {
+    return fail('Invalid --timeout; use a positive integer in milliseconds (1..2147483647). Run --help.');
   }
   if (options['--host']) {
     try { parseHostSelection(options['--host']); } catch (error) { return fail(error instanceof Error ? error.message : 'Invalid --host. Run --help.'); }
@@ -98,7 +97,8 @@ if (args.includes('--help')) {
           } else {
             try {
               console.log('Querying OpenCode runtime; this may start its service. No reload/restart will be performed.');
-              const report = await verifyRuntime({ directory, ...(options['--opencode'] ? { executable: options['--opencode'] } : {}), ...(options['--server'] ? { server: options['--server'] } : {}), ...(options['--timeout'] ? { timeoutMs: Number(options['--timeout']) } : {}) }, expectedAgents(sources));
+              const timeoutMs = options['--timeout'] ? parseCliTimeoutMs(options['--timeout']) : undefined;
+              const report = await verifyRuntime({ directory, ...(options['--opencode'] ? { executable: options['--opencode'] } : {}), ...(options['--server'] ? { server: options['--server'] } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}) }, expectedAgents(sources));
               printReport(report);
               if (!report.ok) allOk = false;
             } catch (err) {
