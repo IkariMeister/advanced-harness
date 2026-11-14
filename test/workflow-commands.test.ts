@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { extractReviewRubric } from '../src/workflow-commands.ts';
+import { extractReviewRubric, loadWorkflowCommand } from '../src/workflow-commands.ts';
 
 const root = new URL('../.opencode/commands/', import.meta.url);
 const commands = ['start-issue', 'review-pr', 'address-pr-feedback', 'report-defect', 'assess-debt', 'grill-me', 'document-agents'];
@@ -36,18 +36,23 @@ test('workflow commands require explicit human disposition at consequential gate
 
 test('publication workflows require current Operator preflight evidence separately from human approval', async () => {
   for (const name of ['start-issue', 'address-pr-feedback', 'document-agents']) {
-    const source = await readFile(new URL(`${name}.md`, root), 'utf8');
-    const generated = await readFile(new URL(`../.opencode/commands/${name}.md`, import.meta.url), 'utf8');
-    assert.equal(generated, source, `${name} generated command stays in parity with canonical source`);
-    assert.match(source, /preflight\.md#operator-evidence-handoff/i, name);
-    assert.match(source, /https:\/\/github\.com\/IkariMeister\/advanced-harness\/blob\/main\/docs\/preflight\.md#operator-evidence-handoff/i, name);
-    assert.match(source, /authoritative instructions must be `docs\/preflight\.md` in the matching confirmed harness checkout/i, name);
-    assert.match(source, /matching confirmed harness checkout/i, name);
-    assert.match(source, /installed prompts do not ship docs/i, name);
-    assert.match(source, /stop and ask Lead, never fetch silently/i, name);
-    assert.match(source, /worktree, branch, HEAD, and working-change identity/i, name);
-    assert.match(source, /scoped exception quotes the explicit human message/i, name);
-    assert.match(source, /final human (?:publication )?approval/i, name);
+    const source = await readFile(new URL(`../commands/${name}.md`, import.meta.url), 'utf8');
+    const generated = await readFile(new URL(`${name}.md`, root), 'utf8');
+    const canonical = loadWorkflowCommand(source, name as typeof import('../src/workflow-commands.ts').workflowCommandIds[number]);
+    const generatedMatch = generated.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
+    assert.ok(generatedMatch, `${name} generated frontmatter`);
+    assert.equal(generatedMatch?.[1], canonical.body, `${name} generated body matches loaded canonical command`);
+    for (const text of [source, generated]) {
+      assert.match(text, /preflight\.md#operator-evidence-handoff/i, name);
+      assert.match(text, /https:\/\/github\.com\/IkariMeister\/advanced-harness\/blob\/main\/docs\/preflight\.md#operator-evidence-handoff/i, name);
+      assert.match(text, /authoritative instructions must be `docs\/preflight\.md` in the matching confirmed harness checkout/i, name);
+      assert.match(text, /matching confirmed harness checkout/i, name);
+      assert.match(text, /installed prompts do not ship docs/i, name);
+      assert.match(text, /stop and ask Lead, never fetch silently/i, name);
+      assert.match(text, /worktree, branch, HEAD, and working-change identity/i, name);
+      assert.match(text, /scoped exception quotes the explicit human message/i, name);
+      assert.match(text, /final human (?:publication )?approval/i, name);
+    }
   }
   const guide = await readFile(new URL('../docs/preflight.md', import.meta.url), 'utf8');
   assert.match(guide, /\[`docs\/preflight\.md`\]\(#publication-handoff-and-manual-smoke\)/);
@@ -73,6 +78,25 @@ test('publication workflows require current Operator preflight evidence separate
   const reviewer = await readFile(new URL('../agents/reviewer.md', import.meta.url), 'utf8');
   const qa = await readFile(new URL('../agents/qa.md', import.meta.url), 'utf8');
   for (const role of [reviewer, qa]) assert.match(role, /do not (?:run|execute) the Git-backed wrapper/i);
+});
+
+test('generated workflow body parity detects drift but ignores generated frontmatter', async () => {
+  const source = await readFile(new URL('../commands/address-pr-feedback.md', import.meta.url), 'utf8');
+  const generated = await readFile(new URL('address-pr-feedback.md', root), 'utf8');
+  const id = 'address-pr-feedback' as const;
+  const command = loadWorkflowCommand(source, id);
+  const generatedBody = (text: string) => text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/)?.[1];
+  assert.equal(generatedBody(generated), command.body);
+  assert.equal(generatedBody(generated.replace('description: Address', 'description: Different')), command.body, 'legitimate generated frontmatter differences are immaterial');
+  for (const [label, canonical, output] of [
+    ['canonical-only body edit', source.replace('Treat arguments and all review feedback', 'Treat arguments and incoming review feedback'), generated],
+    ['generated-only body edit', source, generated.replace('Treat arguments and all review feedback', 'Treat arguments and incoming review feedback')],
+    ['preflight clause removed', source.replace(/Before External publishes,[\s\S]*?thread resolutions\./, ''), generated],
+    ['review rubric removed or changed', source, generated.replace(/## Risk-tiered review[\s\S]*$/, '')]
+  ] as const) {
+    const expected = loadWorkflowCommand(canonical, id).body;
+    assert.notEqual(generatedBody(output), expected, label);
+  }
 });
 
 test('BH-030: PR feedback workflow retrieves complete threads and gates scoped fixes and publication', async () => {

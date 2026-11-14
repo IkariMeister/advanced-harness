@@ -87,7 +87,61 @@ policy:
       resource:
         kind: native-pattern
         host: opencode
-        value: "npm run harness:preflight -- *&&*"
+        value: "npm run harness:preflight -- *&*"
+      effect: ask
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "npm run harness:preflight -- *`*"
+      effect: ask
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "npm run harness:preflight -- *\n*"
+      effect: ask
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "npm run harness:preflight -- *\r*"
+      effect: ask
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "npm run harness:preflight -- *>*"
+      effect: ask
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "npm run harness:preflight -- *<*"
+      effect: ask
+      binding:
+        host: opencode
+        action: shell
+    - capability: shell.run
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: "npm run harness:preflight -- *$*"
       effect: ask
       binding:
         host: opencode
@@ -106,15 +160,6 @@ policy:
         kind: native-pattern
         host: opencode
         value: "npm run harness:preflight -- *|*"
-      effect: ask
-      binding:
-        host: opencode
-        action: shell
-    - capability: shell.run
-      resource:
-        kind: native-pattern
-        host: opencode
-        value: "npm run harness:preflight -- *$(*)*"
       effect: ask
       binding:
         host: opencode
@@ -299,4 +344,4 @@ declined, create nothing, report the exact tool response to Lead, and stop; do n
 to run local Git for you.
 ## Operator-owned preflight handoff
 
-Run `npm run harness:preflight -- --worktree <path> --base <confirmed-base> --task <key> --json` from the confirmed harness checkout, targeting the task worktree. Installed prompts do not ship the docs tree: repository navigation is [the preflight handoff guide](https://github.com/IkariMeister/advanced-harness/blob/main/docs/preflight.md#operator-evidence-handoff), but the authoritative instructions must be `docs/preflight.md` in the matching confirmed harness checkout. If that checkout or guide cannot be confirmed, report this to Lead and stop; do not fetch another version. Relay the exact command, JSON, exit status, worktree, branch, HEAD, and working-change state; never publish. If shell is not offered, the command is denied, or its permission prompt is declined, report the exact outcome and ask Lead; do not retry by another role or route. A human may run this exact command and supply an attributed result, or explicitly quote an in-conversation scoped exception identifying the current evidence and waived checks. Missing execution is not a result. Compound command forms remain ASK.
+Run `npm run harness:preflight -- --worktree <path> --base <confirmed-base> --task <key> --json` from the confirmed harness checkout, targeting the task worktree. Installed prompts do not ship the docs tree: repository navigation is [the preflight handoff guide](https://github.com/IkariMeister/advanced-harness/blob/main/docs/preflight.md#operator-evidence-handoff), but the authoritative instructions must be `docs/preflight.md` in the matching confirmed harness checkout. If that checkout or guide cannot be confirmed, report this to Lead and stop; do not fetch another version. Relay the exact command, JSON, exit status, worktree, branch, HEAD, and working-change state; never publish. If shell is not offered, the command is denied, or its permission prompt is declined, report the exact outcome and ask Lead; do not retry by another role or route. A human may run this exact command and supply an attributed result, or explicitly quote an in-conversation scoped exception identifying the current evidence and waived checks. Missing execution is not a result. Ordered literal-pattern ASK guards cover identified command separators, substitutions, control characters, and redirections. They can prompt on quoted literal characters and are not a shell parser or sandbox.

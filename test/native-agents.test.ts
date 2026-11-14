@@ -62,10 +62,16 @@ test('native operational roles expose shell and keep edit defaults role-scoped',
   assert.equal(effectiveShellEffect('operator', 'npm test'), 'ask');
   assert.equal(effectiveShellEffect('operator', 'npm run typecheck'), 'ask');
   assert.equal(effectiveShellEffect('operator', 'git push origin issue/186'), 'deny');
-  for (const [operator, separator] of [['&&', ' && '], ['&&', '&&'], [';', ' ; '], [';', ';'], ['|', ' | '], ['|', '|'], ['$(' , '$(echo x)']]) {
+  for (const [operator, separator] of [['&', ' & '], ['&', '&'], ['&&', ' && '], ['&&', '&&'], [';', ' ; '], [';', ';'], ['|', ' | '], ['|', '|'], ['||', ' || '], ['||', '||'], ['`', '`id`'], ['$', '${HOME}'], ['$', '$(echo x)'], ['$', '"$quoted-path"'], ['>', '>out'], ['<', '<in'], ['>', '>>out'], ['<', '<(echo)'], ['LF', '\n'], ['CR', '\r'], ['CRLF', '\r\n']]) {
     const command = `npm run harness:preflight -- --worktree task ${separator}git push origin issue/186`;
     assert.equal(effectiveShellEffect('operator', command), 'ask', `${operator}: ${command}`);
   }
+  for (const benign of [
+    'npm run harness:preflight -- --worktree "folder with spaces" --base main --json',
+    "npm run harness:preflight -- --worktree 'folder with spaces' --json",
+    'npm run harness:preflight -- --json --worktree task --base main',
+    'npm run harness:preflight -- --worktree task --base main --json --allow-note "no findings"'
+  ]) assert.equal(effectiveShellEffect('operator', benign), 'allow', benign);
   assert.ok(!permissionRules('operator').some(rule => rule.action === 'shell' && rule.effect === 'allow' && globMatch(rule.resource, 'npm run typecheck')),
     'a broad npm allow must not be introduced');
   assert.ok(hasRule('operator', 'shell', '*', 'ask'));
@@ -172,7 +178,8 @@ test('Operator owns narrow preflight handoff while Reviewer and QA consume evide
   assert.match(operator, /If shell is not offered, the command is denied, or its permission prompt is declined/);
   assert.match(operator, /human may run this exact command and supply an attributed result/);
   assert.match(operator, /worktree, branch, HEAD, and working-change state/);
-  assert.match(operator, /Compound command forms remain ASK/);
+  assert.match(operator, /ordered literal-pattern ASK guards cover identified command separators, substitutions, control characters, and redirections/i);
+  assert.match(operator, /quoted literal characters and are not a shell parser or sandbox/);
   for (const role of [reviewer, qa]) {
     assert.match(role, /Installed prompts do not ship docs/);
     assert.match(role, /https:\/\/github\.com\/IkariMeister\/advanced-harness\/blob\/main\/docs\/preflight\.md#operator-evidence-handoff/);

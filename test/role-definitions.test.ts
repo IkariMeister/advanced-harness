@@ -46,10 +46,15 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
   assert.notEqual(shellAsk, -1, 'Operator retains the general shell ask rule');
   permissions.splice(shellAsk + 1, 0,
     { action: 'shell', resource: 'npm run harness:preflight -- *', effect: 'allow' },
-    { action: 'shell', resource: 'npm run harness:preflight -- *&&*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *&*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *`*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *\n*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *\r*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *>*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *<*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *$*', effect: 'ask' },
     { action: 'shell', resource: 'npm run harness:preflight -- *;*', effect: 'ask' },
-    { action: 'shell', resource: 'npm run harness:preflight -- *|*', effect: 'ask' },
-    { action: 'shell', resource: 'npm run harness:preflight -- *$(*)*', effect: 'ask' });
+    { action: 'shell', resource: 'npm run harness:preflight -- *|*', effect: 'ask' });
   // #172: the canonical checkout receives only remote updates; External fast-forwards the base during bootstrap.
   const previous = 'existing worktrees and untouched canonical changes do not block bootstrap; stop and ask\nLead only if settings are missing/invalid, target branch/worktree already exists, or\ncreation fails. Never discard unrelated changes or perform remote Git/API/MCP\noperations; External owns those. Command patterns are workflow aids, not a sandbox;\ndo not use scripts/aliases to bypass role ownership.';
   assert.ok(operator.system.includes(previous));

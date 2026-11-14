@@ -47,6 +47,14 @@ the current result/state and waived checks; waived is not passed.
 
 ## Consequences
 
+Operator's preflight exception uses ordered literal-pattern ASK guards for identified
+command separators, substitutions, control characters, and redirections. These guards
+include a conservative any-dollar-sign guard, so they may also prompt on benign quoted
+dollar signs or paths containing `$`; ordinary quoted paths without guarded characters
+remain allowed. They are not a shell parser or sandbox.
+Static parsing, compilation, and matching tests establish only the tested configuration
+behavior, not installed-host enforcement. Source changes do not deploy permissions.
+
 The handoff is advisory and non-atomic. Local or remote state may change during
 inspection or relay; unexpected state and uncertain writes stop for read-only
 inspection, never automatic retry. Static matcher tests do not establish host sandbox

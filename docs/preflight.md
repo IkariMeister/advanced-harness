@@ -28,6 +28,16 @@ attributed result. Alternatively, a scoped exception must be an explicit human
 message in the conversation, quoted in the handoff, naming the current result/state
 and exact checks waived. Missing execution is never a fabricated result.
 
+Operator's OpenCode permission allows the preflight command's ordinary optional flags
+and argument order, while later ordered literal-pattern ASK guards cover identified
+command separators (`&`, `;`, `|`), substitutions (any `$`, including `$(` and `${`,
+and backticks), LF/CR, and redirections (`<`, `>`). The broad `$` guard can also prompt
+for benign quoted dollar signs or paths containing `$`; ordinary quoted paths without
+these guarded characters remain allowed. Matching is conservative: quoted literal
+characters can also prompt. These patterns are not a shell parser or sandbox, and static parsing,
+compilation, and matching tests establish only tested configuration behavior, not
+installed-host enforcement.
+
 ### Result, freshness, and publication rules
 
 The JSON `approved` field is an automated verdict only, never human or plan approval.
