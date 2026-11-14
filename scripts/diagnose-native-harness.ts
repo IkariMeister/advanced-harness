@@ -13,6 +13,8 @@ import { formatScannerProbe, probeGitleaks, type ScannerProbe } from '../src/pre
 
 const args = process.argv.slice(2);
 
+const callerCwd = (): string => process.env.INIT_CWD || process.cwd();
+
 // Option errors are reported as-is: they never contain config or provider details (#145).
 function parseOptions(): Record<string, string> | undefined {
   const options: Record<string, string> = {};
@@ -32,7 +34,7 @@ function parseOptions(): Record<string, string> | undefined {
     try { parseHostSelection(options['--host']); } catch (error) { return fail(error instanceof Error ? error.message : 'Invalid --host. Run --help.'); }
   }
   let directory: string | undefined;
-  try { directory = resolve(options['--project'] ?? process.cwd()); if (!statSync(directory).isDirectory()) directory = undefined; } catch { directory = undefined; }
+  try { directory = resolve(callerCwd(), options['--project'] ?? '.'); if (!statSync(directory).isDirectory()) directory = undefined; } catch { directory = undefined; }
   if (!directory) return fail('Select an existing project directory (--project). No configuration was changed.');
   return options;
 }
@@ -51,7 +53,7 @@ if (args.includes('--help')) {
   const options = parseOptions();
   if (options) {
     try {
-      const directory = resolve(options['--project'] ?? process.cwd());
+      const directory = resolve(callerCwd(), options['--project'] ?? '.');
       const scope = options['--scope'] as 'global' | 'project' | undefined;
       const global = resolve(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode'));
 
