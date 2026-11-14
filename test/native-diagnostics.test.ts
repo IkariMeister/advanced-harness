@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assessRuntime, cliQuery, decodeRows, diagnoseHost, expectedAgents, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
+import { assessRuntime, classifyCliQueryError, cliQuery, decodeRows, diagnoseHost, expectedAgents, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
 import { hostPermissionMatrix, permissionCapabilities } from '../src/host-permission-capabilities.ts';
 import { nativeRoles } from '../src/native-installer.ts';
 import { clearRegisteredAdapters, getHostAdapter, registerHostAdapter, supportedHosts, type HostAdapter } from '../src/host-registry.ts';
@@ -124,31 +124,68 @@ test('persistent missing roles stop after bounded retries; API errors remain inc
 
 test('CLI transport errors suppress potentially sensitive raw stderr and classify failure modes', async t => {
   const root = mkdtempSync(join(tmpdir(), 'opencode-cli-errors-'));
+  const secretDir = join(root, 'secret-user-token-dir');
+  mkdirSync(secretDir, { recursive: true });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  const missing = cliQuery({ directory: root, executable: join(root, 'definitely-not-an-installed-opencode-cli') });
-  await assert.rejects(missing('/api/agent'), error => error instanceof Error && /executable was not found/i.test(error.message) && /Raw output suppressed/.test(error.message) && !error.message.includes('ENOENT'));
+  try {
+    const missing = cliQuery({ directory: root, executable: join(secretDir, 'definitely-not-an-installed-opencode-cli') });
+    await assert.rejects(
+      missing('/api/agent'),
+      error => error instanceof Error
+        && /executable was not found \("definitely-not-an-installed-opencode-cli"\)/.test(error.message)
+        && !error.message.includes('secret-user-token-dir')
+        && /Raw output suppressed/.test(error.message)
+        && !error.message.includes('ENOENT'),
+    );
 
-  const configFile = join(root, 'opencode.json');
-  writeFileSync(configFile, '{}');
-  const nonExec = cliQuery({ directory: root, executable: configFile });
-  await assert.rejects(nonExec('/api/agent'), error => error instanceof Error && /not an executable binary/i.test(error.message) && /Raw output suppressed/.test(error.message));
+    const configFile = join(secretDir, 'opencode.json');
+    writeFileSync(configFile, '{}');
+    const nonExec = cliQuery({ directory: root, executable: configFile });
+    await assert.rejects(
+      nonExec('/api/agent'),
+      error => error instanceof Error
+        && /not an executable binary \("opencode\.json"\)/.test(error.message)
+        && !error.message.includes('secret-user-token-dir')
+        && /Raw output suppressed/.test(error.message),
+    );
 
-  const apiScript = join(root, 'api');
-  writeFileSync(apiScript, "console.error('SECRET_TOKEN=should-never-appear'); process.exit(7);\n");
-  const nonzero = cliQuery({ directory: root, executable: process.execPath });
-  await assert.rejects(nonzero('/api/agent'), error => error instanceof Error && /exited with status 7/.test(error.message) && /Raw output suppressed/.test(error.message) && !error.message.includes('SECRET_TOKEN'));
+    for (const code of ['EACCES', 'EPERM', 'EISDIR', 'ENOEXEC', 'UNKNOWN', 'EINVAL', 'EFTYPE']) {
+      const err = classifyCliQueryError({ code }, join(secretDir, 'fake-bin'), 15000);
+      assert.match(err.message, /not an executable binary \("fake-bin"\)/, code);
+      assert.ok(!err.message.includes('secret-user-token-dir'), code);
+    }
 
-  writeFileSync(apiScript, "console.log('not-json-secret=123');\n");
-  const badJson = cliQuery({ directory: root, executable: process.execPath });
-  await assert.rejects(badJson('/api/agent'), error => error instanceof Error && /non-JSON output/.test(error.message) && /Raw output suppressed/.test(error.message) && !error.message.includes('not-json-secret'));
+    const maxBufErr = classifyCliQueryError({ code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', killed: true }, join(secretDir, 'opencode'), 15000);
+    assert.match(maxBufErr.message, /buffer limit/);
+    assert.doesNotMatch(maxBufErr.message, /timed out after/);
 
-  writeFileSync(apiScript, 'setTimeout(() => {}, 5000);\n');
-  const timedOut = cliQuery({ directory: root, executable: process.execPath, timeoutMs: 100 });
-  await assert.rejects(timedOut('/api/agent'), error => error instanceof Error && /timed out after 100ms/.test(error.message) && /Raw output suppressed/.test(error.message));
+    const externalSigterm = classifyCliQueryError({ signal: 'SIGTERM', killed: false }, join(secretDir, 'opencode'), 15000);
+    assert.doesNotMatch(externalSigterm.message, /timed out after/);
+    assert.match(externalSigterm.message, /Raw output suppressed/);
+
+    const apiScript = join(root, 'api.js');
+    writeFileSync(apiScript, "console.error('SECRET_TOKEN=should-never-appear'); process.exit(7);\n");
+    const nonzero = cliQuery({ directory: root, executable: process.execPath });
+    await assert.rejects(nonzero('/api/agent'), error => error instanceof Error && /exited with status 7/.test(error.message) && /Raw output suppressed/.test(error.message) && !error.message.includes('SECRET_TOKEN'));
+
+    writeFileSync(apiScript, "console.log('not-json-secret=123');\n");
+    const badJson = cliQuery({ directory: root, executable: process.execPath });
+    await assert.rejects(badJson('/api/agent'), error => error instanceof Error && /non-JSON output/.test(error.message) && /Raw output suppressed/.test(error.message) && !error.message.includes('not-json-secret'));
+
+    writeFileSync(apiScript, 'setTimeout(() => {}, 5000);\n');
+    const timedOut = cliQuery({ directory: root, executable: process.execPath, timeoutMs: 350 });
+    await assert.rejects(timedOut('/api/agent'), error => error instanceof Error && /timed out after 350ms/.test(error.message) && /Raw output suppressed/.test(error.message));
+
+    writeFileSync(apiScript, "console.log('not-json');\n");
+    const zeroTimeoutFallback = cliQuery({ directory: root, executable: process.execPath, timeoutMs: 0 });
+    await assert.rejects(zeroTimeoutFallback('/api/agent'), error => error instanceof Error && /non-JSON output/.test(error.message));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test('doctor CLI precedence is explicit executable, OPENCODE_BIN, then platform discovery, with ~/ expansion', async () => {
+test('doctor CLI precedence, ~/ expansion, and cwd-relative executable resolution', async () => {
   const { findOpenCode } = await import('../src/native-diagnostics.ts');
   const { homedir } = await import('node:os');
   const previous = process.env.OPENCODE_BIN;
@@ -156,12 +193,37 @@ test('doctor CLI precedence is explicit executable, OPENCODE_BIN, then platform 
     process.env.OPENCODE_BIN = '~/bin/opencode';
     assert.equal(findOpenCode('~/custom/opencode'), join(homedir(), 'custom', 'opencode'));
     assert.equal(findOpenCode(), join(homedir(), 'bin', 'opencode'));
+    assert.equal(findOpenCode('~'), '~');
+    assert.equal(findOpenCode('~other/opencode'), resolve('~other/opencode'));
+    assert.equal(findOpenCode('$HOME/bin/opencode'), resolve('$HOME/bin/opencode'));
+    assert.equal(findOpenCode('./bin/opencode'), resolve('./bin/opencode'));
+    assert.equal(findOpenCode('opencode'), 'opencode');
     delete process.env.OPENCODE_BIN;
     const discovered = findOpenCode();
     assert.equal(discovered, process.platform === 'win32' ? (discovered.endsWith('opencode-cli.exe') ? discovered : 'opencode') : 'opencode');
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_BIN;
     else process.env.OPENCODE_BIN = previous;
+  }
+});
+
+test('relative --opencode resolves against cwd rather than --project, while bare names stay bare', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'opencode-cwd-vs-project-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cwdDir = join(root, 'caller-cwd');
+  const projectDir = join(root, 'target-project');
+  mkdirSync(join(cwdDir, 'bin'), { recursive: true });
+  mkdirSync(projectDir, { recursive: true });
+
+  const previousCwd = process.cwd();
+  try {
+    process.chdir(cwdDir);
+    const { findOpenCode } = await import('../src/native-diagnostics.ts');
+    assert.equal(findOpenCode('./bin/opencode'), join(cwdDir, 'bin', 'opencode'));
+    assert.notEqual(findOpenCode('./bin/opencode'), join(projectDir, 'bin', 'opencode'));
+    assert.equal(findOpenCode('opencode'), 'opencode');
+  } finally {
+    process.chdir(previousCwd);
   }
 });
 
@@ -221,6 +283,8 @@ test('doctor surfaces CLI option errors instead of a generic inconclusive messag
     [['--scope', 'everywhere'], /Invalid --scope; use global or project/],
     [['--project', project, '--project', project], /Duplicate option: --project/],
     [['--scope'], /Missing value for --scope/],
+    [['--timeout', '0'], /Invalid --timeout/],
+    [['--timeout', 'abc'], /Invalid --timeout/],
     [['--host', 'not-a-host'], /not-a-host/],
   ] as const) {
     const result = run([...args]);

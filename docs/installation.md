@@ -333,11 +333,14 @@ Run the same checks independently, without reinstalling:
 npm run harness:doctor
 npm run harness:doctor -- --project "C:/Users/you/Projects/android-app"
 npm run harness:doctor -- --opencode "C:/path/to/opencode-cli.exe"
+npm run harness:doctor -- --opencode "~/.local/bin/opencode" --timeout 30000
 npm run harness:doctor -- --server "http://localhost:49374"
 npm run harness:doctor -- --scope global
 ```
 
 Use the same project and server as your OpenCode UI. Global installations are checked in the current directory, including project overrides. `--scope global` inspects only global configuration and `--scope project` only the project (no global fallback); without `--scope`, both are inspected. Invalid, duplicate or incomplete options are reported as such and exit 2 before anything is inspected. The diagnostic lists inspected config paths, not contents or credentials. It uses OpenCode's CLI connection/authentication flow, may start the service, and never reloads/restarts it, edits configuration, substitutes models, or sends inference requests. `OPENCODE_BIN` or `--opencode` selects a CLI; Windows automatically discovers the standard desktop-bundled CLI, otherwise `opencode` on PATH is used. The installer also accepts `--opencode`.
+
+Leading `~/` (or `~\`) in `--opencode` and `OPENCODE_BIN` expands against your home directory (bare `~`, `~user`, and `$HOME` are not expanded), and relative paths containing a separator resolve against the caller's current working directory rather than `--project` (bare command names stay bare for `PATH` lookup). Each runtime API query defaults to a `15000` ms timeout; pass `--timeout <ms>` (positive integer) on `harness:doctor` to adjust it. When a query fails, `harness:doctor` suppresses raw stdout/stderr and prints only the executable basename alongside a credential-free failure category (missing executable, non-executable/config file path, timeout, output buffer limit, non-zero exit status, or non-JSON output).
 
 Exit codes: **0** means discovery/catalog checks passed; **1** means definite readiness failures; **2** means verification is inconclusive (CLI, API, timeout, unsupported response, or config/project errors). If verification fails after installation, the saved config and backup remain in place; no automatic rollback or repeated installation is needed. The post-save check that `harness:install` and `harness:update` run for OpenCode exits **1** for definite readiness failures, but an inconclusive result there only prints a warning and exits **0**, because all approved writes, backups, and the receipt are already complete; run `harness:doctor` to resolve it.
 

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -83,9 +83,9 @@ export function decodeRows(response: unknown, directory: string, kind: keyof Sna
 }
 
 function normalizeExecutablePath(value: string): string {
-  const expanded = value === '~'
-    ? homedir()
-    : (value.startsWith('~/') || value.startsWith('~\\')) ? join(homedir(), value.slice(2)) : value;
+  const expanded = (value.startsWith('~/') || value.startsWith('~\\'))
+    ? join(homedir(), value.slice(2))
+    : value;
   return (expanded.includes('/') || expanded.includes('\\')) ? resolve(expanded) : expanded;
 }
 
@@ -99,19 +99,32 @@ export function findOpenCode(explicit?: string): string {
 
 const SUPPRESSED_SUFFIX = 'Raw output suppressed to protect credentials.';
 
-function classifyCliQueryError(error: unknown, executable: string, timeoutMs: number): DiagnosticError {
+export function classifyCliQueryError(error: unknown, executable: string, timeoutMs: number): DiagnosticError {
+  const label = basename(executable) || executable;
   if (error instanceof SyntaxError) {
     return new DiagnosticError(`OpenCode API check returned non-JSON output. Verify OpenCode V2 CLI compatibility (opencode api get) and server connection (--server). ${SUPPRESSED_SUFFIX}`);
   }
   const err = object(error) ? error : {};
-  if (err.killed === true || err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
+  if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+    return new DiagnosticError(`OpenCode API check output exceeded the buffer limit. Check service status and server connection (--server). ${SUPPRESSED_SUFFIX}`);
+  }
+  if (err.code === 'ETIMEDOUT' || err.killed === true) {
     return new DiagnosticError(`OpenCode API check timed out after ${timeoutMs}ms. Check service status and server connection (--server). ${SUPPRESSED_SUFFIX}`);
   }
   if (err.code === 'ENOENT') {
-    return new DiagnosticError(`OpenCode CLI executable was not found ("${executable}"). Check PATH, OPENCODE_BIN, or --opencode. ${SUPPRESSED_SUFFIX}`);
+    return new DiagnosticError(`OpenCode CLI executable was not found ("${label}"). Check PATH, OPENCODE_BIN, or --opencode. ${SUPPRESSED_SUFFIX}`);
   }
-  if (err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'EISDIR' || err.code === 'ENOEXEC' || (/\.(?:jsonc?)$/i.test(executable) && typeof err.code === 'string')) {
-    return new DiagnosticError(`OpenCode CLI path is not an executable binary ("${executable}"). Pass the opencode CLI binary to --opencode, not a config file. ${SUPPRESSED_SUFFIX}`);
+  if (
+    err.code === 'EACCES'
+    || err.code === 'EPERM'
+    || err.code === 'EISDIR'
+    || err.code === 'ENOEXEC'
+    || err.code === 'UNKNOWN'
+    || err.code === 'EINVAL'
+    || err.code === 'EFTYPE'
+    || (/\.(?:jsonc?)$/i.test(executable) && typeof err.code === 'string')
+  ) {
+    return new DiagnosticError(`OpenCode CLI path is not an executable binary ("${label}"). Pass the opencode CLI binary to --opencode, not a config file. ${SUPPRESSED_SUFFIX}`);
   }
   if (typeof err.code === 'number') {
     return new DiagnosticError(`OpenCode API check exited with status ${err.code}. Verify OpenCode V2 CLI compatibility (opencode api get), service status, and server connection (--server). ${SUPPRESSED_SUFFIX}`);
@@ -121,7 +134,9 @@ function classifyCliQueryError(error: unknown, executable: string, timeoutMs: nu
 
 export function cliQuery(options: RuntimeOptions): Query {
   const executable = findOpenCode(options.executable);
-  const timeoutMs = options.timeoutMs ?? 15000;
+  const timeoutMs = typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+    ? options.timeoutMs
+    : 15000;
   return async path => {
     const args = ['api', ...(options.server ? ['--server', options.server] : []), 'get', `${path}?location[directory]=${encodeURIComponent(resolve(options.directory))}`];
     try {
