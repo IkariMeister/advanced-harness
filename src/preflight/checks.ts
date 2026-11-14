@@ -192,10 +192,15 @@ export const TEST_CHANGE_CHECK_ID = 'test-change';
 /** Changed-path identity for de-duplication: Windows paths compare case-insensitively, other platforms exactly. */
 const changedPathKey = (path: string) => (process.platform === 'win32' ? path.toLowerCase() : path);
 
+/** Origin precedence for a path's final state: committed < staged < unstaged < untracked. The latest origin decides. */
+const ORIGIN_ORDER: Record<ChangeOrigin, number> = { committed: 0, staged: 1, unstaged: 2, untracked: 3 };
+
 /**
  * Warns when production files changed and no test file changed (BH-070); passes when tests changed or no production
  * file changed. A rename contributes its new and old path. A deletion counts as a production change when its path
  * matches a production glob, but a removed path (a deletion, or the old path of a rename) is never a test change.
+ * Each path's state is its final state across origins: the latest origin that touches it decides, so a test modified
+ * in a commit and then deleted in the index or worktree is removed, and a later re-add counts as present.
  * A copy's source is not a change. A path that matches a test glob is a test even when a production glob also matches
  * it. Without both globs the check passes with an explicit "not run" note. It reads the trusted policy's globs, so it
  * is trusted-policy dependent.
@@ -207,23 +212,25 @@ export function testChangeCheck(prodGlobs?: readonly string[], testGlobs?: reado
     if (prodGlobs === undefined || testGlobs === undefined) return { status: 'pass', evidence: ['prodGlobs/testGlobs not configured; check not run'] };
     const productionPatterns: readonly string[] = prodGlobs;
     const testPatterns: readonly string[] = testGlobs;
-    const changed = new Map<string, string>();
-    // Keys of paths that still exist in the candidate: the path of every non-deleted entry. A rename's old path is removed.
-    const present = new Set<string>();
-    for (const entry of changeset.entries) {
-      const touched = entry.status === 'renamed' && entry.oldPath !== undefined ? [entry.path, entry.oldPath] : [entry.path];
-      for (const touchedPath of touched) {
-        const normalized = touchedPath.replaceAll('\\', '/');
-        changed.set(changedPathKey(normalized), normalized);
-      }
-      if (entry.status !== 'deleted') present.add(changedPathKey(entry.path.replaceAll('\\', '/')));
+    // Final state per path across origins. Entries are applied in origin order, so the latest origin that touches a
+    // path decides: a deletion removes it and a later add restores it. A rename's old path is settled first, so a
+    // case-only rename on Windows keeps the new spelling and present state.
+    const final = new Map<string, { path: string; present: boolean }>();
+    const settle = (path: string, present: boolean) => {
+      const normalized = path.replaceAll('\\', '/');
+      final.set(changedPathKey(normalized), { path: normalized, present });
+    };
+    const byOrigin = [...changeset.entries].sort((a, b) => ORIGIN_ORDER[a.origin] - ORIGIN_ORDER[b.origin]);
+    for (const entry of byOrigin) {
+      if (entry.status === 'renamed' && entry.oldPath !== undefined) settle(entry.oldPath, false);
+      settle(entry.path, entry.status !== 'deleted');
     }
-    const paths = [...changed.entries()];
+    const paths = [...final.values()];
     const matchesTest = (path: string) => testPatterns.some(glob => matchesGlob(path, glob));
-    const isTest = ([key, path]: [string, string]) => present.has(key) && matchesTest(path);
-    const tests = paths.filter(isTest).map(([, path]) => path);
-    const removedTests = paths.filter(entry => !present.has(entry[0]) && matchesTest(entry[1])).map(([, path]) => path);
-    const production = paths.filter(entry => !isTest(entry) && productionPatterns.some(glob => matchesGlob(entry[1], glob))).map(([, path]) => path);
+    const isTest = (entry: { path: string; present: boolean }) => entry.present && matchesTest(entry.path);
+    const tests = paths.filter(isTest).map(entry => entry.path);
+    const removedTests = paths.filter(entry => !entry.present && matchesTest(entry.path)).map(entry => entry.path);
+    const production = paths.filter(entry => !isTest(entry) && productionPatterns.some(glob => matchesGlob(entry.path, glob))).map(entry => entry.path);
     const metrics = { productionFiles: production.length, testFiles: tests.length };
     if (production.length === 0) return { status: 'pass', evidence: ['No production files changed.'], metrics };
     if (tests.length > 0) return { status: 'pass', evidence: [`Test files changed: ${tests.length}; production files changed: ${production.length}.`], metrics };

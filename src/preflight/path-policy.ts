@@ -15,7 +15,12 @@ export const DEFAULT_SENSITIVE_PATH_GLOBS = ['**/.env*', '**/id_rsa*', '**/.DS_S
 export function validateSensitivePathGlobs(value: unknown, name = 'forbiddenPathGlobs'): asserts value is readonly string[] {
   if (!Array.isArray(value) || value.some(glob => typeof glob !== 'string' || !glob.trim() || glob.length > 300 || /[\u0000-\u001f\u007f]/.test(glob) || glob.startsWith('/') || /^[a-z]:/i.test(glob) || glob.replaceAll('\\', '/').split('/').includes('..'))) throw new Error(`${name} must be an array of safe repository-relative glob strings.`);
 }
-/** Case-insensitive glob match on forward-slash paths. Shared by path-policy and test-change so both read globs alike. */
+/**
+ * Case-insensitive glob match on forward-slash paths. Shared by path-policy and test-change so both read globs alike.
+ * `**`, and the directory form that ends in a slash, match any characters including line terminators (CR, LF,
+ * U+2028, U+2029), which is why the regex uses the dot-all flag. `*` and `?` stay within one path segment (they never
+ * cross `/`); their negated classes already match line terminators inside a segment.
+ */
 export function matchesGlob(path: string, glob: string): boolean {
   const p = path.replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
   const g = glob.replaceAll('\\', '/').replace(/^\.\//, '').toLowerCase();
@@ -28,7 +33,7 @@ export function matchesGlob(path: string, glob: string): boolean {
     else if (char === '?') source += '[^/]';
     else source += char.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   }
-  return new RegExp(`^${source}$`).test(p);
+  return new RegExp(`^${source}$`, 's').test(p);
 }
 
 export function pathPolicyCheck(globs: readonly string[] = DEFAULT_SENSITIVE_PATH_GLOBS): PreflightCheck {

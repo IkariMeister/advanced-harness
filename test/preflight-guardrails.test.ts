@@ -226,6 +226,150 @@ test('a deleted test file does not satisfy test-change, and a deleted file match
   assert.equal(liveTest.status, 'pass', 'the same path present in the candidate is a test change');
 });
 
+test('a staged test modification followed by an unstaged deletion leaves the test removed, not present', async () => {
+  const { worktree } = taskRepo({ config: PROD_TEST, files: { 'src/a.ts': 'export const a = 1;\n', 'test/a.test.ts': 'test("a", () => {});\n' } });
+  writeFileSync(join(worktree, 'test', 'a.test.ts'), 'test("a changed", () => {});\n');
+  git(worktree, 'add', 'test/a.test.ts');
+  rmSync(join(worktree, 'test', 'a.test.ts'));
+  writeFileSync(join(worktree, 'src', 'a.ts'), 'export const a = 2;\n');
+  const result = await run(worktree);
+  assert.equal(statusOf(result, 'test-change'), 'warn', 'an absent test does not satisfy the guardrail');
+  assert.match(evidenceOf(result, 'test-change'), /Production files changed \(1\) and no test files changed: src\/a\.ts\./);
+  assert.match(evidenceOf(result, 'test-change'), /Removed test paths do not count as test changes: test\/a\.test\.ts\./);
+  assert.doesNotMatch(evidenceOf(result, 'test-change'), /Test files changed/);
+  assert.equal(exitCodeFor(result), 0, 'a warning is evidence, not a block');
+});
+
+test('a committed test modification followed by a staged deletion leaves the test removed, not present', async () => {
+  const { worktree } = taskRepo({ config: PROD_TEST, files: { 'src/a.ts': 'export const a = 1;\n', 'test/a.test.ts': 'test("a", () => {});\n' } });
+  writeFileSync(join(worktree, 'test', 'a.test.ts'), 'test("a changed", () => {});\n');
+  git(worktree, 'add', 'test/a.test.ts');
+  git(worktree, 'commit', '-q', '-m', 'change test');
+  git(worktree, 'rm', '-q', 'test/a.test.ts');
+  writeFileSync(join(worktree, 'src', 'a.ts'), 'export const a = 2;\n');
+  const result = await run(worktree);
+  assert.equal(statusOf(result, 'test-change'), 'warn');
+  assert.match(evidenceOf(result, 'test-change'), /Production files changed \(1\) and no test files changed: src\/a\.ts\./);
+  assert.match(evidenceOf(result, 'test-change'), /Removed test paths do not count as test changes: test\/a\.test\.ts\./);
+  assert.doesNotMatch(evidenceOf(result, 'test-change'), /Test files changed/);
+});
+
+test('a committed test modification followed by a staged rename away from it leaves the old path removed', async () => {
+  const { worktree } = taskRepo({ config: PROD_TEST, files: { 'src/a.ts': 'export const a = 1;\n', 'test/a.test.ts': 'test("a", () => {});\n' } });
+  writeFileSync(join(worktree, 'test', 'a.test.ts'), 'test("a changed", () => {});\n');
+  git(worktree, 'add', 'test/a.test.ts');
+  git(worktree, 'commit', '-q', '-m', 'change test');
+  git(worktree, 'mv', 'test/a.test.ts', 'src/b.ts');
+  const result = await run(worktree);
+  assert.equal(statusOf(result, 'test-change'), 'warn', 'the old test path is removed by the later staged rename');
+  assert.match(evidenceOf(result, 'test-change'), /Production files changed \(1\) and no test files changed: src\/b\.ts\./);
+  assert.match(evidenceOf(result, 'test-change'), /Removed test paths do not count as test changes: test\/a\.test\.ts\./);
+  assert.doesNotMatch(evidenceOf(result, 'test-change'), /Test files changed/);
+});
+
+test('a deletion followed by a re-add counts the test as present, for a staged deletion with an untracked re-add and a committed deletion with a staged re-add', async () => {
+  const withUntracked = taskRepo({ config: PROD_TEST, files: { 'src/a.ts': 'export const a = 1;\n', 'test/a.test.ts': 'test("a", () => {});\n' } });
+  git(withUntracked.worktree, 'rm', '-q', 'test/a.test.ts');
+  mkdirSync(join(withUntracked.worktree, 'test'), { recursive: true });
+  writeFileSync(join(withUntracked.worktree, 'test', 'a.test.ts'), 'test("a again", () => {});\n');
+  writeFileSync(join(withUntracked.worktree, 'src', 'a.ts'), 'export const a = 2;\n');
+  const untrackedResult = await run(withUntracked.worktree);
+  assert.equal(statusOf(untrackedResult, 'test-change'), 'pass', 'a later untracked add restores the test');
+  assert.match(evidenceOf(untrackedResult, 'test-change'), /Test files changed: 1; production files changed: 1\./);
+  assert.doesNotMatch(evidenceOf(untrackedResult, 'test-change'), /Removed test paths/);
+
+  const withStaged = taskRepo({ config: PROD_TEST, files: { 'src/a.ts': 'export const a = 1;\n', 'test/a.test.ts': 'test("a", () => {});\n' } });
+  git(withStaged.worktree, 'rm', '-q', 'test/a.test.ts');
+  git(withStaged.worktree, 'commit', '-q', '-m', 'drop test');
+  mkdirSync(join(withStaged.worktree, 'test'), { recursive: true });
+  writeFileSync(join(withStaged.worktree, 'test', 'a.test.ts'), 'test("a again", () => {});\n');
+  git(withStaged.worktree, 'add', 'test/a.test.ts');
+  writeFileSync(join(withStaged.worktree, 'src', 'a.ts'), 'export const a = 2;\n');
+  const stagedResult = await run(withStaged.worktree);
+  assert.equal(statusOf(stagedResult, 'test-change'), 'pass', 'a staged re-add after a committed deletion is present');
+  assert.match(evidenceOf(stagedResult, 'test-change'), /Test files changed: 1; production files changed: 1\./);
+});
+
+test('test-change resolves a path by its final state across origins, whatever the entry order', async () => {
+  const check = testChangeCheck(['src/**'], ['test/**']);
+  const unstagedDeletedFirst = await check.run({ worktree: '/', changeset: changesetOf([
+    changeEntry('test/a.test.ts', { status: 'deleted', origin: 'unstaged' }),
+    changeEntry('test/a.test.ts', { origin: 'staged' }),
+    changeEntry('src/a.ts'),
+  ]) });
+  assert.equal(unstagedDeletedFirst.status, 'warn', 'the unstaged deletion is the latest origin, whatever the array order');
+  assert.match(unstagedDeletedFirst.evidence.join('\n'), /Removed test paths do not count as test changes: test\/a\.test\.ts\./);
+  const stagedAddedAfterCommittedDelete = await check.run({ worktree: '/', changeset: changesetOf([
+    changeEntry('src/a.ts'),
+    changeEntry('test/a.test.ts', { origin: 'staged', status: 'added' }),
+    changeEntry('test/a.test.ts', { origin: 'committed', status: 'deleted' }),
+  ]) });
+  assert.equal(stagedAddedAfterCommittedDelete.status, 'pass', 'the later staged add is present');
+});
+
+test('a Windows case-only rename settles to the new spelling across origins, and a backslash spelling is the same path', { skip: process.platform !== 'win32' }, async () => {
+  const committed = taskRepo({ config: PROD_TEST, files: { 'src/a.ts': 'export const a = 1;\n', 'test/Foo.test.ts': 'test("a", () => {});\n' } });
+  git(committed.worktree, 'mv', 'test/Foo.test.ts', 'test/foo.test.ts');
+  git(committed.worktree, 'commit', '-q', '-m', 'rename test case');
+  writeFileSync(join(committed.worktree, 'src', 'a.ts'), 'export const a = 2;\n');
+  const committedResult = await run(committed.worktree);
+  assert.equal(statusOf(committedResult, 'test-change'), 'pass', 'a committed case-only rename leaves the test present under the new spelling');
+  assert.match(evidenceOf(committedResult, 'test-change'), /Test files changed: 1; production files changed: 1\./);
+  assert.doesNotMatch(evidenceOf(committedResult, 'test-change'), /Removed test paths/, 'the old spelling is settled before the new one, so the new one stays present');
+
+  const staged = taskRepo({ config: PROD_TEST, files: { 'src/a.ts': 'export const a = 1;\n', 'test/Foo.test.ts': 'test("a", () => {});\n' } });
+  writeFileSync(join(staged.worktree, 'test', 'Foo.test.ts'), 'test("a changed", () => {});\n');
+  git(staged.worktree, 'add', 'test/Foo.test.ts');
+  git(staged.worktree, 'commit', '-q', '-m', 'change test');
+  git(staged.worktree, 'mv', 'test/Foo.test.ts', 'test/foo.test.ts');
+  writeFileSync(join(staged.worktree, 'src', 'a.ts'), 'export const a = 2;\n');
+  const stagedResult = await run(staged.worktree);
+  assert.equal(statusOf(stagedResult, 'test-change'), 'pass', 'a committed edit followed by a staged case-only rename is present under the new spelling');
+  assert.match(evidenceOf(stagedResult, 'test-change'), /Test files changed: 1; production files changed: 1\./);
+  assert.doesNotMatch(evidenceOf(stagedResult, 'test-change'), /Removed test paths/);
+});
+
+test('origin settling normalizes backslash separators, so a backslash spelling and a slash spelling are one path', async () => {
+  const check = testChangeCheck(['src/**'], ['test/**']);
+  const deletedLater = await check.run({ worktree: '/', changeset: changesetOf([
+    changeEntry('src/a.ts', { origin: 'untracked', status: 'added' }),
+    changeEntry('test\\Foo.test.ts', { origin: 'committed', status: 'added' }),
+    changeEntry('test/Foo.test.ts', { origin: 'unstaged', status: 'deleted' }),
+  ]) });
+  assert.equal(deletedLater.status, 'warn', 'the unstaged deletion of the same path removes the committed add, whatever the separator');
+  assert.match(deletedLater.evidence.join('\n'), /Removed test paths do not count as test changes: test\/Foo\.test\.ts\./);
+  assert.doesNotMatch(deletedLater.evidence.join('\n'), /Test files changed/);
+
+  const readdedLater = await check.run({ worktree: '/', changeset: changesetOf([
+    changeEntry('src/a.ts', { origin: 'untracked', status: 'added' }),
+    changeEntry('test/Bar.test.ts', { origin: 'committed', status: 'deleted' }),
+    changeEntry('test\\Bar.test.ts', { origin: 'unstaged', status: 'added' }),
+  ]) });
+  assert.equal(readdedLater.status, 'pass', 'the unstaged add with a backslash separator restores the same path');
+  assert.match(readdedLater.evidence.join('\n'), /Test files changed: 1; production files changed: 1\./);
+});
+
+test('recursive wildcards in test-change cross U+2028 and CR/LF, for ** and the **/ directory form', async () => {
+  const lineSeparator = String.fromCharCode(0x2028);
+  const recursive = testChangeCheck(['src/**'], ['test/**']);
+  assert.equal((await recursive.run({ worktree: '/', changeset: changesetOf([changeEntry(`src/a${lineSeparator}b.ts`)]) })).status, 'warn', '** matches U+2028 in a production path');
+  assert.equal((await recursive.run({ worktree: '/', changeset: changesetOf([changeEntry('src/a\r\nb.ts')]) })).status, 'warn', '** matches CR/LF in a production path');
+  assert.equal((await recursive.run({ worktree: '/', changeset: changesetOf([changeEntry(`test/sub${lineSeparator}dir/a.test.ts`), changeEntry('src/a.ts')]) })).status, 'pass', '** matches a test path with U+2028 inside the part it covers (test/ prefix anchored), so the test change counts');
+  assert.equal((await recursive.run({ worktree: '/', changeset: changesetOf([changeEntry('test/sub\r\ndir/a.test.ts'), changeEntry('src/a.ts')]) })).status, 'pass', '** matches a test path with CR/LF inside the part it covers');
+  assert.equal((await recursive.run({ worktree: '/', changeset: changesetOf([changeEntry(`test${lineSeparator}dir/a.test.ts`), changeEntry('src/a.ts')]) })).status, 'warn', 'test/** is anchored: a path starting with test<U+2028> is not under test/, so it is not a test change');
+
+  const directoryForm = testChangeCheck(['**/*.ts'], ['**/*.test.ts']);
+  assert.equal((await directoryForm.run({ worktree: '/', changeset: changesetOf([changeEntry(`lib${lineSeparator}/a.ts`)]) })).status, 'warn', '**/ matches a directory with U+2028 in its name');
+  assert.equal((await directoryForm.run({ worktree: '/', changeset: changesetOf([changeEntry('lib\r\n/a.ts')]) })).status, 'warn', '**/ matches a directory with CR/LF in its name');
+  const testDirectory = await directoryForm.run({ worktree: '/', changeset: changesetOf([changeEntry(`test${lineSeparator}dir/a.test.ts`), changeEntry('lib/x.ts')]) });
+  assert.equal(testDirectory.status, 'pass', '**/*.test.ts matches a test whose directory name holds U+2028');
+  assert.match(testDirectory.evidence.join('\n'), /Test files changed: 1; production files changed: 1\./);
+
+  const anchoredDirectoryForm = testChangeCheck(['src/**'], ['test/**/*.test.ts']);
+  assert.equal((await anchoredDirectoryForm.run({ worktree: '/', changeset: changesetOf([changeEntry(`test/sub${lineSeparator}dir/a.test.ts`), changeEntry('src/a.ts')]) })).status, 'pass', 'test/**/*.test.ts matches a nested test directory whose name holds U+2028');
+  assert.equal((await anchoredDirectoryForm.run({ worktree: '/', changeset: changesetOf([changeEntry('test/sub\r\ndir/a.test.ts'), changeEntry('src/a.ts')]) })).status, 'pass', 'test/**/*.test.ts matches a nested test directory whose name holds CR/LF');
+});
+
 test('invalid prodGlobs or testGlobs passed to testChangeCheck name that field, not forbiddenPathGlobs', () => {
   assert.throws(() => testChangeCheck(['/absolute/**'], ['test/**']), (error: unknown) => error instanceof Error && error.message === 'prodGlobs must be an array of safe repository-relative glob strings.');
   assert.throws(() => testChangeCheck(['src/**'], ['../escape/**']), (error: unknown) => error instanceof Error && error.message === 'testGlobs must be an array of safe repository-relative glob strings.');
@@ -316,6 +460,40 @@ test('a run that ends early for a missing worktree records no bypass', async () 
   assert.doesNotMatch(human.stdout, /Justified bypass/);
 });
 
+test('runPreflight refuses an empty or whitespace-only justifyNoTests before any check runs, so no block is downgraded', async () => {
+  const { worktree } = taskRepo({ config: { ...PROD_TEST, checks: { 'test-change': { severity: 'block' } } }, files: { 'src/a.ts': 'export const a = 1;\n' } });
+  writeFileSync(join(worktree, 'src', 'a.ts'), 'export const a = 2;\n');
+  const unjustified = await run(worktree);
+  assert.equal(exitCodeFor(unjustified), 1, 'without a justification the same change is blocked');
+  for (const blank of ['', '   ', '\t\n ']) {
+    const result = await run(worktree, { justifyNoTests: blank });
+    assert.equal(result.bypass, undefined, `no bypass is recorded for ${JSON.stringify(blank)}`);
+    assert.equal(statusOf(result, 'test-change'), 'inconclusive', JSON.stringify(blank));
+    assert.match(evidenceOf(result, 'test-change'), /justifyNoTests must be a nonblank string/);
+    assert.equal(exitCodeFor(result), 2, JSON.stringify(blank));
+    assert.equal(result.approved, false);
+    assert.equal(result.approved, derivedApproval(result));
+    assert.doesNotMatch(formatHuman(result), /JUSTIFIED BYPASS|Justified bypass/);
+  }
+  const nonString = await run(worktree, { justifyNoTests: 42 as unknown as string });
+  assert.equal(nonString.bypass, undefined, 'a non-string justification from a JavaScript caller is refused too');
+  assert.equal(exitCodeFor(nonString), 2);
+});
+
+test('runPreflight keeps a valid justification verbatim, leading and trailing spaces included, and the CLI matches', async () => {
+  const justification = '  Generated constant only; no behavior changed.  ';
+  const { worktree } = taskRepo({ config: { ...PROD_TEST, checks: { 'test-change': { severity: 'block' } } }, files: { 'src/a.ts': 'export const a = 1;\n' } });
+  writeFileSync(join(worktree, 'src', 'a.ts'), 'export const a = 2;\n');
+  const bypassed = await run(worktree, { justifyNoTests: justification });
+  assert.equal(statusOf(bypassed, 'test-change'), 'warn');
+  assert.deepEqual(bypassed.bypass, [{ check: 'test-change', justification, applied: true }]);
+  assert.equal(bypassed.bypass?.[0]?.justification, justification, 'the stored text is not trimmed');
+  assert.equal(exitCodeFor(bypassed), 0);
+  const json = cli('--worktree', worktree, '--base', 'main', '--justify-no-tests', justification, '--json');
+  assert.equal(json.status, 0, json.stderr);
+  assert.deepEqual(parseJson(json.stdout).bypass, [{ check: 'test-change', justification, applied: true }], 'the CLI also keeps the text verbatim');
+});
+
 test('acceptance criteria without a flag pass with the no-task-context note, and approval is derived from statuses', async () => {
   const { worktree } = taskRepo({ files: { 'src/a.ts': 'export const a = 1;\n' } });
   const result = await run(worktree);
@@ -383,8 +561,8 @@ test('display escaping covers C1 controls and U+2028/U+2029 in criteria evidence
   assert.ok(evidence.includes('a\\u0085b\\u009fc\\u2028d\\u2029e\\u0007f'), evidence);
   assert.doesNotMatch(evidence, /[\u{80}-\u{9f}\u{2028}\u{2029}]/u, 'no raw C1, line-separator, or paragraph-separator character reaches the output');
 
-  // `src/*.ts` rather than `src/**`: the `**` translation uses `.`, which does not match U+2028 in a path.
-  const check = testChangeCheck(['src/*.ts'], ['test/*.ts']);
+  // Recursive `src/**` crosses U+2028 in a path; the escaped display is checked below.
+  const check = testChangeCheck(['src/**'], ['test/**']);
   const outcome = await check.run({ worktree: '/', changeset: changesetOf([changeEntry('src/a' + String.fromCharCode(0x2028) + 'b\u0085.ts')]) });
   assert.equal(outcome.status, 'warn');
   assert.ok(outcome.evidence.join('\n').includes('src/a\\u2028b\\u0085.ts'), outcome.evidence.join('\n'));

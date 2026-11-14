@@ -8,7 +8,7 @@ approval. The human approves.
 npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--criteria <file>] [--justify-no-tests "<text>"] [--json]
 ```
 
-Each value flag may appear once and needs a value; a missing or repeated flag is a usage error (exit 2). `--justify-no-tests` also refuses a blank value.
+Each value flag may appear once and needs a value; a missing or repeated flag is a usage error (exit 2). `--justify-no-tests` also refuses a blank value. Programmatic `runPreflight` callers get the same refusal: a defined `justifyNoTests` that is empty, whitespace-only, or not a string returns an inconclusive result before any check runs, and records no bypass.
 
 ## Base ref and trust model
 
@@ -102,7 +102,9 @@ path, previous path for renames, status (`added`, `modified`, `deleted`,
   `**/*.jks`, `**/*.keystore`, `**/build/**`, and `**/dist/**`.
   Glob matching is case-insensitive after converting `\\` to `/`. `*` matches
   zero or more characters within one path component; `?` matches exactly one
-  character within one component. `**` matches any characters including `/`, and
+  character within one component. Neither `*` nor `?` crosses `/`; inside a component they match
+  line terminators (CR, LF, U+2028, U+2029) like any other character.
+  `**` matches any characters including `/` and line terminators, and
   `**/` matches zero or more directory components, so `**/*.pem` includes both
   `root.pem` and `certs/root.pem`. By contrast, `*.pem` matches root-level files
   only. Brackets and braces are literal characters, not character classes or
@@ -204,6 +206,8 @@ candidate changeset remain blocked until reviewed and present at trusted `origin
 **`test-change`** (configurable, BH-070) reads the trusted `prodGlobs` and `testGlobs`, which are given together. It warns when a changed production file exists and no changed test file does. It passes when a test file changed or no production file changed. With either glob missing it passes with the evidence `prodGlobs/testGlobs not configured; check not run`. With no `test-change` setting and no globs, the policy row stays `pass`. When `test-change` is configured (severity `block`, or `enabled: true`) and a glob is missing, the policy row warns, as described under [the policy result](#the-policy-result).
 
 - A changed path is any `path` in the changeset, plus the `oldPath` of a rename. A deletion counts as a production change when its path matches a production glob. A deleted test file is not a test change, and neither is the old path of a rename: the evidence lists those paths as `Removed test paths do not count as test changes`. A copy's source is not a change, because it stays in place.
+- Each path's state is its final state across origins. Origins apply in precedence order `committed`, then `staged`, then `unstaged`, then `untracked` (an add), and the latest origin that touches a path decides. A test modified in a commit and then deleted in the index or worktree is removed, not a test change. A test deleted in one origin and added again in a later one (for example, a staged re-add after a committed deletion, or an untracked file after a staged deletion) is present. A rename's old path follows the same rule.
+  A test file deleted in one origin and then re-added identically in a later origin still counts as a test change: the check settles state per origin, not by net change against the base.
 - A path that matches a test glob is a test, even if a production glob also matches it.
 - Matching uses the same case-insensitive glob rules as `path-policy`, on forward-slash paths. Changed paths that differ only by case are one path on Windows.
 - Severity (`checks.test-change.severity`) can turn the warning into a block. `enabled: false` skips the check.
@@ -212,7 +216,7 @@ candidate changeset remain blocked until reviewed and present at trusted `origin
 { "prodGlobs": ["src/**"], "testGlobs": ["test/**", "**/*.test.ts"], "checks": { "test-change": { "severity": "block" } } }
 ```
 
-**Justified bypass** (`--justify-no-tests "<text>"`). When `test-change` would block, this option turns that block into a warning. The text must be nonblank, and it is recorded verbatim whether or not it was needed. The human output shows it on a `Justified bypass (not approval)` line, where control characters are escaped and the text is bounded to 240 characters, so a justification cannot forge an output line. The verdict reads `PASS (JUSTIFIED BYPASS)` only when the bypass changed a block and no other check blocks. The JSON result gains a `bypass` array, `[{ "check": "test-change", "justification": "<text>", "applied": true }]`, which keeps the text verbatim. `applied` is `true` only when a block became a warning; otherwise it is `false`, and the status is unchanged. The bypass applies only to a `block`. An `inconclusive` test-change, for example when the trusted ref is unavailable, is not bypassed. A caller-supplied check named `test-change` is never downgraded by severity or by the bypass. A bypass is never approval. `approved` still derives only from check statuses. A bypassed block is a warning, so `approved` follows the same rule as any other warning. A run that stops early (for example, an unavailable worktree) records no bypass.
+**Justified bypass** (`--justify-no-tests "<text>"`). When `test-change` would block, this option turns that block into a warning. The text must be nonblank, and it is recorded verbatim whether or not it was needed; the runner does not trim it, so leading and trailing spaces are kept in the `bypass` entry. A blank text is refused at the CLI, and `runPreflight` refuses it the same way (inconclusive, no bypass recorded). The human output shows it on a `Justified bypass (not approval)` line, where control characters are escaped and the text is bounded to 240 characters, so a justification cannot forge an output line. The verdict reads `PASS (JUSTIFIED BYPASS)` only when the bypass changed a block and no other check blocks. The JSON result gains a `bypass` array, `[{ "check": "test-change", "justification": "<text>", "applied": true }]`, which keeps the text verbatim. `applied` is `true` only when a block became a warning; otherwise it is `false`, and the status is unchanged. The bypass applies only to a `block`. An `inconclusive` test-change, for example when the trusted ref is unavailable, is not bypassed. A caller-supplied check named `test-change` is never downgraded by severity or by the bypass. A bypass is never approval. `approved` still derives only from check statuses. A bypassed block is a warning, so `approved` follows the same rule as any other warning. A run that stops early (for example, an unavailable worktree) records no bypass.
 
 When a run has acknowledged incomplete coverage, the verdict reads `PASS (ACKNOWLEDGED INCOMPLETE COVERAGE)`, which takes precedence over `PASS (JUSTIFIED BYPASS)`; the `Justified bypass` line still prints. Custom programmatic `checks` ignore criteria: a `checks` list replaces the built-in set, so the `acceptance-criteria` row is absent from that run.
 

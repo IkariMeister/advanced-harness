@@ -17,9 +17,13 @@ version between releases.
 
 - Preflight `test-change` check (BH-070, #185): a configurable check that warns when changed production files
   match the trusted `prodGlobs` and no changed file matches the trusted `testGlobs`, and passes otherwise.
-  A deleted test file does not count. `--justify-no-tests "<text>"` turns a `test-change` block into a warning
+  A deleted test file does not count, and a path's state is its final state across origins (committed, staged,
+  unstaged, untracked): a later deletion removes an earlier modification, and a later re-add counts. Recursive
+  `**` and `**/` globs match line terminators (CR, LF, U+2028, U+2029) in `path-policy` and `test-change`.
+  `--justify-no-tests "<text>"` turns a `test-change` block into a warning
   when one occurs; the JSON result gains a `bypass` array that records the text and whether it changed a block
-  (`applied`). It is evidence, not approval. `--criteria <file>` reads acceptance criteria for the fixed
+  (`applied`). It is evidence, not approval. `runPreflight` refuses an empty, whitespace-only, or non-string `justifyNoTests`
+  as inconclusive, with no bypass recorded, and keeps a valid text verbatim. `--criteria <file>` reads acceptance criteria for the fixed
   `acceptance-criteria` check, where pending items warn. See
   [docs/preflight.md](docs/preflight.md#test-change-acceptance-criteria-and-justified-bypass).
 - `MEMORY.md` pruning during learning review (BH-077, #216): add pruning candidate proposals

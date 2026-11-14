@@ -26,7 +26,7 @@ export function resolveBase(worktree: string, option: string | undefined): BaseR
   }
 }
 
-/** `criteria` is the parsed `--criteria` file; `justifyNoTests` is the `--justify-no-tests` text. Neither can approve. */
+/** `criteria` is the parsed `--criteria` file; `justifyNoTests` is the `--justify-no-tests` text, which must be nonblank when defined. Neither can approve. */
 export type PreflightOptions = { worktree: string; base?: string | undefined; task?: string | undefined; checks?: readonly PreflightCheck[]; sensitivePathGlobs?: readonly string[]; secretExceptions?: readonly SecretException[]; secretScanner?: typeof scanAddedText; criteria?: AcceptanceCriteriaInput | undefined; justifyNoTests?: string | undefined };
 type TaskInputs = { criteria?: AcceptanceCriteriaInput | undefined; justifyNoTests?: string | undefined };
 type ExecuteChecksOptions = TaskInputs & { worktree: string; changeset: Changeset; checks: readonly PreflightCheck[]; custom: boolean; task?: string | undefined; policy?: ProjectPreflightPolicy | undefined; unavailableReason?: string | undefined };
@@ -127,9 +127,16 @@ function withProgrammaticOverrides(policy: ProjectPreflightPolicy, options: Pref
   };
 }
 
+/**
+ * A defined justification must be a nonblank string. A blank one would downgrade a block with no stated reason, so the
+ * runner refuses it before any check runs. The text itself is never trimmed; it is recorded exactly as supplied.
+ */
+const BLANK_JUSTIFICATION_REASON = 'justifyNoTests must be a nonblank string; a blank justification cannot downgrade a block, so no checks were run.';
+
 /** Runs checks in `id` order. A thrown check or failed tool call is `inconclusive`, never a pass. */
 export async function runPreflight(options: PreflightOptions): Promise<PreflightResult> {
   if (options.checks !== undefined && (options.sensitivePathGlobs !== undefined || options.secretExceptions !== undefined || options.secretScanner !== undefined)) return inconclusiveAll(options.checks, 'Custom checks cannot be combined with preflight policy overrides.');
+  if (options.justifyNoTests !== undefined && (typeof options.justifyNoTests !== 'string' || options.justifyNoTests.trim() === '')) return inconclusiveAll(options.checks ?? defaultChecks, BLANK_JUSTIFICATION_REASON);
   const taskInputs: TaskInputs = { criteria: options.criteria, justifyNoTests: options.justifyNoTests };
   let worktree: string;
   try { worktree = realpathSync(options.worktree); } catch { return inconclusiveAll(options.checks ?? defaultChecks, `Worktree not found: ${options.worktree}`); }
