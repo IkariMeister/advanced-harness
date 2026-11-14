@@ -3,9 +3,18 @@ import { existsSync, lstatSync, readFileSync, readlinkSync, readdirSync } from '
 import { join } from 'node:path';
 import { PreflightToolError, type BaseSource, type ChangeEntry, type ChangeOrigin, type ChangeStatus, type Changeset } from './types.ts';
 
-function git(worktree: string, args: string[]): Buffer {
-  const result = spawnSync('git', ['-C', worktree, '-c', 'core.quotepath=false', '--literal-pathspecs', ...args], { maxBuffer: 256 * 1024 * 1024 });
-  if (result.error) throw new PreflightToolError(`git could not be started: ${result.error.message}`);
+/** Captured stdout limit for one git call. */
+const GIT_MAX_BUFFER = 256 * 1024 * 1024;
+
+/** A git call whose stdout exceeded its capture limit. The process ran; its output was too large to capture. */
+class GitOutputLimitError extends PreflightToolError {}
+
+function git(worktree: string, args: string[], input?: string, maxBuffer = GIT_MAX_BUFFER): Buffer {
+  const result = spawnSync('git', ['-C', worktree, '-c', 'core.quotepath=false', '--literal-pathspecs', ...args], { maxBuffer, ...(input === undefined ? {} : { input }) });
+  if (result.error) {
+    if ((result.error as NodeJS.ErrnoException).code === 'ENOBUFS') throw new GitOutputLimitError(`git ${args[0]} output exceeded ${maxBuffer} bytes`);
+    throw new PreflightToolError(`git failed to run: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     const detail = result.stderr.toString('utf8').trim().split(/\r?\n/)[0] ?? '';
     throw new PreflightToolError(`git ${args[0]} failed (exit ${result.status})${detail ? `: ${detail}` : ''}`);
@@ -57,10 +66,65 @@ function readWorkingFile(worktree: string, path: string): WorkingFile {
   }
 }
 
-/** Git blob mode 120000 is a symlink whose blob content is the link target. Mode 160000 is a submodule commit gitlink. */
-function blob(worktree: string, spec: string, mode: string | undefined): WorkingFile {
+/** A spec containing a line break cannot be sent as a batch request, so it is read with a single `cat-file blob` call. */
+const isBatchable = (spec: string) => !/[\r\n]/.test(spec);
+
+/**
+ * Splits `git cat-file --batch` output into the bytes of each requested spec. Each reply is
+ * `<oid> blob <size>\n`, exactly `<size>` bytes, then `\n`; `<spec> missing\n` means the object is absent.
+ * A missing object, malformed output, or bytes after the last reply throws {@link PreflightToolError}.
+ */
+export function parseCatFileBatch(output: Buffer, requests: readonly string[]): Map<string, Buffer> {
+  const contents = new Map<string, Buffer>();
+  const malformed = (spec: string) => new PreflightToolError(`git cat-file returned malformed output for ${spec}`);
+  let offset = 0;
+  for (const spec of requests) {
+    const lineEnd = output.indexOf(0x0a, offset);
+    if (lineEnd < 0) throw malformed(spec);
+    const header = output.toString('utf8', offset, lineEnd);
+    offset = lineEnd + 1;
+    if (header === `${spec} missing`) throw new PreflightToolError(`git cat-file could not find ${spec}`);
+    const match = /^[0-9a-f]+ blob (\d+)$/.exec(header);
+    if (!match) throw malformed(spec);
+    const end = offset + Number(match[1]);
+    if (end >= output.length || output[end] !== 0x0a) throw malformed(spec);
+    contents.set(spec, output.subarray(offset, end));
+    offset = end + 1;
+  }
+  if (offset !== output.length) throw new PreflightToolError('git cat-file returned unexpected trailing output');
+  return contents;
+}
+
+/**
+ * Reads the bytes of every batchable blob spec with one `git cat-file --batch` call. If that call's output
+ * exceeds its capture limit, each spec is read with its own `cat-file blob` call instead, so the limit then
+ * applies per object. Other failures throw {@link PreflightToolError}.
+ */
+function batchBlobs(worktree: string, specs: string[], maxBuffer?: number): Map<string, Buffer> {
+  const requests = specs.filter(isBatchable);
+  if (requests.length === 0) return new Map();
+  let output: Buffer;
+  try {
+    output = git(worktree, ['cat-file', '--batch'], `${requests.join('\n')}\n`, maxBuffer);
+  } catch (error) {
+    if (!(error instanceof GitOutputLimitError)) throw error;
+    const contents = new Map<string, Buffer>();
+    for (const spec of requests) contents.set(spec, git(worktree, ['cat-file', 'blob', spec]));
+    return contents;
+  }
+  return parseCatFileBatch(output, requests);
+}
+
+/**
+ * Git blob mode 120000 is a symlink whose blob content is the link target. Mode 160000 is a submodule commit gitlink.
+ * Content comes from the batched map. Only specs that cannot be batched are read with a single `cat-file blob` call;
+ * any other spec missing from the map is a programming error and throws.
+ */
+function blob(worktree: string, spec: string, mode: string | undefined, batched: Map<string, Buffer>): WorkingFile {
   if (mode === '160000') return { kind: 'submodule', content: undefined };
-  return { kind: mode === '120000' ? 'symlink' : 'file', content: git(worktree, ['cat-file', 'blob', spec]) };
+  const content = batched.get(spec) ?? (isBatchable(spec) ? undefined : git(worktree, ['cat-file', 'blob', spec]));
+  if (content === undefined) throw new PreflightToolError(`No batched blob content for ${spec}`);
+  return { kind: mode === '120000' ? 'symlink' : 'file', content };
 }
 
 function modeOf(worktree: string, args: string[], path: string): string | undefined {
@@ -132,7 +196,7 @@ function addedLinesForPath(worktree: string, args: string[], path: string, oldPa
  * Collects `merge-base(base, HEAD)...HEAD` plus staged, unstaged, and untracked
  * files, with contents. Any git failure throws {@link PreflightToolError}.
  */
-export function collectChangeset(worktree: string, base: string, baseSource: BaseSource = 'option', dependencies: { nestedStatus?: NestedStatusRunner } = {}): Changeset {
+export function collectChangeset(worktree: string, base: string, baseSource: BaseSource = 'option', dependencies: { nestedStatus?: NestedStatusRunner; blobBatchMaxBuffer?: number } = {}): Changeset {
   const top = text(worktree, ['rev-parse', '--show-toplevel']);
   const head = text(top, ['rev-parse', '--verify', 'HEAD^{commit}']);
   let baseCommit: string;
@@ -142,19 +206,25 @@ export function collectChangeset(worktree: string, base: string, baseSource: Bas
   const entries: ChangeEntry[] = [];
   const nestedStatusCache = new Map<string, boolean>();
   const nestedStatus = dependencies.nestedStatus ?? spawnSync;
-  for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-M', '-z', mergeBase, head]), 'committed')) {
-    const kind = entry.status === 'deleted' ? undefined : modeOf(top, ['ls-tree', head], entry.path);
+  const committedEntries = parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-M', '-z', mergeBase, head]), 'committed');
+  const committedModes = committedEntries.map(entry => entry.status === 'deleted' ? undefined : modeOf(top, ['ls-tree', head], entry.path));
+  const committedBlobs = batchBlobs(top, committedEntries.flatMap((entry, index) => entry.status === 'deleted' || committedModes[index] === '160000' ? [] : [`${head}:${entry.path}`]), dependencies.blobBatchMaxBuffer);
+  for (const [index, entry] of committedEntries.entries()) {
+    const kind = committedModes[index];
     const oldId = gitlinkId(top, ['ls-tree', mergeBase], entry.oldPath ?? entry.path);
     const newId = gitlinkId(top, ['ls-tree', head], entry.path);
     const added = entry.status === 'deleted' ? undefined : kind === '160000' ? { text: '', lines: [], complete: false } : addedLinesForPath(top, ['diff', mergeBase, head], entry.path, entry.oldPath);
-    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path, nestedStatusCache, nestedStatus) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `${head}:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
+    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path, nestedStatusCache, nestedStatus) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `${head}:${entry.path}`, kind, committedBlobs)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
   }
-  for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--cached', '--name-status', '-M', '-z']), 'staged')) {
-    const kind = entry.status === 'deleted' ? undefined : modeOf(top, ['ls-files', '-s'], entry.path);
+  const stagedEntries = parseNameStatus(git(top, ['diff', '--no-ext-diff', '--cached', '--name-status', '-M', '-z']), 'staged');
+  const stagedModes = stagedEntries.map(entry => entry.status === 'deleted' ? undefined : modeOf(top, ['ls-files', '-s'], entry.path));
+  const stagedBlobs = batchBlobs(top, stagedEntries.flatMap((entry, index) => entry.status === 'deleted' || stagedModes[index] === '160000' ? [] : [`:${entry.path}`]), dependencies.blobBatchMaxBuffer);
+  for (const [index, entry] of stagedEntries.entries()) {
+    const kind = stagedModes[index];
     const oldId = gitlinkId(top, ['ls-tree', 'HEAD'], entry.oldPath ?? entry.path);
     const newId = kind === '160000' ? (git(top, ['ls-files', '-s', '-z', '--', entry.path]).toString('utf8').split('\0')[0]?.split(' ')[1]) : undefined;
     const added = entry.status === 'deleted' ? undefined : kind === '160000' ? { text: '', lines: [], complete: false } : addedLinesForPath(top, ['diff', '--cached'], entry.path, entry.oldPath);
-    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path, nestedStatusCache, nestedStatus) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `:${entry.path}`, kind)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
+    entries.push({ ...entry, ...(oldId !== undefined || newId !== undefined ? { gitlink: { ...(oldId === undefined ? {} : { oldId }), ...(newId === undefined ? {} : { newId }), ...(kind === '160000' ? { nestedContentDirty: nestedContentDirty(top, entry.path, nestedStatusCache, nestedStatus) } : {}) } } : {}), ...(entry.status === 'deleted' ? { content: undefined } : blob(top, `:${entry.path}`, kind, stagedBlobs)), ...(added ? { addedText: added.text, targetLines: added.lines, addedTextComplete: added.complete } : {}) });
   }
   for (const entry of parseNameStatus(git(top, ['diff', '--no-ext-diff', '--name-status', '-M', '-z']), 'unstaged')) {
     if (entry.status === 'deleted') {
