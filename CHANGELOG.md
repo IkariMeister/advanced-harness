@@ -21,7 +21,9 @@ version between releases.
   line and per-entry `added-task` / `last-used-task` fields to `MEMORY.md` (minimum
   compatible harness version `0.4.0-dev`; legacy `MEMORY.md` files without task metadata
   continue to parse and are backfilled on the first task run). Keeping a `stale` candidate
-  restarts its count at `currentTaskCount`; declining or cancelling writes nothing.
+  restarts its `last-used-task` at `currentTaskCount`; declining or cancelling writes nothing.
+  Applying a pruning plan enforces a maximum forward step of 1000 tasks (`MAX_TASK_COUNT_STEP`)
+  relative to the on-disk `Task count`.
   `src/shared-memory.ts` provides the deterministic library primitives (`advanceMemoryTaskCount`,
   `markMemoryEntriesUsed`, `detectPruningCandidates`, `planMemoryPruning`,
   `applyApprovedMemoryPruning`), satisfying #217 acceptance criteria 1 and 2 at the library

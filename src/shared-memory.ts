@@ -12,6 +12,7 @@ export type MemoryEntry = {
 };
 
 export const STALE_TASK_THRESHOLD = 20;
+export const MAX_TASK_COUNT_STEP = 1000;
 
 export type BootstrapContext = {
   projectRoot: string;
@@ -321,7 +322,7 @@ export function formatSharedMemory(
 ): string {
   const lines = ['# Shared Operator memory'];
   if (options?.taskCount !== undefined) {
-    if (!Number.isInteger(options.taskCount) || options.taskCount < 0) {
+    if (!Number.isSafeInteger(options.taskCount) || options.taskCount < 0) {
       throw new Error('Task count must be a non-negative integer.');
     }
     lines.push(`Task count: ${options.taskCount}`);
@@ -487,6 +488,14 @@ export function writeSharedMemorySerialized(
         : maxEntryTask >= 0
           ? maxEntryTask
           : undefined;
+    if (taskCount !== undefined) {
+      if (!Number.isSafeInteger(taskCount) || taskCount < 0) {
+        throw new Error('Task count must be a non-negative integer.');
+      }
+      if (maxEntryTask > taskCount) {
+        throw new Error(`Cannot write MEMORY.md with Task count ${taskCount} lower than entry task metadata (${maxEntryTask}).`);
+      }
+    }
     const formatted = formatSharedMemory(deduplicated, taskCount !== undefined ? { taskCount } : undefined);
     const newHash = createHash('sha256').update(formatted).digest('hex');
     writeFileSync(tempPath, formatted, 'utf8');
@@ -518,7 +527,7 @@ export function advanceMemoryTaskCount(state: {
     return {
       ...entry,
       addedAtTask: entry.addedAtTask ?? nextTaskCount,
-      lastUsedAtTask: entry.lastUsedAtTask ?? nextTaskCount,
+      lastUsedAtTask: entry.lastUsedAtTask ?? entry.addedAtTask ?? nextTaskCount,
     };
   });
   return { taskCount: nextTaskCount, entries };
@@ -538,7 +547,7 @@ export function markMemoryEntriesUsed(
   usedEntries: readonly MemoryEntry[],
   currentTaskCount: number
 ): MemoryEntry[] {
-  if (!Number.isInteger(currentTaskCount) || currentTaskCount < 0) {
+  if (!Number.isSafeInteger(currentTaskCount) || currentTaskCount < 0) {
     throw new Error('currentTaskCount must be a non-negative integer.');
   }
   const usedKeys = new Set(usedEntries.map((e) => baseMemoryIdentityKey(e)));
@@ -947,12 +956,12 @@ export function detectPruningCandidates(options: {
     .map((r) => normalizeKey(r))
     .filter((r) => r.length > 0);
   const staleThreshold = options.staleThreshold ?? STALE_TASK_THRESHOLD;
-  if (!Number.isInteger(staleThreshold) || staleThreshold < 1) {
+  if (!Number.isSafeInteger(staleThreshold) || staleThreshold < 1) {
     throw new Error('staleThreshold must be a positive integer.');
   }
   if (
     options.currentTaskCount !== undefined &&
-    (!Number.isInteger(options.currentTaskCount) || options.currentTaskCount < 0)
+    (!Number.isSafeInteger(options.currentTaskCount) || options.currentTaskCount < 0)
   ) {
     throw new Error('currentTaskCount must be a non-negative integer.');
   }
@@ -1314,7 +1323,7 @@ export function planMemoryPruning(options: {
 }): MemoryPruningPlan {
   if (
     options.currentTaskCount !== undefined &&
-    (!Number.isInteger(options.currentTaskCount) || options.currentTaskCount < 0)
+    (!Number.isSafeInteger(options.currentTaskCount) || options.currentTaskCount < 0)
   ) {
     throw new Error('currentTaskCount must be a non-negative integer.');
   }
@@ -1694,6 +1703,12 @@ export function applyApprovedMemoryPruning(options: {
   if (currentMem.hash !== options.memoryBaselineHash) {
     throw new Error('Concurrent modification detected on shared MEMORY.md. Baseline hash does not match current file on disk.');
   }
+  const hasEntryTaskMetadata = plan.updatedMemoryEntries.some(
+    (e) => e.addedAtTask !== undefined || e.lastUsedAtTask !== undefined
+  );
+  if (hasEntryTaskMetadata && plan.currentTaskCount === undefined) {
+    throw new Error('Cannot apply memory pruning plan with entry task metadata when currentTaskCount is undefined.');
+  }
   if (plan.currentTaskCount !== undefined) {
     if (!Number.isSafeInteger(plan.currentTaskCount) || plan.currentTaskCount < 0) {
       throw new Error('Memory pruning plan currentTaskCount must be a safe non-negative integer.');
@@ -1701,8 +1716,8 @@ export function applyApprovedMemoryPruning(options: {
     if (plan.currentTaskCount < currentMem.taskCount) {
       throw new Error('Cannot apply memory pruning plan with a currentTaskCount older than the on-disk MEMORY.md task count.');
     }
-    if (plan.currentTaskCount - currentMem.taskCount > 1000) {
-      throw new Error('Cannot apply memory pruning plan whose currentTaskCount jumps more than 1000 tasks ahead of on-disk MEMORY.md.');
+    if (plan.currentTaskCount - currentMem.taskCount > MAX_TASK_COUNT_STEP) {
+      throw new Error(`Cannot apply memory pruning plan whose currentTaskCount jumps more than ${MAX_TASK_COUNT_STEP} tasks ahead of on-disk MEMORY.md.`);
     }
     for (const e of plan.updatedMemoryEntries) {
       if (
