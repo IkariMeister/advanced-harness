@@ -14,7 +14,7 @@ type Row = Record<string, unknown>;
 export type Snapshot = { agents: Row[]; models: Row[]; providers: Row[] };
 export type Check = { role: string; issues: string[]; model?: string };
 export type Report = { checks: Check[]; ok: boolean };
-export type RuntimeOptions = { directory: string; executable?: string; server?: string };
+export type RuntimeOptions = { directory: string; executable?: string; server?: string; timeoutMs?: number };
 export type Query = (path: string) => Promise<unknown>;
 const object = (value: unknown): value is Row => !!value && typeof value === 'object' && !Array.isArray(value);
 /** Only controlled, credential-free messages may be shown by the CLIs. */
@@ -82,24 +82,90 @@ export function decodeRows(response: unknown, directory: string, kind: keyof Sna
   return rows;
 }
 
+export const DEFAULT_CLI_TIMEOUT_MS = 15000;
+export const MAX_CLI_TIMEOUT_MS = 2147483647;
+
+export function parseCliTimeoutMs(raw: string): number | undefined {
+  if (!/^\d+$/.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_CLI_TIMEOUT_MS ? parsed : undefined;
+}
+
+export function effectiveTimeoutMs(timeoutMs?: number): number {
+  return typeof timeoutMs === 'number' && Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= MAX_CLI_TIMEOUT_MS
+    ? timeoutMs
+    : DEFAULT_CLI_TIMEOUT_MS;
+}
+
+function normalizeExecutablePath(value: string): string {
+  const expanded = (value.startsWith('~/') || value.startsWith('~\\'))
+    ? join(homedir(), value.slice(2))
+    : value;
+  const baseDir = process.env.INIT_CWD || process.cwd();
+  return (expanded.includes('/') || expanded.includes('\\')) ? resolve(baseDir, expanded) : expanded;
+}
+
 export function findOpenCode(explicit?: string): string {
-  if (explicit) return explicit;
-  if (process.env.OPENCODE_BIN) return process.env.OPENCODE_BIN;
+  if (explicit) return normalizeExecutablePath(explicit);
+  if (process.env.OPENCODE_BIN) return normalizeExecutablePath(process.env.OPENCODE_BIN);
   // Desktop installs do not always put their bundled CLI on PATH.
   const desktop = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Programs', '@opencodedesktop', 'resources', 'opencode-cli.exe');
   return process.platform === 'win32' && existsSync(desktop) ? desktop : 'opencode';
 }
 
+const SUPPRESSED_SUFFIX = 'Raw output suppressed to protect credentials.';
+
+function executableLabel(executable: string): string {
+  // Split on both POSIX and Windows separators; accepted residual risk: the
+  // filename itself could still reflect user-supplied text.
+  const segments = executable.split(/[\\/]+/).filter(Boolean);
+  return segments[segments.length - 1] || executable;
+}
+
+export function classifyCliQueryError(error: unknown, executable: string, timeoutMs: number): DiagnosticError {
+  const label = executableLabel(executable);
+  if (error instanceof SyntaxError) {
+    return new DiagnosticError(`OpenCode API check returned non-JSON output. Verify OpenCode V2 CLI compatibility (opencode api get) and server connection (--server). ${SUPPRESSED_SUFFIX}`);
+  }
+  const err = object(error) ? error : {};
+  if (err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+    return new DiagnosticError(`OpenCode API check output exceeded the buffer limit. Check service status and server connection (--server). ${SUPPRESSED_SUFFIX}`);
+  }
+  if (err.code === 'ETIMEDOUT' || err.killed === true) {
+    return new DiagnosticError(`OpenCode API check timed out after ${timeoutMs}ms. Check service status and server connection (--server). ${SUPPRESSED_SUFFIX}`);
+  }
+  if (err.code === 'ENOENT') {
+    return new DiagnosticError(`OpenCode CLI executable was not found ("${label}"). Check PATH, OPENCODE_BIN, or --opencode. ${SUPPRESSED_SUFFIX}`);
+  }
+  if (
+    err.code === 'EACCES'
+    || err.code === 'EPERM'
+    || err.code === 'EISDIR'
+    || err.code === 'ENOEXEC'
+    || err.code === 'UNKNOWN'
+    || err.code === 'EINVAL'
+    || err.code === 'EFTYPE'
+    || (/\.(?:jsonc?)$/i.test(executable) && typeof err.code === 'string')
+  ) {
+    return new DiagnosticError(`OpenCode CLI path is not an executable binary ("${label}"). Pass the opencode CLI binary to --opencode, not a config file. ${SUPPRESSED_SUFFIX}`);
+  }
+  if (typeof err.code === 'number') {
+    return new DiagnosticError(`OpenCode API check exited with status ${err.code}. Verify OpenCode V2 CLI compatibility (opencode api get), service status, and server connection (--server). ${SUPPRESSED_SUFFIX}`);
+  }
+  return new DiagnosticError(`OpenCode API check failed or timed out. Check CLI path (--opencode), service status, and server connection. ${SUPPRESSED_SUFFIX}`);
+}
+
 export function cliQuery(options: RuntimeOptions): Query {
   const executable = findOpenCode(options.executable);
+  const timeoutMs = effectiveTimeoutMs(options.timeoutMs);
   return async path => {
     const args = ['api', ...(options.server ? ['--server', options.server] : []), 'get', `${path}?location[directory]=${encodeURIComponent(resolve(options.directory))}`];
     try {
-      const { stdout } = await promisify(execFile)(executable, args, { cwd: options.directory, timeout: 15000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+      const { stdout } = await promisify(execFile)(executable, args, { cwd: options.directory, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
       return JSON.parse(stdout) as unknown;
-    } catch {
+    } catch (error) {
       // Never echo CLI stderr/stdout: plugin/config errors can contain secrets.
-      throw new DiagnosticError('OpenCode API check failed or timed out. Check CLI path (--opencode), service status, and server connection. Raw output suppressed to protect credentials.');
+      throw classifyCliQueryError(error, executable, timeoutMs);
     }
   };
 }

@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assessRuntime, cliQuery, decodeRows, diagnoseHost, expectedAgents, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
+import { assessRuntime, classifyCliQueryError, cliQuery, DEFAULT_CLI_TIMEOUT_MS, decodeRows, diagnoseHost, effectiveTimeoutMs, expectedAgents, MAX_CLI_TIMEOUT_MS, parseCliTimeoutMs, runtimeModelReference, verifyRuntime, type Snapshot } from '../src/native-diagnostics.ts';
 import { hostPermissionMatrix, permissionCapabilities } from '../src/host-permission-capabilities.ts';
 import { nativeRoles } from '../src/native-installer.ts';
 import { clearRegisteredAdapters, getHostAdapter, registerHostAdapter, supportedHosts, type HostAdapter } from '../src/host-registry.ts';
@@ -122,25 +122,162 @@ test('persistent missing roles stop after bounded retries; API errors remain inc
   await assert.rejects(verifyRuntime({ directory }, expected, async () => ({ error: 'private details' })), /inconclusive/);
 });
 
-test('CLI transport errors suppress potentially sensitive raw stderr', async () => {
-  const query = cliQuery({ directory: process.cwd(), executable: 'definitely-not-an-installed-opencode-cli' });
-  await assert.rejects(query('/api/agent'), error => error instanceof Error && /Raw output suppressed/.test(error.message) && !error.message.includes('ENOENT'));
+test('CLI transport errors suppress potentially sensitive raw stderr and classify failure modes', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'opencode-cli-errors-'));
+  const secretDir = join(root, 'secret-user-token-dir');
+  mkdirSync(secretDir, { recursive: true });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  try {
+    const missing = cliQuery({ directory: root, executable: join(secretDir, 'definitely-not-an-installed-opencode-cli') });
+    await assert.rejects(
+      missing('/api/agent'),
+      error => error instanceof Error
+        && /executable was not found \("definitely-not-an-installed-opencode-cli"\)/.test(error.message)
+        && !error.message.includes('secret-user-token-dir')
+        && /Raw output suppressed/.test(error.message)
+        && !error.message.includes('ENOENT'),
+    );
+
+    const configFile = join(secretDir, 'opencode.json');
+    writeFileSync(configFile, '{}');
+    const nonExec = cliQuery({ directory: root, executable: configFile });
+    await assert.rejects(
+      nonExec('/api/agent'),
+      error => error instanceof Error
+        && /not an executable binary \("opencode\.json"\)/.test(error.message)
+        && !error.message.includes('secret-user-token-dir')
+        && /Raw output suppressed/.test(error.message),
+    );
+
+    for (const code of ['EACCES', 'EPERM', 'EISDIR', 'ENOEXEC', 'UNKNOWN', 'EINVAL', 'EFTYPE']) {
+      const err = classifyCliQueryError({ code }, join(secretDir, 'fake-bin'), 15000);
+      assert.match(err.message, /not an executable binary \("fake-bin"\)/, code);
+      assert.ok(!err.message.includes('secret-user-token-dir'), code);
+    }
+
+    const maxBufErr = classifyCliQueryError({ code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', killed: true }, join(secretDir, 'opencode'), 15000);
+    assert.match(maxBufErr.message, /buffer limit/);
+    assert.doesNotMatch(maxBufErr.message, /timed out after/);
+
+    const externalSigterm = classifyCliQueryError({ signal: 'SIGTERM', killed: false }, join(secretDir, 'opencode'), 15000);
+    assert.doesNotMatch(externalSigterm.message, /timed out after/);
+    assert.match(externalSigterm.message, /Raw output suppressed/);
+
+    const apiScript = join(root, 'api.js');
+    writeFileSync(apiScript, "console.error('SECRET_TOKEN=should-never-appear'); process.exit(7);\n");
+    const nonzero = cliQuery({ directory: root, executable: process.execPath });
+    await assert.rejects(nonzero('/api/agent'), error => error instanceof Error && /exited with status 7/.test(error.message) && /Raw output suppressed/.test(error.message) && !error.message.includes('SECRET_TOKEN'));
+
+    writeFileSync(apiScript, "console.log('not-json-secret=123');\n");
+    const badJson = cliQuery({ directory: root, executable: process.execPath });
+    await assert.rejects(badJson('/api/agent'), error => error instanceof Error && /non-JSON output/.test(error.message) && /Raw output suppressed/.test(error.message) && !error.message.includes('not-json-secret'));
+
+    writeFileSync(apiScript, 'setTimeout(() => {}, 5000);\n');
+    const timedOut = cliQuery({ directory: root, executable: process.execPath, timeoutMs: 350 });
+    await assert.rejects(timedOut('/api/agent'), error => error instanceof Error && /timed out after 350ms/.test(error.message) && /Raw output suppressed/.test(error.message));
+
+    const winPathErr = classifyCliQueryError({ code: 'ENOENT' }, String.raw`C:\Users\secret-user\opencode.exe`, 15000);
+    assert.match(winPathErr.message, /executable was not found \("opencode\.exe"\)/);
+    assert.ok(!winPathErr.message.includes('secret-user'));
+
+    assert.equal(effectiveTimeoutMs(undefined), DEFAULT_CLI_TIMEOUT_MS);
+    for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5, MAX_CLI_TIMEOUT_MS + 1]) {
+      assert.equal(effectiveTimeoutMs(invalid), DEFAULT_CLI_TIMEOUT_MS, String(invalid));
+    }
+    assert.equal(effectiveTimeoutMs(1), 1);
+    assert.equal(effectiveTimeoutMs(MAX_CLI_TIMEOUT_MS), MAX_CLI_TIMEOUT_MS);
+
+    for (const raw of ['0', '-1', '1e3', '0x10', ' 5 ', 'abc', String(MAX_CLI_TIMEOUT_MS + 1)]) {
+      assert.equal(parseCliTimeoutMs(raw), undefined, raw);
+    }
+    assert.equal(parseCliTimeoutMs('1'), 1);
+    assert.equal(parseCliTimeoutMs(String(MAX_CLI_TIMEOUT_MS)), MAX_CLI_TIMEOUT_MS);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test('doctor CLI precedence is explicit executable, OPENCODE_BIN, then platform discovery', async () => {
+test('doctor CLI precedence, ~/ expansion, and INIT_CWD/cwd-relative executable resolution', async () => {
   const { findOpenCode } = await import('../src/native-diagnostics.ts');
-  const previous = process.env.OPENCODE_BIN;
+  const { homedir } = await import('node:os');
+  const previousBin = process.env.OPENCODE_BIN;
+  const previousInitCwd = process.env.INIT_CWD;
   try {
-    process.env.OPENCODE_BIN = 'environment-opencode';
-    assert.equal(findOpenCode('explicit-opencode'), 'explicit-opencode');
-    assert.equal(findOpenCode(), 'environment-opencode');
+    delete process.env.INIT_CWD;
+    process.env.OPENCODE_BIN = '~/bin/opencode';
+    assert.equal(findOpenCode('~/custom/opencode'), join(homedir(), 'custom', 'opencode'));
+    assert.equal(findOpenCode(), join(homedir(), 'bin', 'opencode'));
+    assert.equal(findOpenCode('~'), '~');
+    assert.equal(findOpenCode('~other/opencode'), resolve('~other/opencode'));
+    assert.equal(findOpenCode('$HOME/bin/opencode'), resolve('$HOME/bin/opencode'));
+    assert.equal(findOpenCode('./bin/opencode'), resolve('./bin/opencode'));
+    assert.equal(findOpenCode('opencode'), 'opencode');
     delete process.env.OPENCODE_BIN;
     const discovered = findOpenCode();
     assert.equal(discovered, process.platform === 'win32' ? (discovered.endsWith('opencode-cli.exe') ? discovered : 'opencode') : 'opencode');
   } finally {
-    if (previous === undefined) delete process.env.OPENCODE_BIN;
-    else process.env.OPENCODE_BIN = previous;
+    if (previousBin === undefined) delete process.env.OPENCODE_BIN;
+    else process.env.OPENCODE_BIN = previousBin;
+    if (previousInitCwd === undefined) delete process.env.INIT_CWD;
+    else process.env.INIT_CWD = previousInitCwd;
   }
+});
+
+test('relative --opencode resolves against INIT_CWD or cwd rather than --project, while bare names stay bare', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'opencode-cwd-vs-project-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cwdDir = join(root, 'caller-cwd');
+  const initCwdDir = join(root, 'npm-init-cwd');
+  const projectDir = join(root, 'target-project');
+  mkdirSync(join(cwdDir, 'bin'), { recursive: true });
+  mkdirSync(join(initCwdDir, 'bin'), { recursive: true });
+  mkdirSync(projectDir, { recursive: true });
+
+  const previousCwd = process.cwd();
+  const previousInitCwd = process.env.INIT_CWD;
+  try {
+    delete process.env.INIT_CWD;
+    process.chdir(cwdDir);
+    const { findOpenCode } = await import('../src/native-diagnostics.ts');
+    assert.equal(findOpenCode('./bin/opencode'), join(realpathSync(cwdDir), 'bin', 'opencode'));
+    assert.notEqual(findOpenCode('./bin/opencode'), join(realpathSync(projectDir), 'bin', 'opencode'));
+    assert.equal(findOpenCode('opencode'), 'opencode');
+
+    process.env.INIT_CWD = '';
+    assert.equal(findOpenCode('./bin/opencode'), join(realpathSync(cwdDir), 'bin', 'opencode'));
+
+    process.env.INIT_CWD = 'relative-init-cwd';
+    assert.equal(findOpenCode('./bin/opencode'), join(realpathSync(cwdDir), 'relative-init-cwd', 'bin', 'opencode'));
+
+    process.env.INIT_CWD = initCwdDir;
+    const { homedir } = await import('node:os');
+    assert.equal(findOpenCode('./bin/opencode'), join(initCwdDir, 'bin', 'opencode'));
+    assert.equal(findOpenCode('~\\bin\\opencode'), join(homedir(), 'bin', 'opencode'));
+    assert.equal(findOpenCode('opencode'), 'opencode');
+  } finally {
+    process.chdir(previousCwd);
+    if (previousInitCwd === undefined) delete process.env.INIT_CWD;
+    else process.env.INIT_CWD = previousInitCwd;
+  }
+});
+
+test('harness:doctor resolves --project and its omitted default against INIT_CWD when set', t => {
+  const { home, xdg, project, run } = sandboxedDoctor(t);
+  const initRoot = mkdtempSync(join(tmpdir(), 'harness-doctor-init-cwd-'));
+  t.after(() => rmSync(initRoot, { recursive: true, force: true }));
+  const nestedProject = join(initRoot, 'nested-project');
+  mkdirSync(nestedProject, { recursive: true });
+  const script = fileURLToPath(new URL('../scripts/diagnose-native-harness.ts', import.meta.url));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: xdg, INIT_CWD: initRoot };
+  const runWithInitCwd = (cliArgs: string[]) => execFileSync(process.execPath, [script, ...cliArgs], { env, encoding: 'utf8', stdio: 'pipe' });
+
+  const omitted = runWithInitCwd(['--host', 'opencode', '--scope', 'project']);
+  assert.match(omitted, new RegExp(`Checking location: ${initRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+
+  const relative = runWithInitCwd(['--host', 'opencode', '--scope', 'project', '--project', './nested-project']);
+  assert.match(relative, new RegExp(`Checking location: ${nestedProject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.ok(run(['--host', 'opencode', '--scope', 'project', '--project', project]).status === 0);
 });
 
 test('Windows executable discovery uses a controlled LOCALAPPDATA fixture and falls back when absent', { skip: process.platform !== 'win32' }, async t => {
@@ -199,6 +336,12 @@ test('doctor surfaces CLI option errors instead of a generic inconclusive messag
     [['--scope', 'everywhere'], /Invalid --scope; use global or project/],
     [['--project', project, '--project', project], /Duplicate option: --project/],
     [['--scope'], /Missing value for --scope/],
+    [['--timeout', '0'], /Invalid --timeout/],
+    [['--timeout', '1e3'], /Invalid --timeout/],
+    [['--timeout', '0x10'], /Invalid --timeout/],
+    [['--timeout', ' 5 '], /Invalid --timeout/],
+    [['--timeout', '3000000000'], /Invalid --timeout/],
+    [['--timeout', 'abc'], /Invalid --timeout/],
     [['--host', 'not-a-host'], /not-a-host/],
   ] as const) {
     const result = run([...args]);
