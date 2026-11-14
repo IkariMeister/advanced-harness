@@ -14,7 +14,7 @@ type Row = Record<string, unknown>;
 export type Snapshot = { agents: Row[]; models: Row[]; providers: Row[] };
 export type Check = { role: string; issues: string[]; model?: string };
 export type Report = { checks: Check[]; ok: boolean };
-export type RuntimeOptions = { directory: string; executable?: string; server?: string };
+export type RuntimeOptions = { directory: string; executable?: string; server?: string; timeoutMs?: number };
 export type Query = (path: string) => Promise<unknown>;
 const object = (value: unknown): value is Row => !!value && typeof value === 'object' && !Array.isArray(value);
 /** Only controlled, credential-free messages may be shown by the CLIs. */
@@ -82,24 +82,54 @@ export function decodeRows(response: unknown, directory: string, kind: keyof Sna
   return rows;
 }
 
+function normalizeExecutablePath(value: string): string {
+  const expanded = value === '~'
+    ? homedir()
+    : (value.startsWith('~/') || value.startsWith('~\\')) ? join(homedir(), value.slice(2)) : value;
+  return (expanded.includes('/') || expanded.includes('\\')) ? resolve(expanded) : expanded;
+}
+
 export function findOpenCode(explicit?: string): string {
-  if (explicit) return explicit;
-  if (process.env.OPENCODE_BIN) return process.env.OPENCODE_BIN;
+  if (explicit) return normalizeExecutablePath(explicit);
+  if (process.env.OPENCODE_BIN) return normalizeExecutablePath(process.env.OPENCODE_BIN);
   // Desktop installs do not always put their bundled CLI on PATH.
   const desktop = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Programs', '@opencodedesktop', 'resources', 'opencode-cli.exe');
   return process.platform === 'win32' && existsSync(desktop) ? desktop : 'opencode';
 }
 
+const SUPPRESSED_SUFFIX = 'Raw output suppressed to protect credentials.';
+
+function classifyCliQueryError(error: unknown, executable: string, timeoutMs: number): DiagnosticError {
+  if (error instanceof SyntaxError) {
+    return new DiagnosticError(`OpenCode API check returned non-JSON output. Verify OpenCode V2 CLI compatibility (opencode api get) and server connection (--server). ${SUPPRESSED_SUFFIX}`);
+  }
+  const err = object(error) ? error : {};
+  if (err.killed === true || err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
+    return new DiagnosticError(`OpenCode API check timed out after ${timeoutMs}ms. Check service status and server connection (--server). ${SUPPRESSED_SUFFIX}`);
+  }
+  if (err.code === 'ENOENT') {
+    return new DiagnosticError(`OpenCode CLI executable was not found ("${executable}"). Check PATH, OPENCODE_BIN, or --opencode. ${SUPPRESSED_SUFFIX}`);
+  }
+  if (err.code === 'EACCES' || err.code === 'EPERM' || err.code === 'EISDIR' || err.code === 'ENOEXEC' || (/\.(?:jsonc?)$/i.test(executable) && typeof err.code === 'string')) {
+    return new DiagnosticError(`OpenCode CLI path is not an executable binary ("${executable}"). Pass the opencode CLI binary to --opencode, not a config file. ${SUPPRESSED_SUFFIX}`);
+  }
+  if (typeof err.code === 'number') {
+    return new DiagnosticError(`OpenCode API check exited with status ${err.code}. Verify OpenCode V2 CLI compatibility (opencode api get), service status, and server connection (--server). ${SUPPRESSED_SUFFIX}`);
+  }
+  return new DiagnosticError(`OpenCode API check failed or timed out. Check CLI path (--opencode), service status, and server connection. ${SUPPRESSED_SUFFIX}`);
+}
+
 export function cliQuery(options: RuntimeOptions): Query {
   const executable = findOpenCode(options.executable);
+  const timeoutMs = options.timeoutMs ?? 15000;
   return async path => {
     const args = ['api', ...(options.server ? ['--server', options.server] : []), 'get', `${path}?location[directory]=${encodeURIComponent(resolve(options.directory))}`];
     try {
-      const { stdout } = await promisify(execFile)(executable, args, { cwd: options.directory, timeout: 15000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+      const { stdout } = await promisify(execFile)(executable, args, { cwd: options.directory, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
       return JSON.parse(stdout) as unknown;
-    } catch {
+    } catch (error) {
       // Never echo CLI stderr/stdout: plugin/config errors can contain secrets.
-      throw new DiagnosticError('OpenCode API check failed or timed out. Check CLI path (--opencode), service status, and server connection. Raw output suppressed to protect credentials.');
+      throw classifyCliQueryError(error, executable, timeoutMs);
     }
   };
 }
