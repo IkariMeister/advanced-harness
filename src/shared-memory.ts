@@ -1343,7 +1343,10 @@ export function planMemoryPruning(options: {
       // for stale candidates, keeping restarts its task count at currentTaskCount.
       const candidate = candidateMap.get(key);
       let reviewed = candidate ? markEntryReviewed(entry, candidate) : entry;
-      if (candidate?.kind === 'stale' && options.currentTaskCount !== undefined) {
+      if (candidate?.kind === 'stale') {
+        if (options.currentTaskCount === undefined) {
+          throw new Error('Keeping a stale pruning candidate requires currentTaskCount to restart its task count.');
+        }
         reviewed = {
           ...reviewed,
           addedAtTask: reviewed.addedAtTask ?? options.currentTaskCount,

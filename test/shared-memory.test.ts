@@ -2116,6 +2116,17 @@ test('stale pruning: task count serialization, backfill, usage tracking, 20-task
     assert.equal(candidatesAt21[0]?.entry.fact, legacyEntry2.fact);
     assert.equal(candidatesAt21[0]?.evidenceKey, 'unused-since-1');
 
+    // Keep disposition requires currentTaskCount when keeping a stale candidate
+    assert.throws(
+      () =>
+        planMemoryPruning({
+          memoryEntries: currentEntries,
+          candidates: candidatesAt21,
+          dispositions: [{ entry: candidatesAt21[0]!.entry, disposition: 'keep' }],
+        }),
+      /requires currentTaskCount/
+    );
+
     // Keep disposition restarts entry2's count at 21 and marks reviewed-keep
     const keepPlan = planMemoryPruning({
       memoryEntries: currentEntries,
