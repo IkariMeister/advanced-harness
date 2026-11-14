@@ -69,7 +69,7 @@ test('trusted base policy replaces path globs, normalizes exact allowlist paths,
   assert.deepEqual(policy.sensitivePathGlobs, ['**/*.bin']);
   assert.equal(policy.secretExceptions[0]?.path, 'src/token.ts');
   assert.equal(policy.secretExceptions[0]?.justification, justification);
-  assert.deepEqual(createDefaultChecks().map(check => check.id), ['changeset', 'base-context', 'policy-integrity', 'worktree-boundary', 'path-policy', 'secret-scan', 'policy']);
+  assert.deepEqual(createDefaultChecks().map(check => check.id), ['changeset', 'base-context', 'policy-integrity', 'worktree-boundary', 'path-policy', 'secret-scan', 'test-change', 'acceptance-criteria', 'policy']);
   const secretScanner: typeof scanAddedText = (changes, dependencies) => scanAddedText(changes, { ...dependencies, probe: () => ({ available: false, backend: 'builtin', reason: 'Gitleaks is not installed.' }) });
   const result = await runPreflight({ worktree: root, base: 'main', secretScanner });
   assert.equal(result.checks.find(check => check.id === 'path-policy')?.status, 'pass', 'replacement globs do not retain the default .env rule');
@@ -394,12 +394,13 @@ test('preflight policy schema rejects unknown keys at every level and unsupporte
 });
 
 test('fixed check IDs are rejected as fixed, unknown IDs are rejected, and enabled and severity are typed', () => {
-  for (const id of ['changeset', 'base-context', 'policy-integrity', 'policy', 'secret-scan', 'worktree-boundary']) {
-    assert.throws(() => validatePreflightConfig(JSON.stringify({ checks: { [id]: { enabled: false } } })), /is a fixed check.*path-policy/, id);
+  for (const id of ['changeset', 'base-context', 'policy-integrity', 'policy', 'secret-scan', 'worktree-boundary', 'acceptance-criteria']) {
+    assert.throws(() => validatePreflightConfig(JSON.stringify({ checks: { [id]: { enabled: false } } })), /is a fixed check.*path-policy, test-change/, id);
   }
-  assert.throws(() => validatePreflightConfig(JSON.stringify({ checks: { nope: {} } })), /is not a known check.*path-policy/);
+  assert.throws(() => validatePreflightConfig(JSON.stringify({ checks: { nope: {} } })), /is not a known check.*path-policy, test-change/);
   assert.throws(() => validatePreflightConfig(JSON.stringify({ checks: { 'path-policy': { enabled: 'no' } } })), /enabled must be true or false/);
   assert.throws(() => validatePreflightConfig(JSON.stringify({ checks: { 'path-policy': { severity: 'fatal' } } })), /severity must be "block" or "warn"/);
+  assert.deepEqual(validatePreflightConfig(JSON.stringify({ checks: { 'test-change': { enabled: false, severity: 'block' } } })).checks, { 'test-change': { enabled: false, severity: 'block' } });
 });
 
 test('forbiddenPathGlobs accepts the array and object forms, rejects unsafe globs, and requires prodGlobs and testGlobs together', () => {
@@ -470,12 +471,47 @@ test('add and replace forbidden-glob modes change the effective list, and the ro
   assert.match(policyRow(replacedResult)?.evidence.join('\n') ?? '', /Forbidden path globs: mode replace, 0 glob\(s\)\./);
 });
 
-test('recorded prodGlobs and testGlobs are not enforced, so the policy row warns', async () => {
-  const root = policyRepo({ prodGlobs: ['src/**'], testGlobs: ['test/**'] });
+test('prodGlobs and testGlobs are enforced by test-change, so the policy row passes; disabling test-change makes the row warn', async () => {
+  const enforced = policyRepo({ prodGlobs: ['src/**'], testGlobs: ['test/**'] });
+  const result = await runPreflight({ worktree: enforced, base: 'main', secretScanner: noGitleaks });
+  assert.equal(policyRow(result)?.status, 'pass', JSON.stringify(result));
+  assert.doesNotMatch(policyRow(result)?.evidence.join('\n') ?? '', /not enforced yet|BH-070/);
+  assert.equal(result.checks.find(check => check.id === 'test-change')?.status, 'pass');
+
+  const disabled = policyRepo({ checks: { 'test-change': { enabled: false } }, prodGlobs: ['src/**'], testGlobs: ['test/**'] });
+  const disabledResult = await runPreflight({ worktree: disabled, base: 'main', secretScanner: noGitleaks });
+  assert.equal(disabledResult.checks.some(check => check.id === 'test-change'), false, 'a disabled test-change is skipped');
+  assert.equal(policyRow(disabledResult)?.status, 'warn');
+  assert.match(policyRow(disabledResult)?.evidence.join('\n') ?? '', /prodGlobs and testGlobs are inert while test-change is disabled/);
+  assert.ok(disabledResult.warnings.some(line => line.startsWith('policy: ')));
+});
+
+test('test-change configured without prodGlobs and testGlobs warns on the policy row, and unconfigured globs pass quietly', async () => {
+  for (const checks of [{ 'test-change': { severity: 'block' } }, { 'test-change': { enabled: true } }]) {
+    const root = policyRepo({ checks });
+    const result = await runPreflight({ worktree: root, base: 'main', secretScanner: noGitleaks });
+    assert.equal(policyRow(result)?.status, 'warn', JSON.stringify(checks));
+    assert.match(policyRow(result)?.evidence.join('\n') ?? '', /Recorded but not enforced: test-change is configured but prodGlobs\/testGlobs are not set; the check does not run\./);
+    assert.equal(result.checks.find(check => check.id === 'test-change')?.status, 'pass', 'the check itself reports its not-run pass');
+  }
+  const quiet = policyRepo({ forbiddenPathGlobs: ['**/*.pem'] });
+  const quietResult = await runPreflight({ worktree: quiet, base: 'main', secretScanner: noGitleaks });
+  assert.equal(policyRow(quietResult)?.status, 'pass', JSON.stringify(quietResult));
+  assert.doesNotMatch(policyRow(quietResult)?.evidence.join('\n') ?? '', /test-change/);
+});
+
+test('a disabled test-change with severity block and no globs adds no missing-globs warning; with globs only the inert rule applies', async () => {
+  const root = policyRepo({ checks: { 'test-change': { enabled: false, severity: 'block' } } });
   const result = await runPreflight({ worktree: root, base: 'main', secretScanner: noGitleaks });
-  assert.equal(policyRow(result)?.status, 'warn');
-  assert.match(policyRow(result)?.evidence.join('\n') ?? '', /prodGlobs and testGlobs are recorded for BH-070 and not enforced yet/);
-  assert.ok(result.warnings.some(line => line.startsWith('policy: ')));
+  assert.equal(result.checks.some(check => check.id === 'test-change'), false, 'a disabled test-change is skipped');
+  assert.equal(policyRow(result)?.status, 'pass', JSON.stringify(result));
+  assert.doesNotMatch(policyRow(result)?.evidence.join('\n') ?? '', /Recorded but not enforced/, 'a disabled check is not configured, so no missing-globs warning');
+
+  const withGlobs = policyRepo({ checks: { 'test-change': { enabled: false, severity: 'block' } }, prodGlobs: ['src/**'], testGlobs: ['test/**'] });
+  const globResult = await runPreflight({ worktree: withGlobs, base: 'main', secretScanner: noGitleaks });
+  assert.equal(policyRow(globResult)?.status, 'warn');
+  const notEnforced = (policyRow(globResult)?.evidence ?? []).filter(line => line.startsWith('Recorded but not enforced'));
+  assert.deepEqual(notEnforced, ['Recorded but not enforced: prodGlobs and testGlobs are inert while test-change is disabled.']);
 });
 
 test('a worktree edit to the policy file does not weaken the trusted policy in force', async () => {

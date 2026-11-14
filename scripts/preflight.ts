@@ -1,19 +1,24 @@
 import { realpathSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readAcceptanceCriteria } from '../src/preflight/criteria.ts';
 import { exitCodeFor, formatHuman, runPreflight } from '../src/preflight/runner.ts';
 
-const usage = `Usage: npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--json]
+const usage = `Usage: npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--criteria <file>] [--justify-no-tests "<text>"] [--json]
        npm run harness:preflight -- -h | --help
 
 Reports pre-publish evidence for a task worktree. It never records approval.
-  --worktree <path>  Task worktree to inspect (required)
-  --base <ref>       Base ref; defaults to baseBranch in project context.
-                     Required if the project context has no baseBranch.
-  --task <key>       Optional task or issue key (e.g. 182, #182, BH-067)
-                     to verify that HEAD matches the task branch.
-  --json             Print the result contract as JSON
-  -h, --help         Show this help message
+  --worktree <path>            Task worktree to inspect (required)
+  --base <ref>                 Base ref; defaults to baseBranch in project context.
+                               Required if the project context has no baseBranch.
+  --task <key>                 Optional task or issue key (e.g. 182, #182, BH-067)
+                               to verify that HEAD matches the task branch.
+  --criteria <file>            Acceptance criteria JSON: {"items":[{"text":"...","done":true}]}.
+                               Pending items warn; a missing or invalid file is inconclusive.
+  --justify-no-tests "<text>"  Justified bypass: turns a test-change block into a warning and
+                               records the text in the output. It is not approval.
+  --json                       Print the result contract as JSON
+  -h, --help                   Show this help message
 
 Exit codes: 0 pass (or --help), 1 blocked, 2 inconclusive or usage error.`;
 
@@ -40,6 +45,7 @@ export async function runCli(args: string[], deps: CliDeps = defaultDeps): Promi
   try {
     if (args.includes('--help') || args.includes('-h')) { deps.output(usage); return 0; }
     const options: Record<string, string> = {};
+    const valueFlags = ['--worktree', '--base', '--task', '--criteria', '--justify-no-tests'];
     let json = false;
     for (let index = 0; index < args.length; index += 1) {
       const flag = args[index]!;
@@ -47,15 +53,24 @@ export async function runCli(args: string[], deps: CliDeps = defaultDeps): Promi
       if (flag === '--ack-gitlink') {
         return fail('--ack-gitlink was removed. Move acknowledgements into trusted .harness/preflight.json under gitlinkAcknowledgements; see docs/preflight.md.');
       }
-      if (flag !== '--worktree' && flag !== '--base' && flag !== '--task') return fail(`Unknown option: ${flag}`);
+      if (!valueFlags.includes(flag)) return fail(`Unknown option: ${flag}`);
       if (options[flag] !== undefined) return fail(`Duplicate option: ${flag}`);
       const value = args[index + 1];
       if (!value || value.startsWith('--')) return fail(`Missing value for ${flag}`);
+      if (flag === '--justify-no-tests' && !value.trim()) return fail('--justify-no-tests requires a nonblank justification.');
       options[flag] = value;
       index += 1;
     }
     if (!options['--worktree']) return fail('Missing required --worktree.');
-    const result = await deps.runPreflight({ worktree: options['--worktree'], base: options['--base'], task: options['--task'] });
+    const criteriaPath = options['--criteria'];
+    const justification = options['--justify-no-tests'];
+    const result = await deps.runPreflight({
+      worktree: options['--worktree'],
+      base: options['--base'],
+      task: options['--task'],
+      ...(criteriaPath === undefined ? {} : { criteria: readAcceptanceCriteria(resolve(criteriaPath)) }),
+      ...(justification === undefined ? {} : { justifyNoTests: justification }),
+    });
     deps.output(json ? JSON.stringify(result, null, 2) : formatHuman(result));
     return exitCodeFor(result);
   } catch (error) {
