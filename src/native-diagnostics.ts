@@ -99,7 +99,7 @@ export function effectiveTimeoutMs(timeoutMs?: number): number {
 
 function normalizeExecutablePath(value: string): string {
   const expanded = (value.startsWith('~/') || value.startsWith('~\\'))
-    ? join(homedir(), value.slice(2))
+    ? join(homedir(), ...value.slice(2).split(/[\\/]+/).filter(Boolean))
     : value;
   const baseDir = process.env.INIT_CWD || process.cwd();
   return (expanded.includes('/') || expanded.includes('\\')) ? resolve(baseDir, expanded) : expanded;
