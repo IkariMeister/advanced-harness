@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -312,6 +312,23 @@ test('cliQuery shared caller resolves relative executable against INIT_CWD rathe
         && /executable was not found \("shared-opencode-cli"\)/.test(error.message)
         && !error.message.includes(initRoot),
     );
+
+    if (process.platform !== 'win32') {
+      const initBin = join(initRoot, 'bin');
+      const projectBin = join(projectDir, 'bin');
+      mkdirSync(initBin, { recursive: true });
+      mkdirSync(projectBin, { recursive: true });
+
+      const initStub = join(initBin, 'shared-opencode-cli');
+      const projectDecoy = join(projectBin, 'shared-opencode-cli');
+      writeFileSync(initStub, '#!/bin/sh\nprintf \'{"ok":true}\\n\'\n', 'utf8');
+      writeFileSync(projectDecoy, '#!/bin/sh\nexit 1\n', 'utf8');
+      chmodSync(initStub, 0o755);
+      chmodSync(projectDecoy, 0o755);
+
+      const result = await query('/api/model');
+      assert.deepEqual(result, { ok: true });
+    }
   } finally {
     if (previousInitCwd === undefined) delete process.env.INIT_CWD;
     else process.env.INIT_CWD = previousInitCwd;
