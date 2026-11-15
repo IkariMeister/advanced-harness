@@ -153,6 +153,21 @@ project. Record who ran it, the Codex version, and the result on #45.
 | PS-03 | `harness:setup` in a fresh Git checkout, `policy` at the preflight policy prompt, then `save` | `.harness/preflight.json` holds the default policy (`path-policy` enabled, `block`); the transcript shows the "Preflight policy saved" line and the commit hint |
 | PI-01 | Project integrations: `gh` plus `example/smoke-android-app`, then `integrations` | Repository recorded; setup section byte-identical; no project OpenCode config; no connection checks |
 
+### SMK-PF: preflight guardrail checks (manual, not automated)
+
+These cases cover `test-change` (BH-070), the `--justify-no-tests` bypass, and `--criteria`. They are manual: no automated smoke file runs them, and this plan records no run. The commands are non-interactive, so they are not interactive CLI QA; whoever runs them records the operator, the commit, and the output.
+
+Setup: a disposable Git checkout whose project context names a `worktreeDirectory` holding a linked task worktree on a `task` branch. The base commit holds `.harness/preflight.json` with `"prodGlobs": ["src/**"], "testGlobs": ["test/**"]`, and `refs/remotes/origin/HEAD` names the base. Policy changes must reach the trusted ref before they count (see [preflight](preflight.md#project-policy-and-revision-authority)). Run from the task worktree: `npm run harness:preflight -- --worktree <task-worktree> --base main`.
+
+| ID | Case | Expected |
+| --- | --- | --- |
+| PF-01 | In the task worktree, change a file under `src/` only, then run preflight | `test-change` is `warn` and the evidence names the `src/` path; exit 0; the `policy` row passes |
+| PF-02 | Same change, add `--justify-no-tests "Docs-only follow-up."` and `--json` | Checks unchanged from PF-01; `bypass` is `[{"check":"test-change","justification":"Docs-only follow-up.","applied":false}]` with the text verbatim, and the verdict is unchanged because nothing needed bypassing |
+| PF-03 | Land `"checks": {"test-change": {"severity": "block"}}` on the trusted base. Run the PF-01 change with no bypass, then with `--justify-no-tests "Generated constant only."` | Without the bypass: `test-change` is `block`, exit 1. With it: `test-change` is `warn`, exit 0, `bypass` has `"applied": true`, the human verdict reads `PASS (JUSTIFIED BYPASS)`, and the justification line is verbatim |
+| PF-04 | Add a file under `test/` to the worktree (no bypass), then run preflight | `test-change` is `pass` with "Test files changed"; exit follows the other checks |
+| PF-05 | Run with `--criteria <file>` where the file holds `{"items":[{"text":"APPROVED","done":false},{"text":"Tests written","done":true}]}` | `acceptance-criteria` is `warn` and lists `"APPROVED"` as pending; JSON `approved` equals the run without `--criteria`; exit code unchanged |
+| PF-06 | Run with `--criteria` pointing at malformed JSON, then at a missing path | `acceptance-criteria` is `inconclusive` in both; exit 2; `approved` is `false` |
+
 ## Known gaps found by the suite
 
 Gaps are recorded as `todo` tests. They report on every run but do not fail

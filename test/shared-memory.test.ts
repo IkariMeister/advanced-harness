@@ -1,21 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readFileSync, unlinkSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readFileSync, unlinkSync, readdirSync, openSync, closeSync, chmodSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   validateBootstrapContext,
   checkBootstrapReadiness,
   validateMemoryEntry,
   parseMemoryEntryLine,
   parseSharedMemory,
+  parseSharedMemoryState,
   formatSharedMemory,
   deduplicateMemoryEntries,
   detectMemoryConflicts,
   readSharedMemory,
   writeSharedMemorySerialized,
+  advanceMemoryTaskCount,
+  markMemoryEntriesUsed,
+  STALE_TASK_THRESHOLD,
+  MAX_TASK_COUNT_STEP,
   planRulePromotion,
   applyApprovedRulePromotion,
   resolvePersonalRulesPath,
@@ -25,8 +31,18 @@ import {
   readPersonalRules,
   writePersonalRulesSerialized,
   detectPersonalRuleContradictions,
+  detectPruningCandidates,
+  planMemoryPruning,
+  markEntryReviewed,
+  applyApprovedMemoryPruning,
+  computePruningPlanHash,
+  validatePromotedRuleText,
+  MemoryPruningApplyError,
   type MemoryEntry,
   type BootstrapContext,
+  type PruningCandidate,
+  type PruningDisposition,
+  type TriStateResult,
 } from '../src/shared-memory.ts';
 
 function createFixture(t: test.TestContext) {
@@ -383,10 +399,24 @@ Some initial rules.
   assert.ok(plan.diff.includes('+- Always verify screenshots before PR.'));
   assert.ok(plan.updatedAgentsText.includes('<!-- advanced-harness:project:start -->'));
 
-  // Requires explicit approval to apply
-  assert.throws(() => applyApprovedRulePromotion(plan, false), /Rule promotion requires explicit human approval/);
-  const updated = applyApprovedRulePromotion(plan, true);
-  assert.equal(updated, plan.updatedAgentsText);
+  // Rejects empty, raw-newlines, or >2000-character rules on promotion (F-15)
+  assert.throws(() => planRulePromotion({
+    memoryEntries: entries,
+    agentsText: agentsOriginal,
+    dispositions: [{ type: 'promote', entry: entries[0]!, targetRuleText: '' }],
+  }), /cannot be empty/);
+
+  assert.throws(() => planRulePromotion({
+    memoryEntries: entries,
+    agentsText: agentsOriginal,
+    dispositions: [{ type: 'promote', entry: entries[0]!, targetRuleText: 'line 1\nline 2' }],
+  }), /must not contain raw newlines/);
+
+  assert.throws(() => planRulePromotion({
+    memoryEntries: entries,
+    agentsText: agentsOriginal,
+    dispositions: [{ type: 'promote', entry: entries[0]!, targetRuleText: 'a'.repeat(2001) }],
+  }), /exceeds maximum length/);
 
   // Rejects promotion of secrets or machine-local worktree paths
   assert.throws(() => {
@@ -557,7 +587,7 @@ test('personal rules: resolvePersonalRulesPath, parsing, formatting, serialized 
   }, /Concurrent modification detected on AGENTS.personal.md/);
 
   // Validate personal rule text rejects secrets and machine-local worktree paths
-  assert.throws(() => validatePersonalRuleText('github_pat_11AAAAAAA0123456789_abcdefghijklmnopqrstuvwxyz'), /potential secret or credential/);
+  assert.throws(() => validatePersonalRuleText('github_pat_11AAAAAAA0123456789_abcdefghijklmnopqrstuvwxyz'), /Personal rule contains potential secret\/token patterns/);
   assert.throws(() => validatePersonalRuleText('C:\\Users\\Alice\\Projects\\advanced-harness-worktrees\\issue-1'), /machine-local worktree or operational paths/);
   assert.throws(() => validatePersonalRuleText(''), /cannot be empty/);
   assert.throws(() => validatePersonalRuleText('Multi\nline'), /must not contain raw newlines/);
@@ -610,7 +640,7 @@ test('planRulePromotion handles "personal" disposition and validates rules', () 
     memoryEntries: entries,
     agentsText: agentsOriginal,
     dispositions: [{ type: 'personal', entry: entries[2]!, targetRuleText: 'ghp_012345678901234567890123456789' }],
-  }), /potential secret or credential/);
+  }), /Personal rule contains potential secret\/token patterns/);
 
   assert.throws(() => planRulePromotion({
     memoryEntries: entries,
@@ -672,4 +702,2112 @@ test('detectPersonalRuleContradictions identifies contradictions with AGENTS.md 
   assert.match(contradictions[2]!.contradictionReason, /human-only/);
   assert.equal(contradictions[3]!.rule, 'Never force push, auto-merge if tests pass');
   assert.match(contradictions[3]!.contradictionReason, /human-only/);
+});
+
+test('detectPruningCandidates avoids false positives and handles tri-state checks', () => {
+  const agents = `# Instructions\n\nMerging remains human-only.\n`;
+  const personal = ['', '   ', 'valid-personal-rule'];
+
+  const entries: MemoryEntry[] = [
+    // Should NOT be flagged as redundant because fact is short ("Node")
+    { source: 'Test', scope: 'General', confirmation: 'approved', fact: 'Node' },
+    // Should NOT be flagged by empty personal rules
+    { source: 'Test', scope: 'General', confirmation: 'approved', fact: 'Some fact not in personal rules' },
+    // Should NOT be flagged as contradicted because it explicitly negates auto-merge before or after
+    { source: 'Git', scope: 'Workflow', confirmation: 'approved', fact: 'Never auto-merge pull requests' },
+    { source: 'Git', scope: 'Workflow', confirmation: 'approved', fact: 'Auto-merge is not allowed' },
+    // Two unrelated facts in the same scope: should NOT flag the first as contradicted
+    { source: 'Tooling', scope: 'Versions', confirmation: 'approved', fact: 'Node 24 is active' },
+    { source: 'Tooling', scope: 'Versions', confirmation: 'approved', fact: 'TypeScript 7 is active' },
+    // Prose with "the main branch must be clean": should NOT match branch obsolete check
+    { source: 'Security', scope: 'Git', confirmation: 'approved', fact: 'The main branch must be clean before push' },
+    // Prose with "Priority is #1": should NOT match obsolete issue check
+    { source: 'Rank', scope: 'Priority', confirmation: 'approved', fact: 'Priority is #1 item in queue' },
+    // Candidates with external checks that return "unknown" or throw: must NOT be flagged as obsolete (F-29)
+    { source: 'Bug', scope: 'Fixes', confirmation: 'approved', fact: 'Fixes issue #888' },
+    { source: 'Git', scope: 'Branches', confirmation: 'approved', fact: 'Tracking branch `feature/unknown-branch`' },
+    { source: 'Repo', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/unknown-file.ts`' },
+    // Longer fact merely containing shorter personal rule: should NOT flag as redundant (F-22)
+    { source: 'Personal', scope: 'Settings', confirmation: 'approved', fact: 'Use valid-personal-rule when compiling releases in production' },
+    // Distinct subject nouns: Docker compose vs Docker desktop should NOT supersede each other (F-01)
+    { source: 'DevOps', scope: 'Containers', confirmation: 'approved', fact: 'Docker compose is required for local testing' },
+    { source: 'DevOps', scope: 'Containers', confirmation: 'approved', fact: 'Docker desktop is required for local testing' },
+    // File path with a..b.ts: valid file should not be skipped as path traversal (F-04)
+    { source: 'Repo', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/a..b.ts`' },
+    // Issue reference in parentheses: (#123) should match (F-01)
+    { source: 'Fix', scope: 'Issue', confirmation: 'approved', fact: 'Resolves issue (#123)' },
+  ];
+
+  const externalChecker = {
+    checkIssueExists: (id: string) => {
+      if (id === '888') return { status: 'unknown' as TriStateResult, evidence: 'Network error' };
+      if (id === '1') return { status: 'missing' as TriStateResult, evidence: 'Issue #1 missing' };
+      if (id === '123') return { status: 'missing' as TriStateResult, evidence: 'Issue #123 missing' };
+      return { status: 'missing' as TriStateResult, evidence: 'Missing' };
+    },
+    checkBranchExists: (branch: string) => {
+      if (branch === 'feature/unknown-branch') throw new Error('Offline error');
+      return { status: 'missing' as TriStateResult, evidence: 'Missing branch' };
+    },
+    checkFileExists: (filePath: string) => {
+      if (filePath.includes('unknown-file')) return { status: 'unknown' as TriStateResult, evidence: 'Unknown file' };
+      if (filePath === 'src/a..b.ts') return { status: 'missing' as TriStateResult, evidence: 'Missing a..b.ts' };
+      return { status: 'missing' as TriStateResult, evidence: 'Missing file' };
+    },
+  };
+
+  const candidates = detectPruningCandidates({
+    memoryEntries: entries,
+    agentsText: agents,
+    personalRules: personal,
+    externalChecker,
+  });
+
+  // Only the valid obsolete (#123) and valid file (src/a..b.ts) should be flagged!
+  assert.equal(candidates.length, 2);
+  assert.equal(candidates[0]!.kind, 'obsolete');
+  assert.equal(candidates[0]!.evidenceKey, 'file:src/a..b.ts');
+  assert.equal(candidates[1]!.kind, 'obsolete');
+  assert.equal(candidates[1]!.evidenceKey, 'issue:123');
+});
+
+test('detectPruningCandidates identifies redundant, contradicted/superseded, and obsolete entries', () => {
+  const agents = `# Instructions\n\nAlways run tests before PR. Merging remains human-only.\n`;
+  const personal = ['Use 2 spaces for indentation'];
+
+  const entries: MemoryEntry[] = [
+    // 0: redundant with AGENTS.md
+    { source: 'Review', scope: 'Repo', confirmation: 'approved', fact: 'Always run tests before PR.' },
+    // 1: redundant with personal rules
+    { source: 'Operator', scope: 'Editor', confirmation: 'approved', fact: 'Use 2 spaces for indentation' },
+    // 2: contradicted by AGENTS.md
+    { source: 'Operator', scope: 'Git', confirmation: 'approved', fact: 'Merges automatically when tests pass' },
+    // 3: older entry superseded by newer entry in same scope with shared topic
+    { source: 'Test', scope: 'Tooling', confirmation: 'approved', fact: 'Node 18 is required for builds' },
+    // 4: newer entry superseding #3
+    { source: 'Test', scope: 'Tooling', confirmation: 'replaces Node 18', fact: 'Node 24 is required for builds' },
+    // 5: obsolete: refers to deleted issue #999
+    { source: 'IssueTracker', scope: 'Fixes', confirmation: 'approved', fact: 'Resolves issue #999 for good' },
+    // 6: obsolete: refers to deleted branch issue/999
+    { source: 'Git', scope: 'Branches', confirmation: 'approved', fact: 'Tracking branch `issue/999`' },
+    // 7: obsolete: refers to deleted file obsolete.ts
+    { source: 'Repo', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/obsolete.ts` on start' },
+    // 8: active and valid entry
+    { source: 'Dev', scope: 'Context', confirmation: 'approved', fact: 'All active work happens in task worktrees' },
+  ];
+
+  const externalChecker = {
+    checkIssueExists: (id: string) => (id === '999' ? { status: 'missing' as TriStateResult, evidence: 'Issue #999 deleted' } : 'exists' as TriStateResult),
+    checkBranchExists: (branch: string) => (branch === 'issue/999' ? { status: 'missing' as TriStateResult, evidence: 'Branch deleted' } : 'exists' as TriStateResult),
+    checkFileExists: (path: string) => (path.includes('obsolete.ts') ? { status: 'missing' as TriStateResult, evidence: 'File removed' } : 'exists' as TriStateResult),
+  };
+
+  const candidates = detectPruningCandidates({
+    memoryEntries: entries,
+    agentsText: agents,
+    personalRules: personal,
+    externalChecker,
+  });
+
+  assert.equal(candidates.length, 7);
+
+  // Redundant with AGENTS.md
+  assert.equal(candidates[0]!.kind, 'redundant');
+  assert.equal(candidates[0]!.entry.fact, 'Always run tests before PR.');
+  assert.match(candidates[0]!.reason, /AGENTS\.md/);
+  assert.equal(candidates[0]!.evidenceKey, 'agents-rule');
+
+  // Redundant with personal
+  assert.equal(candidates[1]!.kind, 'redundant');
+  assert.equal(candidates[1]!.entry.fact, 'Use 2 spaces for indentation');
+  assert.match(candidates[1]!.reason, /personal rule/);
+  assert.equal(candidates[1]!.evidenceKey, 'personal-rule');
+
+  // Contradicted by AGENTS.md
+  assert.equal(candidates[2]!.kind, 'contradicted');
+  assert.equal(candidates[2]!.entry.fact, 'Merges automatically when tests pass');
+  assert.equal(candidates[2]!.evidenceKey, 'agents-merging');
+
+  // Superseded by newer entry
+  assert.equal(candidates[3]!.kind, 'contradicted');
+  assert.equal(candidates[3]!.entry.fact, 'Node 18 is required for builds');
+  assert.match(candidates[3]!.evidence, /Node 24 is required for builds/);
+
+  // Obsolete issue
+  assert.equal(candidates[4]!.kind, 'obsolete');
+  assert.equal(candidates[4]!.entry.fact, 'Resolves issue #999 for good');
+  assert.match(candidates[4]!.reason, /#999/);
+  assert.equal(candidates[4]!.evidenceKey, 'issue:999');
+
+  // Obsolete branch
+  assert.equal(candidates[5]!.kind, 'obsolete');
+  assert.equal(candidates[5]!.entry.fact, 'Tracking branch `issue/999`');
+  assert.match(candidates[5]!.reason, /branch "issue\/999"/);
+  assert.equal(candidates[5]!.evidenceKey, 'branch:issue/999');
+
+  // Obsolete file
+  assert.equal(candidates[6]!.kind, 'obsolete');
+  assert.equal(candidates[6]!.entry.fact, 'Inspect file `src/obsolete.ts` on start');
+  assert.match(candidates[6]!.reason, /file "src\/obsolete\.ts"/);
+  assert.equal(candidates[6]!.evidenceKey, 'file:src/obsolete.ts');
+});
+
+test('planMemoryPruning handles end-to-end detect, plan with keep, discard, promote, and re-detection', () => {
+  const agentsOriginal = '# Project Guidelines\n\nAlways check tests before commit.\n';
+  const entries: MemoryEntry[] = [
+    { source: 'Dev', scope: 'Issues', confirmation: 'approved', fact: 'Referenced in issue #12 for tracking' },
+    { source: 'Dev', scope: 'Files', confirmation: 'approved', fact: 'Inspect file `src/a.ts` on start' },
+    { source: 'Dev', scope: 'Branches', confirmation: 'approved', fact: 'Tracking branch `feature/x`' },
+    { source: 'Dev', scope: 'Redundant', confirmation: 'approved', fact: 'Always check tests before commit.' },
+    { source: 'Dev', scope: 'DiscardMe', confirmation: 'approved', fact: 'Obsolete note with issue #99' },
+  ];
+
+  const externalChecker = {
+    checkIssueExists: (id: string) => (id === '12' || id === '99' ? { status: 'missing' as TriStateResult, evidence: 'Issue closed' } : 'exists' as TriStateResult),
+    checkBranchExists: (branch: string) => (branch === 'feature/x' ? { status: 'missing' as TriStateResult, evidence: 'Branch deleted' } : 'exists' as TriStateResult),
+    checkFileExists: (path: string) => (path === 'src/a.ts' ? { status: 'missing' as TriStateResult, evidence: 'File removed' } : 'exists' as TriStateResult),
+  };
+
+  // 1. Detect candidate
+  const initialCandidates = detectPruningCandidates({
+    memoryEntries: entries,
+    agentsText: agentsOriginal,
+    externalChecker,
+  });
+  assert.equal(initialCandidates.length, 5);
+
+  // 2. Plan dispositions: keep issue #12, file, branch; promote redundant; discard obsolete
+  const plan = planMemoryPruning({
+    memoryEntries: entries,
+    candidates: initialCandidates,
+    dispositions: [
+      { entry: entries[0]!, disposition: 'keep' },
+      { entry: entries[1]!, disposition: 'keep' },
+      { entry: entries[2]!, disposition: 'keep' },
+      { entry: entries[3]!, disposition: 'promote' },
+      { entry: entries[4]!, disposition: 'discard' },
+    ],
+    agentsText: agentsOriginal,
+    agentsPath: join(tmpdir(), 'AGENTS.md'),
+  });
+
+  assert.equal(plan.keptCount, 3);
+  assert.equal(plan.discardedCount, 1);
+  assert.equal(plan.promotedToAgents.length, 1);
+  assert.equal(plan.updatedMemoryEntries.length, 3); // Kept entries remain, discarded and promoted are gone
+  assert.ok(plan.updatedMemoryEntries[0]!.confirmation.includes('reviewed-keep:obsolete:issue:12'));
+  assert.ok(plan.updatedMemoryEntries[1]!.confirmation.includes('reviewed-keep:obsolete:file:src/a.ts'));
+  assert.ok(plan.updatedMemoryEntries[2]!.confirmation.includes('reviewed-keep:obsolete:branch:feature/x'));
+
+  // Assert explicitly that discarded and promoted entries are completely gone from updatedMemoryEntries (F-29)
+  assert.ok(!plan.updatedMemoryEntries.some((e) => e.fact.includes('Obsolete note with issue #99')));
+  assert.ok(!plan.updatedMemoryEntries.some((e) => e.fact.includes('Always check tests before commit.')));
+  assert.ok(plan.updatedAgentsText?.includes('Always check tests before commit.'));
+  assert.ok(plan.agentsDiff?.includes('+- Always check tests before commit.'));
+
+  // 3. Re-detect with the exact output of planMemoryPruning: must produce zero candidates!
+  const recheckedCandidates = detectPruningCandidates({
+    memoryEntries: plan.updatedMemoryEntries,
+    agentsText: agentsOriginal,
+    externalChecker,
+  });
+  assert.equal(recheckedCandidates.length, 0);
+
+  // 4. Prefix collision tests (F-17, F-29):
+  // 4a. Kept issue:12 must not suppress issue:1 when fact changes to issue #1
+  const modifiedEntriesIssue: MemoryEntry[] = [
+    { ...plan.updatedMemoryEntries[0]!, fact: 'Referenced in issue #1 for tracking' },
+  ];
+  const checkerFor1 = {
+    checkIssueExists: (id: string) => (id === '1' ? { status: 'missing' as TriStateResult, evidence: 'Issue #1 closed' } : 'exists' as TriStateResult),
+  };
+  const recheckedWithNewReason = detectPruningCandidates({
+    memoryEntries: modifiedEntriesIssue,
+    agentsText: agentsOriginal,
+    externalChecker: checkerFor1,
+  });
+  assert.equal(recheckedWithNewReason.length, 1);
+  assert.equal(recheckedWithNewReason[0]!.evidenceKey, 'issue:1');
+
+  // 4b. Kept file:src/a.ts must not suppress file:src/a.tsx (F-17, F-29)
+  const modifiedEntriesFile: MemoryEntry[] = [
+    { ...plan.updatedMemoryEntries[1]!, fact: 'Inspect file `src/a.tsx` on start' },
+  ];
+  const checkerForFileTsx = {
+    checkFileExists: (path: string) => (path === 'src/a.tsx' ? { status: 'missing' as TriStateResult, evidence: 'File missing' } : 'exists' as TriStateResult),
+  };
+  const recheckedFile = detectPruningCandidates({
+    memoryEntries: modifiedEntriesFile,
+    agentsText: agentsOriginal,
+    externalChecker: checkerForFileTsx,
+  });
+  assert.equal(recheckedFile.length, 1);
+  assert.equal(recheckedFile[0]!.evidenceKey, 'file:src/a.tsx');
+
+  // 4c. Kept branch:feature/x must not suppress branch:feature/x-2 (F-17, F-29)
+  const modifiedEntriesBranch: MemoryEntry[] = [
+    { ...plan.updatedMemoryEntries[2]!, fact: 'Tracking branch `feature/x-2`' },
+  ];
+  const checkerForBranch2 = {
+    checkBranchExists: (branch: string) => (branch === 'feature/x-2' ? { status: 'missing' as TriStateResult, evidence: 'Branch deleted' } : 'exists' as TriStateResult),
+  };
+  const recheckedBranch = detectPruningCandidates({
+    memoryEntries: modifiedEntriesBranch,
+    agentsText: agentsOriginal,
+    externalChecker: checkerForBranch2,
+  });
+  assert.equal(recheckedBranch.length, 1);
+  assert.equal(recheckedBranch[0]!.evidenceKey, 'branch:feature/x-2');
+});
+
+test('planMemoryPruning validates candidates, dispositions, and supports complex supersession with delimiters', () => {
+  const entryA: MemoryEntry = { source: 'Dev', scope: 'ScopeA', confirmation: 'approved', fact: 'Fact A' };
+  const entryB: MemoryEntry = { source: 'Dev', scope: 'ScopeA', confirmation: 'approved', fact: 'Fact B; with [brackets] and long delimiters' };
+  const candidateA: PruningCandidate = {
+    entry: entryA,
+    kind: 'contradicted',
+    reason: 'Superseded',
+    evidence: 'Newer',
+    evidenceKey: 'newer-entry:123456789abc',
+  };
+
+  // Candidate not matching any entry throws
+  const foreignEntry: MemoryEntry = { source: 'Foreign', scope: 'ScopeA', confirmation: 'approved', fact: 'Unknown' };
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA, entryB],
+    candidates: [{ ...candidateA, entry: foreignEntry }],
+    dispositions: [],
+  }), /Candidate does not match any entry in memoryEntries/);
+
+  // Disposition not recognized as candidate throws
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA, entryB],
+    candidates: [candidateA],
+    dispositions: [{ entry: entryB, disposition: 'keep' }],
+  }), /not a recognized pruning candidate/);
+
+  // Duplicate disposition throws
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA, entryB],
+    candidates: [candidateA],
+    dispositions: [
+      { entry: entryA, disposition: 'keep' },
+      { entry: entryA, disposition: 'keep' },
+    ],
+  }), /Duplicate disposition/);
+
+  // Unknown disposition type throws
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA, entryB],
+    candidates: [candidateA],
+    dispositions: [{ entry: entryA, disposition: 'invalid' as any }],
+  }), /Unknown disposition type/);
+
+  // Promote without agentsText throws
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entryA],
+    candidates: [candidateA],
+    dispositions: [{ entry: entryA, disposition: 'promote' }],
+    agentsText: undefined,
+  }), /Promotion disposition requires agentsText/);
+
+  // Newer fact with ; and ] generates safe evidenceKey without semicolon or bracket
+  const entrySuperseded: MemoryEntry = { source: 'Dev', scope: 'ScopeA', confirmation: 'approved', fact: 'Old fact' };
+  const entrySuperseding: MemoryEntry = { source: 'Dev', scope: 'ScopeA', confirmation: 'replaces Old fact', fact: 'Fact B; with [brackets] and long delimiters' };
+  const candidatesFromDetection = detectPruningCandidates({
+    memoryEntries: [entrySuperseded, entrySuperseding],
+  });
+  assert.equal(candidatesFromDetection.length, 1);
+  assert.equal(candidatesFromDetection[0]!.kind, 'contradicted');
+  assert.ok(!candidatesFromDetection[0]!.evidenceKey.includes(';'));
+  assert.ok(!candidatesFromDetection[0]!.evidenceKey.includes(']'));
+
+  // Keeping candidate with ; and ] produces valid memory entry that formats and parses without error
+  const keepPlan = planMemoryPruning({
+    memoryEntries: [entrySuperseded, entrySuperseding],
+    candidates: candidatesFromDetection,
+    dispositions: [{ entry: entrySuperseded, disposition: 'keep' }],
+  });
+  const formatted = formatSharedMemory(keepPlan.updatedMemoryEntries);
+  const parsed = parseSharedMemory(formatted);
+  assert.equal(parsed.length, 2);
+  assert.ok(parsed[0]!.confirmation.includes('reviewed-keep:contradicted:newer-entry:'));
+});
+
+test('applyApprovedMemoryPruning enforces atomic write sequencing, baseline verification, and partial failure receipts', (t) => {
+  const { memoryPath, projectRoot } = createFixture(t);
+  mkdirSync(projectRoot, { recursive: true });
+  const personalPath = resolvePersonalRulesPath(memoryPath);
+  const agentsPath = join(projectRoot, 'AGENTS.md');
+
+  const initialEntry: MemoryEntry = { source: 'A', scope: 'General', confirmation: 'confirmed', fact: 'Valid fact initially' };
+  const retainedEntry: MemoryEntry = { source: 'B', scope: 'RetainedScope', confirmation: 'confirmed', fact: 'Retained fact stays' };
+  writeSharedMemorySerialized(memoryPath, [initialEntry, retainedEntry], undefined);
+  const initialPersonal = ['Personal rule 1: keep local'];
+  writePersonalRulesSerialized(personalPath, initialPersonal, undefined);
+  const initialAgentsText = '# Existing AGENTS\n\nRule 0.\n';
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+
+  const memBase = readSharedMemory(memoryPath);
+  const personalBase = readPersonalRules(personalPath);
+  const agentsBaseHash = createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex');
+
+  const candidate: PruningCandidate = {
+    entry: initialEntry,
+    kind: 'redundant',
+    reason: 'Covered',
+    evidence: 'test',
+    evidenceKey: 'test',
+  };
+
+  const plan = planMemoryPruning({
+    memoryEntries: [initialEntry, retainedEntry],
+    candidates: [candidate],
+    dispositions: [{ entry: initialEntry, disposition: 'personal', targetRuleText: 'New personal rule 2' }],
+    agentsText: initialAgentsText,
+  });
+
+  // 1. Missing baseline hashes or expectedPlanHash throw (F-25)
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: '',
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /valid memoryBaselineHash/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: '',
+    expectedPlanHash: plan.planHash,
+  }), /valid personalBaselineHash/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: '',
+  }), /valid expectedPlanHash/);
+
+  // 2. Mismatched or tampered planHash throws (F-25, F-31)
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: 'tampered-plan-hash',
+  }), /Approval plan hash does not match/);
+
+  // Tampered plan content retaining old planHash throws (recomputed mismatch) (F-25, F-31)
+  const tamperedPersonalPlan = {
+    ...plan,
+    promotedToPersonal: ['Tampered unapproved rule'],
+  };
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: tamperedPersonalPlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // Mutating updatedMemoryEntries[0].source throws (F-31)
+  const tamperedSourcePlan = {
+    ...plan,
+    updatedMemoryEntries: plan.updatedMemoryEntries.map((e, i) => (i === 0 ? { ...e, source: 'TamperedSource' } : e)),
+  };
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: tamperedSourcePlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // Mutating updatedMemoryEntries[0].scope throws (F-31)
+  const tamperedScopePlan = {
+    ...plan,
+    updatedMemoryEntries: plan.updatedMemoryEntries.map((e, i) => (i === 0 ? { ...e, scope: 'TamperedScope' } : e)),
+  };
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: tamperedScopePlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // Mutating updatedAgentsText throws (F-31)
+  const tamperedAgentsTextPlan = {
+    ...plan,
+    updatedAgentsText: '# Tampered AGENTS\n',
+  };
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: tamperedAgentsTextPlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // Mutating agentsDiff throws (F-31)
+  const tamperedAgentsDiffPlan = {
+    ...plan,
+    agentsDiff: '--- a/AGENTS.md\n+++ b/AGENTS.md\n+Tampered\n',
+  };
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: tamperedAgentsDiffPlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // 2b. Mutation tests on a real promotion plan covering candidates, dispositions, agentsBaselineHash, updatedAgentsText, agentsDiff, and agentsPath (F-40, F-43)
+  const promoPlanForHashTest = planMemoryPruning({
+    memoryEntries: [initialEntry, retainedEntry],
+    candidates: [candidate],
+    dispositions: [{ entry: initialEntry, disposition: 'promote', targetRuleText: 'Real promoted rule' }],
+    agentsText: initialAgentsText,
+    agentsPath,
+  });
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      candidates: promoPlanForHashTest.candidates.map((c, i) => (i === 0 ? { ...c, reason: 'Tampered reason' } : c)),
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      dispositions: promoPlanForHashTest.dispositions.map((d, i) => (i === 0 ? { ...d, targetRuleText: 'Tampered rule' } : d)),
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      agentsBaselineHash: '0'.repeat(64),
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      updatedAgentsText: promoPlanForHashTest.updatedAgentsText + '# extra\n',
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: {
+      ...promoPlanForHashTest,
+      agentsDiff: promoPlanForHashTest.agentsDiff + '\n+tampered',
+    },
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /planHash does not match computed hash of plan content/);
+
+  // Pointing an agentsPath-bound plan at a different AGENTS.md path throws even if content/baseline hash matches (F-43)
+  const altAgentsPath = join(projectRoot, 'AGENTS.alt.md');
+  writeFileSync(altAgentsPath, initialAgentsText, 'utf8');
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: promoPlanForHashTest,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promoPlanForHashTest.planHash,
+    agentsPath: altAgentsPath,
+    agentsBaselineHash: promoPlanForHashTest.agentsBaselineHash,
+  }), /AGENTS\.md path does not match the path recorded in MemoryPruningPlan/);
+
+  // 3. Hand-built plan with promotedToAgents but missing updatedAgentsText throws before writing and leaves files unchanged (F-26, F-33)
+  const planWithMissingAgentsText = {
+    ...plan,
+    promotedToAgents: ['Rule to promote'],
+    updatedAgentsText: undefined,
+  };
+  (planWithMissingAgentsText as any).planHash = computePruningPlanHash(planWithMissingAgentsText);
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: planWithMissingAgentsText,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: planWithMissingAgentsText.planHash,
+    agentsPath,
+    agentsBaselineHash: agentsBaseHash,
+  }), /Promotion to AGENTS\.md requires updatedAgentsText/);
+  assert.equal(readSharedMemory(memoryPath).hash, memBase.hash);
+  assert.equal(readPersonalRules(personalPath).hash, personalBase.hash);
+  assert.equal(createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex'), agentsBaseHash);
+
+  // 4. Stale baseline hash or mismatched plan.agentsBaselineHash fails (F-32, F-33)
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: 'stale-hash',
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /Baseline hash does not match/);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: 'stale-personal-hash',
+    expectedPlanHash: plan.planHash,
+  }), /Baseline hash does not match/);
+
+  // Pairing an older plan with a newer AGENTS.md disk baseline throws (F-32)
+  const promotePlanForBaselineTest = planMemoryPruning({
+    memoryEntries: [initialEntry, retainedEntry],
+    candidates: [candidate],
+    dispositions: [{ entry: initialEntry, disposition: 'promote', targetRuleText: 'Promoted rule for baseline test' }],
+    agentsText: initialAgentsText,
+    agentsPath,
+  });
+  writeFileSync(agentsPath, '# Existing AGENTS\n\nRule 0.\nNew concurrent edit.\n', 'utf8');
+  const newerDiskAgentsHash = createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex');
+  // Passing the old baseline hash fails against disk
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: promotePlanForBaselineTest,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promotePlanForBaselineTest.planHash,
+    agentsPath,
+    agentsBaselineHash: agentsBaseHash,
+  }), /Concurrent modification detected on AGENTS\.md/);
+  // Passing the newer disk hash fails against plan.agentsBaselineHash (F-32)
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: promotePlanForBaselineTest,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: promotePlanForBaselineTest.planHash,
+    agentsPath,
+    agentsBaselineHash: newerDiskAgentsHash,
+  }), /AGENTS\.md baseline hash does not match the baseline hash recorded in MemoryPruningPlan/);
+  // Restore AGENTS.md to initialAgentsText
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+
+  // 5. Decline (approved: false) leaves files byte-identical
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan,
+    approved: false,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  }), /requires explicit human approval/);
+
+  assert.equal(readSharedMemory(memoryPath).hash, memBase.hash);
+  assert.equal(readPersonalRules(personalPath).hash, personalBase.hash);
+
+  // 6. No-op plan leaves both files byte-identical without rewriting
+  const noOpPlan = planMemoryPruning({
+    memoryEntries: [initialEntry, retainedEntry],
+    candidates: [],
+    dispositions: [],
+    agentsText: initialAgentsText,
+  });
+  const noOpRes = applyApprovedMemoryPruning({
+    plan: noOpPlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: noOpPlan.planHash,
+  });
+  assert.equal(noOpRes.success, true);
+  assert.equal(readSharedMemory(memoryPath).hash, memBase.hash);
+  assert.equal(readPersonalRules(personalPath).hash, personalBase.hash);
+
+  // 7. Success path:
+  // 7a. Personal rule promotion + MEMORY.md update
+  const successRes = applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+  });
+  assert.equal(successRes.success, true);
+  const updatedPersonal = readPersonalRules(personalPath);
+  assert.ok(updatedPersonal.rules.includes('Personal rule 1: keep local'));
+  assert.ok(updatedPersonal.rules.includes('New personal rule 2'));
+  assert.equal(successRes.receipt.personalWritten, true);
+  assert.equal(successRes.receipt.memoryWritten, true);
+  assert.equal(successRes.receipt.personalHash, updatedPersonal.hash);
+  const updatedMem = readSharedMemory(memoryPath);
+  assert.equal(updatedMem.entries.length, 1);
+  assert.equal(updatedMem.entries[0]!.fact, 'Retained fact stays');
+  assert.equal(successRes.receipt.memoryHash, updatedMem.hash);
+
+  // 7b. Successful AGENTS.md promotion write path: verifies content, receipt.agentsHash, and no leftover .tmp/.lock (F-33, F-35)
+  const memBefore7b = readSharedMemory(memoryPath);
+  const personalBefore7b = readPersonalRules(personalPath);
+  const agentsPlan7b = planMemoryPruning({
+    memoryEntries: [retainedEntry],
+    candidates: [{ entry: retainedEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k-7b' }],
+    dispositions: [{ entry: retainedEntry, disposition: 'promote', targetRuleText: 'Always verify receipts after apply.' }],
+    agentsText: readFileSync(agentsPath, 'utf8'),
+    agentsPath,
+  });
+  const res7b = applyApprovedMemoryPruning({
+    plan: agentsPlan7b,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBefore7b.hash,
+    personalBaselineHash: personalBefore7b.hash,
+    expectedPlanHash: agentsPlan7b.planHash,
+    agentsPath,
+    agentsBaselineHash: agentsPlan7b.agentsBaselineHash,
+  });
+  assert.equal(res7b.success, true);
+  assert.equal(res7b.receipt.agentsWritten, true);
+  assert.equal(res7b.receipt.personalWritten, false);
+  assert.equal(res7b.receipt.memoryWritten, true);
+  const writtenAgentsDisk = readFileSync(agentsPath, 'utf8');
+  assert.equal(writtenAgentsDisk, agentsPlan7b.updatedAgentsText);
+  const expectedAgentsDiskHash = createHash('sha256').update(writtenAgentsDisk).digest('hex');
+  assert.equal(res7b.receipt.agentsHash, expectedAgentsDiskHash);
+  assert.equal(res7b.agentsHash, expectedAgentsDiskHash);
+  const leftoverFiles = readdirSync(projectRoot).filter((f) => f.endsWith('.tmp') || f.endsWith('.lock'));
+  assert.deepEqual(leftoverFiles, []);
+
+  // 8. Partial failures and no-files-modified failures across write positions (F-27, F-33, F-35, F-37):
+  const thirdEntry: MemoryEntry = { source: 'C', scope: 'General', confirmation: 'confirmed', fact: 'Fact 3' };
+  const fourthEntry: MemoryEntry = { source: 'D', scope: 'General', confirmation: 'confirmed', fact: 'Fact 4' };
+
+  // 8.0. Failure at step 1 ('agents' locked) before any file is written reports "no files were modified" and failedStep === 'agents' (F-35, F-37)
+  writeSharedMemorySerialized(memoryPath, [thirdEntry], undefined);
+  const memHash80 = readSharedMemory(memoryPath).hash;
+  const personalHash80 = readPersonalRules(personalPath).hash;
+  const agentsText80 = readFileSync(agentsPath, 'utf8');
+  const plan80 = planMemoryPruning({
+    memoryEntries: [thirdEntry],
+    candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
+    dispositions: [{ entry: thirdEntry, disposition: 'promote', targetRuleText: 'Rule blocked by lock' }],
+    agentsText: agentsText80,
+    agentsPath,
+  });
+  const agentsLockFd = openSync(`${agentsPath}.lock`, 'wx');
+  try {
+    let err80: any;
+    try {
+      applyApprovedMemoryPruning({
+        plan: plan80,
+        approved: true,
+        memoryPath,
+        memoryBaselineHash: memHash80,
+        personalBaselineHash: personalHash80,
+        expectedPlanHash: plan80.planHash,
+        agentsPath,
+        agentsBaselineHash: plan80.agentsBaselineHash,
+      });
+    } catch (err) {
+      err80 = err;
+    }
+    assert.ok(err80 instanceof MemoryPruningApplyError);
+    assert.match(err80.message, /no files were modified/);
+    assert.equal(err80.receipt.failedStep, 'agents');
+    assert.match(err80.receipt.cause ?? '', /Another writer holds the lock/);
+    assert.equal(err80.receipt.agentsWritten, false);
+    assert.equal(err80.receipt.personalWritten, false);
+    assert.equal(err80.receipt.memoryWritten, false);
+  } finally {
+    closeSync(agentsLockFd);
+    unlinkSync(`${agentsPath}.lock`);
+  }
+
+  // 8a. AGENTS.md written, then personal rule write fails (locked)
+  const memHashBefore8a = readSharedMemory(memoryPath).hash;
+  const personalHashBefore8a = readPersonalRules(personalPath).hash;
+  const agentsTextBefore8a = readFileSync(agentsPath, 'utf8');
+
+  const personalLockFd = openSync(`${personalPath}.lock`, 'wx');
+  try {
+    let err8a: any;
+    try {
+      const planWithBoth = planMemoryPruning({
+        memoryEntries: [thirdEntry, fourthEntry],
+        candidates: [
+          { entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' },
+          { entry: fourthEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k4' },
+        ],
+        dispositions: [
+          { entry: thirdEntry, disposition: 'promote', targetRuleText: 'Promoted rule from 8a' },
+          { entry: fourthEntry, disposition: 'personal', targetRuleText: 'Personal rule causing failure' },
+        ],
+        agentsText: agentsTextBefore8a,
+        agentsPath,
+      });
+
+      applyApprovedMemoryPruning({
+        plan: planWithBoth,
+        approved: true,
+        memoryPath,
+        memoryBaselineHash: memHashBefore8a,
+        personalBaselineHash: personalHashBefore8a,
+        expectedPlanHash: planWithBoth.planHash,
+        agentsPath,
+        agentsBaselineHash: planWithBoth.agentsBaselineHash,
+      });
+    } catch (err) {
+      err8a = err;
+    }
+    assert.ok(err8a instanceof MemoryPruningApplyError);
+    assert.match(err8a.message, /Partial failure during memory pruning write sequence at personal/);
+    assert.equal(err8a.receipt.failedStep, 'personal');
+    assert.match(err8a.receipt.cause ?? '', /Another writer holds the lock/);
+    assert.equal(err8a.receipt.agentsWritten, true);
+    assert.equal(
+      err8a.receipt.agentsHash,
+      createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex')
+    );
+    assert.equal(err8a.receipt.personalWritten, false);
+    assert.equal(err8a.receipt.memoryWritten, false);
+  } finally {
+    closeSync(personalLockFd);
+    unlinkSync(`${personalPath}.lock`);
+  }
+
+  // 8b. AGENTS.md written, then MEMORY.md fails (locked) (F-33)
+  const agentsTextAfter8a = readFileSync(agentsPath, 'utf8');
+  const currentPersonalHashAfter8a = readPersonalRules(personalPath).hash;
+  const currentMemHashAfter8a = readSharedMemory(memoryPath).hash;
+
+  const plan8b = planMemoryPruning({
+    memoryEntries: [thirdEntry, fourthEntry],
+    candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
+    dispositions: [
+      { entry: thirdEntry, disposition: 'promote', targetRuleText: 'Promoted rule from 8b' },
+    ],
+    agentsText: agentsTextAfter8a,
+    agentsPath,
+  });
+
+  const memLockFd8b = openSync(`${memoryPath}.lock`, 'wx');
+  try {
+    let err8b: any;
+    try {
+      applyApprovedMemoryPruning({
+        plan: plan8b,
+        approved: true,
+        memoryPath,
+        memoryBaselineHash: currentMemHashAfter8a,
+        personalBaselineHash: currentPersonalHashAfter8a,
+        expectedPlanHash: plan8b.planHash,
+        agentsPath,
+        agentsBaselineHash: plan8b.agentsBaselineHash,
+      });
+    } catch (err) {
+      err8b = err;
+    }
+    assert.ok(err8b instanceof MemoryPruningApplyError);
+    assert.match(err8b.message, /Partial failure during memory pruning write sequence at memory/);
+    assert.equal(err8b.receipt.failedStep, 'memory');
+    assert.match(err8b.receipt.cause ?? '', /Another writer holds the lock/);
+    assert.equal(err8b.receipt.agentsWritten, true);
+    assert.equal(
+      err8b.receipt.agentsHash,
+      createHash('sha256').update(readFileSync(agentsPath, 'utf8')).digest('hex')
+    );
+    assert.equal(err8b.receipt.personalWritten, false);
+    assert.equal(err8b.receipt.memoryWritten, false);
+  } finally {
+    closeSync(memLockFd8b);
+    unlinkSync(`${memoryPath}.lock`);
+  }
+
+  // 8c. Personal written, then MEMORY.md fails (locked)
+  const agentsTextAfter8b = readFileSync(agentsPath, 'utf8');
+  const currentPersonalHashAfter8b = readPersonalRules(personalPath).hash;
+  const currentMemHashAfter8b = readSharedMemory(memoryPath).hash;
+
+  const plan8c = planMemoryPruning({
+    memoryEntries: [thirdEntry, fourthEntry],
+    candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
+    dispositions: [
+      { entry: thirdEntry, disposition: 'personal', targetRuleText: 'New personal rule 8c' },
+    ],
+    agentsText: agentsTextAfter8b,
+  });
+
+  const memLockFd8c = openSync(`${memoryPath}.lock`, 'wx');
+  try {
+    let err8c: any;
+    try {
+      applyApprovedMemoryPruning({
+        plan: plan8c,
+        approved: true,
+        memoryPath,
+        memoryBaselineHash: currentMemHashAfter8b,
+        personalBaselineHash: currentPersonalHashAfter8b,
+        expectedPlanHash: plan8c.planHash,
+      });
+    } catch (err) {
+      err8c = err;
+    }
+    assert.ok(err8c instanceof MemoryPruningApplyError);
+    assert.match(err8c.message, /Partial failure during memory pruning write sequence at memory/);
+    assert.equal(err8c.receipt.failedStep, 'memory');
+    assert.equal(err8c.receipt.agentsWritten, false);
+    assert.equal(err8c.receipt.personalWritten, true);
+    assert.equal(err8c.receipt.personalHash, readPersonalRules(personalPath).hash);
+    assert.equal(err8c.receipt.memoryWritten, false);
+  } finally {
+    closeSync(memLockFd8c);
+    unlinkSync(`${memoryPath}.lock`);
+  }
+
+  // 8d. Rejects directory at agentsPath (non-regular file guard) (F-35)
+  const dirAsAgentsPath = join(projectRoot, 'AGENTS_DIR');
+  mkdirSync(dirAsAgentsPath, { recursive: true });
+  const plan8d = planMemoryPruning({
+    memoryEntries: [thirdEntry, fourthEntry],
+    candidates: [{ entry: thirdEntry, kind: 'redundant', reason: 'Covered', evidence: 'test', evidenceKey: 'k3' }],
+    dispositions: [{ entry: thirdEntry, disposition: 'promote', targetRuleText: 'Promoted rule from 8b' }],
+    agentsText: agentsTextAfter8a,
+    agentsPath: dirAsAgentsPath,
+  });
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: plan8d,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: currentMemHashAfter8b,
+    personalBaselineHash: readPersonalRules(personalPath).hash,
+    expectedPlanHash: plan8d.planHash,
+    agentsPath: dirAsAgentsPath,
+    agentsBaselineHash: plan8d.agentsBaselineHash,
+  }), /AGENTS\.md path must be a regular file/);
+});
+
+test('markEntryReviewed caps keep tags and evicts oldest, preserving case and rejecting invalid keys', () => {
+  let entry: MemoryEntry = { source: 'Dev', scope: 'General', confirmation: 'initial', fact: 'Fact' };
+
+  // Add 6 keep tags sequentially: oldest should be evicted at cap of 5 (F-30)
+  for (let i = 1; i <= 6; i++) {
+    const candidate: PruningCandidate = {
+      entry,
+      kind: 'obsolete',
+      reason: 'test',
+      evidence: 'test',
+      evidenceKey: `Issue:${i}`, // Case should be preserved
+    };
+    entry = markEntryReviewed(entry, candidate);
+  }
+
+  assert.ok(entry.confirmation.includes('(reviewed-keep:obsolete:Issue:6)'));
+  assert.ok(entry.confirmation.includes('(reviewed-keep:obsolete:Issue:2)'));
+  // Oldest (Issue:1) must be evicted!
+  assert.ok(!entry.confirmation.includes('Issue:1'));
+
+  // Rejects keys containing ) or newlines
+  assert.throws(() => markEntryReviewed(entry, {
+    entry,
+    kind: 'obsolete',
+    reason: 'test',
+    evidence: 'test',
+    evidenceKey: 'issue:100)',
+  }), /closing parenthesis/);
+
+  assert.throws(() => markEntryReviewed(entry, {
+    entry,
+    kind: 'obsolete',
+    reason: 'test',
+    evidence: 'test',
+    evidenceKey: 'issue:100\nmalformed',
+  }), /closing parenthesis|newlines/);
+});
+
+test('validatePromotedRuleText and validatePersonalRuleText reject secrets, paths, and limits', () => {
+  assert.throws(() => validatePromotedRuleText(''), /cannot be empty/);
+  assert.throws(() => validatePromotedRuleText('   '), /cannot be empty/);
+  assert.throws(() => validatePromotedRuleText('line 1\nline 2'), /must not contain raw newlines/);
+  assert.throws(() => validatePromotedRuleText('ghp_012345678901234567890123456789'), /potential secret\/token/);
+  assert.throws(() => validatePromotedRuleText('/Users/test/Projects/advanced-harness-worktrees/test'), /machine-local/);
+  assert.throws(() => validatePromotedRuleText('/home/alice/Projects/advanced-harness-worktrees/test'), /machine-local/);
+  assert.throws(() => validatePromotedRuleText('C:\\Users\\Alice\\Projects\\advanced-harness-worktrees\\issue-1'), /machine-local/);
+  assert.throws(() => validatePromotedRuleText('\\\\server\\share\\Projects\\advanced-harness-worktrees\\issue-1'), /machine-local/);
+  assert.throws(() => validatePromotedRuleText('a'.repeat(2001)), /exceeds maximum length/);
+
+  // Positive valid rule check executes without error
+  validatePromotedRuleText('Always check lint before commit.');
+  validatePersonalRuleText('Use dark theme in developer tools.');
+});
+
+test('applyApprovedMemoryPruning handles Windows path case and preserves POSIX mode', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-case-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
+  const agentsPath = join(dir, 'AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+
+  if (process.platform !== 'win32') {
+    chmodSync(agentsPath, 0o640);
+  }
+
+  const memBase = readSharedMemory(memoryPath);
+  const personalBase = readPersonalRules(personalPath);
+  const agentsBaseHash = createHash('sha256').update(initialAgentsText, 'utf8').digest('hex');
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
+  const plan = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule' }],
+    agentsText: initialAgentsText,
+    agentsPath,
+  });
+
+  const caseVariantAgentsPath = process.platform === 'win32'
+    ? agentsPath.toUpperCase()
+    : agentsPath;
+
+  const result = applyApprovedMemoryPruning({
+    plan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: plan.planHash,
+    agentsPath: caseVariantAgentsPath,
+    agentsBaselineHash: agentsBaseHash,
+  });
+  assert.equal(result.receipt.agentsWritten, true);
+  assert.match(readFileSync(agentsPath, 'utf8'), /Promoted edge rule/);
+  assert.equal(readSharedMemory(memoryPath).entries.length, 0);
+
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(agentsPath).mode & 0o777, 0o640);
+  }
+});
+
+test('applyApprovedMemoryPruning reports stale lock and rejects missing AGENTS.md parent', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-lock-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
+  const agentsPath = join(dir, 'AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+
+  const memBase = readSharedMemory(memoryPath);
+  const personalBase = readPersonalRules(personalPath);
+  const agentsBaseHash = createHash('sha256').update(initialAgentsText, 'utf8').digest('hex');
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
+
+  const lockPath = `${agentsPath}.lock`;
+  writeFileSync(lockPath, 'stale', 'utf8');
+  try {
+    const plan = planMemoryPruning({
+      memoryEntries: [entry],
+      candidates: [candidate],
+      dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule' }],
+      agentsText: initialAgentsText,
+      agentsPath,
+    });
+    assert.throws(() => applyApprovedMemoryPruning({
+      plan,
+      approved: true,
+      memoryPath,
+      memoryBaselineHash: memBase.hash,
+      personalBaselineHash: personalBase.hash,
+      expectedPlanHash: plan.planHash,
+      agentsPath,
+      agentsBaselineHash: agentsBaseHash,
+    }), /remove stale AGENTS\.md\.lock/i);
+  } finally {
+    try { unlinkSync(lockPath); } catch {}
+  }
+
+  const missingParentAgents = join(dir, 'missing-parent', 'AGENTS.md');
+  const planMissingParent = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule 2' }],
+    agentsText: initialAgentsText,
+    agentsPath: missingParentAgents,
+  });
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: planMissingParent,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: memBase.hash,
+    personalBaselineHash: personalBase.hash,
+    expectedPlanHash: planMissingParent.planHash,
+    agentsPath: missingParentAgents,
+    agentsBaselineHash: agentsBaseHash,
+  }), /parent directory does not exist/i);
+});
+
+test('applyApprovedMemoryPruning rejects dangling AGENTS.md symlink', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-symlink-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
+  const danglingAgents = join(dir, 'dangling-AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+
+  try {
+    symlinkSync(join(dir, 'nonexistent-target.md'), danglingAgents);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'EPERM') {
+      t.skip('Symlink creation requires elevated privileges on Windows');
+      return;
+    }
+    throw err;
+  }
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
+  const planDangling = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted edge rule' }],
+    agentsText: initialAgentsText,
+    agentsPath: danglingAgents,
+  });
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: planDangling,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: readSharedMemory(memoryPath).hash,
+    personalBaselineHash: readPersonalRules(personalPath).hash,
+    expectedPlanHash: planDangling.planHash,
+    agentsPath: danglingAgents,
+    agentsBaselineHash: createHash('sha256').update(initialAgentsText, 'utf8').digest('hex'),
+  }), /symlink/i);
+});
+
+test('planMemoryPruning and applyApprovedMemoryPruning require agentsPath when promotions exist', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-unbound-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
+  const agentsPath = join(dir, 'AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
+
+  assert.throws(() => planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted unbound rule' }],
+    agentsText: initialAgentsText,
+  }), /requires agentsPath when agentsText is provided/i);
+
+  const validPlan = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted unbound rule' }],
+    agentsText: initialAgentsText,
+    agentsPath,
+  });
+  const unboundPlan = { ...validPlan, agentsPath: undefined };
+  unboundPlan.planHash = computePruningPlanHash(unboundPlan);
+
+  assert.throws(() => applyApprovedMemoryPruning({
+    plan: unboundPlan,
+    approved: true,
+    memoryPath,
+    memoryBaselineHash: readSharedMemory(memoryPath).hash,
+    personalBaselineHash: readPersonalRules(personalPath).hash,
+    expectedPlanHash: unboundPlan.planHash,
+    agentsPath,
+    agentsBaselineHash: createHash('sha256').update(initialAgentsText, 'utf8').digest('hex'),
+  }), /requires agentsPath to be recorded in MemoryPruningPlan/i);
+});
+
+test('applyApprovedMemoryPruning cleans up temp file when source AGENTS.md is read-only', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-pruning-readonly-'));
+  t.after(() => {
+    try { chmodSync(join(dir, 'AGENTS.md'), 0o644); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const memoryPath = join(dir, 'MEMORY.md');
+  const personalPath = join(dir, 'AGENTS.personal.md');
+  const agentsPath = join(dir, 'AGENTS.md');
+
+  const entry = {
+    date: '2026-11-12',
+    scope: 'edge-topic',
+    summary: 'Edge test learning',
+    fact: 'Edge test learning',
+    confirmation: 'approved',
+    source: 'PR #224',
+    tags: [],
+  };
+  const initialAgentsText = '# AGENTS\n\n- Existing rule\n';
+  writeFileSync(memoryPath, formatSharedMemory([entry]), 'utf8');
+  writeFileSync(personalPath, '', 'utf8');
+  writeFileSync(agentsPath, initialAgentsText, 'utf8');
+  chmodSync(agentsPath, 0o444);
+
+  const candidate = {
+    entry,
+    kind: 'redundant' as const,
+    reason: 'Covered by AGENTS.md',
+    evidence: 'AGENTS.md',
+    evidenceKey: 'agents:1',
+  };
+  const plan = planMemoryPruning({
+    memoryEntries: [entry],
+    candidates: [candidate],
+    dispositions: [{ entry, disposition: 'promote', targetRuleText: 'Promoted readonly rule' }],
+    agentsText: initialAgentsText,
+    agentsPath,
+  });
+
+  if (process.platform === 'win32') {
+    let caught: unknown;
+    try {
+      applyApprovedMemoryPruning({
+        plan,
+        approved: true,
+        memoryPath,
+        memoryBaselineHash: readSharedMemory(memoryPath).hash,
+        personalBaselineHash: readPersonalRules(personalPath).hash,
+        expectedPlanHash: plan.planHash,
+        agentsPath,
+        agentsBaselineHash: createHash('sha256').update(initialAgentsText, 'utf8').digest('hex'),
+      });
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught instanceof MemoryPruningApplyError);
+    assert.equal(caught.receipt.failedStep, 'agents');
+    assert.equal(caught.receipt.agentsWritten, false);
+  } else {
+    const result = applyApprovedMemoryPruning({
+      plan,
+      approved: true,
+      memoryPath,
+      memoryBaselineHash: readSharedMemory(memoryPath).hash,
+      personalBaselineHash: readPersonalRules(personalPath).hash,
+      expectedPlanHash: plan.planHash,
+      agentsPath,
+      agentsBaselineHash: createHash('sha256').update(initialAgentsText, 'utf8').digest('hex'),
+    });
+    assert.equal(result.receipt.agentsWritten, true);
+    assert.equal(statSync(agentsPath).mode & 0o777, 0o444);
+  }
+
+  const leftover = readdirSync(dir).filter((f) => f.startsWith('.AGENTS.') && f.endsWith('.tmp'));
+  assert.deepEqual(leftover, []);
+});
+
+test('MEMORY.md task count parsing: legacy files, task count 0, CRLF/BOM, header placement, and one-sided metadata', () => {
+  // Header-only legacy file
+  const headerOnly = parseSharedMemoryState('# Shared Operator memory\n');
+  assert.equal(headerOnly.taskCount, 0);
+  assert.equal(headerOnly.hasTaskCount, false);
+  assert.deepEqual(headerOnly.entries, []);
+
+  // Old-format file without Task count or entry task metadata still parses
+  const legacyText = [
+    '# Shared Operator memory',
+    '',
+    '- [Source: Implementer; scope: Build; confirmation: confirmed] Use Gradle daemon; avoid clean.',
+    '',
+  ].join('\n');
+  const legacyParsed = parseSharedMemoryState(legacyText);
+  assert.equal(legacyParsed.taskCount, 0);
+  assert.equal(legacyParsed.hasTaskCount, false);
+  assert.equal(legacyParsed.entries.length, 1);
+  assert.equal(legacyParsed.entries[0]?.fact, 'Use Gradle daemon; avoid clean.');
+  assert.equal(legacyParsed.entries[0]?.addedAtTask, undefined);
+  assert.equal(legacyParsed.entries[0]?.lastUsedAtTask, undefined);
+
+  // Task count 0 and CRLF + UTF-8 BOM round-trip
+  const bomCrlf = '\uFEFF# Shared Operator memory\r\nTask count: 0\r\n\r\n- [Source: QA; scope: E2E; confirmation: confirmed; added-task: 0; last-used-task: 0] Run smoke.\r\n';
+  const bomParsed = parseSharedMemoryState(bomCrlf);
+  assert.equal(bomParsed.taskCount, 0);
+  assert.equal(bomParsed.hasTaskCount, true);
+  assert.equal(bomParsed.entries[0]?.addedAtTask, 0);
+  assert.equal(bomParsed.entries[0]?.lastUsedAtTask, 0);
+  const reformatted = formatSharedMemory(bomParsed.entries, { taskCount: bomParsed.taskCount });
+  assert.deepEqual(parseSharedMemoryState(reformatted), bomParsed);
+
+  // One-sided metadata (addedAtTask alone, lastUsedAtTask alone)
+  const oneSided = [
+    { source: 'Lead', scope: 'Git', confirmation: 'confirmed', fact: 'Added only.', addedAtTask: 3 },
+    { source: 'Lead', scope: 'Git', confirmation: 'confirmed', fact: 'Used only.', lastUsedAtTask: 7 },
+  ];
+  const formattedOneSided = formatSharedMemory(oneSided, { taskCount: 9 });
+  const parsedOneSided = parseSharedMemoryState(formattedOneSided);
+  assert.equal(parsedOneSided.entries[0]?.addedAtTask, 3);
+  assert.equal(parsedOneSided.entries[0]?.lastUsedAtTask, undefined);
+  assert.equal(parsedOneSided.entries[1]?.addedAtTask, undefined);
+  assert.equal(parsedOneSided.entries[1]?.lastUsedAtTask, 7);
+
+  // Task count placed after entries parses cleanly; duplicate Task count throws
+  const movedHeader = [
+    '# Shared Operator memory',
+    '',
+    '- [Source: Lead; scope: Git; confirmation: confirmed; added-task: 1] Keep clean.',
+    'Task count: 4',
+    '',
+  ].join('\n');
+  const parsedMoved = parseSharedMemoryState(movedHeader);
+  assert.equal(parsedMoved.taskCount, 4);
+  assert.equal(parsedMoved.entries.length, 1);
+
+  assert.throws(
+    () => parseSharedMemoryState('# Shared Operator memory\nTask count: 1\nTask count: 2\n'),
+    /Duplicate Task count/
+  );
+});
+
+test('MEMORY.md validation rejects semicolons in confirmation and evidenceKey while allowing semicolons in fact', () => {
+  assert.throws(
+    () =>
+      validateMemoryEntry({
+        source: 'Lead',
+        scope: 'Git',
+        confirmation: 'confirmed; extra',
+        fact: 'Valid fact.',
+      }),
+    /unsupported delimiters/
+  );
+  assert.equal(
+    parseMemoryEntryLine(
+      '- [Source: Lead; scope: Git; confirmation: confirmed (reviewed-keep:stale:unused-since-1); extra] Fact text.'
+    ),
+    undefined
+  );
+  assert.throws(
+    () =>
+      parseSharedMemoryState(
+        '# Shared Operator memory\n- [Source: Lead; scope: Git; confirmation: confirmed (reviewed-keep:stale:unused-since-1); extra] Fact text.\n'
+      ),
+    /Unsupported shared MEMORY\.md content/
+  );
+  assert.throws(
+    () =>
+      markEntryReviewed(
+        { source: 'Lead', scope: 'Git', confirmation: 'confirmed', fact: 'Fact.' },
+        {
+          entry: { source: 'Lead', scope: 'Git', confirmation: 'confirmed', fact: 'Fact.' },
+          kind: 'stale',
+          reason: 'Unused',
+          evidence: 'Unused',
+          evidenceKey: 'bad;key',
+        }
+      ),
+    /semicolons/
+  );
+  const parsedFactWithSemicolon = parseMemoryEntryLine(
+    '- [Source: Lead; scope: Git; confirmation: confirmed (reviewed-keep:stale:unused-since-1)] First clause; second clause.'
+  );
+  assert.equal(parsedFactWithSemicolon?.fact, 'First clause; second clause.');
+});
+
+test('MEMORY.md deduplication preserves earliest addedAtTask and latest lastUsedAtTask; usage survives keep', () => {
+  const e1 = {
+    source: 'Implementer',
+    scope: 'Build',
+    confirmation: 'confirmed',
+    fact: 'Use Gradle daemon.',
+    addedAtTask: 5,
+    lastUsedAtTask: 8,
+  };
+  const e2 = {
+    source: 'Implementer',
+    scope: 'Build',
+    confirmation: 'confirmed',
+    fact: 'Use Gradle daemon.',
+    addedAtTask: 2,
+    lastUsedAtTask: 14,
+  };
+  const deduped = deduplicateMemoryEntries([e1, e2]);
+  assert.equal(deduped.length, 1);
+  assert.equal(deduped[0]?.addedAtTask, 2);
+  assert.equal(deduped[0]?.lastUsedAtTask, 14);
+
+  // Usage matching survives reviewed-keep tags added to confirmation
+  const keptEntry = markEntryReviewed(deduped[0]!, {
+    entry: deduped[0]!,
+    kind: 'stale',
+    reason: 'Unused',
+    evidence: 'Unused',
+    evidenceKey: 'unused-since-14',
+  });
+  const updated = markMemoryEntriesUsed([keptEntry], [e1], 35);
+  assert.equal(updated[0]?.lastUsedAtTask, 35);
+});
+
+test('stale pruning: backfill, usage tracking, threshold, priority order, and validation', () => {
+  const legacy1 = {
+    source: 'Implementer',
+    scope: 'Build',
+    confirmation: 'confirmed',
+    fact: 'Use Gradle daemon for local builds.',
+  };
+  const legacy2 = {
+    source: 'Reviewer',
+    scope: 'Tests',
+    confirmation: 'confirmed',
+    fact: 'Run unit tests before opening PR.',
+  };
+
+  // Backfill pre-existing entries on first task so none are treated as stale at once
+  const task1 = advanceMemoryTaskCount({ taskCount: 0, entries: [legacy1, legacy2] });
+  assert.equal(task1.taskCount, 1);
+  assert.equal(task1.entries[0]?.addedAtTask, 1);
+  assert.equal(task1.entries[0]?.lastUsedAtTask, 1);
+  assert.deepEqual(detectPruningCandidates({ memoryEntries: task1.entries, currentTaskCount: 1 }), []);
+
+  // Mark entry1 used at task 10; entry2 stays at 1
+  const afterUse = markMemoryEntriesUsed(task1.entries, [legacy1], 10);
+  assert.equal(STALE_TASK_THRESHOLD, 20);
+  assert.deepEqual(detectPruningCandidates({ memoryEntries: afterUse, currentTaskCount: 20 }), []);
+
+  const at21 = detectPruningCandidates({ memoryEntries: afterUse, currentTaskCount: 21 });
+  assert.equal(at21.length, 1);
+  assert.equal(at21[0]?.kind, 'stale');
+  assert.equal(at21[0]?.entry.fact, legacy2.fact);
+  assert.equal(at21[0]?.evidenceKey, 'unused-since-1');
+
+  // Redundant takes precedence over stale; kept stale entry can still be proposed under another kind
+  const redundantAndStale = detectPruningCandidates({
+    memoryEntries: afterUse,
+    agentsText: '# Rules\n\n- Run unit tests before opening PR.\n',
+    currentTaskCount: 21,
+  });
+  assert.equal(redundantAndStale.length, 1);
+  assert.equal(redundantAndStale[0]?.kind, 'redundant');
+
+  const keptStale = markEntryReviewed(afterUse[1]!, at21[0]!);
+  const redundantAfterStaleKeep = detectPruningCandidates({
+    memoryEntries: [keptStale],
+    agentsText: '# Rules\n\n- Run unit tests before opening PR.\n',
+    currentTaskCount: 21,
+  });
+  assert.equal(redundantAfterStaleKeep.length, 1);
+  assert.equal(redundantAfterStaleKeep[0]?.kind, 'redundant');
+
+  // Validation for staleThreshold and currentTaskCount
+  assert.throws(
+    () => detectPruningCandidates({ memoryEntries: afterUse, currentTaskCount: 21, staleThreshold: 0 }),
+    /staleThreshold must be a positive integer/
+  );
+  assert.throws(
+    () => detectPruningCandidates({ memoryEntries: afterUse, currentTaskCount: -1 }),
+    /currentTaskCount must be a non-negative integer/
+  );
+  assert.throws(
+    () =>
+      planMemoryPruning({
+        memoryEntries: afterUse,
+        candidates: at21,
+        dispositions: [{ entry: at21[0]!.entry, disposition: 'keep' }],
+        currentTaskCount: -1,
+      }),
+    /currentTaskCount must be a non-negative integer/
+  );
+  assert.throws(
+    () =>
+      planMemoryPruning({
+        memoryEntries: afterUse,
+        candidates: at21,
+        dispositions: [{ entry: at21[0]!.entry, disposition: 'keep' }],
+      }),
+    /requires currentTaskCount/
+  );
+});
+
+test('stale pruning: plan hash sensitivity, keep persistence without pre-write, decline no-op, and promote/personal/discard', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-stale-apply-'));
+  try {
+    const memoryPath = join(dir, 'MEMORY.md');
+    const agentsPath = join(dir, 'AGENTS.md');
+    const personalPath = resolvePersonalRulesPath(memoryPath);
+    writeFileSync(agentsPath, '# Project Rules\n\n- Keep existing rule.\n', 'utf8');
+
+    const entryKeep = {
+      source: 'Implementer',
+      scope: 'Build',
+      confirmation: 'confirmed',
+      fact: 'Keep this stale entry after review.',
+      addedAtTask: 1,
+      lastUsedAtTask: 1,
+    };
+    const entryPromote = {
+      source: 'Implementer',
+      scope: 'Build',
+      confirmation: 'confirmed',
+      fact: 'Promote this stale entry to AGENTS.md.',
+      addedAtTask: 1,
+      lastUsedAtTask: 1,
+    };
+    const entryPersonal = {
+      source: 'Reviewer',
+      scope: 'Style',
+      confirmation: 'confirmed',
+      fact: 'Move this stale entry to personal rules.',
+      addedAtTask: 1,
+      lastUsedAtTask: 1,
+    };
+    const entryDiscard = {
+      source: 'QA',
+      scope: 'E2E',
+      confirmation: 'confirmed',
+      fact: 'Discard this stale entry.',
+      addedAtTask: 1,
+      lastUsedAtTask: 1,
+    };
+
+    const initialWrite = writeSharedMemorySerialized(
+      memoryPath,
+      [entryKeep, entryPromote, entryPersonal, entryDiscard],
+      undefined,
+      { taskCount: 1 }
+    );
+
+    const candidates = detectPruningCandidates({
+      memoryEntries: [entryKeep, entryPromote, entryPersonal, entryDiscard],
+      currentTaskCount: 21,
+    });
+    assert.equal(candidates.length, 4);
+
+    // Plan hash changes when task metadata or currentTaskCount changes
+    const planAt21 = planMemoryPruning({
+      memoryEntries: [entryKeep, entryPromote, entryPersonal, entryDiscard],
+      candidates,
+      dispositions: [
+        { entry: entryKeep, disposition: 'keep' },
+        { entry: entryPromote, disposition: 'promote', targetRuleText: 'Promote this stale entry to AGENTS.md.' },
+        { entry: entryPersonal, disposition: 'personal', targetRuleText: 'Move this stale entry to personal rules.' },
+        { entry: entryDiscard, disposition: 'discard' },
+      ],
+      agentsText: readFileSync(agentsPath, 'utf8'),
+      agentsPath,
+      currentTaskCount: 21,
+    });
+    const planAt22 = planMemoryPruning({
+      memoryEntries: [entryKeep, entryPromote, entryPersonal, entryDiscard],
+      candidates,
+      dispositions: [
+        { entry: entryKeep, disposition: 'keep' },
+        { entry: entryPromote, disposition: 'promote', targetRuleText: 'Promote this stale entry to AGENTS.md.' },
+        { entry: entryPersonal, disposition: 'personal', targetRuleText: 'Move this stale entry to personal rules.' },
+        { entry: entryDiscard, disposition: 'discard' },
+      ],
+      agentsText: readFileSync(agentsPath, 'utf8'),
+      agentsPath,
+      currentTaskCount: 22,
+    });
+    assert.notEqual(planAt21.planHash, planAt22.planHash);
+
+    // Declining writes nothing across MEMORY.md, AGENTS.md, AGENTS.personal.md, and leaves no temp/lock files
+    const agentsBeforeDecline = readFileSync(agentsPath, 'utf8');
+    const dirEntriesBeforeDecline = readdirSync(dir).sort();
+    assert.throws(
+      () =>
+        applyApprovedMemoryPruning({
+          plan: planAt21,
+          approved: false,
+          memoryPath,
+          memoryBaselineHash: initialWrite.hash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: planAt21.planHash,
+          agentsPath,
+          agentsBaselineHash: planAt21.agentsBaselineHash,
+        }),
+      /requires explicit human approval/
+    );
+    assert.equal(readSharedMemory(memoryPath).hash, initialWrite.hash);
+    assert.equal(readFileSync(agentsPath, 'utf8'), agentsBeforeDecline);
+    assert.equal(existsSync(personalPath), false);
+    assert.deepEqual(readdirSync(dir).sort(), dirEntriesBeforeDecline);
+
+    // Plan-hash mismatch writes nothing
+    assert.throws(
+      () =>
+        applyApprovedMemoryPruning({
+          plan: planAt21,
+          approved: true,
+          memoryPath,
+          memoryBaselineHash: initialWrite.hash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: '0'.repeat(64),
+          agentsPath,
+          agentsBaselineHash: planAt21.agentsBaselineHash,
+        }),
+      /plan hash does not match/
+    );
+    assert.equal(readSharedMemory(memoryPath).hash, initialWrite.hash);
+    assert.equal(readFileSync(agentsPath, 'utf8'), agentsBeforeDecline);
+    assert.equal(existsSync(personalPath), false);
+
+    // Apply without manually pre-writing taskCount: 21; apply persists taskCount 21
+    const applied = applyApprovedMemoryPruning({
+      plan: planAt21,
+      approved: true,
+      memoryPath,
+      memoryBaselineHash: initialWrite.hash,
+      personalBaselineHash: readPersonalRules(personalPath).hash,
+      expectedPlanHash: planAt21.planHash,
+      agentsPath,
+      agentsBaselineHash: planAt21.agentsBaselineHash,
+    });
+    assert.equal(applied.success, true);
+
+    const afterApply = readSharedMemory(memoryPath);
+    assert.equal(afterApply.taskCount, 21);
+    assert.equal(afterApply.entries.length, 1);
+    assert.equal(afterApply.entries[0]?.fact, entryKeep.fact);
+    assert.equal(afterApply.entries[0]?.lastUsedAtTask, 21);
+    assert.equal(afterApply.entries[0]?.confirmation, 'confirmed');
+    assert.match(readFileSync(agentsPath, 'utf8'), /Promote this stale entry to AGENTS\.md\./);
+    assert.ok(readPersonalRules(personalPath).rules.includes('Move this stale entry to personal rules.'));
+
+    // Kept entry is not proposed at task 40, and is proposed again at task 41
+    assert.deepEqual(detectPruningCandidates({ memoryEntries: afterApply.entries, currentTaskCount: 40 }), []);
+    const at41 = detectPruningCandidates({ memoryEntries: afterApply.entries, currentTaskCount: 41 });
+    assert.equal(at41.length, 1);
+    assert.equal(at41[0]?.evidenceKey, 'unused-since-21');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stale pruning: addedAtTask fallback and advanceMemoryTaskCount backfill/validation', () => {
+  const addedOnly = {
+    source: 'Implementer',
+    scope: 'Build',
+    confirmation: 'confirmed',
+    fact: 'Added-only entry.',
+    addedAtTask: 2,
+  };
+  const addedOnlyCandidates = detectPruningCandidates({
+    memoryEntries: [addedOnly],
+    currentTaskCount: 22,
+  });
+  assert.equal(addedOnlyCandidates.length, 1);
+  assert.equal(addedOnlyCandidates[0]?.kind, 'stale');
+  assert.equal(addedOnlyCandidates[0]?.evidenceKey, 'unused-since-2');
+
+  const addedOnlyAdvance = advanceMemoryTaskCount({
+    taskCount: 5,
+    entries: [addedOnly],
+  });
+  assert.equal(addedOnlyAdvance.taskCount, 6);
+  assert.equal(addedOnlyAdvance.entries[0]?.addedAtTask, 2);
+  assert.equal(addedOnlyAdvance.entries[0]?.lastUsedAtTask, 2);
+
+  // F23: entry with only lastUsedAtTask backfills addedAtTask = lastUsedAtTask
+  const lastUsedOnly = {
+    source: 'Implementer',
+    scope: 'Build',
+    confirmation: 'confirmed',
+    fact: 'Last-used-only entry.',
+    lastUsedAtTask: 3,
+  };
+  const lastUsedOnlyAdvance = advanceMemoryTaskCount({
+    taskCount: 5,
+    entries: [lastUsedOnly],
+  });
+  assert.equal(lastUsedOnlyAdvance.taskCount, 6);
+  assert.equal(lastUsedOnlyAdvance.entries[0]?.addedAtTask, 3);
+  assert.equal(lastUsedOnlyAdvance.entries[0]?.lastUsedAtTask, 3);
+
+  assert.throws(() => advanceMemoryTaskCount({ taskCount: -1, entries: [] }), /non-negative integer/);
+  assert.throws(() => advanceMemoryTaskCount({ taskCount: 9007199254740992, entries: [] }), /non-negative integer/);
+  assert.throws(() => advanceMemoryTaskCount({ taskCount: Number.MAX_SAFE_INTEGER, entries: [] }), /exceeds safe integer range/);
+});
+
+test('stale pruning: 6+ keeps do not evict reviewed-keep tags for other kinds', () => {
+  let multiKeepEntry: {
+    source: string;
+    scope: string;
+    confirmation: string;
+    fact: string;
+    addedAtTask?: number | undefined;
+    lastUsedAtTask?: number | undefined;
+  } = {
+    source: 'Reviewer',
+    scope: 'Tests',
+    confirmation: 'confirmed (reviewed-keep:redundant:agents-rule) (reviewed-keep:obsolete:issue:1)',
+    fact: 'Entry kept across 6 stale cycles.',
+    addedAtTask: 1,
+    lastUsedAtTask: 1,
+  };
+  for (let cycle = 1; cycle <= 6; cycle++) {
+    const taskNow = 1 + cycle * 20;
+    const cands = detectPruningCandidates({ memoryEntries: [multiKeepEntry], currentTaskCount: taskNow });
+    assert.equal(cands.length, 1);
+    assert.equal(cands[0]?.kind, 'stale');
+    const p = planMemoryPruning({
+      memoryEntries: [multiKeepEntry],
+      candidates: cands,
+      dispositions: [{ entry: multiKeepEntry, disposition: 'keep' }],
+      currentTaskCount: taskNow,
+    });
+    multiKeepEntry = p.updatedMemoryEntries[0]!;
+  }
+  assert.match(multiKeepEntry.confirmation, /\(reviewed-keep:redundant:agents-rule\)/);
+  assert.match(multiKeepEntry.confirmation, /\(reviewed-keep:obsolete:issue:1\)/);
+  assert.doesNotMatch(multiKeepEntry.confirmation, /reviewed-keep:stale:/);
+});
+
+test('stale pruning: writeSharedMemorySerialized normalization, monotonicity, and taskCount >= entry metadata', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-stale-write-'));
+  try {
+    const memoryPath = join(dir, 'MEMORY.md');
+    const addedOnly = {
+      source: 'Implementer',
+      scope: 'Build',
+      confirmation: 'confirmed',
+      fact: 'Added-only entry.',
+      addedAtTask: 2,
+    };
+    const normWrite = writeSharedMemorySerialized(memoryPath, [addedOnly], undefined);
+    const normRead = readSharedMemory(memoryPath);
+    assert.equal(normRead.hasTaskCount, true);
+    assert.equal(normRead.taskCount, 2);
+
+    const w5 = writeSharedMemorySerialized(memoryPath, [], normWrite.hash, { taskCount: 5 });
+    assert.throws(
+      () => writeSharedMemorySerialized(memoryPath, [], w5.hash, { taskCount: 4 }),
+      /older than existing on-disk Task count/
+    );
+
+    const exceedsEntry = { ...addedOnly, lastUsedAtTask: 10 };
+    assert.throws(
+      () => writeSharedMemorySerialized(memoryPath, [exceedsEntry], w5.hash, { taskCount: 8 }),
+      /lower than entry task metadata/
+    );
+    assert.throws(
+      () => writeSharedMemorySerialized(memoryPath, [exceedsEntry], w5.hash),
+      /lower than entry task metadata/
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stale pruning: partial failure after AGENTS.md write leaves MEMORY.md unchanged and no temp leftovers', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-stale-pf-'));
+  try {
+    const memoryPath = join(dir, 'MEMORY.md');
+    const agentsPath = join(dir, 'AGENTS.md');
+    const personalPath = resolvePersonalRulesPath(memoryPath);
+    writeFileSync(agentsPath, '# Project Rules\n\n- Existing.\n', 'utf8');
+
+    const promoteEntry = {
+      source: 'Implementer',
+      scope: 'Build',
+      confirmation: 'confirmed',
+      fact: 'Promote stale rule before failure.',
+      addedAtTask: 1,
+      lastUsedAtTask: 1,
+    };
+    const w2 = writeSharedMemorySerialized(memoryPath, [promoteEntry], undefined, { taskCount: 1 });
+    const pfCands = detectPruningCandidates({ memoryEntries: [promoteEntry], currentTaskCount: 21 });
+    const pfPlan = planMemoryPruning({
+      memoryEntries: [promoteEntry],
+      candidates: pfCands,
+      dispositions: [{ entry: promoteEntry, disposition: 'promote', targetRuleText: 'Promote stale rule before failure.' }],
+      agentsText: readFileSync(agentsPath, 'utf8'),
+      agentsPath,
+      currentTaskCount: 21,
+    });
+    const lockFd = openSync(`${memoryPath}.lock`, 'wx');
+    try {
+      let caught: unknown;
+      try {
+        applyApprovedMemoryPruning({
+          plan: pfPlan,
+          approved: true,
+          memoryPath,
+          memoryBaselineHash: w2.hash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: pfPlan.planHash,
+          agentsPath,
+          agentsBaselineHash: pfPlan.agentsBaselineHash,
+        });
+      } catch (err) {
+        caught = err;
+      }
+      assert.ok(caught instanceof MemoryPruningApplyError);
+      assert.equal(caught.receipt.agentsWritten, true);
+      assert.equal(caught.receipt.memoryWritten, false);
+      assert.equal(caught.receipt.failedStep, 'memory');
+      assert.match(readFileSync(agentsPath, 'utf8'), /Promote stale rule before failure\./);
+      assert.equal(readSharedMemory(memoryPath).hash, w2.hash);
+      assert.deepEqual(readdirSync(dir).sort(), ['AGENTS.md', 'MEMORY.md', 'MEMORY.md.lock']);
+    } finally {
+      closeSync(lockFd);
+      unlinkSync(`${memoryPath}.lock`);
+    }
+    assert.deepEqual(readdirSync(dir).sort(), ['AGENTS.md', 'MEMORY.md']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stale pruning: planMemoryPruning and applyApprovedMemoryPruning step-limit and metadata guards', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-stale-guards-'));
+  try {
+    const memoryPath = join(dir, 'MEMORY.md');
+    const personalPath = resolvePersonalRulesPath(memoryPath);
+    const metaEntry = {
+      source: 'Implementer',
+      scope: 'Build',
+      confirmation: 'confirmed',
+      fact: 'Entry with metadata.',
+      addedAtTask: 5,
+      lastUsedAtTask: 5,
+    };
+    const discardExtra = {
+      source: 'Implementer',
+      scope: 'Build',
+      confirmation: 'confirmed',
+      fact: 'Redundant extra entry.',
+      addedAtTask: 5,
+      lastUsedAtTask: 5,
+    };
+    const wMeta = writeSharedMemorySerialized(memoryPath, [metaEntry, discardExtra], undefined, { taskCount: 5 });
+
+    // MAX_TASK_COUNT_STEP guard on apply
+    assert.equal(MAX_TASK_COUNT_STEP, 1000);
+    const jumpCands = detectPruningCandidates({ memoryEntries: [metaEntry], currentTaskCount: 5000 });
+    const jumpPlan = planMemoryPruning({
+      memoryEntries: [metaEntry],
+      candidates: jumpCands,
+      dispositions: [{ entry: metaEntry, disposition: 'keep' }],
+      currentTaskCount: 5000,
+    });
+    assert.throws(
+      () =>
+        applyApprovedMemoryPruning({
+          plan: jumpPlan,
+          approved: true,
+          memoryPath,
+          memoryBaselineHash: wMeta.hash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: jumpPlan.planHash,
+        }),
+      /jumps more than 1000 tasks ahead/
+    );
+
+    // F16: planMemoryPruning rejects missing currentTaskCount and entry-exceeds-count upfront
+    const noCountCands = detectPruningCandidates({
+      memoryEntries: [metaEntry, discardExtra],
+      agentsText: 'Redundant extra entry.\n',
+    });
+    assert.throws(
+      () =>
+        planMemoryPruning({
+          memoryEntries: [metaEntry, discardExtra],
+          candidates: noCountCands,
+          dispositions: [{ entry: discardExtra, disposition: 'discard' }],
+        }),
+      /requires currentTaskCount/
+    );
+
+    const exceedsEntry = { ...metaEntry, lastUsedAtTask: 10 };
+    const exceedsCands = detectPruningCandidates({
+      memoryEntries: [exceedsEntry, discardExtra],
+      agentsText: 'Redundant extra entry.\n',
+      currentTaskCount: 6,
+    });
+    assert.throws(
+      () =>
+        planMemoryPruning({
+          memoryEntries: [exceedsEntry, discardExtra],
+          candidates: exceedsCands,
+          dispositions: [{ entry: discardExtra, disposition: 'discard' }],
+          currentTaskCount: 6,
+        }),
+      /exceeds currentTaskCount/
+    );
+
+    // F21: planMemoryPruning rejects addedAtTask > currentTaskCount, accepts entry === currentTaskCount,
+    // and applyApprovedMemoryPruning rejects currentTaskCount older than on-disk MEMORY.md task count
+    const exceedsAddedEntry = { ...metaEntry, addedAtTask: 10, lastUsedAtTask: 5 };
+    const exceedsAddedCands = detectPruningCandidates({
+      memoryEntries: [exceedsAddedEntry, discardExtra],
+      agentsText: 'Redundant extra entry.\n',
+      currentTaskCount: 6,
+    });
+    assert.throws(
+      () =>
+        planMemoryPruning({
+          memoryEntries: [exceedsAddedEntry, discardExtra],
+          candidates: exceedsAddedCands,
+          dispositions: [{ entry: discardExtra, disposition: 'discard' }],
+          currentTaskCount: 6,
+        }),
+      /exceeds currentTaskCount/
+    );
+
+    const equalEntry = { ...metaEntry, addedAtTask: 5, lastUsedAtTask: 5 };
+    const equalPlan = planMemoryPruning({
+      memoryEntries: [equalEntry, discardExtra],
+      candidates: noCountCands,
+      dispositions: [{ entry: discardExtra, disposition: 'discard' }],
+      currentTaskCount: 5,
+    });
+    assert.equal(equalPlan.currentTaskCount, 5);
+
+    const olderEntry = { ...metaEntry, addedAtTask: 3, lastUsedAtTask: 3 };
+    const olderPlan = planMemoryPruning({
+      memoryEntries: [olderEntry, discardExtra],
+      candidates: noCountCands,
+      dispositions: [{ entry: discardExtra, disposition: 'discard' }],
+      currentTaskCount: 4,
+    });
+    assert.throws(
+      () =>
+        applyApprovedMemoryPruning({
+          plan: olderPlan,
+          approved: true,
+          memoryPath,
+          memoryBaselineHash: wMeta.hash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: olderPlan.planHash,
+        }),
+      /older than the on-disk MEMORY\.md task count/
+    );
+
+    // F10: applyApprovedMemoryPruning defense-in-depth guards on forged/rehashed plans
+    const validPlan = planMemoryPruning({
+      memoryEntries: [metaEntry, discardExtra],
+      candidates: noCountCands,
+      dispositions: [{ entry: discardExtra, disposition: 'discard' }],
+      currentTaskCount: 5,
+    });
+
+    const missingCountPlan = { ...validPlan, currentTaskCount: undefined };
+    const missingCountHash = computePruningPlanHash(missingCountPlan);
+    assert.throws(
+      () =>
+        applyApprovedMemoryPruning({
+          plan: { ...missingCountPlan, planHash: missingCountHash },
+          approved: true,
+          memoryPath,
+          memoryBaselineHash: wMeta.hash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: missingCountHash,
+        }),
+      /when currentTaskCount is undefined/
+    );
+
+    const forgedExceedsPlan = { ...validPlan, updatedMemoryEntries: [exceedsEntry] };
+    const forgedExceedsHash = computePruningPlanHash(forgedExceedsPlan);
+    assert.throws(
+      () =>
+        applyApprovedMemoryPruning({
+          plan: { ...forgedExceedsPlan, planHash: forgedExceedsHash },
+          approved: true,
+          memoryPath,
+          memoryBaselineHash: wMeta.hash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: forgedExceedsHash,
+        }),
+      /entry task count exceeds plan currentTaskCount/
+    );
+
+    const unsafePlan = { ...validPlan, currentTaskCount: 9007199254740992 };
+    const unsafeHash = computePruningPlanHash(unsafePlan);
+    assert.throws(
+      () =>
+        applyApprovedMemoryPruning({
+          plan: { ...unsafePlan, planHash: unsafeHash },
+          approved: true,
+          memoryPath,
+          memoryBaselineHash: wMeta.hash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: unsafeHash,
+        }),
+      /safe non-negative integer/
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stale pruning: safe-integer bounds and free Task count placement', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-stale-safeint-'));
+  try {
+    const memoryPath = join(dir, 'MEMORY.md');
+    assert.throws(
+      () => parseSharedMemoryState('# Shared Operator memory\nTask count: 9007199254740992\n'),
+      /exceeds safe integer range/
+    );
+    assert.throws(
+      () => parseMemoryEntryLine('- [Source: Lead; scope: Git; confirmation: confirmed; added-task: 9007199254740992] Fact.'),
+      /exceeds safe integer range/
+    );
+    assert.throws(
+      () => parseMemoryEntryLine('- [Source: Lead; scope: Git; confirmation: confirmed; last-used-task: 9007199254740992] Fact.'),
+      /exceeds safe integer range/
+    );
+    assert.throws(() => formatSharedMemory([], { taskCount: 9007199254740992 }), /non-negative integer/);
+    assert.throws(() => markMemoryEntriesUsed([], [], 9007199254740992), /non-negative integer/);
+    assert.throws(() => detectPruningCandidates({ memoryEntries: [], currentTaskCount: 9007199254740992 }), /non-negative integer/);
+    assert.throws(() => detectPruningCandidates({ memoryEntries: [], staleThreshold: 9007199254740992 }), /positive integer/);
+    assert.throws(
+      () => planMemoryPruning({ memoryEntries: [], candidates: [], dispositions: [], currentTaskCount: 9007199254740992 }),
+      /non-negative integer/
+    );
+    assert.throws(
+      () => writeSharedMemorySerialized(memoryPath, [], undefined, { taskCount: 9007199254740992 }),
+      /non-negative integer/
+    );
+
+    const parsedMiddle = parseSharedMemoryState(
+      '# Shared Operator memory\n- [Source: Lead; scope: Git; confirmation: confirmed] First.\nTask count: 7\n- [Source: Lead; scope: Git; confirmation: confirmed] Second.\n'
+    );
+    assert.equal(parsedMiddle.taskCount, 7);
+    assert.equal(parsedMiddle.entries.length, 2);
+    const parsedEnd = parseSharedMemoryState(
+      '# Shared Operator memory\n- [Source: Lead; scope: Git; confirmation: confirmed] First.\nTask count: 9\n'
+    );
+    assert.equal(parsedEnd.taskCount, 9);
+    assert.throws(
+      () => parseSharedMemoryState('# Shared Operator memory\nTask count: 1\nTask count: 2\n'),
+      /Duplicate Task count/
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

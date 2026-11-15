@@ -11,10 +11,11 @@ import {
 } from '../project-setup.ts';
 import type { ChangeOrigin, Changeset, CheckOutcome, PreflightCheck } from './types.ts';
 import { addedTextByteLength, MAX_SECRET_SCAN_BYTES, safeGitleaksRuleId, scanAddedText, type SecretFinding } from './secret-scanner.ts';
-import { markTrustedPolicyDependent } from './path-policy.ts';
+import { markConfigurableBuiltIn, markTrustedPolicyDependent, matchesGlob, validateSensitivePathGlobs } from './path-policy.ts';
 import { isProjectPreflightPolicyPath } from './policy.ts';
 import { normalizeExceptionPath, validateSecretExceptions, type SecretException } from './exceptions.ts';
 import { trustedCommit } from './trusted-context.ts';
+import { displayText } from './criteria.ts';
 export { validateSecretExceptions, type SecretException } from './exceptions.ts';
 export { DEFAULT_SENSITIVE_PATH_GLOBS, pathPolicyCheck } from './path-policy.ts';
 
@@ -182,12 +183,68 @@ export const policyIntegrityCheck: PreflightCheck = {
   },
 };
 
+/** Path text for evidence: backslashes become forward slashes, then the shared display escaping and bound apply. */
 function displayFindingPath(path: string): string {
-  const normalized = path.replaceAll('\\', '/');
-  const points = [...normalized];
-  const clipped = points.slice(0, 240).map(character => /[\u0000-\u001f\u007f]/.test(character) ? `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}` : character).join('');
-  return points.length > 240 ? `${clipped}…` : clipped;
+  return displayText(path.replaceAll('\\', '/'));
 }
+export const TEST_CHANGE_CHECK_ID = 'test-change';
+
+/** Changed-path identity for de-duplication: Windows paths compare case-insensitively, other platforms exactly. */
+const changedPathKey = (path: string) => (process.platform === 'win32' ? path.toLowerCase() : path);
+
+/** Origin precedence for a path's final state: committed < staged < unstaged < untracked. The latest origin decides. */
+const ORIGIN_ORDER: Record<ChangeOrigin, number> = { committed: 0, staged: 1, unstaged: 2, untracked: 3 };
+
+/**
+ * Warns when production files changed and no test file changed (BH-070); passes when tests changed or no production
+ * file changed. A rename contributes its new and old path. A deletion counts as a production change when its path
+ * matches a production glob, but a removed path (a deletion, or the old path of a rename) is never a test change.
+ * Each path's state is its final state across origins: the latest origin that touches it decides, so a test modified
+ * in a commit and then deleted in the index or worktree is removed, and a later re-add counts as present.
+ * A copy's source is not a change. A path that matches a test glob is a test even when a production glob also matches
+ * it. Without both globs the check passes with an explicit "not run" note. It reads the trusted policy's globs, so it
+ * is trusted-policy dependent.
+ */
+export function testChangeCheck(prodGlobs?: readonly string[], testGlobs?: readonly string[]): PreflightCheck {
+  if (prodGlobs !== undefined) validateSensitivePathGlobs(prodGlobs, 'prodGlobs');
+  if (testGlobs !== undefined) validateSensitivePathGlobs(testGlobs, 'testGlobs');
+  const check: PreflightCheck = { id: TEST_CHANGE_CHECK_ID, run({ changeset }) {
+    if (prodGlobs === undefined || testGlobs === undefined) return { status: 'pass', evidence: ['prodGlobs/testGlobs not configured; check not run'] };
+    const productionPatterns: readonly string[] = prodGlobs;
+    const testPatterns: readonly string[] = testGlobs;
+    // Final state per path across origins. Entries are applied in origin order, so the latest origin that touches a
+    // path decides: a deletion removes it and a later add restores it. A rename's old path is settled first, so a
+    // case-only rename on Windows keeps the new spelling and present state.
+    const final = new Map<string, { path: string; present: boolean }>();
+    const settle = (path: string, present: boolean) => {
+      const normalized = path.replaceAll('\\', '/');
+      final.set(changedPathKey(normalized), { path: normalized, present });
+    };
+    const byOrigin = [...changeset.entries].sort((a, b) => ORIGIN_ORDER[a.origin] - ORIGIN_ORDER[b.origin]);
+    for (const entry of byOrigin) {
+      if (entry.status === 'renamed' && entry.oldPath !== undefined) settle(entry.oldPath, false);
+      settle(entry.path, entry.status !== 'deleted');
+    }
+    const paths = [...final.values()];
+    const matchesTest = (path: string) => testPatterns.some(glob => matchesGlob(path, glob));
+    const isTest = (entry: { path: string; present: boolean }) => entry.present && matchesTest(entry.path);
+    const tests = paths.filter(isTest).map(entry => entry.path);
+    const removedTests = paths.filter(entry => !entry.present && matchesTest(entry.path)).map(entry => entry.path);
+    const production = paths.filter(entry => !isTest(entry) && productionPatterns.some(glob => matchesGlob(entry.path, glob))).map(entry => entry.path);
+    const metrics = { productionFiles: production.length, testFiles: tests.length };
+    if (production.length === 0) return { status: 'pass', evidence: ['No production files changed.'], metrics };
+    if (tests.length > 0) return { status: 'pass', evidence: [`Test files changed: ${tests.length}; production files changed: ${production.length}.`], metrics };
+    const shown = production.slice(0, 50).map(displayFindingPath);
+    const evidence = [`Production files changed (${production.length}) and no test files changed: ${shown.join(', ')}${production.length > 50 ? `, … ${production.length - 50} additional path(s)` : ''}.`];
+    if (removedTests.length) {
+      const shownRemoved = removedTests.slice(0, 50).map(displayFindingPath);
+      evidence.push(`Removed test paths do not count as test changes: ${shownRemoved.join(', ')}${removedTests.length > 50 ? `, … ${removedTests.length - 50} additional path(s)` : ''}.`);
+    }
+    return { status: 'warn', evidence, metrics };
+  } };
+  return markConfigurableBuiltIn(markTrustedPolicyDependent(check));
+}
+
 export function secretScanCheck(exceptions: readonly SecretException[] = [], scanner: typeof scanAddedText = scanAddedText): PreflightCheck {
   const check: PreflightCheck = { id: 'secret-scan', run({ changeset, gitlinkAcknowledgements, trustedPolicyCommit }) {
     validateSecretExceptions(exceptions);

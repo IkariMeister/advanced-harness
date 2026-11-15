@@ -12,10 +12,13 @@ const MAX_POLICY_BYTES = 1024 * 1024;
 const POLICY_PATHS = [CONFIG_PATH, ALLOWLIST_PATH] as const;
 const CONFIG_KEYS = ['version', 'checks', 'forbiddenPathGlobs', 'prodGlobs', 'testGlobs', 'gitlinkAcknowledgements'] as const;
 
-/** Built-in checks the policy can never disable, downgrade, or name as configurable. */
-export const FIXED_CHECK_IDS = ['changeset', 'base-context', 'policy-integrity', 'policy', 'secret-scan', 'worktree-boundary'] as const;
+/**
+ * Built-in checks the policy can never disable, downgrade, or name as configurable. `acceptance-criteria` is fixed
+ * because its input is per-run task evidence from `--criteria`, not repository policy a branch could reshape.
+ */
+export const FIXED_CHECK_IDS = ['changeset', 'base-context', 'policy-integrity', 'policy', 'secret-scan', 'worktree-boundary', 'acceptance-criteria'] as const;
 /** Built-in checks the trusted policy may enable, disable, or re-severity. */
-export const CONFIGURABLE_CHECK_IDS = ['path-policy'] as const;
+export const CONFIGURABLE_CHECK_IDS = ['path-policy', 'test-change'] as const;
 export type ConfigurableCheckId = typeof CONFIGURABLE_CHECK_IDS[number];
 export type Severity = 'block' | 'warn';
 export type ForbiddenGlobMode = 'add' | 'replace' | 'default';
@@ -26,7 +29,7 @@ export type PreflightConfig = {
   version: 1;
   checks: Partial<Record<ConfigurableCheckId, { enabled?: boolean; severity?: Severity }>>;
   forbiddenPathGlobs?: { mode: 'add' | 'replace'; globs: readonly string[] };
-  /** Recorded for BH-070; not enforced yet. Given together or not at all. */
+  /** Enforced by the `test-change` check (BH-070). Given together or not at all. */
   prodGlobs?: readonly string[];
   testGlobs?: readonly string[];
   gitlinkAcknowledgements: GitlinkAcknowledgement[];
@@ -42,6 +45,8 @@ export type ProjectPreflightPolicy = {
   forbiddenGlobMode: ForbiddenGlobMode;
   /** Configurable built-in checks disabled by the trusted policy. */
   disabled: string[];
+  /** Configurable built-in checks the trusted policy sets to `enabled: true`. */
+  enabled: string[];
   /** Severity overrides for configurable built-in checks, keyed by check id. */
   severity: Record<string, Severity>;
   prodGlobs?: readonly string[];
@@ -68,7 +73,7 @@ function invalid(message: string): never {
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
 /** The first key that appears twice in one object, or undefined. JSON.parse keeps only the last value, so duplicates are refused. */
-function duplicateKey(text: string): string | undefined {
+export function duplicateKey(text: string): string | undefined {
   let found: string | undefined;
   const visit = (node: Node): void => {
     if (found !== undefined) return;
@@ -278,6 +283,7 @@ function loadProjectPreflightPolicyUnchecked(root: string, baseRef: string, over
     ...(forbidden === undefined ? {} : { sensitivePathGlobs: forbidden.globs }),
     forbiddenGlobMode: forbidden?.mode ?? 'default',
     disabled: CONFIGURABLE_CHECK_IDS.filter(id => config?.checks[id]?.enabled === false),
+    enabled: CONFIGURABLE_CHECK_IDS.filter(id => config?.checks[id]?.enabled === true),
     severity,
     ...(config?.prodGlobs === undefined ? {} : { prodGlobs: config.prodGlobs }),
     ...(config?.testGlobs === undefined ? {} : { testGlobs: config.testGlobs }),
@@ -324,6 +330,7 @@ export function builtInPreflightPolicy(): ProjectPreflightPolicy {
     source: { path: CONFIG_PATH, ref: TRUSTED_REF, commit: '', present: false },
     forbiddenGlobMode: 'default',
     disabled: [],
+    enabled: [],
     severity: Object.create(null) as Record<string, Severity>,
     secretExceptions: [],
     gitlinkAcknowledgements: [],
@@ -340,7 +347,9 @@ export function policyCheck(policy: ProjectPreflightPolicy): PreflightCheck {
     const forbidden = effectiveForbiddenGlobs(policy.forbiddenGlobMode, policy.sensitivePathGlobs);
     const severities = Object.entries(policy.severity).map(([id, value]) => `${id}=${value}`);
     const notEnforced: string[] = [];
-    if (policy.prodGlobs !== undefined || policy.testGlobs !== undefined) notEnforced.push('prodGlobs and testGlobs are recorded for BH-070 and not enforced yet');
+    if (policy.disabled.includes('test-change') && (policy.prodGlobs !== undefined || policy.testGlobs !== undefined)) notEnforced.push('prodGlobs and testGlobs are inert while test-change is disabled');
+    const testChangeConfigured = !policy.disabled.includes('test-change') && (policy.severity['test-change'] === 'block' || policy.enabled.includes('test-change'));
+    if (testChangeConfigured && (policy.prodGlobs === undefined || policy.testGlobs === undefined)) notEnforced.push('test-change is configured but prodGlobs/testGlobs are not set; the check does not run');
     if (policy.forbiddenGlobMode !== 'default' && policy.disabled.includes('path-policy')) notEnforced.push('forbiddenPathGlobs is inert while path-policy is disabled');
     const commit = policy.source.commit ? policy.source.commit.slice(0, 12) : 'unresolved';
     return {

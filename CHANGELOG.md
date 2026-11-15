@@ -8,6 +8,7 @@ version between releases.
 
 ### Changed
 
+- `harness:doctor` and shared OpenCode CLI diagnostics (`findOpenCode` / `cliQuery`, used by `harness:doctor`, `harness:integrations`, and model discovery; Refs #239): `--opencode` and `OPENCODE_BIN` now expand leading `~/` (and `~\`) and resolve relative paths containing separators against `INIT_CWD` or `process.cwd()` instead of `--project` (and `harness:doctor` `--project` / omitted default uses the same base), `cliQuery` classifies failures into credential-free categories (missing executable, non-executable/config path, `maxBuffer` overflow, timeout, non-zero exit status, non-JSON output) while printing only the final path segment, and `harness:doctor` adds `--timeout <ms>` (`1..2147483647`, default `15000` per query).
 - Preflight gitlink coverage acknowledgements now come only from trusted
   `.harness/preflight.json` at local `refs/remotes/origin/HEAD`, independently of
   `--base`. Exact clean gitlink gaps with nonblank justifications remain visibly
@@ -15,11 +16,58 @@ version between releases.
 
 ### Added
 
+- Stale `MEMORY.md` pruning by task age (BH-078, #217): extend `MEMORY.md` pruning with a
+  fourth candidate kind, `stale`, for entries unused for 20 tasks (`STALE_TASK_THRESHOLD`)
+  since they were last confirmed or applied. Adds a project-level `Task count: N` metadata
+  line and per-entry `added-task` / `last-used-task` fields to `MEMORY.md` (minimum
+  compatible harness version `0.4.0-dev`; legacy `MEMORY.md` files without task metadata
+  continue to parse and are backfilled on the first task run; one-sided entries backfill
+  symmetrically via `last-used-task = added-task` or `added-task = last-used-task`). Keeping a `stale` candidate
+  restarts its `last-used-task` at `currentTaskCount`; declining or cancelling writes nothing.
+  `writeSharedMemorySerialized` rejects any `taskCount` lower than the on-disk `Task count`
+  or any entry's task metadata.
+  Planning and applying a pruning plan require `currentTaskCount` (with entry task counts at or
+  below `currentTaskCount`) whenever retained entries carry task metadata, and applying enforces
+  a maximum forward step of 1000 tasks (`MAX_TASK_COUNT_STEP`) relative to the on-disk
+  `Task count` (`0` for legacy files without `Task count:`) to guard against runaway or
+  corrupted task jumps.
+  `src/shared-memory.ts` provides the deterministic library primitives (`advanceMemoryTaskCount`,
+  `markMemoryEntriesUsed`, `detectPruningCandidates`, `planMemoryPruning`,
+  `applyApprovedMemoryPruning`), satisfying #217 acceptance criteria 1 and 2 at the library
+  level while runtime/CLI wiring remains deferred.
+- Preflight `test-change` check (BH-070, #185): a configurable check that warns when changed production files
+  match the trusted `prodGlobs` and no changed file matches the trusted `testGlobs`, and passes otherwise.
+  A deleted test file does not count, and a path's state is its final state across origins (committed, staged,
+  unstaged, untracked): a later deletion removes an earlier modification, and a later re-add counts. Recursive
+  `**` and `**/` globs match line terminators (CR, LF, U+2028, U+2029) in `path-policy` and `test-change`.
+  `--justify-no-tests "<text>"` turns a `test-change` block into a warning
+  when one occurs; the JSON result gains a `bypass` array that records the text and whether it changed a block
+  (`applied`). It is evidence, not approval. `runPreflight` refuses an empty, whitespace-only, or non-string `justifyNoTests`
+  as inconclusive, with no bypass recorded, and keeps a valid text verbatim. `--criteria <file>` reads acceptance criteria for the fixed
+  `acceptance-criteria` check, where pending items warn. See
+  [docs/preflight.md](docs/preflight.md#test-change-acceptance-criteria-and-justified-bypass).
+- `MEMORY.md` pruning during learning review (BH-077, #216): add pruning candidate proposals
+  at end-of-task learning review across three kinds: redundant (covered by rules in `AGENTS.md`
+  or `AGENTS.personal.md`), contradicted or superseded (by newer entries or rules), and
+  obsolete (refers to issues, branches, or files that no longer exist, with remote evidence
+  relayed through Lead from External; references with `unknown` status or check errors are never proposed).
+  Learnings leave `MEMORY.md` upon approved promotion to any tier (`AGENTS.md` or `AGENTS.personal.md`) or on discard.
+  Each individual file write (`AGENTS.md`, `AGENTS.personal.md`, `MEMORY.md`) is lock-serialized and uses a per-file atomic
+  temp-file rename (preserving file mode via `chmodSync` (POSIX mode bits; read-only attribute on Windows) and using `lstat` to reject symlinks—including dangling symlinks—or
+  non-regular files, and requiring the `AGENTS.md` parent directory to already exist rather than creating directories implicitly),
+  while the multi-file sequence is ordered and non-atomic across files, verifying file baselines, `AGENTS.md` path identity (requiring a bound `agentsPath` whenever promotions are planned), and
+  the plan hash before modifying files and yielding a structured partial-failure receipt (with completed writes, failed step, and cause)
+  for human recovery.
+  Kept entries are marked with a visible `reviewed-keep:<kind>:<evidenceKey>` marker (capped at 5 tags per entry with oldest-first
+  eviction, so an older kept candidate can be re-proposed if a 6th distinct keep tag evicts its tag)
+  so they are not re-proposed without a new reason or tag eviction. Operators remain the sole serialized writer of `MEMORY.md`,
+  `AGENTS.personal.md`, and pruning-promoted `AGENTS.md` updates; declining or cancelling writes
+  nothing. Extends shared rule validation to enforce non-empty, single-line, and 2000-character limits on promotion.
 - Preflight project guardrail policy (BH-069, #184): a trusted `.harness/preflight.json`, read only from
   local `refs/remotes/origin/HEAD` (with or without `--base`), enables or disables the configurable
   `path-policy` check, sets its severity (`block` or `warn`), and adds to or replaces the forbidden path
-  globs. The fixed `policy` result row reports the effective policy and warns on recorded keys that are not
-  enforced yet (`prodGlobs`, `testGlobs`). `harness:setup` offers the default file once, in a Git checkout,
+  globs. The fixed `policy` result row reports the effective policy and warns on recorded keys that are inert,
+  such as `prodGlobs` and `testGlobs` while `test-change` is disabled. `harness:setup` offers the default file once, in a Git checkout,
   and only when you type `policy`. See [docs/configuration.md](docs/configuration.md#preflight-policy).
 - `harness:setup` now follows the AGENTS.md link to an existing linked context file, updates the settings there,
   and keeps the link as written; an explicit `--context` is unchanged.

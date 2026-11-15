@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { discoverConfigurations } from '../src/native-installer.ts';
-import { DiagnosticError, expectedAgents, printReport, verifyRuntime, diagnoseHost, printHostDiagnosticReport } from '../src/native-diagnostics.ts';
+import { DiagnosticError, expectedAgents, parseCliTimeoutMs, printReport, verifyRuntime, diagnoseHost, printHostDiagnosticReport } from '../src/native-diagnostics.ts';
 import { detectInstalledHosts, parseHostSelection, type HostId } from '../src/host-registry.ts';
 import { describeHarnessCheckout } from '../src/harness-version.ts';
 import { diagnoseProcedureSkills } from '../src/procedure-skill-diagnostics.ts';
@@ -13,23 +13,28 @@ import { formatScannerProbe, probeGitleaks, type ScannerProbe } from '../src/pre
 
 const args = process.argv.slice(2);
 
+const callerCwd = (): string => process.env.INIT_CWD || process.cwd();
+
 // Option errors are reported as-is: they never contain config or provider details (#145).
 function parseOptions(): Record<string, string> | undefined {
   const options: Record<string, string> = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
     const value = args[index + 1];
-    if (!flag || !['--project', '--opencode', '--server', '--host', '--scope'].includes(flag)) return fail(`Unknown option: ${flag ?? ''}. Run --help.`);
+    if (!flag || !['--project', '--opencode', '--server', '--host', '--scope', '--timeout'].includes(flag)) return fail(`Unknown option: ${flag ?? ''}. Run --help.`);
     if (options[flag]) return fail(`Duplicate option: ${flag}. Run --help.`);
     if (!value || value.startsWith('--')) return fail(`Missing value for ${flag}. Run --help.`);
     options[flag] = value;
   }
   if (options['--scope'] && !['global', 'project'].includes(options['--scope'])) return fail('Invalid --scope; use global or project. Run --help.');
+  if (options['--timeout'] && parseCliTimeoutMs(options['--timeout']) === undefined) {
+    return fail('Invalid --timeout; use a positive integer in milliseconds (1..2147483647). Run --help.');
+  }
   if (options['--host']) {
     try { parseHostSelection(options['--host']); } catch (error) { return fail(error instanceof Error ? error.message : 'Invalid --host. Run --help.'); }
   }
   let directory: string | undefined;
-  try { directory = resolve(options['--project'] ?? process.cwd()); if (!statSync(directory).isDirectory()) directory = undefined; } catch { directory = undefined; }
+  try { directory = resolve(callerCwd(), options['--project'] ?? '.'); if (!statSync(directory).isDirectory()) directory = undefined; } catch { directory = undefined; }
   if (!directory) return fail('Select an existing project directory (--project). No configuration was changed.');
   return options;
 }
@@ -41,14 +46,14 @@ function fail(message: string): undefined {
 }
 
 if (args.includes('--help')) {
-  console.log('Usage: npm run harness:doctor -- [--scope <global|project>] [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--project <directory>] [--opencode <CLI path>] [--server <URL>]');
+  console.log('Usage: npm run harness:doctor -- [--scope <global|project>] [--host <opencode|claude-code|antigravity|codex|cursor|all>] [--project <directory>] [--opencode <CLI path>] [--server <URL>] [--timeout <ms>]');
   console.log('Inspects config and runtime agent/model catalogs for all specified or detected hosts. May start the OpenCode service; never reloads it, edits config, or sends model requests.');
   console.log('--scope global inspects only global configuration; --scope project inspects only the project. Without --scope, both are inspected.');
 } else {
   const options = parseOptions();
   if (options) {
     try {
-      const directory = resolve(options['--project'] ?? process.cwd());
+      const directory = resolve(callerCwd(), options['--project'] ?? '.');
       const scope = options['--scope'] as 'global' | 'project' | undefined;
       const global = resolve(join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode'));
 
@@ -94,7 +99,8 @@ if (args.includes('--help')) {
           } else {
             try {
               console.log('Querying OpenCode runtime; this may start its service. No reload/restart will be performed.');
-              const report = await verifyRuntime({ directory, ...(options['--opencode'] ? { executable: options['--opencode'] } : {}), ...(options['--server'] ? { server: options['--server'] } : {}) }, expectedAgents(sources));
+              const timeoutMs = options['--timeout'] ? parseCliTimeoutMs(options['--timeout']) : undefined;
+              const report = await verifyRuntime({ directory, ...(options['--opencode'] ? { executable: options['--opencode'] } : {}), ...(options['--server'] ? { server: options['--server'] } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}) }, expectedAgents(sources));
               printReport(report);
               if (!report.ok) allOk = false;
             } catch (err) {

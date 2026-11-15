@@ -38,12 +38,27 @@ export type Changeset = {
   entries: ChangeEntry[];
 };
 
+/** One item of a `--criteria` file. `done` is the human's checkbox state as recorded in the file. */
+export type CriteriaItem = { text: string; done: boolean };
+
+/** A parsed criteria file, or the reason it could not be used (inconclusive). Undefined means no file was supplied. */
+export type AcceptanceCriteriaInput = { items: CriteriaItem[] } | { error: string };
+
+/**
+ * A justified bypass supplied for a run. `applied` is true only when it changed a block to warn. The entry is
+ * recorded evidence of a stated reason; it is never approval.
+ */
+export type BypassEntry = { check: string; justification: string; applied: boolean };
+
 export type PreflightContext = {
   worktree: string;
   changeset: Changeset;
   task?: string | undefined;
   gitlinkAcknowledgements?: readonly { path: string; oldId?: string; newId: string; justification?: string }[] | undefined;
   trustedPolicyCommit?: string | undefined;
+  criteria?: AcceptanceCriteriaInput | undefined;
+  /** The `--justify-no-tests` text. The runner applies the bypass after severity; checks only receive it. */
+  justifyNoTests?: string | undefined;
 };
 
 export type CheckOutcome = {
@@ -65,11 +80,14 @@ export type PreflightCheck = {
 export type CheckResult = { id: string; status: CheckStatus; evidence: string[] };
 
 export type PreflightResult = {
+  /** Derived only from check statuses. No marker, stamp, justification, or criteria text sets it. */
   approved: boolean;
   blocking: string[];
   warnings: string[];
   metrics: Record<string, number>;
   checks: CheckResult[];
+  /** Present when `--justify-no-tests` was supplied to a run that executed checks. */
+  bypass?: BypassEntry[];
 };
 
 /** Exit codes: 0 pass, 1 blocked, 2 inconclusive. */
