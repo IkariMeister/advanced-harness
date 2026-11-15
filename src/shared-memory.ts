@@ -492,6 +492,9 @@ export function writeSharedMemorySerialized(
       if (!Number.isSafeInteger(taskCount) || taskCount < 0) {
         throw new Error('Task count must be a non-negative integer.');
       }
+      if (current.hasTaskCount && taskCount < current.taskCount) {
+        throw new Error(`Cannot write MEMORY.md with Task count ${taskCount} older than existing on-disk Task count (${current.taskCount}).`);
+      }
       if (maxEntryTask > taskCount) {
         throw new Error(`Cannot write MEMORY.md with Task count ${taskCount} lower than entry task metadata (${maxEntryTask}).`);
       }
@@ -521,7 +524,13 @@ export function advanceMemoryTaskCount(state: {
   taskCount: number;
   entries: readonly MemoryEntry[];
 }): { taskCount: number; entries: MemoryEntry[] } {
+  if (!Number.isSafeInteger(state.taskCount) || state.taskCount < 0) {
+    throw new Error('taskCount must be a non-negative integer.');
+  }
   const nextTaskCount = state.taskCount + 1;
+  if (!Number.isSafeInteger(nextTaskCount)) {
+    throw new Error('Advancing taskCount exceeds safe integer range.');
+  }
   const entries = state.entries.map((entry) => {
     validateMemoryEntry(entry);
     return {
@@ -1414,6 +1423,23 @@ export function planMemoryPruning(options: {
         reviewed = candidate ? markEntryReviewed(entry, candidate) : entry;
       }
       updatedMemory.push(reviewed);
+    }
+  }
+
+  const hasEntryTaskMetadata = updatedMemory.some(
+    (e) => e.addedAtTask !== undefined || e.lastUsedAtTask !== undefined
+  );
+  if (hasEntryTaskMetadata && options.currentTaskCount === undefined) {
+    throw new Error('Planning memory pruning with entry task metadata requires currentTaskCount.');
+  }
+  if (options.currentTaskCount !== undefined) {
+    for (const e of updatedMemory) {
+      if (
+        (e.addedAtTask !== undefined && e.addedAtTask > options.currentTaskCount) ||
+        (e.lastUsedAtTask !== undefined && e.lastUsedAtTask > options.currentTaskCount)
+      ) {
+        throw new Error('Cannot plan memory pruning where an entry task count exceeds currentTaskCount.');
+      }
     }
   }
 
