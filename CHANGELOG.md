@@ -16,6 +16,25 @@ version between releases.
 
 ### Added
 
+- Stale `MEMORY.md` pruning by task age (BH-078, #217): extend `MEMORY.md` pruning with a
+  fourth candidate kind, `stale`, for entries unused for 20 tasks (`STALE_TASK_THRESHOLD`)
+  since they were last confirmed or applied. Adds a project-level `Task count: N` metadata
+  line and per-entry `added-task` / `last-used-task` fields to `MEMORY.md` (minimum
+  compatible harness version `0.4.0-dev`; legacy `MEMORY.md` files without task metadata
+  continue to parse and are backfilled on the first task run; one-sided entries backfill
+  symmetrically via `last-used-task = added-task` or `added-task = last-used-task`). Keeping a `stale` candidate
+  restarts its `last-used-task` at `currentTaskCount`; declining or cancelling writes nothing.
+  `writeSharedMemorySerialized` rejects any `taskCount` lower than the on-disk `Task count`
+  or any entry's task metadata.
+  Planning and applying a pruning plan require `currentTaskCount` (with entry task counts at or
+  below `currentTaskCount`) whenever retained entries carry task metadata, and applying enforces
+  a maximum forward step of 1000 tasks (`MAX_TASK_COUNT_STEP`) relative to the on-disk
+  `Task count` (`0` for legacy files without `Task count:`) to guard against runaway or
+  corrupted task jumps.
+  `src/shared-memory.ts` provides the deterministic library primitives (`advanceMemoryTaskCount`,
+  `markMemoryEntriesUsed`, `detectPruningCandidates`, `planMemoryPruning`,
+  `applyApprovedMemoryPruning`), satisfying #217 acceptance criteria 1 and 2 at the library
+  level while runtime/CLI wiring remains deferred.
 - Preflight `test-change` check (BH-070, #185): a configurable check that warns when changed production files
   match the trusted `prodGlobs` and no changed file matches the trusted `testGlobs`, and passes otherwise.
   A deleted test file does not count, and a path's state is its final state across origins (committed, staged,
