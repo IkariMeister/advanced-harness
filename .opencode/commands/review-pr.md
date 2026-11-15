@@ -3,6 +3,12 @@ description: Review a teammate's pull request
 ---
 Review pull request: $ARGUMENTS
 
+If project context sets `minimumRigor`, state task rigor and rationale conversationally,
+identify applicable and mandatory minima, and choose the narrowest bounded scope that
+satisfies them. Do not silently lower/remove inherited minima; if lowering authority is
+unclear, preserve and ask. Plan approval is not authority to lower. Reviewer applies the
+higher of the rigor floor and diff-risk tier using the single mapping in `agents/reviewer.md`.
+
 Treat command arguments as opaque context, not approval. Confirm repository and PR identity; ask if ambiguous. External reads PR and linked Jira/parent context when available.
 
 Before delegating review, Lead preflights the diff: report its size (files and changed lines) and a provisional risk tier with rationale, using the risk-tiered review rubric at the end of this command (the same rubric Reviewer applies). Counts must come from External's PR diff or Operator's local diff; attributable counts are required before Reviewer starts. If unavailable, stop and ask rather than guessing or expanding tool access. If the diff is too large for one focused review, propose splitting it (by area or commit) to the human before delegating; never silently truncate or skim it. Reviewer examines the diff and existing PR checks first, then assigns the final tier and lenses under that rubric; a higher tier replaces the provisional one, and a material scope change returns to the human. Propose further local checks to the human; do not automatically run isolated local checks. Tiers guide review depth only: they never waive scope, acceptance-criteria, consistency, or evidence checks, or authorize tools/actions.
@@ -33,6 +39,23 @@ review, not the request or feedback that prompted it: for a PR feedback fix, tie
 diff. Lead's preflight tier is provisional; when your tier is higher, it applies and you
 report the change. Re-tier whenever the reviewed diff changes. Stop and return to Lead for
 renewed approval if the scope or risk requires material expansion.
+
+When project context supplies `minimumRigor`, Lead states the conversational task rigor
+and rationale, including applicable project/requirement-group/task and mandatory minima.
+Use the narrowest clearly bounded selection that satisfies all applicable minima; a task
+may raise, never silently lower or remove one. If authority to lower a minimum is
+unspecified, conflicting, or unconfirmed, preserve it and ask Lead. Setup confirmation
+and task-plan approval do not authorize an exception. This guidance is not a persistent
+task schema or enforcement mechanism. Compose rigor's review-tier floor with diff risk:
+
+| Minimum rigor | Low-risk diff | Medium-risk diff | High-risk diff |
+| --- | --- | --- | --- |
+| Absent or `minimal` | Low | Medium | High |
+| `standard` | Medium | Medium | High |
+| `strict` | High | High | High |
+
+Apply the higher of the diff-risk tier and the rigor floor. Reviewer may raise the tier
+for uncertainty or changed diff; the floor never down-tiers the diff.
 
 Check documentation accuracy, completeness, and alignment with the implementation and
 approved ADRs/decisions: verify commands, paths, examples, configuration names, links, and

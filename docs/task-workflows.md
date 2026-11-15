@@ -6,6 +6,15 @@ approval. Tool access, permission dialogs, integrations, and command arguments d
 constitute conversational approval. Project commands and arguments override global
 commands with the same names.
 
+Optional project `minimumRigor` is a floor, not a methodology selector. Lead states
+the task rigor and rationale conversationally, identifies applicable scoped and
+mandatory minima, and uses the narrowest bounded scope satisfying them. A task may
+raise but cannot silently lower/remove a minimum; unknown, conflicting, or unconfirmed
+exception authority means preserve and ask. Setup confirmation or plan approval is not
+exception authority. This does not add persistent task metadata or an enforcement
+mechanism. Reviewer applies the higher of the diff-risk tier and rigor floor using the
+single mapping in [`agents/reviewer.md`](../agents/reviewer.md).
+
 | Command | Purpose | Arguments |
 | --- | --- | --- |
 | `/start-issue` | Start a GitHub or Jira issue | `$ARGUMENTS` (full input) |

@@ -147,6 +147,11 @@ npm run harness:setup -- --project "$HOME/Projects/MarsRoverIA"
 
 `--context` is supported there too. Settings and integrations use independent marked sections and preserve each other. Worktree and memory paths under your home directory are saved as `$HOME/...` so they can be committed; agents read them from context and ask only when they are missing, invalid, or conflicting ([how shared locations resolve](project-setup.md#how-shared-locations-resolve)). Do not store secrets; review any absolute, machine-specific paths before committing. Context must be Markdown inside the project; malformed markers/JSON, unknown fields, symlinks, and concurrent changes are refused. Multi-file writes are preflighted and individually atomic, not a transaction; partial-write failures disclose completed writes/backups without discarding newer work.
 
+An optional project-only `minimumRigor` field (`minimal`, `standard`, `strict`) sets a
+workflow floor in project context. It is neither a global preference nor methodology
+selection. It is omitted unless selected; existing contexts without it retain their
+behavior. Version remains 1, and older harness versions may reject a populated field.
+
 ## 3. Optional checks and authentication
 
 Approve enabling a new global connection separately, then sign in through OpenCode **`/mcps`**. Never paste tokens or start a hidden CLI OAuth flow. For GitHub CLI, install/sign in intentionally through your own terminal when needed; setup does neither.

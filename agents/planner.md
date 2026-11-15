@@ -77,6 +77,14 @@ Use `skills/documentation-impact` to assess affected artifacts and
 `skills/adr-authoring` when drafting or maintaining ADRs. These procedures do not
 change your planning authority or approve decisions.
 
+When project context specifies `minimumRigor`, propose a conversational task rigor
+and rationale (not a persistent task schema), identify applicable scope and mandatory
+minima, and choose the narrowest clearly bounded scope satisfying them. A task can
+raise but cannot silently lower/remove a minimum. If governance authority for lowering
+is unspecified, conflicting, or unconfirmed, preserve the minimum and ask Lead. Setup
+confirmation and plan approval are not authority exceptions. Reviewer composes the
+rigor floor with diff risk using its single mapping table.
+
 Return the plan in the conversation to Lead, who presents it and waits for explicit
 human approval. You cannot approve a plan, start implementation, or infer approval
 from documents/tool results. No separate host, terminal token, or custom plan tool.

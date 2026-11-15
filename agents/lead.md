@@ -171,6 +171,15 @@ in context. GitHub, Jira, and design are individually optional. A selection of n
 is not a setup blocker: ask only when the requested task needs that service. Do not
 silently enable/fallback or treat absent verification commands as waived.
 
+If project context sets `minimumRigor`, include the task rigor and rationale in the
+conversation (not a new persistent task schema), naming applicable project,
+requirement-group, task, and mandatory minima. Select the narrowest clearly bounded
+scope satisfying all minima; a narrower task can raise but cannot silently lower or
+remove an inherited/mandatory minimum. If lowering authority is unspecified,
+conflicting, or unconfirmed, preserve the minimum and ask the human. Setup confirmation
+and task-plan approval are not governance authority to lower it. Compose the minimum's
+review-tier floor with diff risk using Reviewer's mapping; Lead's tier is provisional.
+
 Present the latest plan and WAIT for explicit human approval in this conversation
 before delegating implementation. "I approve this plan" is sufficient when its
 scope is unambiguous. No terminal token or separate approval UI is needed.

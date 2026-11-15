@@ -26,6 +26,8 @@ export type ProjectProfile = {
   device: { preference: 'physical-first' | 'emulator' | 'ask'; serial?: string };
   worktreeDirectory: string;
   memoryPath: string;
+  /** Optional project-wide minimum rigor; absence preserves existing workflow behavior. */
+  minimumRigor?: 'minimal' | 'standard' | 'strict';
 };
 export type Inspection = {
   hasGit: boolean;
@@ -158,7 +160,7 @@ function inside(path: string, directory: string): boolean {
 }
 
 export function validateProfile(value: unknown, home = homedir()): ProjectProfile {
-  if (!object(value) || !onlyKeys(value, ['version', 'projectRoot', 'baseBranch', 'shell', 'checks', 'additionalChecks', 'device', 'worktreeDirectory', 'memoryPath']) || value.version !== 1 || (value.projectRoot !== undefined && (typeof value.projectRoot !== 'string' || !isAbsoluteOnAnyPlatform(value.projectRoot))) || typeof value.baseBranch !== 'string' || !validBranch(value.baseBranch) || !['powershell', 'bash', 'cmd'].includes(String(value.shell)) || !object(value.checks) || !onlyKeys(value.checks, checkNames) || !object(value.device) || !onlyKeys(value.device, ['preference', 'serial']) || !['physical-first', 'emulator', 'ask'].includes(String(value.device.preference))) throw new Error('Invalid or unsupported project profile metadata; unknown fields are not silently discarded.');
+  if (!object(value) || !onlyKeys(value, ['version', 'projectRoot', 'baseBranch', 'shell', 'checks', 'additionalChecks', 'device', 'worktreeDirectory', 'memoryPath', 'minimumRigor']) || value.version !== 1 || (value.projectRoot !== undefined && (typeof value.projectRoot !== 'string' || !isAbsoluteOnAnyPlatform(value.projectRoot))) || (value.minimumRigor !== undefined && (typeof value.minimumRigor !== 'string' || !['minimal', 'standard', 'strict'].includes(value.minimumRigor))) || typeof value.baseBranch !== 'string' || !validBranch(value.baseBranch) || !['powershell', 'bash', 'cmd'].includes(String(value.shell)) || !object(value.checks) || !onlyKeys(value.checks, checkNames) || !object(value.device) || !onlyKeys(value.device, ['preference', 'serial']) || !['physical-first', 'emulator', 'ask'].includes(String(value.device.preference))) throw new Error('Invalid or unsupported project profile metadata; unknown fields are not silently discarded.');
   for (const name of checkNames) {
     const check = value.checks[name];
     if (!object(check) || !onlyKeys(check, ['status', 'command']) || !['configured', 'unconfigured'].includes(String(check.status))) throw new Error(`Invalid ${name} check configuration.`);
@@ -367,6 +369,14 @@ export async function askProfile(
     checks[name] = answer === '-' ? { status: 'unconfigured' } : { status: 'configured', command: answer };
   }
   const additionalChecks = await askAdditionalChecks(ask, previous, suggestedAdditionalChecks(inspection, shell));
+  let minimumRigor: ProjectProfile['minimumRigor'] = previous?.minimumRigor;
+  for (;;) {
+    const suggestion = previous?.minimumRigor ?? '-';
+    const answer = (await ask('Project minimum rigor: minimal, standard, strict, or - to omit/remove', suggestion)).trim();
+    const choice = answer || suggestion;
+    if (choice === '-') { minimumRigor = undefined; break; }
+    if (['minimal', 'standard', 'strict'].includes(choice)) { minimumRigor = choice as NonNullable<ProjectProfile['minimumRigor']>; break; }
+  }
   let device: ProjectProfile['device'];
   if (isAndroid) {
     const preference = await choose(ask, 'Device preference: physical-first, emulator, or ask', ['physical-first', 'emulator', 'ask'], previous?.device.preference ?? globalDefaults?.device.preference ?? 'physical-first');
@@ -385,7 +395,7 @@ export async function askProfile(
   const worktreeDirectory = chooseStoredPath(await ask('Parent directory for future worktrees (outside the checkout)', suggested.worktreeDirectory), suggested.worktreeDirectory, kept?.worktreeDirectory, home);
   const memoryPath = chooseStoredPath(await ask('Shared MEMORY.md path (outside checkout/worktrees)', suggested.memoryPath), suggested.memoryPath, kept?.memoryPath, home);
   const settings = withProjectRoot<SharedLocations & { projectRoot?: string }>(root, { worktreeDirectory, memoryPath });
-  return validateProfile({ version: 1, ...(settings.projectRoot === undefined ? {} : { projectRoot: settings.projectRoot }), baseBranch, shell, checks, ...(additionalChecks.length ? { additionalChecks } : {}), device, worktreeDirectory, memoryPath }, home);
+  return validateProfile({ version: 1, ...(settings.projectRoot === undefined ? {} : { projectRoot: settings.projectRoot }), baseBranch, shell, checks, ...(additionalChecks.length ? { additionalChecks } : {}), device, worktreeDirectory, memoryPath, ...(minimumRigor ? { minimumRigor } : {}) }, home);
 }
 
 /** Previous gates are reconfirmed, newly detected ones suggested, then free-form gates until Enter. */
@@ -424,6 +434,7 @@ export function updateProjectInstructions(original: string | undefined, profile:
     'Operator owns local Git/worktrees and shared MEMORY.md. Task bootstrap prepares the worktree and initializes shared memory without blocking on other worktrees. Shared memory stays outside application worktrees.',
     'worktreeDirectory and memoryPath below are the shared locations, outside this checkout by design: read them from here, never search the workspace for MEMORY.md or create one inside it. $HOME/ means the current user\'s home directory on this machine. Ask Lead if either is missing or invalid, or if an absolute path was saved for a projectRoot that is not this repository on this machine.',
     'Screenshots/video/logcat evidence remain optional unless explicitly required. Implementation and publishing require separate conversational approvals.',
+    ...(profile.minimumRigor ? [`Project minimum rigor is \`${profile.minimumRigor}\`. For each task, identify applicable project, requirement-group, task and mandatory minima, state the selected rigor and rationale in the conversation, and apply the narrowest clearly bounded scope only when it satisfies every inherited minimum. A task may raise but must not silently lower or remove a minimum. If governance authority to lower it is unspecified, conflicting, or unconfirmed, preserve the minimum and ask Lead; setup confirmation and task-plan approval are not such authority. Rigor is conversational guidance, not a new persistent task schema or enforcement mechanism.`] : []),
   ]);
 }
 

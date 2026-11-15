@@ -115,6 +115,23 @@ diff. Lead's preflight tier is provisional; when your tier is higher, it applies
 report the change. Re-tier whenever the reviewed diff changes. Stop and return to Lead for
 renewed approval if the scope or risk requires material expansion.
 
+When project context supplies `minimumRigor`, Lead states the conversational task rigor
+and rationale, including applicable project/requirement-group/task and mandatory minima.
+Use the narrowest clearly bounded selection that satisfies all applicable minima; a task
+may raise, never silently lower or remove one. If authority to lower a minimum is
+unspecified, conflicting, or unconfirmed, preserve it and ask Lead. Setup confirmation
+and task-plan approval do not authorize an exception. This guidance is not a persistent
+task schema or enforcement mechanism. Compose rigor's review-tier floor with diff risk:
+
+| Minimum rigor | Low-risk diff | Medium-risk diff | High-risk diff |
+| --- | --- | --- | --- |
+| Absent or `minimal` | Low | Medium | High |
+| `standard` | Medium | Medium | High |
+| `strict` | High | High | High |
+
+Apply the higher of the diff-risk tier and the rigor floor. Reviewer may raise the tier
+for uncertainty or changed diff; the floor never down-tiers the diff.
+
 Check documentation accuracy, completeness, and alignment with the implementation and
 approved ADRs/decisions: verify commands, paths, examples, configuration names, links, and
 that claims have objective evidence. Report findings without silently editing the work
