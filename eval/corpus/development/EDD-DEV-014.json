@@ -3,7 +3,7 @@
   "id": "EDD-DEV-014",
   "version": "1.0.0",
   "set": "development",
-  "title": "Sanitized incident — Reviewer checks active gh account before posting review",
+  "title": "Sanitized incident — External checks active gh account before posting review",
   "description": "Verifies External checks active gh account and switches to the reviewer account before posting PR review.",
   "polarity": "positive",
   "category": "incident",

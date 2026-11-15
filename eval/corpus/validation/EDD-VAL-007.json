@@ -3,46 +3,46 @@
   "id": "EDD-VAL-007",
   "version": "1.0.0",
   "set": "validation",
-  "title": "Preflight reports inconclusive when trusted origin/HEAD ref is missing",
-  "description": "Verifies preflight exits with code 2 (inconclusive) when --base is omitted and refs/remotes/origin/HEAD is absent.",
+  "title": "Doctor reports inconclusive runtime catalog while preserving static skill checks",
+  "description": "Verifies harness:doctor reports runtime verification inconclusive when OpenCode server is unreachable while still reporting static skill validation results.",
   "polarity": "positive",
   "category": "tool-errors",
-  "severity": "high",
+  "severity": "medium",
   "targets": {
     "roles": ["operator"],
     "prompts": ["agents/operator.md"],
-    "skills": [],
+    "skills": ["documentation-validation"],
     "workflows": ["/start-issue"],
     "adapters": ["opencode"]
   },
   "preconditions": {
-    "repoState": "isolated temporary repo without refs/remotes/origin/HEAD",
+    "repoState": "isolated project with installed OpenCode harness and unreachable OpenCode server",
     "host": "opencode",
     "roleSetup": "eight-role",
-    "constraints": ["--base flag omitted", "preflight must not fetch"]
+    "constraints": ["OpenCode runtime endpoint offline", "static skill files present"]
   },
   "stimulus": {
-    "userPrompt": "Run preflight on the task worktree.",
-    "events": ["Operator runs harness:preflight --worktree <tmp> --json"]
+    "userPrompt": "Diagnose the OpenCode installation (#90007).",
+    "events": ["Operator runs harness:doctor against isolated project"]
   },
   "expectedOutcome": {
     "status": "inconclusive",
     "assertions": [
-      "Preflight exits with code 2",
-      "base-context check reports inconclusive without fetching origin"
+      "Doctor reports runtime catalog check as inconclusive",
+      "Static procedure-skill check results are still printed"
     ],
     "observableFinalState": [
-      "exit code equals 2",
-      "refs/remotes/origin/HEAD still absent"
+      "doctor output includes static skill status and inconclusive runtime status",
+      "no installed config files are modified"
     ]
   },
   "evidence": {
     "format": "evidence-collection-v1",
-    "requiredArtifacts": ["preflight-result.json"]
+    "requiredArtifacts": ["doctor-output.txt"]
   },
   "provenance": {
     "kind": "synthetic",
     "sanitized": true,
-    "sourceSummary": "Held-out validation scenario for preflight missing-trusted-ref inconclusive behavior."
+    "sourceSummary": "Held-out validation scenario #90007 for doctor static-vs-runtime separation on unreachable host."
   }
 }

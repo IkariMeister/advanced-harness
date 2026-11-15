@@ -708,8 +708,13 @@ export function validateResult(input: unknown, path = 'result'): EvalResult {
   const reason = assertNonEmptyString(obj.reason, `${path}.reason`);
   const durationMs = assertNonNegativeNumber(obj.durationMs, `${path}.durationMs`);
 
-  if (!Array.isArray(obj.observableStateChecks) || obj.observableStateChecks.length === 0) {
-    throw new Error(`${path}.observableStateChecks must be a non-empty array.`);
+  if (!Array.isArray(obj.observableStateChecks)) {
+    throw new Error(`${path}.observableStateChecks must be an array.`);
+  }
+  if ((outcome === 'pass' || outcome === 'fail') && obj.observableStateChecks.length === 0) {
+    throw new Error(
+      `${path}.observableStateChecks must be a non-empty array when outcome is "${outcome}".`,
+    );
   }
   const observableStateChecks = obj.observableStateChecks.map((raw, idx) => {
     const cPath = `${path}.observableStateChecks[${idx}]`;
@@ -722,8 +727,15 @@ export function validateResult(input: unknown, path = 'result'): EvalResult {
     };
   });
 
-  if (!Array.isArray(obj.evidence) || obj.evidence.length === 0) {
-    throw new Error(`${path}.evidence must be a non-empty array.`);
+  if (outcome === 'pass' && observableStateChecks.some((check) => !check.passed)) {
+    throw new Error(`${path}.outcome cannot be "pass" when an observableStateCheck failed.`);
+  }
+
+  if (!Array.isArray(obj.evidence)) {
+    throw new Error(`${path}.evidence must be an array.`);
+  }
+  if ((outcome === 'pass' || outcome === 'fail') && obj.evidence.length === 0) {
+    throw new Error(`${path}.evidence must be a non-empty array when outcome is "${outcome}".`);
   }
   const evidence = obj.evidence.map((raw, idx) => {
     const ePath = `${path}.evidence[${idx}]`;
@@ -812,6 +824,14 @@ export function validateResult(input: unknown, path = 'result'): EvalResult {
   };
 }
 
+function normalizeForCrossSetCheck(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/#\d+/g, '#N')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function readSetScenarios(corpusRoot: string, set: ScenarioSet): EvalScenario[] {
   const dir = join(corpusRoot, set);
   const files = readdirSync(dir)
@@ -819,10 +839,20 @@ function readSetScenarios(corpusRoot: string, set: ScenarioSet): EvalScenario[] 
     .sort();
   return files.map((file) => {
     const fullPath = join(dir, file);
-    const parsed: unknown = JSON.parse(readFileSync(fullPath, 'utf8'));
-    const scenario = validateScenario(parsed, `${set}/${file}`);
+    const label = `${set}/${file}`;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(fullPath, 'utf8'));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to parse ${label}: ${message}`);
+    }
+    const scenario = validateScenario(parsed, label);
     if (scenario.set !== set) {
-      throw new Error(`${set}/${file} has set "${scenario.set}" inside "${set}" directory.`);
+      throw new Error(`${label} has set "${scenario.set}" inside "${set}" directory.`);
+    }
+    if (file !== `${scenario.id}.json`) {
+      throw new Error(`${label} filename must match scenario.id "${scenario.id}.json".`);
     }
     return scenario;
   });
@@ -857,6 +887,8 @@ export function validateCorpusCoverage(scenarios: readonly EvalScenario[]): Scen
 
   const developmentIds: string[] = [];
   const validationIds: string[] = [];
+  const devTitles = new Map<string, string>();
+  const devPrompts = new Map<string, string>();
   const byCategory: Record<string, { positive: number; negative: number }> = {};
   const targetSurfaceCounts = {
     roles: 0,
@@ -872,6 +904,8 @@ export function validateCorpusCoverage(scenarios: readonly EvalScenario[]): Scen
         throw new Error(`Development scenario "${scenario.id}" must use EDD-DEV- prefix.`);
       }
       developmentIds.push(scenario.id);
+      devTitles.set(normalizeForCrossSetCheck(scenario.title), scenario.id);
+      devPrompts.set(normalizeForCrossSetCheck(scenario.stimulus.userPrompt), scenario.id);
     } else {
       if (!scenario.id.startsWith('EDD-VAL-')) {
         throw new Error(`Validation scenario "${scenario.id}" must use EDD-VAL- prefix.`);
@@ -894,10 +928,19 @@ export function validateCorpusCoverage(scenarios: readonly EvalScenario[]): Scen
     throw new Error('Both development and validation sets must be non-empty.');
   }
 
-  const devSet = new Set(developmentIds);
-  for (const id of validationIds) {
-    if (devSet.has(id)) {
-      throw new Error(`Scenario ID "${id}" appears in both development and validation sets.`);
+  for (const scenario of scenarios) {
+    if (scenario.set !== 'validation') continue;
+    const dupTitleDevId = devTitles.get(normalizeForCrossSetCheck(scenario.title));
+    if (dupTitleDevId) {
+      throw new Error(
+        `Validation scenario "${scenario.id}" duplicates development title from "${dupTitleDevId}".`,
+      );
+    }
+    const dupPromptDevId = devPrompts.get(normalizeForCrossSetCheck(scenario.stimulus.userPrompt));
+    if (dupPromptDevId) {
+      throw new Error(
+        `Validation scenario "${scenario.id}" duplicates development userPrompt from "${dupPromptDevId}".`,
+      );
     }
   }
 

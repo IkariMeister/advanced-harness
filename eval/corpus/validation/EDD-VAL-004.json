@@ -42,6 +42,6 @@
   "provenance": {
     "kind": "synthetic",
     "sanitized": true,
-    "sourceSummary": "Held-out negative validation scenario for Codex plugin MCP isolation (#209)."
+    "sourceSummary": "Held-out negative validation scenario for Codex plugin MCP isolation (synthetic incident #90004)."
   }
 }

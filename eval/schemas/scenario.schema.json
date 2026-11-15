@@ -39,11 +39,11 @@
     },
     "title": {
       "type": "string",
-      "minLength": 1
+      "pattern": "\\S"
     },
     "description": {
       "type": "string",
-      "minLength": 1
+      "pattern": "\\S"
     },
     "polarity": {
       "type": "string",
@@ -82,15 +82,15 @@
         },
         "prompts": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         },
         "skills": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         },
         "workflows": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         },
         "adapters": {
           "type": "array",
@@ -106,7 +106,7 @@
       "additionalProperties": false,
       "required": ["repoState", "host", "roleSetup", "constraints"],
       "properties": {
-        "repoState": { "type": "string", "minLength": 1 },
+        "repoState": { "type": "string", "pattern": "\\S" },
         "host": {
           "type": "string",
           "enum": ["opencode", "claude-code", "antigravity", "codex", "cursor", "any"]
@@ -118,7 +118,7 @@
         "constraints": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         }
       }
     },
@@ -127,11 +127,11 @@
       "additionalProperties": false,
       "required": ["userPrompt", "events"],
       "properties": {
-        "userPrompt": { "type": "string", "minLength": 1 },
+        "userPrompt": { "type": "string", "pattern": "\\S" },
         "events": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         }
       }
     },
@@ -147,20 +147,20 @@
         "assertions": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         },
         "requiredSkills": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         },
         "expectedRoleTransitions": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         },
         "observableFinalState": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         }
       }
     },
@@ -175,7 +175,7 @@
         "requiredArtifacts": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         }
       }
     },
@@ -188,9 +188,19 @@
           "type": "string",
           "enum": ["synthetic", "sanitized-incident"]
         },
-        "sanitized": { "type": "boolean" },
-        "sourceSummary": { "type": "string", "minLength": 1 }
+        "sanitized": { "const": true },
+        "sourceSummary": { "type": "string", "pattern": "\\S" }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "set": { "const": "development" } }, "required": ["set"] },
+      "then": { "properties": { "id": { "pattern": "^EDD-DEV-[0-9]{3,}$" } } }
+    },
+    {
+      "if": { "properties": { "set": { "const": "validation" } }, "required": ["set"] },
+      "then": { "properties": { "id": { "pattern": "^EDD-VAL-[0-9]{3,}$" } } }
+    }
+  ]
 }

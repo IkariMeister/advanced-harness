@@ -21,8 +21,8 @@
     "schemaVersion": {
       "const": 1
     },
-    "runId": { "type": "string", "minLength": 1 },
-    "createdAt": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "pattern": "\\S" },
+    "createdAt": { "type": "string", "pattern": "\\S" },
     "mode": {
       "type": "string",
       "enum": ["deterministic", "live"]
@@ -40,15 +40,15 @@
       "additionalProperties": false,
       "required": ["provider", "fixtureLoopbackOnly"],
       "properties": {
-        "provider": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "pattern": "\\S" },
         "fixtureLoopbackOnly": { "type": "boolean" },
         "roleModels": {
           "type": "object",
-          "additionalProperties": { "type": "string", "minLength": 1 }
+          "additionalProperties": { "type": "string", "pattern": "\\S" }
         }
       }
     },
-    "rubricId": { "type": "string", "minLength": 1 },
+    "rubricId": { "type": "string", "pattern": "\\S" },
     "rubricVersion": {
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
@@ -71,5 +71,24 @@
         "pattern": "^EDD-(DEV|VAL)-[0-9]{3,}$"
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "mode": { "const": "deterministic" } }, "required": ["mode"] },
+      "then": {
+        "properties": {
+          "modelConfig": {
+            "properties": {
+              "fixtureLoopbackOnly": { "const": true }
+            }
+          },
+          "isolation": {
+            "properties": {
+              "networkAllowed": { "const": false }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

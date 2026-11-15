@@ -1,8 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import Ajv2020Import from 'ajv/dist/2020.js';
+import type { ValidateFunction } from 'ajv/dist/2020.js';
 import {
   loadScenarioCorpus,
   validateCorpusCoverage,
@@ -18,28 +20,49 @@ function readJson(relPath: string): unknown {
   return JSON.parse(readFileSync(join(REPO_ROOT, relPath), 'utf8'));
 }
 
-describe('EDD v1 evaluation contracts', () => {
-  it('ships valid JSON Schema files with schemaVersion const 1', () => {
-    const schemaFiles = [
-      'eval/schemas/scenario.schema.json',
-      'eval/schemas/rubric.schema.json',
-      'eval/schemas/run-manifest.schema.json',
-      'eval/schemas/result.schema.json',
-    ];
-    for (const file of schemaFiles) {
-      const schema = readJson(file) as Record<string, unknown>;
-      assert.equal(schema.type, 'object', `${file} should be an object schema`);
-      assert.equal(schema.additionalProperties, false, `${file} should forbid unknown properties`);
-      const props = schema.properties as Record<string, Record<string, unknown>>;
-      assert.equal(props.schemaVersion?.const, 1, `${file} schemaVersion must be const 1`);
-    }
-  });
+type AjvInstance = { compile: (schema: object) => ValidateFunction };
+type AjvCtor = new (opts: { allErrors: boolean; strict: boolean }) => AjvInstance;
+const Ajv2020 =
+  (Ajv2020Import as unknown as { default?: AjvCtor }).default ??
+  (Ajv2020Import as unknown as AjvCtor);
 
-  it('validates all four example files against the contracts', () => {
-    const scenario = validateScenario(readJson('eval/examples/scenario.example.json'));
-    const rubric = validateRubric(readJson('eval/examples/rubric.example.json'));
-    const manifest = validateRunManifest(readJson('eval/examples/run-manifest.example.json'));
-    const result = validateResult(readJson('eval/examples/result.example.json'));
+const ajv = new Ajv2020({ allErrors: true, strict: false });
+const validateScenarioSchema = ajv.compile(readJson('eval/schemas/scenario.schema.json') as object);
+const validateRubricSchema = ajv.compile(readJson('eval/schemas/rubric.schema.json') as object);
+const validateManifestSchema = ajv.compile(
+  readJson('eval/schemas/run-manifest.schema.json') as object,
+);
+const validateResultSchema = ajv.compile(readJson('eval/schemas/result.schema.json') as object);
+
+function assertSchemaValid(
+  validator: { (data: unknown): boolean; errors?: unknown },
+  data: unknown,
+  label: string,
+): void {
+  const ok = validator(data);
+  assert.equal(
+    ok,
+    true,
+    `${label} failed JSON Schema validation: ${JSON.stringify(validator.errors)}`,
+  );
+}
+
+describe('EDD v1 evaluation contracts', () => {
+  it('validates all four example files against both JSON Schemas and TypeScript validators', () => {
+    const scenarioRaw = readJson('eval/examples/scenario.example.json');
+    const rubricRaw = readJson('eval/examples/rubric.example.json');
+    const manifestRaw = readJson('eval/examples/run-manifest.example.json');
+    const resultRaw = readJson('eval/examples/result.example.json');
+
+    assertSchemaValid(validateScenarioSchema, scenarioRaw, 'scenario.example.json');
+    assertSchemaValid(validateRubricSchema, rubricRaw, 'rubric.example.json');
+    assertSchemaValid(validateManifestSchema, manifestRaw, 'run-manifest.example.json');
+    assertSchemaValid(validateResultSchema, resultRaw, 'result.example.json');
+
+    const scenario = validateScenario(scenarioRaw);
+    const rubric = validateRubric(rubricRaw);
+    const manifest = validateRunManifest(manifestRaw);
+    const result = validateResult(resultRaw);
 
     assert.equal(scenario.id, 'EDD-DEV-001');
     assert.equal(rubric.mode, 'deterministic');
@@ -47,18 +70,17 @@ describe('EDD v1 evaluation contracts', () => {
     assert.equal(result.outcome, 'pass');
   });
 
-  it('loads the versioned scenario corpus with >= 20 scenarios and strict set separation', () => {
+  it('validates the full scenario corpus against JSON Schema, separation, and coverage rules', () => {
     const corpus = loadScenarioCorpus(join(REPO_ROOT, 'eval/corpus'));
+    for (const scenario of corpus.all) {
+      assertSchemaValid(validateScenarioSchema, scenario, scenario.id);
+    }
+
     const summary = validateCorpusCoverage(corpus.all);
 
     assert.ok(summary.total >= 20, `Expected >= 20 scenarios, got ${summary.total}`);
-    assert.equal(corpus.development.length, 14);
-    assert.equal(corpus.validation.length, 10);
-
-    const devSet = new Set(summary.developmentIds);
-    for (const valId of summary.validationIds) {
-      assert.equal(devSet.has(valId), false, `Validation ID ${valId} must not overlap development`);
-    }
+    assert.ok(corpus.development.length > 0, 'Development set must be non-empty');
+    assert.ok(corpus.validation.length > 0, 'Validation set must be non-empty');
 
     for (const cat of ['approval', 'permissions', 'scope', 'tool-errors', 'recovery']) {
       const counts = summary.byCategory[cat];
@@ -77,58 +99,77 @@ describe('EDD v1 evaluation contracts', () => {
     assert.ok(sanitizedIncidents.length >= 1, 'Expected at least one sanitized-incident scenario');
   });
 
-  it('rejects invalid scenarios, rubrics, manifests, and results', () => {
+  it('enforces parity between JSON Schemas and TypeScript validators on invalid inputs', () => {
     const baseScenario = readJson('eval/examples/scenario.example.json') as Record<string, unknown>;
-
-    assert.throws(
-      () => validateScenario({ ...baseScenario, schemaVersion: 2 }),
-      /schemaVersion must be 1/,
-    );
-    assert.throws(
-      () => validateScenario({ ...baseScenario, extraField: true }),
-      /not an allowed property/,
-    );
-    assert.throws(
-      () => validateScenario({ ...baseScenario, set: 'validation' }),
-      /must start with "EDD-VAL-"/,
-    );
-    assert.throws(
-      () =>
-        validateScenario({
+    const invalidScenarios: Array<{ label: string; data: unknown; pattern: RegExp }> = [
+      { label: 'wrong schemaVersion', data: { ...baseScenario, schemaVersion: 2 }, pattern: /schemaVersion must be 1/ },
+      { label: 'extra field', data: { ...baseScenario, extraField: true }, pattern: /not an allowed property/ },
+      { label: 'whitespace title', data: { ...baseScenario, title: '   ' }, pattern: /non-empty string/ },
+      { label: 'set/prefix mismatch', data: { ...baseScenario, set: 'validation' }, pattern: /must start with "EDD-VAL-"/ },
+      {
+        label: 'unsanitized provenance',
+        data: {
           ...baseScenario,
           provenance: { kind: 'synthetic', sanitized: false, sourceSummary: 'unsanitized' },
-        }),
-      /sanitized must be true/,
-    );
+        },
+        pattern: /sanitized must be true/,
+      },
+    ];
+
+    for (const { label, data, pattern } of invalidScenarios) {
+      assert.equal(validateScenarioSchema(data), false, `Schema should reject: ${label}`);
+      assert.throws(() => validateScenario(data), pattern, `Validator should reject: ${label}`);
+    }
 
     const baseRubric = readJson('eval/examples/rubric.example.json') as Record<string, unknown>;
-    assert.throws(
-      () => validateRubric({ ...baseRubric, mode: 'live' }),
-      /judge is required when mode is "live"/,
-    );
+    const liveNoJudge = { ...baseRubric, mode: 'live' };
+    assert.equal(validateRubricSchema(liveNoJudge), false);
+    assert.throws(() => validateRubric(liveNoJudge), /judge is required when mode is "live"/);
 
-    const baseManifest = readJson('eval/examples/run-manifest.example.json') as Record<
-      string,
-      unknown
-    >;
+    const baseManifest = readJson('eval/examples/run-manifest.example.json') as Record<string, unknown>;
+    const badDetManifest = {
+      ...baseManifest,
+      isolation: { tempRepo: true, isolatedConfig: true, networkAllowed: true },
+    };
+    assert.equal(validateManifestSchema(badDetManifest), false);
     assert.throws(
-      () =>
-        validateRunManifest({
-          ...baseManifest,
-          isolation: { tempRepo: true, isolatedConfig: true, networkAllowed: true },
-        }),
+      () => validateRunManifest(badDetManifest),
       /networkAllowed must be false in deterministic mode/,
-    );
-
-    const baseResult = readJson('eval/examples/result.example.json') as Record<string, unknown>;
-    assert.throws(
-      () => validateResult({ ...baseResult, outcome: 'unknown' }),
-      /outcome must be one of/,
     );
   });
 
-  it('rejects duplicate scenario IDs across development and validation directories', () => {
-    const tmpRoot = join(tmpdir(), `edd-corpus-dup-${Date.now()}`);
+  it('supports empty observations for non-observed outcomes and rejects pass with failed checks', () => {
+    const baseResult = readJson('eval/examples/result.example.json') as Record<string, unknown>;
+
+    for (const outcome of ['skipped', 'inconclusive', 'infrastructure_error'] as const) {
+      const nonObserved = {
+        ...baseResult,
+        outcome,
+        observableStateChecks: [],
+        evidence: [],
+      };
+      assertSchemaValid(validateResultSchema, nonObserved, `result (${outcome})`);
+      assert.equal(validateResult(nonObserved).outcome, outcome);
+    }
+
+    const passWithFailedCheck = {
+      ...baseResult,
+      outcome: 'pass',
+      observableStateChecks: [{ assertion: 'clean tree', passed: false, observed: 'dirty' }],
+    };
+    assert.equal(validateResultSchema(passWithFailedCheck), false);
+    assert.throws(
+      () => validateResult(passWithFailedCheck),
+      /cannot be "pass" when an observableStateCheck failed/,
+    );
+
+    const passWithEmptyEvidence = { ...baseResult, outcome: 'pass', evidence: [] };
+    assert.equal(validateResultSchema(passWithEmptyEvidence), false);
+    assert.throws(() => validateResult(passWithEmptyEvidence), /evidence must be a non-empty array/);
+  });
+
+  it('rejects malformed JSON, directory/set mismatch, filename/id mismatch, and cross-set overlap', () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'edd-corpus-'));
     try {
       mkdirSync(join(tmpRoot, 'development'), { recursive: true });
       mkdirSync(join(tmpRoot, 'validation'), { recursive: true });
@@ -137,18 +178,45 @@ describe('EDD v1 evaluation contracts', () => {
         string,
         unknown
       >;
+      const valScenario = readJson('eval/corpus/validation/EDD-VAL-001.json') as Record<
+        string,
+        unknown
+      >;
+
+      // 1. Filename / ID mismatch
       writeFileSync(
-        join(tmpRoot, 'development', 'EDD-DEV-001.json'),
+        join(tmpRoot, 'development', 'WRONG-NAME.json'),
         JSON.stringify(devScenario),
         'utf8',
       );
+      assert.throws(() => loadScenarioCorpus(tmpRoot), /filename must match scenario\.id/);
+      rmSync(join(tmpRoot, 'development', 'WRONG-NAME.json'));
+
+      // 2. Directory / set mismatch
       writeFileSync(
-        join(tmpRoot, 'validation', 'EDD-DEV-001.json'),
-        JSON.stringify({ ...devScenario, set: 'validation' }),
+        join(tmpRoot, 'development', 'EDD-VAL-001.json'),
+        JSON.stringify(valScenario),
         'utf8',
       );
+      assert.throws(() => loadScenarioCorpus(tmpRoot), /inside "development" directory/);
+      rmSync(join(tmpRoot, 'development', 'EDD-VAL-001.json'));
 
-      assert.throws(() => loadScenarioCorpus(tmpRoot), /must start with "EDD-VAL-"/);
+      // 3. Malformed JSON names the file
+      writeFileSync(join(tmpRoot, 'development', 'EDD-DEV-001.json'), '{not-json', 'utf8');
+      assert.throws(() => loadScenarioCorpus(tmpRoot), /Failed to parse development\/EDD-DEV-001\.json/);
+      rmSync(join(tmpRoot, 'development', 'EDD-DEV-001.json'));
+
+      // 4. Cross-set title/prompt overlap rejected by validateCorpusCoverage
+      const corpus = loadScenarioCorpus(join(REPO_ROOT, 'eval/corpus'));
+      const firstDev = corpus.development[0]!;
+      const overlappingVal = {
+        ...corpus.validation[0]!,
+        title: firstDev.title,
+      };
+      assert.throws(
+        () => validateCorpusCoverage([...corpus.development, overlappingVal, ...corpus.validation.slice(1)]),
+        /duplicates development title/,
+      );
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });
     }

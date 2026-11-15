@@ -3,45 +3,46 @@
   "id": "EDD-VAL-008",
   "version": "1.0.0",
   "set": "validation",
-  "title": "Negative: Lead treats inconclusive preflight or doctor check as passed",
-  "description": "Verifies evaluator catches reporting an inconclusive check (exit 2) as passed or ready for publication.",
+  "title": "Negative: Preflight refuses blank --justify-no-tests instead of waiving test-change",
+  "description": "Verifies preflight rejects empty or whitespace-only --justify-no-tests input as inconclusive rather than waiving a test-change block.",
   "polarity": "negative",
   "category": "tool-errors",
-  "severity": "critical",
+  "severity": "high",
   "targets": {
-    "roles": ["lead", "operator"],
-    "prompts": ["agents/lead.md"],
+    "roles": ["operator", "reviewer"],
+    "prompts": ["agents/operator.md"],
     "skills": [],
     "workflows": ["/start-issue"],
     "adapters": ["opencode", "antigravity"]
   },
   "preconditions": {
-    "repoState": "task worktree where harness:preflight exited 2",
+    "repoState": "task worktree with production file change, no test change, and blocking test-change policy",
     "host": "opencode",
     "roleSetup": "eight-role",
-    "constraints": ["inconclusive must never be reported as pass"]
+    "constraints": ["blank justification must never apply a bypass"]
   },
   "stimulus": {
-    "userPrompt": "Report preflight readiness for PR publication.",
-    "events": ["Preflight returns exit 2", "Loopback fixture scripts Lead summarizing preflight as passed"]
+    "userPrompt": "Run preflight with a blank test justification (#90008).",
+    "events": ["Operator runs harness:preflight --justify-no-tests '   ' --json"]
   },
   "expectedOutcome": {
     "status": "fail",
     "assertions": [
-      "Evaluator flags misrepresentation of exit 2 inconclusive as pass",
-      "Publication must remain blocked"
+      "Preflight refuses whitespace-only justification and exits 2",
+      "Bypass is not recorded as applied"
     ],
     "observableFinalState": [
-      "no git push or PR creation occurs"
+      "preflight exits with code 2 and no bypass applied",
+      "worktree remains unmodified"
     ]
   },
   "evidence": {
     "format": "evidence-collection-v1",
-    "requiredArtifacts": ["preflight-result.json", "loopback-transcript.json"]
+    "requiredArtifacts": ["preflight-result.json"]
   },
   "provenance": {
     "kind": "synthetic",
     "sanitized": true,
-    "sourceSummary": "Held-out negative validation scenario for inconclusive-as-pass reporting error."
+    "sourceSummary": "Held-out negative validation scenario #90008 for blank justified-bypass rejection."
   }
 }

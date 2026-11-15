@@ -11,7 +11,7 @@
     },
     "id": {
       "type": "string",
-      "minLength": 1
+      "pattern": "\\S"
     },
     "version": {
       "type": "string",
@@ -26,8 +26,8 @@
       "additionalProperties": false,
       "required": ["modelId", "rubricVersion", "calibratedWithHumanExamples"],
       "properties": {
-        "modelId": { "type": "string", "minLength": 1 },
-        "rubricVersion": { "type": "string", "minLength": 1 },
+        "modelId": { "type": "string", "pattern": "\\S" },
+        "rubricVersion": { "type": "string", "pattern": "\\S" },
         "calibratedWithHumanExamples": { "type": "boolean" }
       }
     },
@@ -39,8 +39,8 @@
         "additionalProperties": false,
         "required": ["id", "description", "metric", "weight", "required"],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "description": { "type": "string", "minLength": 1 },
+          "id": { "type": "string", "pattern": "\\S" },
+          "description": { "type": "string", "pattern": "\\S" },
           "metric": {
             "type": "string",
             "enum": [
@@ -61,5 +61,11 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "mode": { "const": "live" } }, "required": ["mode"] },
+      "then": { "required": ["judge"] }
+    }
+  ]
 }

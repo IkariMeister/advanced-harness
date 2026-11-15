@@ -20,7 +20,7 @@
     "schemaVersion": {
       "const": 1
     },
-    "runId": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "pattern": "\\S" },
     "scenarioId": {
       "type": "string",
       "pattern": "^EDD-(DEV|VAL)-[0-9]{3,}$"
@@ -33,25 +33,23 @@
       "type": "string",
       "enum": ["pass", "fail", "skipped", "inconclusive", "infrastructure_error"]
     },
-    "reason": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "pattern": "\\S" },
     "durationMs": { "type": "number", "minimum": 0 },
     "observableStateChecks": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["assertion", "passed", "observed"],
         "properties": {
-          "assertion": { "type": "string", "minLength": 1 },
+          "assertion": { "type": "string", "pattern": "\\S" },
           "passed": { "type": "boolean" },
-          "observed": { "type": "string", "minLength": 1 }
+          "observed": { "type": "string", "pattern": "\\S" }
         }
       }
     },
     "evidence": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -63,7 +61,7 @@
             "additionalProperties": false,
             "required": ["name", "category"],
             "properties": {
-              "name": { "type": "string", "minLength": 1 },
+              "name": { "type": "string", "pattern": "\\S" },
               "category": {
                 "type": "string",
                 "enum": ["unit-tests", "static-analysis", "build", "e2e", "custom"]
@@ -75,7 +73,7 @@
             "additionalProperties": false,
             "required": ["command", "exitStatus", "durationMs", "basis"],
             "properties": {
-              "command": { "type": "string", "minLength": 1 },
+              "command": { "type": "string", "pattern": "\\S" },
               "exitStatus": { "type": "integer" },
               "durationMs": { "type": "number", "minimum": 0 },
               "basis": {
@@ -86,7 +84,7 @@
           },
           "artifacts": {
             "type": "array",
-            "items": { "type": "string", "minLength": 1 }
+            "items": { "type": "string", "pattern": "\\S" }
           }
         }
       }
@@ -107,11 +105,11 @@
         "handoffCount": { "type": "integer", "minimum": 0 },
         "roleTransitions": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         },
         "skillsInvoked": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "\\S" }
         },
         "humanInterventions": { "type": "integer", "minimum": 0 },
         "permissionAmbiguities": { "type": "integer", "minimum": 0 },
@@ -120,5 +118,30 @@
         "tokenCostUsd": { "type": "number", "minimum": 0 }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "enum": ["pass", "fail"] } }, "required": ["outcome"] },
+      "then": {
+        "properties": {
+          "observableStateChecks": { "minItems": 1 },
+          "evidence": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "outcome": { "const": "pass" } }, "required": ["outcome"] },
+      "then": {
+        "properties": {
+          "observableStateChecks": {
+            "items": {
+              "properties": {
+                "passed": { "const": true }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
