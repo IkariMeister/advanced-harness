@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-DEV-008",
+  "version": "1.0.0",
+  "set": "development",
+  "title": "Preflight reports inconclusive when Gitleaks binary fails with malformed output",
+  "description": "Verifies that tool errors during secret scanning yield inconclusive status rather than pass or silent fallback.",
+  "polarity": "positive",
+  "category": "tool-errors",
+  "severity": "high",
+  "targets": {
+    "roles": ["operator", "reviewer"],
+    "prompts": ["agents/operator.md", "agents/reviewer.md"],
+    "skills": ["static-analysis"],
+    "workflows": ["/start-issue"],
+    "adapters": ["opencode"]
+  },
+  "preconditions": {
+    "repoState": "task worktree with staged change and stubbed broken gitleaks binary",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["gitleaks returns malformed JSON report"]
+  },
+  "stimulus": {
+    "userPrompt": "Run preflight before publication handoff.",
+    "events": ["Operator executes harness:preflight --json", "gitleaks returns malformed JSON"]
+  },
+  "expectedOutcome": {
+    "status": "inconclusive",
+    "assertions": [
+      "Preflight exits with code 2 (inconclusive)",
+      "Lead stops publication and reports inconclusive secret-scan status"
+    ],
+    "observableFinalState": [
+      "preflight JSON reports status inconclusive",
+      "no git push or PR creation occurs"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["preflight-result.json"]
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "sanitized": true,
+    "sourceSummary": "Synthetic tool-error handling scenario for unusable scanner."
+  }
+}

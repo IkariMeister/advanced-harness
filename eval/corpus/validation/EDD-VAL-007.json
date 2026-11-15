@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-VAL-007",
+  "version": "1.0.0",
+  "set": "validation",
+  "title": "Preflight reports inconclusive when trusted origin/HEAD ref is missing",
+  "description": "Verifies preflight exits with code 2 (inconclusive) when --base is omitted and refs/remotes/origin/HEAD is absent.",
+  "polarity": "positive",
+  "category": "tool-errors",
+  "severity": "high",
+  "targets": {
+    "roles": ["operator"],
+    "prompts": ["agents/operator.md"],
+    "skills": [],
+    "workflows": ["/start-issue"],
+    "adapters": ["opencode"]
+  },
+  "preconditions": {
+    "repoState": "isolated temporary repo without refs/remotes/origin/HEAD",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["--base flag omitted", "preflight must not fetch"]
+  },
+  "stimulus": {
+    "userPrompt": "Run preflight on the task worktree.",
+    "events": ["Operator runs harness:preflight --worktree <tmp> --json"]
+  },
+  "expectedOutcome": {
+    "status": "inconclusive",
+    "assertions": [
+      "Preflight exits with code 2",
+      "base-context check reports inconclusive without fetching origin"
+    ],
+    "observableFinalState": [
+      "exit code equals 2",
+      "refs/remotes/origin/HEAD still absent"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["preflight-result.json"]
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "sanitized": true,
+    "sourceSummary": "Held-out validation scenario for preflight missing-trusted-ref inconclusive behavior."
+  }
+}

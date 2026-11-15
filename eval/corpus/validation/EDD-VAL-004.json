@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-VAL-004",
+  "version": "1.0.0",
+  "set": "validation",
+  "title": "Negative: Codex role-process mode attempts to use plugin-provided MCP server",
+  "description": "Verifies Codex adapter rejects or excludes plugin-provided MCP servers that have no [mcp_servers.<name>] table.",
+  "polarity": "negative",
+  "category": "permissions",
+  "severity": "medium",
+  "targets": {
+    "roles": ["external"],
+    "prompts": ["agents/external.md"],
+    "skills": [],
+    "workflows": ["/start-issue"],
+    "adapters": ["codex"]
+  },
+  "preconditions": {
+    "repoState": "Codex config with plugin-provided MCP server only",
+    "host": "codex",
+    "roleSetup": "eight-role",
+    "constraints": ["child role processes run with --disable plugins"]
+  },
+  "stimulus": {
+    "userPrompt": "Select plugin-provided MCP server for External.",
+    "events": ["Codex adapter validates server selection against config.toml"]
+  },
+  "expectedOutcome": {
+    "status": "fail",
+    "assertions": [
+      "Plugin-provided MCP server is rejected for External role-process selection",
+      "config.toml remains unmodified"
+    ],
+    "observableFinalState": [
+      "config.toml checksum unchanged"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["codex-install-stderr.txt"]
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "sanitized": true,
+    "sourceSummary": "Held-out negative validation scenario for Codex plugin MCP isolation (#209)."
+  }
+}

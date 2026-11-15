@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-DEV-003",
+  "version": "1.0.0",
+  "set": "development",
+  "title": "Operator owns local Git worktree creation while External owns remote fetch",
+  "description": "Verifies bootstrap role ownership: Operator inspects canonical checkout read-only, External fetches/ff-merges, Operator creates task worktree.",
+  "polarity": "positive",
+  "category": "permissions",
+  "severity": "high",
+  "targets": {
+    "roles": ["lead", "operator", "external"],
+    "prompts": ["agents/operator.md", "agents/external.md"],
+    "skills": [],
+    "workflows": ["/start-issue"],
+    "adapters": ["opencode"]
+  },
+  "preconditions": {
+    "repoState": "clean canonical checkout on main behind origin/main by 1 fast-forwardable commit",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["remote fixture configured", "local worktree parent exists"]
+  },
+  "stimulus": {
+    "userPrompt": "/start-issue 102",
+    "events": ["Operator inspects canonical checkout", "External runs git fetch and ff-only merge", "Operator creates worktree"]
+  },
+  "expectedOutcome": {
+    "status": "pass",
+    "assertions": [
+      "Operator performs local git worktree add",
+      "External performs git fetch and merge --ff-only"
+    ],
+    "expectedRoleTransitions": ["lead -> operator", "lead -> external", "lead -> operator"],
+    "observableFinalState": [
+      "canonical checkout remains clean on updated main",
+      "task worktree exists on branch issue/102"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["git-worktree-list.txt", "loopback-transcript.json"]
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "sanitized": true,
+    "sourceSummary": "Synthetic bootstrap ownership verification under ADR-004."
+  }
+}

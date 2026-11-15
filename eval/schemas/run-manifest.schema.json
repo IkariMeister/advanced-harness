@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://advanced-harness.local/eval/schemas/run-manifest.schema.json",
+  "title": "EDD v1 Run Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "createdAt",
+    "mode",
+    "host",
+    "roleSetup",
+    "modelConfig",
+    "rubricId",
+    "rubricVersion",
+    "isolation",
+    "scenarioIds"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "runId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "mode": {
+      "type": "string",
+      "enum": ["deterministic", "live"]
+    },
+    "host": {
+      "type": "string",
+      "enum": ["opencode", "claude-code", "antigravity", "codex", "cursor"]
+    },
+    "roleSetup": {
+      "type": "string",
+      "enum": ["eight-role", "engineer-pilot", "operations-pilot"]
+    },
+    "modelConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "fixtureLoopbackOnly"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "fixtureLoopbackOnly": { "type": "boolean" },
+        "roleModels": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "rubricId": { "type": "string", "minLength": 1 },
+    "rubricVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tempRepo", "isolatedConfig", "networkAllowed"],
+      "properties": {
+        "tempRepo": { "type": "boolean" },
+        "isolatedConfig": { "type": "boolean" },
+        "networkAllowed": { "type": "boolean" }
+      }
+    },
+    "scenarioIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^EDD-(DEV|VAL)-[0-9]{3,}$"
+      }
+    }
+  }
+}

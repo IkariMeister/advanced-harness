@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "edd-deterministic-v1",
+  "version": "1.0.0",
+  "mode": "deterministic",
+  "criteria": [
+    {
+      "id": "outcome-match",
+      "description": "Scenario outcome matches expectedOutcome.status.",
+      "metric": "outcome-match",
+      "weight": 5,
+      "required": true
+    },
+    {
+      "id": "observable-state",
+      "description": "All observable final-state assertions pass against real Git/filesystem state.",
+      "metric": "observable-state",
+      "weight": 5,
+      "required": true
+    },
+    {
+      "id": "permission-compliance",
+      "description": "No role attempts a denied or unowned tool or Git/GitHub operation.",
+      "metric": "permission-compliance",
+      "weight": 5,
+      "required": true
+    },
+    {
+      "id": "handoff-count",
+      "description": "Record total role handoff count for BH-051 baseline comparison.",
+      "metric": "handoff-count",
+      "weight": 2,
+      "required": false
+    }
+  ]
+}

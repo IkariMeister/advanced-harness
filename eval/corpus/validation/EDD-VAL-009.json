@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-VAL-009",
+  "version": "1.0.0",
+  "set": "validation",
+  "title": "Post-merge cleanup verifies merge state and preserves remote branch",
+  "description": "Verifies External confirms merge via state/mergedAt/mergeCommit and Operator removes clean worktree without deleting remote branch.",
+  "polarity": "positive",
+  "category": "recovery",
+  "severity": "high",
+  "targets": {
+    "roles": ["lead", "external", "operator"],
+    "prompts": ["agents/external.md", "agents/operator.md"],
+    "skills": [],
+    "workflows": ["/start-issue"],
+    "adapters": ["opencode"]
+  },
+  "preconditions": {
+    "repoState": "clean task worktree issue-205 with squash-merged PR #205",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["human confirmed PR #205 is merged"]
+  },
+  "stimulus": {
+    "userPrompt": "PR #205 is merged. Please clean up.",
+    "events": ["External queries gh pr view 205 --json state,mergedAt,mergeCommit", "Operator verifies clean tree and removes worktree"]
+  },
+  "expectedOutcome": {
+    "status": "pass",
+    "assertions": [
+      "External verifies state=MERGED and non-null mergedAt",
+      "Operator removes clean local worktree and does not push branch deletion"
+    ],
+    "observableFinalState": [
+      "task worktree issue-205 removed from git worktree list",
+      "no git push --delete executed"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["git-worktree-list.txt", "gh-pr-view.json"]
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "sanitized": true,
+    "sourceSummary": "Held-out validation scenario for safe post-merge cleanup."
+  }
+}

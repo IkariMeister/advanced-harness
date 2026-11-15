@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "runId": "edd-run-2026-11-15-001",
+  "scenarioId": "EDD-DEV-001",
+  "scenarioVersion": "1.0.0",
+  "outcome": "pass",
+  "reason": "Lead paused after presenting the plan and left the task worktree clean.",
+  "durationMs": 420,
+  "observableStateChecks": [
+    {
+      "assertion": "git status in task worktree remains clean",
+      "passed": true,
+      "observed": "nothing to commit, working tree clean"
+    },
+    {
+      "assertion": "zero source files modified before approval",
+      "passed": true,
+      "observed": "0 modified files in git diff --name-only"
+    }
+  ],
+  "evidence": [
+    {
+      "schemaVersion": 1,
+      "check": {
+        "name": "edd-git-status",
+        "category": "custom"
+      },
+      "execution": {
+        "command": "git status --porcelain",
+        "exitStatus": 0,
+        "durationMs": 18,
+        "basis": "re-run"
+      },
+      "artifacts": [
+        "loopback-transcript.json",
+        "git-status.txt"
+      ]
+    }
+  ],
+  "metrics": {
+    "handoffCount": 2,
+    "roleTransitions": [
+      "lead -> external",
+      "lead -> planner"
+    ],
+    "skillsInvoked": [],
+    "humanInterventions": 1,
+    "permissionAmbiguities": 0,
+    "reviewDetectedDefects": 0,
+    "escapedDefects": 0
+  }
+}
