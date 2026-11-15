@@ -8,13 +8,44 @@ import { makeTempRoot } from './temp-directory.ts';
 import { contextData, contextPath, prepareContextFiles, updateContext } from '../src/project-context.ts';
 import { askGlobalIntegrations, askProjectIntegrations, checkSelectedIntegrations, emptyGlobalIntegrations, legacyIntegrationContext, optionalDiscoveryPrompt, parseGlobalIntegrations, validateGlobalIntegrations, validateProjectIntegrations, type GlobalIntegrations } from '../src/integration-context.ts';
 import { nativeToolDiscoveryGuidance, updateConnectionConfig } from '../src/integration-setup.ts';
-import { saveSetup } from '../src/project-setup.ts';
+import { saveSetup, validateProfile } from '../src/project-setup.ts';
 
 function fixture(t: { after: (callback: () => void) => void }) {
   const root = makeTempRoot('harness-context-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
+
+test('tracked root project settings are the validated portable Node.js harness profile', () => {
+  const rootAgents = readFileSync(fileURLToPath(new URL('../AGENTS.md', import.meta.url)), 'utf8');
+  const profile = contextData(rootAgents, 'project');
+  assert.ok(profile);
+  assert.deepEqual(validateProfile(profile), {
+    version: 1,
+    baseBranch: 'main',
+    shell: 'bash',
+    checks: {
+      build: { status: 'unconfigured' },
+      lint: { status: 'unconfigured' },
+      unit: { status: 'configured', command: 'npm test' },
+      roborazzi: { status: 'unconfigured' },
+      runtime: { status: 'configured', command: 'npm run smoke' },
+      e2e: { status: 'unconfigured' },
+    },
+    additionalChecks: [
+      { name: 'typecheck', command: 'npm run typecheck' },
+      { name: 'docs-check', command: 'npm run docs:check' },
+    ],
+    device: { preference: 'ask' },
+    worktreeDirectory: '$HOME/Projects/advanced-harness-worktrees',
+    memoryPath: '$HOME/Projects/advanced-harness-memory/MEMORY.md',
+  });
+  assert.equal(Object.hasOwn(profile!, 'projectRoot'), false);
+  assert.match(rootAgents, /workflow,\s*not\s+for\s+MarsRoverIA/);
+  assert.match(rootAgents, /stub runtime, not a live host, model, or service/);
+  assert.match(rootAgents, /unconfigured does not mean waived or passed/);
+  assert.match(rootAgents, /Device preference is ask and inert here; no Android device is configured/);
+});
 
 test('all optional integrations can be skipped globally and per project without extra questions or endpoints', async () => {
   for (const scope of ['global', 'project']) {

@@ -35,9 +35,47 @@ human approved. Do not add attribution trailers (for example `Co-Authored-By`) o
 other lines the human did not approve.
 
 This repository is the harness tooling checkout, not the MarsRoverIA pilot app.
-Preserve unrelated work in both repositories. Project settings belong only in the
-application's AGENTS.md or explicitly referenced context; reusable connections and
-defaults are global. Existing legacy profiles require explicit migration consent.
+Preserve unrelated work in both repositories. Application project settings belong
+only in the application's AGENTS.md or explicitly referenced context. This harness
+repository uses the project settings below for its own Node.js development workflow,
+not for MarsRoverIA. Reusable connections and defaults are global. Existing legacy
+profiles require explicit migration consent.
+
+<!-- advanced-harness:project:start -->
+### Advanced Harness project settings
+
+These settings describe this harness repository's Node.js development workflow, not
+an Android application. Commands are workflow configuration, not implementation or
+publishing approval. Build, lint, Roborazzi, and private E2E checks are unconfigured;
+unconfigured does not mean waived or passed. The configured smoke command runs the
+isolated CLI smoke suite with a stub runtime, not a live host, model, or service.
+Device preference is ask and inert here; no Android device is configured. Settings do
+not authorize implementation or publishing. Memory writes require separate
+authorization.
+
+```json
+{
+  "version": 1,
+  "baseBranch": "main",
+  "shell": "bash",
+  "checks": {
+    "build": { "status": "unconfigured" },
+    "lint": { "status": "unconfigured" },
+    "unit": { "status": "configured", "command": "npm test" },
+    "roborazzi": { "status": "unconfigured" },
+    "runtime": { "status": "configured", "command": "npm run smoke" },
+    "e2e": { "status": "unconfigured" }
+  },
+  "additionalChecks": [
+    { "name": "typecheck", "command": "npm run typecheck" },
+    { "name": "docs-check", "command": "npm run docs:check" }
+  ],
+  "device": { "preference": "ask" },
+  "worktreeDirectory": "$HOME/Projects/advanced-harness-worktrees",
+  "memoryPath": "$HOME/Projects/advanced-harness-memory/MEMORY.md"
+}
+```
+<!-- advanced-harness:project:end -->
 
 ## Receipt-managed files
 
