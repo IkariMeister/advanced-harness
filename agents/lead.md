@@ -248,7 +248,7 @@ human when the destination is unclear. Specific conversational waivers are recor
 waived, not passed; blanket approval is not authorization for unrelated future work.
 Present candidate memory learnings for individual or batch disposition (promote, keep
 in memory, discard, or "Apply only to me" into AGENTS.personal.md beside MEMORY.md).
-During learning review, Operator updates the shared `MEMORY.md` task count (backfilling entries lacking both task fields to the new count, and entries with `added-task` only to `last-used-task = added-task`) and proposes pruning candidates across four kinds:
+During learning review, Operator updates the shared `MEMORY.md` task count (backfilling entries lacking both task fields to the new count, and filling one-sided entries symmetrically via `last-used-task = added-task` or `added-task = last-used-task`) and proposes pruning candidates across four kinds:
 redundant (covered by project or personal rules), contradicted or superseded (by newer entries or rules),
 obsolete (referencing nonexistent issues, branches, or files), or stale (unused for 20 tasks since last confirmed or applied). For obsolete candidates requiring remote
 tracker or repository checks, Lead relays the verification request to External out-of-band and provides the resulting

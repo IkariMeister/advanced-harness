@@ -2432,6 +2432,22 @@ test('stale pruning: addedAtTask fallback and advanceMemoryTaskCount backfill/va
   assert.equal(addedOnlyAdvance.entries[0]?.addedAtTask, 2);
   assert.equal(addedOnlyAdvance.entries[0]?.lastUsedAtTask, 2);
 
+  // F23: entry with only lastUsedAtTask backfills addedAtTask = lastUsedAtTask
+  const lastUsedOnly = {
+    source: 'Implementer',
+    scope: 'Build',
+    confirmation: 'confirmed',
+    fact: 'Last-used-only entry.',
+    lastUsedAtTask: 3,
+  };
+  const lastUsedOnlyAdvance = advanceMemoryTaskCount({
+    taskCount: 5,
+    entries: [lastUsedOnly],
+  });
+  assert.equal(lastUsedOnlyAdvance.taskCount, 6);
+  assert.equal(lastUsedOnlyAdvance.entries[0]?.addedAtTask, 3);
+  assert.equal(lastUsedOnlyAdvance.entries[0]?.lastUsedAtTask, 3);
+
   assert.throws(() => advanceMemoryTaskCount({ taskCount: -1, entries: [] }), /non-negative integer/);
   assert.throws(() => advanceMemoryTaskCount({ taskCount: 9007199254740992, entries: [] }), /non-negative integer/);
   assert.throws(() => advanceMemoryTaskCount({ taskCount: Number.MAX_SAFE_INTEGER, entries: [] }), /exceeds safe integer range/);
@@ -2642,6 +2658,54 @@ test('stale pruning: planMemoryPruning and applyApprovedMemoryPruning step-limit
           currentTaskCount: 6,
         }),
       /exceeds currentTaskCount/
+    );
+
+    // F21: planMemoryPruning rejects addedAtTask > currentTaskCount, accepts entry === currentTaskCount,
+    // and applyApprovedMemoryPruning rejects currentTaskCount older than on-disk MEMORY.md task count
+    const exceedsAddedEntry = { ...metaEntry, addedAtTask: 10, lastUsedAtTask: 5 };
+    const exceedsAddedCands = detectPruningCandidates({
+      memoryEntries: [exceedsAddedEntry, discardExtra],
+      agentsText: 'Redundant extra entry.\n',
+      currentTaskCount: 6,
+    });
+    assert.throws(
+      () =>
+        planMemoryPruning({
+          memoryEntries: [exceedsAddedEntry, discardExtra],
+          candidates: exceedsAddedCands,
+          dispositions: [{ entry: discardExtra, disposition: 'discard' }],
+          currentTaskCount: 6,
+        }),
+      /exceeds currentTaskCount/
+    );
+
+    const equalEntry = { ...metaEntry, addedAtTask: 5, lastUsedAtTask: 5 };
+    const equalPlan = planMemoryPruning({
+      memoryEntries: [equalEntry, discardExtra],
+      candidates: noCountCands,
+      dispositions: [{ entry: discardExtra, disposition: 'discard' }],
+      currentTaskCount: 5,
+    });
+    assert.equal(equalPlan.currentTaskCount, 5);
+
+    const olderEntry = { ...metaEntry, addedAtTask: 3, lastUsedAtTask: 3 };
+    const olderPlan = planMemoryPruning({
+      memoryEntries: [olderEntry, discardExtra],
+      candidates: noCountCands,
+      dispositions: [{ entry: discardExtra, disposition: 'discard' }],
+      currentTaskCount: 4,
+    });
+    assert.throws(
+      () =>
+        applyApprovedMemoryPruning({
+          plan: olderPlan,
+          approved: true,
+          memoryPath,
+          memoryBaselineHash: wMeta.hash,
+          personalBaselineHash: readPersonalRules(personalPath).hash,
+          expectedPlanHash: olderPlan.planHash,
+        }),
+      /older than the on-disk MEMORY\.md task count/
     );
 
     // F10: applyApprovedMemoryPruning defense-in-depth guards on forged/rehashed plans

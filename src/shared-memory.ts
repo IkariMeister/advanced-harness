@@ -535,7 +535,7 @@ export function advanceMemoryTaskCount(state: {
     validateMemoryEntry(entry);
     return {
       ...entry,
-      addedAtTask: entry.addedAtTask ?? nextTaskCount,
+      addedAtTask: entry.addedAtTask ?? entry.lastUsedAtTask ?? nextTaskCount,
       lastUsedAtTask: entry.lastUsedAtTask ?? entry.addedAtTask ?? nextTaskCount,
     };
   });

@@ -20,9 +20,11 @@ version between releases.
   since they were last confirmed or applied. Adds a project-level `Task count: N` metadata
   line and per-entry `added-task` / `last-used-task` fields to `MEMORY.md` (minimum
   compatible harness version `0.4.0-dev`; legacy `MEMORY.md` files without task metadata
-  continue to parse and are backfilled on the first task run; entries with `added-task` only
-  backfill `last-used-task = added-task`). Keeping a `stale` candidate
+  continue to parse and are backfilled on the first task run; one-sided entries backfill
+  symmetrically via `last-used-task = added-task` or `added-task = last-used-task`). Keeping a `stale` candidate
   restarts its `last-used-task` at `currentTaskCount`; declining or cancelling writes nothing.
+  `writeSharedMemorySerialized` rejects any `taskCount` lower than the on-disk `Task count`
+  or any entry's task metadata.
   Planning and applying a pruning plan require `currentTaskCount` (with entry task counts at or
   below `currentTaskCount`) whenever retained entries carry task metadata, and applying enforces
   a maximum forward step of 1000 tasks (`MAX_TASK_COUNT_STEP`) relative to the on-disk
