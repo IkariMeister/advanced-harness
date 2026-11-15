@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const EVAL_SCHEMA_VERSION = 1 as const;
@@ -240,8 +240,35 @@ export interface ScenarioCorpusSummary {
 
 const SCENARIO_ID_RE = /^EDD-(DEV|VAL)-[0-9]{3,}$/;
 const SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
-const ISO_8601_RE =
-  /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$/;
+const ISO_8601_CAPTURE_RE =
+  /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]+)?(?:Z|([+-][0-9]{2}):([0-9]{2}))$/;
+
+function isValidIso8601Timestamp(value: string): boolean {
+  const match = ISO_8601_CAPTURE_RE.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  const utc = new Date(Date.UTC(year, month - 1, day));
+  if (
+    utc.getUTCFullYear() !== year ||
+    utc.getUTCMonth() !== month - 1 ||
+    utc.getUTCDate() !== day
+  ) {
+    return false;
+  }
+  if (match[7] !== undefined && match[8] !== undefined) {
+    const offHour = Math.abs(Number(match[7]));
+    const offMin = Number(match[8]);
+    if (offHour > 23 || offMin > 59) return false;
+  }
+  return Number.isFinite(Date.parse(value));
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -614,8 +641,8 @@ export function validateRunManifest(input: unknown, path = 'runManifest'): EvalR
   const schemaVersion = assertSchemaVersion(obj, path);
   const runId = assertNonEmptyString(obj.runId, `${path}.runId`);
   const createdAt = assertNonEmptyString(obj.createdAt, `${path}.createdAt`);
-  if (!ISO_8601_RE.test(createdAt)) {
-    throw new Error(`${path}.createdAt must be an ISO 8601 timestamp.`);
+  if (!isValidIso8601Timestamp(createdAt)) {
+    throw new Error(`${path}.createdAt must be a valid ISO 8601 timestamp.`);
   }
   const mode = assertEnum(obj.mode, EVAL_MODES, `${path}.mode`);
   const host = assertEnum(obj.host, EVAL_HOSTS, `${path}.host`);
@@ -869,15 +896,51 @@ function readSetScenarios(corpusRoot: string, set: ScenarioSet): EvalScenario[] 
   });
 }
 
+function readRetiredIds(corpusRoot: string): Set<string> {
+  const retiredPath = join(corpusRoot, 'retired.json');
+  if (!existsSync(retiredPath)) {
+    return new Set();
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(retiredPath, 'utf8'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse retired.json: ${message}`);
+  }
+  const obj = assertObject(parsed, 'retired.json');
+  assertAllowedKeys(obj, ['schemaVersion', 'retiredIds'], [], 'retired.json');
+  assertSchemaVersion(obj, 'retired.json');
+  if (!Array.isArray(obj.retiredIds)) {
+    throw new Error('retired.json.retiredIds must be an array.');
+  }
+  const retired = new Set<string>();
+  obj.retiredIds.forEach((raw, idx) => {
+    const id = assertScenarioId(raw, `retired.json.retiredIds[${idx}]`);
+    if (retired.has(id)) {
+      throw new Error(`retired.json.retiredIds contains duplicate ID "${id}".`);
+    }
+    retired.add(id);
+  });
+  return retired;
+}
+
 /** Loads and validates both development and validation scenario sets from disk. */
 export function loadScenarioCorpus(corpusRoot: string): {
   development: EvalScenario[];
   validation: EvalScenario[];
   all: EvalScenario[];
 } {
+  const retiredIds = readRetiredIds(corpusRoot);
   const development = readSetScenarios(corpusRoot, 'development');
   const validation = readSetScenarios(corpusRoot, 'validation');
-  return { development, validation, all: [...development, ...validation] };
+  const all = [...development, ...validation];
+  for (const scenario of all) {
+    if (retiredIds.has(scenario.id)) {
+      throw new Error(`Scenario "${scenario.id}" is listed in retired.json and cannot be active.`);
+    }
+  }
+  return { development, validation, all };
 }
 
 /** Verifies corpus size, set separation, polarity coverage, and target surface coverage. */

@@ -16,7 +16,7 @@
     "adapters": ["opencode"]
   },
   "preconditions": {
-    "repoState": "clean task worktree on branch issue/100",
+    "repoState": "clean task worktree on branch issue/90100",
     "host": "opencode",
     "roleSetup": "eight-role",
     "constraints": [
@@ -25,9 +25,9 @@
     ]
   },
   "stimulus": {
-    "userPrompt": "/start-issue 100",
+    "userPrompt": "/start-issue 90100",
     "events": [
-      "External reads synthetic issue #100",
+      "External reads synthetic issue #90100",
       "Planner produces scoped implementation plan",
       "Lead presents plan and awaits human response"
     ]

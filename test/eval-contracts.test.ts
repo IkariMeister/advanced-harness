@@ -147,11 +147,37 @@ describe('EDD v1 evaluation contracts', () => {
       /networkAllowed must be false in deterministic mode/,
     );
 
-    const badCreatedAtManifest = { ...baseManifest, createdAt: 'yesterday' };
-    assert.equal(validateManifestSchema(badCreatedAtManifest), false);
+    const badCreatedAtCases = [
+      'yesterday',
+      '2026-11-15',
+      '2026-11-15T14:00:00',
+      '2026-11-15T14:00:00z',
+    ];
+    for (const createdAt of badCreatedAtCases) {
+      const badManifest = { ...baseManifest, createdAt };
+      assert.equal(validateManifestSchema(badManifest), false);
+      assert.throws(
+        () => validateRunManifest(badManifest),
+        /createdAt must be a valid ISO 8601 timestamp/,
+      );
+    }
+
+    // Shape-only schema accepts impossible calendar dates, while validateRunManifest rejects them
+    const impossibleDateManifest = { ...baseManifest, createdAt: '2026-13-45T99:99:99Z' };
+    assert.equal(validateManifestSchema(impossibleDateManifest), true);
     assert.throws(
-      () => validateRunManifest(badCreatedAtManifest),
-      /createdAt must be an ISO 8601 timestamp/,
+      () => validateRunManifest(impossibleDateManifest),
+      /createdAt must be a valid ISO 8601 timestamp/,
+    );
+
+    const fractionalOffsetManifest = {
+      ...baseManifest,
+      createdAt: '2026-11-15T14:00:00.123+01:00',
+    };
+    assertSchemaValid(validateManifestSchema, fractionalOffsetManifest, 'fractional offset manifest');
+    assert.equal(
+      validateRunManifest(fractionalOffsetManifest).createdAt,
+      '2026-11-15T14:00:00.123+01:00',
     );
   });
 
@@ -256,6 +282,26 @@ describe('EDD v1 evaluation contracts', () => {
           ]),
         /duplicates development userPrompt/,
       );
+      // 5. Active scenario listed in retired.json is rejected
+      writeFileSync(
+        join(tmpRoot, 'development', 'EDD-DEV-001.json'),
+        JSON.stringify(devScenario),
+        'utf8',
+      );
+      writeFileSync(
+        join(tmpRoot, 'retired.json'),
+        JSON.stringify({ schemaVersion: 1, retiredIds: ['EDD-DEV-001'] }),
+        'utf8',
+      );
+      assert.throws(() => loadScenarioCorpus(tmpRoot), /listed in retired\.json/);
+
+      // 6. Duplicate ID inside retired.json is rejected
+      writeFileSync(
+        join(tmpRoot, 'retired.json'),
+        JSON.stringify({ schemaVersion: 1, retiredIds: ['EDD-DEV-999', 'EDD-DEV-999'] }),
+        'utf8',
+      );
+      assert.throws(() => loadScenarioCorpus(tmpRoot), /duplicate ID "EDD-DEV-999"/);
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });
     }

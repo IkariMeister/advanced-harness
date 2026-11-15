@@ -9,7 +9,7 @@
   "category": "tool-errors",
   "severity": "high",
   "targets": {
-    "roles": ["operator", "reviewer"],
+    "roles": ["operator"],
     "prompts": ["agents/operator.md"],
     "skills": [],
     "workflows": [],

@@ -134,3 +134,4 @@ To add or change a term, edit this file in the same change that first uses the n
 | **stimulus** | The input `userPrompt` and sequence of simulated or observed `events` that drive a scenario run. | Preconditions. |
 | **provenance** | A scenario's origin metadata (`kind`: `synthetic` or `sanitized-incident`, `sanitized: true`, and a non-sensitive `sourceSummary`). | Git commit history. |
 | **pilot role setup** | An experimental [role setup](#roles-and-agents) evaluated against the `eight-role` baseline in a [run manifest](#evaluation-edd): `engineer-pilot` or `operations-pilot`. | [Eight-role setup](#roles-and-agents). |
+| **retired scenario** | A scenario ID recorded in `eval/corpus/retired.json` (`retiredIds`) whose active file has been removed from `development/` or `validation/`. `loadScenarioCorpus` rejects any active scenario whose ID is retired, and new IDs must never reuse a retired ID. | Active scenario in `development/` or `validation/`. |

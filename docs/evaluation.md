@@ -24,7 +24,8 @@ All four contract schemas live in `eval/schemas/` and are validated by `src/eval
 - **`polarity` (`positive` | `negative`):** A `positive` scenario exercises compliant expected behavior; a `negative` scenario introduces a boundary, permission, scope, tool-error, or recovery violation that guardrails or evaluators must reject.
 - **`expectedOutcome.status` (`pass` | `fail` | `inconclusive`):** Names the expected evaluation outcome for the scenario (`pass` when compliant behavior succeeds, `fail` when a negative violation is detected/rejected, `inconclusive` when a tool/ref error must stop without passing). A result's `outcome` is `pass` when the observed run matches `expectedOutcome.status` and satisfies every `expectedOutcome.observableFinalState` assertion.
 - **`expectedOutcome.observableFinalState`:** Across both positive and negative scenarios, assertions state **the compliant state the runner must observe** at the end of a compliant/blocked run (for example, that an unapproved edit, destructive cleanup, or unauthorized push did not occur).
-- **Result consistency:** In `eval/schemas/result.schema.json`, `pass` and `fail` results require non-empty `observableStateChecks` and `evidence`, while `skipped`, `inconclusive`, and `infrastructure_error` allow empty arrays when execution did not complete. A `pass` result is rejected if any `observableStateChecks` entry has `passed: false`. Note that `rubric.schema.json` does not enforce unique `criteria[].id` values in JSON Schema itself; `validateRubric` enforces uniqueness in TypeScript.
+- **Result consistency:** In `eval/schemas/result.schema.json`, `pass` and `fail` results require non-empty `observableStateChecks` and `evidence`, while `skipped`, `inconclusive`, and `infrastructure_error` allow empty arrays when execution did not complete. A `pass` result is rejected if any `observableStateChecks` entry has `passed: false`.
+- **Validator-only checks:** `rubric.schema.json` does not enforce unique `criteria[].id` values in JSON Schema itself (`validateRubric` enforces uniqueness in TypeScript), and `run-manifest.schema.json` checks `createdAt` shape only while `validateRunManifest` also verifies real calendar/time validity.
 
 ## Development vs. validation corpus separation
 
@@ -43,7 +44,7 @@ The validator enforces that:
 
 - **Next ID allocation:** Pick the next unused zero-padded integer in the target set (`EDD-DEV-NNN` or `EDD-VAL-NNN`) higher than all active IDs and all IDs listed in [`eval/corpus/retired.json`](../eval/corpus/retired.json). Never reuse a retired ID.
 - **Semantic `version` bumps:** Bump `MAJOR` when `expectedOutcome`, `observableFinalState`, or `stimulus` semantics change; `MINOR` when adding non-breaking assertions or target tags; `PATCH` for typo or clarification edits.
-- **Retirement and holdout integrity:** To retire a scenario, remove its file from `development/` or `validation/` and append its ID to `retiredIds` in `eval/corpus/retired.json` (which `loadScenarioCorpus` does not load as active scenarios). Never move a `development` scenario into `validation`; new `validation` scenarios must be authored independently with distinct text and a fresh `EDD-VAL-NNN` ID.
+- **Retirement and holdout integrity:** To retire a scenario, remove its file from `development/` or `validation/` and append its ID to `retiredIds` in `eval/corpus/retired.json`. `loadScenarioCorpus` validates `retired.json` and rejects any active scenario whose ID appears in `retiredIds`. Never move a `development` scenario into `validation`; new `validation` scenarios must be authored independently with distinct text and a fresh `EDD-VAL-NNN` ID.
 
 ## Adding reproducible incident scenarios
 
