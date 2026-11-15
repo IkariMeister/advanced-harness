@@ -4,7 +4,7 @@ All notable changes to Advanced Harness are listed here. Versions follow the
 process in [docs/releasing.md](docs/releasing.md); `main` carries a `-dev`
 version between releases.
 
-## Unreleased
+## v0.4.0 — 2026-11-15
 
 ### Changed
 
@@ -13,9 +13,42 @@ version between releases.
   `.harness/preflight.json` at local `refs/remotes/origin/HEAD`, independently of
   `--base`. Exact clean gitlink gaps with nonblank justifications remain visibly
   incomplete; the legacy `--ack-gitlink` CLI option now reports migration guidance.
+- The canonical checkout of an application repository receives only remote updates
+  (#172, [ADR-004](docs/adr/0004-canonical-checkout-remote-updates-only.md)). Operator
+  inspects it read-only before task bootstrap and reports and waits for a human decision
+  if it is dirty, mid-operation, off the base branch, or detached. When Lead relays the
+  step, External runs `git fetch` and then `git merge --ff-only` (still ASK; no new allow
+  rule), and reports and waits instead if the base is ahead of or diverged from origin.
+  Untouched canonical changes no longer let bootstrap proceed, and a failed fetch no
+  longer falls back to branching from the local base. The rule applies only to projects that
+  use task worktrees; pinned consumer harness checkouts are unchanged.
+- Claude Code: Operator now has Bash for local Git and task worktree bootstrap, so
+  `/start-issue` can create the worktree there (#200, [ADR-005](docs/adr/0005-claude-code-operator-bash.md),
+  Proposed). Operator's `git fetch --upload-pack` and `-u` denies become project settings
+  deny rules for every session. Its `git push`, `git pull`, `git clone`, and `gh` denies are
+  advisory on Claude Code: instruction only, not enforced. The Operator exception applies only
+  while its shell denies exactly match the ADR-005 list; any missing or extra deny withholds
+  Bash and is reported as unsupported. Implementer, Reviewer, QA, and Lead
+  still have no Bash. If Operator's Bash is unavailable or declined, bootstrap stops for a human
+  to create the worktree or cancel.
+  Upgrade: run `harness:update --host claude-code`. Until you do, `harness:doctor` reports
+  `operator.md` and `CLAUDE.md` as outdated and `.claude/settings.json` as missing the new
+  fetch deny rules.
+- Codex Operator and External role profiles now run with `sandbox_mode = danger-full-access`,
+  derived from the role sources, so `git add`, `git commit` and `gh` are expected to no longer be
+  blocked by the workspace-write sandbox (motivation recorded in #218; not verified by a live run) (#218, [ADR-006](docs/adr/0006-codex-operator-external-full-access.md),
+  Proposed). Lead stays read-only and on request. The destructive-command rules remain
+  installed, but their enforcement for full-access roles is unverified. Existing installs must
+  run `harness:update --host codex`. Manual smoke was waived.
+- Preflight changeset blob reads are batched with `git cat-file --batch` (BH-075, #204); output is unchanged, with a per-blob fallback when batched output exceeds its capture limit.
 
 ### Added
 
+- Host permission capability matrix (BH-048, #123): `docs/host-permission-capabilities.md` documents per-host permission boundaries, and `harness:doctor` prints the selected host's five boundaries with their status, scope, and evidence, including live-run runner attribution.
+- Preflight secret and forbidden-artifact check (BH-068, #183): the `secret-scan` check scans added lines for secrets using a Gitleaks backend, and `path-policy` blocks forbidden paths, with policy read from the trusted base.
+- Preflight evidence for publication handoff (BH-071, #186): per `docs/preflight.md` (Publication handoff and manual smoke), Operator runs the canonical preflight command from the confirmed harness checkout and relays its exact command, JSON, exit status, and worktree state as evidence; Reviewer and QA consume that handoff without running the Git-backed wrapper.
+  Stale or missing evidence is not publishable, waived checks stay waived, and final human publication approval stays separate. This is workflow guidance, not an enforced code gate; it does not change trusted preflight policy, the JSON identity schema, or installed prompts/permissions.
+  Static regression tests are not live proof; the live-role pilot is deferred.
 - Stale `MEMORY.md` pruning by task age (BH-078, #217): extend `MEMORY.md` pruning with a
   fourth candidate kind, `stale`, for entries unused for 20 tasks (`STALE_TASK_THRESHOLD`)
   since they were last confirmed or applied. Adds a project-level `Task count: N` metadata
@@ -91,36 +124,6 @@ version between releases.
   and exit codes 0 pass, 1 blocked, 2 inconclusive. When `--base` is omitted, `base-context` verifies
   the project context and `baseBranch` against the local trusted ref `refs/remotes/origin/HEAD`
   (no fetch); a missing trusted ref or unreadable context is inconclusive (exit 2). See [docs/preflight.md](docs/preflight.md).
-
-### Changed
-
-- The canonical checkout of an application repository receives only remote updates
-  (#172, [ADR-004](docs/adr/0004-canonical-checkout-remote-updates-only.md)). Operator
-  inspects it read-only before task bootstrap and reports and waits for a human decision
-  if it is dirty, mid-operation, off the base branch, or detached. When Lead relays the
-  step, External runs `git fetch` and then `git merge --ff-only` (still ASK; no new allow
-  rule), and reports and waits instead if the base is ahead of or diverged from origin.
-  Untouched canonical changes no longer let bootstrap proceed, and a failed fetch no
-  longer falls back to branching from the local base. The rule applies only to projects that
-  use task worktrees; pinned consumer harness checkouts are unchanged.
-- Claude Code: Operator now has Bash for local Git and task worktree bootstrap, so
-  `/start-issue` can create the worktree there (#200, [ADR-005](docs/adr/0005-claude-code-operator-bash.md),
-  Proposed). Operator's `git fetch --upload-pack` and `-u` denies become project settings
-  deny rules for every session. Its `git push`, `git pull`, `git clone`, and `gh` denies are
-  advisory on Claude Code: instruction only, not enforced. The Operator exception applies only
-  while its shell denies exactly match the ADR-005 list; any missing or extra deny withholds
-  Bash and is reported as unsupported. Implementer, Reviewer, QA, and Lead
-  still have no Bash. If Operator's Bash is unavailable or declined, bootstrap stops for a human
-  to create the worktree or cancel.
-  Upgrade: run `harness:update --host claude-code`. Until you do, `harness:doctor` reports
-  `operator.md` and `CLAUDE.md` as outdated and `.claude/settings.json` as missing the new
-  fetch deny rules.
-- Codex Operator and External role profiles now run with `sandbox_mode = danger-full-access`,
-  derived from the role sources, so `git add`, `git commit` and `gh` are expected to no longer be
-  blocked by the workspace-write sandbox (motivation recorded in #218; not verified by a live run) (#218, [ADR-006](docs/adr/0006-codex-operator-external-full-access.md),
-  Proposed). Lead stays read-only and on request. The destructive-command rules remain
-  installed, but their enforcement for full-access roles is unverified. Existing installs must
-  run `harness:update --host codex`. Manual smoke was waived.
 
 ### Fixed
 
