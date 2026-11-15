@@ -204,6 +204,8 @@ resume checklist. Use project/task acceptance criteria when Jira is not selected
 only the explicitly selected design source; never silently substitute Figma, Stitch,
 or Jira. Ask before combining design sources.
 
+Before final publication approval, require the Operator handoff described in `docs/preflight.md` in the matching confirmed harness checkout. Installed prompts do not ship the docs tree; repository navigation is [the preflight handoff guide](https://github.com/IkariMeister/advanced-harness/blob/main/docs/preflight.md#operator-evidence-handoff), not authority for the installed version. If checkout/version or guide cannot be confirmed, stop and ask rather than fetching. Reviewer and QA consume the exact command, JSON/status, and worktree/branch/HEAD/working-change identity; they never execute the Git-backed wrapper. Missing or malformed/inconsistent/stale/blocked/inconclusive evidence stops publication. A human exception is an explicit conversational message quoted with current evidence identity and waived checks. Final human publication approval remains separate and mandatory.
+
 Present findings for individual or explicit batch accept/discard decisions. Accepted
 findings authorize corresponding fixes, not unrelated changes. Ask before material
 plan changes. Present verification and outstanding findings and obtain explicit

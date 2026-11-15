@@ -20,6 +20,9 @@ const template = (role: typeof roles[number]) => readFileSync(new URL(`../agents
 const definitions = loadNativeDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
 const permissionRules = (role: typeof roles[number]) => definitions[role].permissions as PermissionRule[];
 const hasRule = (role: typeof roles[number], action: string, resource: string, effect: PermissionRule['effect']) => permissionRules(role).some(rule => rule.action === action && rule.resource === resource && rule.effect === effect);
+const globMatch = (pattern: string, value: string) => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 's').test(value);
+const effectiveShellEffect = (role: typeof roles[number], command: string) => permissionRules(role)
+  .filter(rule => rule.action === 'shell' && globMatch(rule.resource, command)).at(-1)?.effect;
 
 test('native roles preserve fixed model variants and deny before native exceptions', () => {
   for (const role of roles) {
@@ -53,6 +56,28 @@ test('native operational roles expose shell and keep edit defaults role-scoped',
   }
   assert.ok(hasRule('implementer', 'edit', '*', 'allow'));
   assert.ok(hasRule('operator', 'edit', '*', 'ask'));
+  assert.ok(hasRule('operator', 'shell', 'npm run harness:preflight -- *', 'allow'));
+  const safe = 'npm run harness:preflight -- --worktree task --base main --task 186 --json';
+  assert.equal(effectiveShellEffect('operator', safe), 'allow');
+  assert.equal(effectiveShellEffect('operator', 'npm test'), 'ask');
+  assert.equal(effectiveShellEffect('operator', 'npm run typecheck'), 'ask');
+  assert.equal(effectiveShellEffect('operator', 'git push origin issue/186'), 'deny');
+  for (const [operator, separator] of [['&', ' & '], ['&', '&'], ['&&', ' && '], ['&&', '&&'], [';', ' ; '], [';', ';'], ['|', ' | '], ['|', '|'], ['||', ' || '], ['||', '||'], ['`', '`id`'], ['$', '${HOME}'], ['$', '$(echo x)'], ['$', '"$quoted-path"'], ['>', '>out'], ['<', '<in'], ['>', '>>out'], ['<', '<(echo)'], ['LF', '\n'], ['CR', '\r'], ['CRLF', '\r\n']]) {
+    const command = `npm run harness:preflight -- --worktree task ${separator}git push origin issue/186`;
+    assert.equal(effectiveShellEffect('operator', command), 'ask', `${operator}: ${command}`);
+  }
+  for (const benign of [
+    'npm run harness:preflight -- --worktree "folder with spaces" --base main --json',
+    "npm run harness:preflight -- --worktree 'folder with spaces' --json",
+    'npm run harness:preflight -- --json --worktree task --base main',
+    'npm run harness:preflight -- --worktree task --base main --json --allow-note "no findings"'
+  ]) assert.equal(effectiveShellEffect('operator', benign), 'allow', benign);
+  assert.ok(!permissionRules('operator').some(rule => rule.action === 'shell' && rule.effect === 'allow' && globMatch(rule.resource, 'npm run typecheck')),
+    'a broad npm allow must not be introduced');
+  assert.ok(hasRule('operator', 'shell', '*', 'ask'));
+  for (const command of ['npm test', 'npm run typecheck', 'git push', 'git pull', 'git clone']) {
+    assert.ok(!permissionRules('operator').some(rule => rule.action === 'shell' && rule.effect === 'allow' && rule.resource === command), command);
+  }
   for (const role of ['external', 'reviewer', 'qa'] as const) assert.ok(!permissionRules(role).some(rule => rule.action === 'edit'), role);
 });
 
@@ -137,6 +162,64 @@ test('QA keeps Git with Operator: Git/GitHub shell is denied and Lead supplies t
   assert.match(qa, /ask Lead to get it from Operator/);
   assert.match(qa, /Do not retry a denied command in another form/);
   assert.match(template('lead').replace(/\s+/g, ' '), /When delegating to Reviewer or QA, include the local Git context Operator reported/);
+});
+
+test('Operator owns narrow preflight handoff while Reviewer and QA consume evidence without Git wrapper execution', () => {
+  const operator = template('operator').replace(/\s+/g, ' ');
+  const reviewer = template('reviewer').replace(/\s+/g, ' ');
+  const qa = template('qa').replace(/\s+/g, ' ');
+  assert.match(operator, /npm run harness:preflight -- --worktree <path> --base <confirmed-base> --task <key> --json/);
+  assert.match(operator, /confirmed harness checkout, targeting the task worktree/);
+  assert.match(operator, /Installed prompts do not ship the docs tree/);
+  assert.match(operator, /https:\/\/github\.com\/IkariMeister\/advanced-harness\/blob\/main\/docs\/preflight\.md#operator-evidence-handoff/);
+  assert.match(operator, /authoritative instructions must be `docs\/preflight\.md` in the matching confirmed harness checkout/);
+  assert.match(operator, /matching confirmed harness checkout/);
+  assert.match(operator, /If that checkout or guide cannot be confirmed, report this to Lead and stop/);
+  assert.match(operator, /If shell is not offered, the command is denied, or its permission prompt is declined/);
+  assert.match(operator, /human may run this exact command and supply an attributed result/);
+  assert.match(operator, /worktree, branch, HEAD, and working-change state/);
+  assert.match(operator, /ordered literal-pattern ASK guards cover identified command separators, substitutions, control characters, and redirections/i);
+  assert.match(operator, /quoted literal characters and are not a shell parser or sandbox/);
+  for (const role of [reviewer, qa]) {
+    assert.match(role, /Installed prompts do not ship docs/);
+    assert.match(role, /https:\/\/github\.com\/IkariMeister\/advanced-harness\/blob\/main\/docs\/preflight\.md#operator-evidence-handoff/);
+    assert.match(role, /authoritative instructions must be `docs\/preflight\.md` in the matching confirmed harness checkout/);
+    assert.match(role, /matching confirmed harness checkout/);
+    assert.match(role, /If checkout\/version or guide cannot be confirmed, ask Lead and stop; do not fetch another version/);
+    assert.match(role, /Operator'?s? exact command|Consume the exact Operator command/i);
+    assert.match(role, /do not (?:run|execute) the Git-backed wrapper/i);
+  }
+  const guide = readFileSync(new URL('../docs/preflight.md', import.meta.url), 'utf8');
+  assert.equal((guide.match(/^## Publication handoff and manual smoke$/gm) ?? []).length, 1);
+  assert.match(guide, /exit 2 takes precedence over exit 1/i);
+  assert.match(guide, /The JSON `approved` field is an automated verdict only/);
+  assert.match(guide, /a scoped exception must be an explicit human\s+message in the conversation/);
+  assert.match(guide, /expected prior remote head/);
+  assert.match(guide, /remote head equals the approved handoff HEAD/);
+  assert.match(guide, /authorized disposable\s+local Git fixture/);
+  assert.match(guide, /interactive TTY/);
+  assert.match(guide, /pagination for the thread[\s\S]*each nested reply collection[\s\S]*verbatim text[\s\S]*metadata/i);
+  assert.match(guide, /no worktree\/application files,\s+backups, commits, or service\/remote writes/);
+  assert.match(guide, /only that\s+corresponding fix.*publication remains paused/s);
+  assert.match(guide, /no role\/tool bypass/);
+  assert.match(guide, /legitimate unpublished difference alone must not be misclassified as stale/s);
+  assert.match(guide, /never hand\s+off missing, malformed, inconsistent, stale, blocked, or inconclusive evidence/);
+});
+
+test('Lead and External distinguish automated evidence from authorization and verify remote handoff state', () => {
+  const lead = template('lead').replace(/\s+/g, ' ');
+  const external = template('external').replace(/\s+/g, ' ');
+  assert.match(lead, /require the Operator handoff described in `docs\/preflight\.md` in the matching confirmed harness checkout/);
+  assert.match(lead, /https:\/\/github\.com\/IkariMeister\/advanced-harness\/blob\/main\/docs\/preflight\.md#operator-evidence-handoff/);
+  assert.match(lead, /If checkout\/version or guide cannot be confirmed, stop and ask rather than fetching/);
+  assert.match(lead, /A human exception is an explicit conversational message quoted with current evidence identity and waived checks/);
+  assert.match(external, /use `docs\/preflight\.md` in the matching confirmed harness checkout/);
+  assert.match(external, /https:\/\/github\.com\/IkariMeister\/advanced-harness\/blob\/main\/docs\/preflight\.md#publication-handoff-and-manual-smoke/);
+  assert.match(external, /compare expected prior remote branch\/PR head with authoritative remote state/);
+  assert.match(external, /do not treat legitimate newer unpublished local HEAD as stale solely because it differs from prior remote HEAD/);
+  assert.match(external, /After push, verify remote HEAD equals approved handoff HEAD/);
+  assert.match(external, /Inspect uncertain writes read-only; never retry automatically/);
+  assert.match(external, /Final human publication approval remains separate/);
 });
 
 test('all native roles distinguish offered tools, configured policy, invocation, and ownership', () => {

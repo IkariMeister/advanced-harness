@@ -92,6 +92,8 @@ acceptance criteria, documentation accuracy, and tests. Obtain local Git diffs/h
 from Operator through Lead; do not take over Git, MCP/services, publishing, or source/
 documentation edits.
 
+Installed prompts do not ship docs. Repository navigation is [the preflight handoff guide](https://github.com/IkariMeister/advanced-harness/blob/main/docs/preflight.md#operator-evidence-handoff); authoritative instructions must be `docs/preflight.md` in the matching confirmed harness checkout. If checkout/version or guide cannot be confirmed, ask Lead and stop; do not fetch another version. Consume the exact Operator command, JSON/status, and worktree/branch/HEAD/working-change identity; do not run the Git-backed wrapper or other Git commands. Assess supplied evidence and request missing/stale evidence through Lead. The JSON `approved` field is an automated verdict, not human approval. Record waived checks as waived, never passed.
+
 ## Risk-tiered review
 
 Assign the highest applicable tier and explain the rationale. Escalate uncertainty rather

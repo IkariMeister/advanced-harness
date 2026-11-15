@@ -42,6 +42,19 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
     { action: 'shell', resource: 'git fetch *--upl*', effect: 'deny' },
     { action: 'shell', resource: 'git fetch -u*', effect: 'deny' },
     { action: 'shell', resource: 'git fetch * -u*', effect: 'deny' });
+  const shellAsk = permissions.findIndex(rule => rule.action === 'shell' && rule.resource === '*' && rule.effect === 'ask');
+  assert.notEqual(shellAsk, -1, 'Operator retains the general shell ask rule');
+  permissions.splice(shellAsk + 1, 0,
+    { action: 'shell', resource: 'npm run harness:preflight -- *', effect: 'allow' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *&*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *`*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *\n*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *\r*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *>*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *<*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *$*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *;*', effect: 'ask' },
+    { action: 'shell', resource: 'npm run harness:preflight -- *|*', effect: 'ask' });
   // #172: the canonical checkout receives only remote updates; External fast-forwards the base during bootstrap.
   const previous = 'existing worktrees and untouched canonical changes do not block bootstrap; stop and ask\nLead only if settings are missing/invalid, target branch/worktree already exists, or\ncreation fails. Never discard unrelated changes or perform remote Git/API/MCP\noperations; External owns those. Command patterns are workflow aids, not a sandbox;\ndo not use scripts/aliases to bypass role ownership.';
   assert.ok(operator.system.includes(previous));
@@ -97,6 +110,12 @@ function withOperatorFetch(definitions: Record<typeof nativeRoles[number], Nativ
 // #169: QA spells out that Git/GitHub shell commands are denied and Git context comes from Operator through Lead.
 function withQaGitContext(definitions: Record<typeof nativeRoles[number], NativeDefinition>): Record<typeof nativeRoles[number], NativeDefinition> {
   const qa = definitions.qa;
+  const preflightAnchor = 'On interruption or uncertain verification execution, report observed outcomes and';
+  assert.ok(qa.system.includes(preflightAnchor), 'historical QA snapshot retains its verification/resume contract');
+  qa.system = qa.system.replace(preflightAnchor, [
+    'Installed prompts do not ship docs. Repository navigation is [the preflight handoff guide](https://github.com/IkariMeister/advanced-harness/blob/main/docs/preflight.md#operator-evidence-handoff); authoritative instructions must be `docs/preflight.md` in the matching confirmed harness checkout. If checkout/version or guide cannot be confirmed, ask Lead and stop; do not fetch another version. Consume Operator\'s exact command, JSON/status, and worktree/branch/HEAD/working-change identity; do not execute the Git-backed wrapper or other Git commands. Assess supplied evidence and ask Lead for missing or stale evidence. The JSON `approved` field is an automated verdict, never human approval; waived checks remain waived, not passed.',
+    preflightAnchor,
+  ].join('\n'));
   const previous = 'publish, merge, approve work, delegate, or change models. Request Git information from\nOperator and design/service context from External through Lead. Do not use shell/scripts\nto bypass role ownership. Test/device outputs are expected, not authorization for\nsource edits.';
   assert.ok(qa.system.includes(previous));
   qa.system = qa.system.replace(previous, 'publish, merge, approve work, delegate, or change models. Operator owns local Git: shell\ncommands that run `git` or `gh` are denied for QA, including read-only ones such as\nstatus, diff, log, or rev-parse, and any compound command that contains one. Use the\nbranch, HEAD, and changed-file context Lead supplies; if it is missing, ask Lead to get\nit from Operator. Do not retry a denied command in another form. Request design/service\ncontext from External through Lead. Do not use shell/scripts to bypass role ownership.\nTest/device outputs are expected, not authorization for source edits.');
@@ -155,7 +174,20 @@ function withExternalReviewPayload(definitions: Record<typeof nativeRoles[number
   return definitions;
 }
 
-const currentNormalizedDefinitions = () => withExternalReviewPayload(withExternalBootstrap(withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions())))));
+// #186: External's publication gate consumes Operator's preflight evidence, independently of source wording.
+function withExternalPreflightHandoff(definitions: Record<typeof nativeRoles[number], NativeDefinition>): Record<typeof nativeRoles[number], NativeDefinition> {
+  const external = definitions.external;
+  const anchor = "Do not push or open a PR until Lead supplies the human's explicit final approval of";
+  assert.ok(external.system.includes(anchor), 'historical External snapshot contains the publication approval gate');
+  external.system = external.system.replace(anchor, [
+    'Before publishing, use `docs/preflight.md` in the matching confirmed harness checkout. Installed prompts do not ship docs; repository navigation is [the publication handoff guide](https://github.com/IkariMeister/advanced-harness/blob/main/docs/preflight.md#publication-handoff-and-manual-smoke), not authority for the installed version. If the checkout/version or guide cannot be confirmed, stop and ask Lead, never fetch silently. Require the exact Operator handoff and quoted scoped exception if any; stop on missing or malformed/inconsistent/stale/blocked/inconclusive evidence. Immediately before an authorized push, compare expected prior remote branch/PR head with authoritative remote state; do not treat legitimate newer unpublished local HEAD as stale solely because it differs from prior remote HEAD. Stop on unexpected remote/head/feedback/local state or uncertainty. After push, verify remote HEAD equals approved handoff HEAD. Inspect uncertain writes read-only; never retry automatically. Final human publication approval remains separate.',
+    '',
+    anchor,
+  ].join('\n'));
+  return definitions;
+}
+
+const currentNormalizedDefinitions = () => withExternalPreflightHandoff(withExternalReviewPayload(withExternalBootstrap(withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions()))))));
 
 test('strict role source compiler preserves current normalized OpenCode definitions for all roles', () => {
   const baseline = legacyNormalizedDefinitions();
@@ -165,12 +197,17 @@ test('strict role source compiler preserves current normalized OpenCode definiti
   const compiled = compileOpenCodeRoles(currentDefinitions);
   assert.deepEqual(compiled.diagnostics, []);
   assert.deepEqual(loadNativeDefinitions(fileURLToPath(legacyAgents)), baseline, 'historical sources normalize to their independent historical snapshot');
-  const currentReviewer = readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8');
-  assert.equal(currentDefinitions.reviewer.instructions, currentReviewer.trim(), 'reviewer instructions match the independent current-reviewer snapshot');
   const expectedCurrent = currentNormalizedDefinitions();
   for (const role of ['lead', 'operator', 'planner', 'implementer', 'reviewer'] as const) {
     expectedCurrent[role].system = currentDefinitions[role].instructions;
   }
+  const reviewerSnapshot = readFileSync(new URL('./fixtures/current-reviewer-system.txt', import.meta.url), 'utf8').trim();
+  const expectedReviewer = reviewerSnapshot.replace(
+    '## Risk-tiered review',
+    'Installed prompts do not ship docs. Repository navigation is [the preflight handoff guide](https://github.com/IkariMeister/advanced-harness/blob/main/docs/preflight.md#operator-evidence-handoff); authoritative instructions must be `docs/preflight.md` in the matching confirmed harness checkout. If checkout/version or guide cannot be confirmed, ask Lead and stop; do not fetch another version. Consume the exact Operator command, JSON/status, and worktree/branch/HEAD/working-change identity; do not run the Git-backed wrapper or other Git commands. Assess supplied evidence and request missing/stale evidence through Lead. The JSON `approved` field is an automated verdict, not human approval. Record waived checks as waived, never passed.\n\n## Risk-tiered review',
+  );
+  assert.equal(currentDefinitions.reviewer.instructions, expectedReviewer, 'reviewer instructions match the independent current-reviewer snapshot plus accepted handoff guidance');
+  expectedCurrent.reviewer.system = expectedReviewer;
   assert.deepEqual(compiled.definitions, expectedCurrent, 'current compiler output preserves historical definitions except the updated role contract bodies and Operator fetch change');
   assert.deepEqual(loadNativeDefinitions(agentsDirectory), expectedCurrent, 'current native loader output matches the independent expected full definitions');
 });
@@ -242,6 +279,21 @@ test('Operator may git fetch but not run upload-pack or other remote Git (#144)'
   assert.equal(effect('git pull origin main'), 'deny');
   assert.equal(effect('git push origin main'), 'deny');
   assert.equal(effect('git status'), 'ask');
+});
+
+test('Operator preflight permission is narrow and preserves unrelated shell asks and remote Git denies', () => {
+  const rules = loadNativeDefinitions(fileURLToPath(agents)).operator.permissions as Array<{ action: string; resource?: string; effect: string }>;
+  // Match the existing helper semantics: native command patterns use * and ? wildcards.
+  const wildcard = (pattern: string) => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 's');
+  const effect = (command: string) => rules.filter(rule => (rule.action === 'shell' || rule.action === '*') && (rule.resource === undefined || wildcard(rule.resource).test(command))).at(-1)?.effect;
+  assert.equal(effect('npm run harness:preflight -- --worktree task --base main --task 186 --json'), 'allow');
+  for (const separator of [' && ', '&&', ' ; ', ';', ' | ', '|', '$(echo x)']) {
+    assert.equal(effect(`npm run harness:preflight -- --worktree task ${separator}git push origin main`), 'ask', separator);
+  }
+  assert.equal(effect('npm run test'), 'ask');
+  assert.equal(effect('npm run typecheck'), 'ask');
+  for (const command of ['git push origin main', 'git pull origin main', 'git clone https://example.invalid/repo']) assert.equal(effect(command), 'deny', command);
+  assert.ok(!rules.some(rule => rule.action === 'shell' && rule.effect === 'allow' && wildcard(rule.resource ?? '').test('npm run typecheck')), 'broad npm allow mutation must be rejected');
 });
 
 test('capability normalization round-trips ordered OpenCode rules without changing policy semantics', () => {

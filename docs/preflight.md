@@ -1,8 +1,104 @@
 # Preflight
 
-`harness:preflight` collects pre-publish evidence for a task worktree. It reports
-evidence only: no result, file, or tracker stamp counts as plan or publish
-approval. The human approves.
+## Publication handoff and manual smoke
+
+This is the single authoritative publication handoff contract. It is workflow
+guidance, not an enforced code gate. Installed prompts do not ship the documentation
+tree: navigate to repository-qualified [`docs/preflight.md`](#publication-handoff-and-manual-smoke) in
+the matching confirmed harness checkout. If the checkout/version or guide cannot be
+confirmed, stop and ask Lead; do not silently fetch another version. The link is
+repository navigation for the source tree; installed-role lookup must use the local
+confirmed checkout rather than this link target as a version-selection mechanism.
+
+### Operator evidence handoff
+
+Operator runs the canonical command **from that confirmed harness checkout** while
+`--worktree` targets the task worktree:
+
+```text
+npm run harness:preflight -- --worktree <task-worktree-path> --base <confirmed-base> --task <key> --json
+```
+
+Operator relays the exact command, JSON, exit status, worktree, branch, HEAD, and
+working-change state. Reviewer and QA consume the handoff and do not run the
+Git-backed wrapper. If shell is not offered, the command is denied, or its permission
+prompt is declined, report the exact outcome and escalate to Lead; do not bypass by
+another role or tool route. A human may run the exact command and provide an
+attributed result. Alternatively, a scoped exception must be an explicit human
+message in the conversation, quoted in the handoff, naming the current result/state
+and exact checks waived. Missing execution is never a fabricated result.
+
+Operator's OpenCode permission allows the preflight command's ordinary optional flags
+and argument order, while later ordered literal-pattern ASK guards cover identified
+command separators (`&`, `;`, `|`), substitutions (any `$`, including `$(` and `${`,
+and backticks), LF/CR, and redirections (`<`, `>`). The broad `$` guard can also prompt
+for benign quoted dollar signs or paths containing `$`; ordinary quoted paths without
+these guarded characters remain allowed. Matching is conservative: quoted literal
+characters can also prompt. These patterns are not a shell parser or sandbox, and static parsing,
+compilation, and matching tests establish only tested configuration behavior, not
+installed-host enforcement.
+
+### Result, freshness, and publication rules
+
+The JSON `approved` field is an automated verdict only, never human or plan approval.
+Exit 2 takes precedence over exit 1 when any check is inconclusive, even when a
+blocking finding remains; the automated verdict is false. Operator must never hand
+off missing, malformed, inconsistent, stale, blocked, or inconclusive evidence as
+publishable. Any local change after the run invalidates evidence and an exception;
+obtain a fresh Operator handoff. Waived checks are waived, never passed. Final human
+publication approval remains separate and mandatory.
+
+Immediately before an authorized push, External compares the authoritative remote
+branch/PR with the expected prior remote head. This is not an equality check against
+the unpublished local HEAD: legitimate new local work may be ahead of the prior
+remote head. Stop if the expected prior head, remote state, feedback, local changes,
+or any other relevant context is unexpected or uncertain. After pushing, verify the
+remote head equals the approved handoff HEAD. For uncertain writes, inspect state
+read-only and never retry automatically. This workflow does not change trusted
+preflight policy, JSON identity schema, or installed prompts/permissions.
+
+### Manual smoke procedure
+
+This section describes a procedure, not an execution record. Per-task manual testing
+may be explicitly waived; record a waiver in the conversation as waived, never
+passed. A waiver does not waive automated checks.
+
+Prerequisites: an explicitly authorized manual run, the matching confirmed harness
+checkout and authorized role launch, an interactive TTY, and an authorized disposable
+local Git fixture with trusted policy and a task worktree. Do not use a production
+repository, deploy/install to a real project, or make live GitHub/service writes
+without separate explicit human approval. Stop before execution if a prerequisite is
+missing; do not use a substitute role or route.
+
+1. Give the workflow an ambiguous issue/PR/repository target. Expect clarification
+   before any mutation; no files, backups, commits, or service writes occur.
+2. In the disposable PR-feedback fixture, exercise pagination for the thread
+   collection and each nested reply collection. Expect every reply's verbatim text
+   and available identity/head metadata retained. Simulate incomplete or inconsistent
+   retrieval; expect an explicit stop, not a claim that feedback is absent.
+3. Cancel at the plan/fix confirmation. Expect no worktree/application files,
+   backups, commits, or service/remote writes from the cancelled operation.
+4. Accept only one enumerated finding and approve its scoped plan. Expect only that
+   corresponding fix to be authorized; publication remains paused pending review and
+   separate final human approval. Discarded findings receive no fix.
+5. Make the preflight shell unavailable, deny the command, or decline its permission
+   prompt. Expect the exact observed outcome reported to Lead, no role/tool bypass,
+   and no invented result. If the human runs the exact command, attribute the supplied
+   output to that human; a scoped exception must quote the explicit message and name
+   current state/checks waived.
+6. Change local files, remote PR/head state, or review feedback after evidence capture.
+   Expect stale-state stop and a fresh handoff/review. Also use a fixture where remote
+   remains at the expected old head while the approved local task HEAD is newer; this
+   legitimate unpublished difference alone must not be misclassified as stale.
+7. Supply missing, malformed, inconsistent, blocked, or inconclusive evidence. Expect
+   publication to stop. For a mixed block plus inconclusive result, expect exit 2,
+   retained findings/statuses, and a false automated verdict.
+
+No production or remote write is part of this smoke procedure. Do not record an
+unrun or waived case as passed, and do not add operational test logs to repository
+documentation.
+
+## CLI usage
 
 ```text
 npm run harness:preflight -- --worktree <path> [--base <ref>] [--task <key>] [--criteria <file>] [--justify-no-tests "<text>"] [--json]
@@ -292,6 +388,15 @@ configured or if a check returns an unknown status, the result is inconclusive.
 `exitCodeFor` evaluates `inconclusive` before `block`: an inconclusive result on any check yields overall exit code 2 even if another check reports `block`. For example, when `refs/remotes/origin/HEAD` is missing and `--base` is omitted, `base-context` is `inconclusive` while `worktree-boundary` reports `block`, resulting in overall exit code 2. Passing `--base <ref>` allows `base-context` to pass, yielding exit code 1 from the blocked `worktree-boundary` check.
 
 A tooling error is never a pass.
+
+### Separate live role pilot (not run)
+
+A live role pilot requires separate scoped human approval for deployment/launch and
+the approved services and repository. After that approval, exercise Operator's real
+JSON handoff, Reviewer/QA consumption without Git commands, stale-state rejection,
+scoped waiver recording, and External stopping absent separate final publication
+approval. Static prompt/tests do not prove actual role responses or enforcement.
+This pilot is pending; no live-role result is claimed here.
 
 ## Adding checks
 

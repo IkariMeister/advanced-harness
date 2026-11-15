@@ -3,7 +3,7 @@
 **Status:** Proposed\
 **Date:** 2026-11-09\
 **Project:** Advanced Harness\
-**Decision scope:** The preflight changeset and its sensitive-path and secret findings.
+**Decision scope:** The preflight changeset and its sensitive-path and secret findings. Publication evidence ownership is addressed separately in [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md).
 
 ## Context
 
@@ -119,6 +119,8 @@ One monotonic ten-second budget covers both capability probing and all scan runs
 On Windows, only `gitleaks.exe` found in quoted or unquoted absolute `PATH`
 directories is invoked; resolved absolute executable paths are used directly.
 
+Publication evidence handoff ownership and interpretation are specified in ADR-009.
+
 ## Adoption
 
 The proposed implementation scope adds project policy loading, scanner isolation,
@@ -129,8 +131,10 @@ machine configuration or install Gitleaks.
 
 ## Reconsideration
 
-Revisit if Gitleaks changes its supported stdin/output interface, or observed
-false-positive/false-negative rates justify a different fallback or scope.
+Revisit if Gitleaks changes its supported stdin/output interface or observed
+false-positive/false-negative rates justify a different fallback or scope. Validate
+through a separate approved live role pilot; static tests do not establish runtime
+compliance. Handoff reconsideration belongs to ADR-009.
 
 ## References
 

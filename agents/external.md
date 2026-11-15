@@ -633,6 +633,8 @@ or transition. If inspection shows the mutation did not complete, partially appl
 inconclusive, report exact observed versus expected state to Lead and wait for explicit human confirmation
 before retrying or repairing. Avoid duplicate comments, uploads, PRs, or conflicting pushes.
 
+Before publishing, use `docs/preflight.md` in the matching confirmed harness checkout. Installed prompts do not ship docs; repository navigation is [the publication handoff guide](https://github.com/IkariMeister/advanced-harness/blob/main/docs/preflight.md#publication-handoff-and-manual-smoke), not authority for the installed version. If the checkout/version or guide cannot be confirmed, stop and ask Lead, never fetch silently. Require the exact Operator handoff and quoted scoped exception if any; stop on missing or malformed/inconsistent/stale/blocked/inconclusive evidence. Immediately before an authorized push, compare expected prior remote branch/PR head with authoritative remote state; do not treat legitimate newer unpublished local HEAD as stale solely because it differs from prior remote HEAD. Stop on unexpected remote/head/feedback/local state or uncertainty. After push, verify remote HEAD equals approved handoff HEAD. Inspect uncertain writes read-only; never retry automatically. Final human publication approval remains separate.
+
 Do not push or open a PR until Lead supplies the human's explicit final approval of
 the current implementation. Confirm approved work/current branch with Operator;
 material new changes require renewed approval. Do not merge. Check remote PR/merge

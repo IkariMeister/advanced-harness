@@ -12,6 +12,7 @@ This directory contains proposed and accepted architecture decisions for Advance
 | [ADR-006](0006-codex-operator-external-full-access.md) | Run Codex Operator and External Outside the Sandbox, With Per-Launch Host Permission and Unverified Forbidden Rules | Proposed | Codex sandbox for Operator and External, and what still bounds them |
 | [ADR-007](0007-preflight-scope-and-redaction.md) | Preflight Scope, Redaction, and Secret Scanning | Proposed | Changeset scope, secret scanning, and sanitized findings |
 | [ADR-008](0008-project-guardrail-policy.md) | Project Guardrail Policy in `.harness/preflight.json`, Read From origin/HEAD | Proposed | Preflight check enablement and severity, the policy result, and the trust anchor |
+| [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md) | Operator-Owned Preflight Evidence and Human-Approved Publication Handoffs | Proposed | Preflight evidence ownership and publication handoffs |
 
 ## Status lifecycle
 

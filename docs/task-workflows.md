@@ -95,8 +95,11 @@ applicable project instructions and shared memory.
 8. Reviewer runs planned applicable checks; QA performs applicable QA and smoke
    verification. Lead presents findings for individual or explicit-batch accept/discard
    decisions. Implement accepted fixes within their scope and recheck affected checks.
- 9. Lead requests final human approval before any push or PR creation. External publishes
-    only after that approval. Apply lifecycle updates only when the selected tracker has
+   9. Follow the [Operator evidence and publication handoff](preflight.md#operator-evidence-handoff).
+      Reviewer and QA assess the Operator result without running the Git-backed wrapper.
+      Lead obtains separate final human publication approval; External publishes only after it.
+      This workflow instruction does not modify trusted preflight policy or deploy permissions.
+     Apply lifecycle updates only when the selected tracker has
     an explicitly confirmed mapping: transition the issue to In Review only when that
     mapping exists. An absent optional mapping is nonblocking; ask about explicitly
     required but unresolved mappings, permissions, or uncertain transition outcomes.
