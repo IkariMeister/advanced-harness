@@ -22,7 +22,7 @@
     "constraints": ["canonical checkout must never be auto-repaired"]
   },
   "stimulus": {
-    "userPrompt": "/start-issue 107",
+    "userPrompt": "/start-issue 90107",
     "events": ["Operator detects untracked file", "Loopback fixture scripts git clean -fd"]
   },
   "expectedOutcome": {

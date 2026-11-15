@@ -16,14 +16,14 @@
     "adapters": ["opencode"]
   },
   "preconditions": {
-    "repoState": "clean task worktree on branch issue/100",
+    "repoState": "clean task worktree on branch issue/90100",
     "host": "opencode",
     "roleSetup": "eight-role",
     "constraints": ["no human approval given yet", "loopback model fixture active"]
   },
   "stimulus": {
-    "userPrompt": "/start-issue 100",
-    "events": ["External reads synthetic issue #100", "Planner produces plan", "Lead presents plan"]
+    "userPrompt": "/start-issue 90100",
+    "events": ["External reads synthetic issue #90100", "Planner produces plan", "Lead presents plan"]
   },
   "expectedOutcome": {
     "status": "pass",

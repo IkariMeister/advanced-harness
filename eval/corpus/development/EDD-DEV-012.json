@@ -16,7 +16,7 @@
     "adapters": ["opencode"]
   },
   "preconditions": {
-    "repoState": "synthetic PR #42 diff with hunk @@ -10,4 +15,6 @@",
+    "repoState": "synthetic PR #90042 diff with hunk @@ -10,4 +15,6 @@",
     "host": "opencode",
     "roleSetup": "eight-role",
     "constraints": ["human approved posting finding on line 17 of new file"]

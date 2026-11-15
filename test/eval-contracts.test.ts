@@ -21,12 +21,18 @@ function readJson(relPath: string): unknown {
 }
 
 type AjvInstance = { compile: (schema: object) => ValidateFunction };
-type AjvCtor = new (opts: { allErrors: boolean; strict: boolean }) => AjvInstance;
+type AjvCtor = new (opts: {
+  allErrors: boolean;
+  strictSchema: boolean;
+  strictTypes: boolean;
+}) => AjvInstance;
 const Ajv2020 =
   (Ajv2020Import as unknown as { default?: AjvCtor }).default ??
   (Ajv2020Import as unknown as AjvCtor);
 
-const ajv = new Ajv2020({ allErrors: true, strict: false });
+// strictSchema catches unknown/misspelled keywords; strictTypes is false because
+// conditional allOf/if/then branches refine properties whose types are declared at root.
+const ajv = new Ajv2020({ allErrors: true, strictSchema: true, strictTypes: false });
 const validateScenarioSchema = ajv.compile(readJson('eval/schemas/scenario.schema.json') as object);
 const validateRubricSchema = ajv.compile(readJson('eval/schemas/rubric.schema.json') as object);
 const validateManifestSchema = ajv.compile(
@@ -126,6 +132,10 @@ describe('EDD v1 evaluation contracts', () => {
     assert.equal(validateRubricSchema(liveNoJudge), false);
     assert.throws(() => validateRubric(liveNoJudge), /judge is required when mode is "live"/);
 
+    const existingCriteria = baseRubric.criteria as unknown[];
+    const dupCriteriaRubric = { ...baseRubric, criteria: [existingCriteria[0], existingCriteria[0]] };
+    assert.throws(() => validateRubric(dupCriteriaRubric), /duplicate id/);
+
     const baseManifest = readJson('eval/examples/run-manifest.example.json') as Record<string, unknown>;
     const badDetManifest = {
       ...baseManifest,
@@ -135,6 +145,13 @@ describe('EDD v1 evaluation contracts', () => {
     assert.throws(
       () => validateRunManifest(badDetManifest),
       /networkAllowed must be false in deterministic mode/,
+    );
+
+    const badCreatedAtManifest = { ...baseManifest, createdAt: 'yesterday' };
+    assert.equal(validateManifestSchema(badCreatedAtManifest), false);
+    assert.throws(
+      () => validateRunManifest(badCreatedAtManifest),
+      /createdAt must be an ISO 8601 timestamp/,
     );
   });
 
@@ -206,16 +223,38 @@ describe('EDD v1 evaluation contracts', () => {
       assert.throws(() => loadScenarioCorpus(tmpRoot), /Failed to parse development\/EDD-DEV-001\.json/);
       rmSync(join(tmpRoot, 'development', 'EDD-DEV-001.json'));
 
-      // 4. Cross-set title/prompt overlap rejected by validateCorpusCoverage
+      // 4. Cross-set title and userPrompt overlap rejected by validateCorpusCoverage
       const corpus = loadScenarioCorpus(join(REPO_ROOT, 'eval/corpus'));
       const firstDev = corpus.development[0]!;
-      const overlappingVal = {
+      const overlappingTitleVal = {
         ...corpus.validation[0]!,
         title: firstDev.title,
       };
       assert.throws(
-        () => validateCorpusCoverage([...corpus.development, overlappingVal, ...corpus.validation.slice(1)]),
+        () =>
+          validateCorpusCoverage([
+            ...corpus.development,
+            overlappingTitleVal,
+            ...corpus.validation.slice(1),
+          ]),
         /duplicates development title/,
+      );
+
+      const overlappingPromptVal = {
+        ...corpus.validation[0]!,
+        stimulus: {
+          ...corpus.validation[0]!.stimulus,
+          userPrompt: firstDev.stimulus.userPrompt,
+        },
+      };
+      assert.throws(
+        () =>
+          validateCorpusCoverage([
+            ...corpus.development,
+            overlappingPromptVal,
+            ...corpus.validation.slice(1),
+          ]),
+        /duplicates development userPrompt/,
       );
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });

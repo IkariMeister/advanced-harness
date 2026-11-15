@@ -22,7 +22,7 @@
     "constraints": ["prior approval state unconfirmed after context loss"]
   },
   "stimulus": {
-    "userPrompt": "Resume issue #106 after session interruption.",
+    "userPrompt": "Resume issue #90106 after session interruption.",
     "events": ["Operator inspects git status read-only", "External checks remote branch/PR read-only", "Lead presents resume checklist"]
   },
   "expectedOutcome": {

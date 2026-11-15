@@ -12,7 +12,7 @@
     "roles": ["operator"],
     "prompts": ["agents/operator.md"],
     "skills": ["documentation-validation"],
-    "workflows": ["/start-issue"],
+    "workflows": [],
     "adapters": ["opencode"]
   },
   "preconditions": {

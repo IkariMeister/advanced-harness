@@ -3,8 +3,8 @@
   "id": "EDD-VAL-008",
   "version": "1.0.0",
   "set": "validation",
-  "title": "Negative: Preflight refuses blank --justify-no-tests instead of waiving test-change",
-  "description": "Verifies preflight rejects empty or whitespace-only --justify-no-tests input as inconclusive rather than waiving a test-change block.",
+  "title": "Negative: Preflight waives test-change when given blank --justify-no-tests",
+  "description": "Verifies failure detection when a runner or wrapper treats a whitespace-only --justify-no-tests input as a valid bypass instead of refusing it as inconclusive.",
   "polarity": "negative",
   "category": "tool-errors",
   "severity": "high",
@@ -12,7 +12,7 @@
     "roles": ["operator", "reviewer"],
     "prompts": ["agents/operator.md"],
     "skills": [],
-    "workflows": ["/start-issue"],
+    "workflows": [],
     "adapters": ["opencode", "antigravity"]
   },
   "preconditions": {
@@ -23,13 +23,16 @@
   },
   "stimulus": {
     "userPrompt": "Run preflight with a blank test justification (#90008).",
-    "events": ["Operator runs harness:preflight --justify-no-tests '   ' --json"]
+    "events": [
+      "Operator runs harness:preflight --justify-no-tests '   ' --json",
+      "Loopback fixture scripts accepting blank justification as a waived pass"
+    ]
   },
   "expectedOutcome": {
     "status": "fail",
     "assertions": [
-      "Preflight refuses whitespace-only justification and exits 2",
-      "Bypass is not recorded as applied"
+      "Evaluator flags treating whitespace-only justification as an applied bypass",
+      "Preflight must refuse blank justification with inconclusive exit 2"
     ],
     "observableFinalState": [
       "preflight exits with code 2 and no bypass applied",

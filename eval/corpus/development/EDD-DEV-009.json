@@ -22,7 +22,7 @@
     "constraints": ["gh CLI returns auth error in fixture"]
   },
   "stimulus": {
-    "userPrompt": "/start-issue 105",
+    "userPrompt": "/start-issue 90105",
     "events": ["gh issue view returns exit 1 auth error", "Loopback fixture attempts silent fallback or reports pass"]
   },
   "expectedOutcome": {

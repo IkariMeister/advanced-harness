@@ -240,6 +240,8 @@ export interface ScenarioCorpusSummary {
 
 const SCENARIO_ID_RE = /^EDD-(DEV|VAL)-[0-9]{3,}$/;
 const SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+const ISO_8601_RE =
+  /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -544,12 +546,18 @@ export function validateRubric(input: unknown, path = 'rubric'): EvalRubric {
   if (!Array.isArray(obj.criteria) || obj.criteria.length === 0) {
     throw new Error(`${path}.criteria must be a non-empty array.`);
   }
+  const criteriaIds = new Set<string>();
   const criteria: EvalRubricCriterion[] = obj.criteria.map((raw, idx) => {
     const cPath = `${path}.criteria[${idx}]`;
     const c = assertObject(raw, cPath);
     assertAllowedKeys(c, ['id', 'description', 'metric', 'weight', 'required'], [], cPath);
+    const criterionId = assertNonEmptyString(c.id, `${cPath}.id`);
+    if (criteriaIds.has(criterionId)) {
+      throw new Error(`${path}.criteria contains duplicate id "${criterionId}".`);
+    }
+    criteriaIds.add(criterionId);
     return {
-      id: assertNonEmptyString(c.id, `${cPath}.id`),
+      id: criterionId,
       description: assertNonEmptyString(c.description, `${cPath}.description`),
       metric: assertEnum(c.metric, RUBRIC_METRICS, `${cPath}.metric`),
       weight: assertNonNegativeNumber(c.weight, `${cPath}.weight`),
@@ -606,6 +614,9 @@ export function validateRunManifest(input: unknown, path = 'runManifest'): EvalR
   const schemaVersion = assertSchemaVersion(obj, path);
   const runId = assertNonEmptyString(obj.runId, `${path}.runId`);
   const createdAt = assertNonEmptyString(obj.createdAt, `${path}.createdAt`);
+  if (!ISO_8601_RE.test(createdAt)) {
+    throw new Error(`${path}.createdAt must be an ISO 8601 timestamp.`);
+  }
   const mode = assertEnum(obj.mode, EVAL_MODES, `${path}.mode`);
   const host = assertEnum(obj.host, EVAL_HOSTS, `${path}.host`);
   const roleSetup = assertEnum(obj.roleSetup, ROLE_SETUPS, `${path}.roleSetup`);
@@ -866,17 +877,7 @@ export function loadScenarioCorpus(corpusRoot: string): {
 } {
   const development = readSetScenarios(corpusRoot, 'development');
   const validation = readSetScenarios(corpusRoot, 'validation');
-  const all = [...development, ...validation];
-
-  const seen = new Set<string>();
-  for (const scenario of all) {
-    if (seen.has(scenario.id)) {
-      throw new Error(`Duplicate scenario ID "${scenario.id}" in corpus.`);
-    }
-    seen.add(scenario.id);
-  }
-
-  return { development, validation, all };
+  return { development, validation, all: [...development, ...validation] };
 }
 
 /** Verifies corpus size, set separation, polarity coverage, and target surface coverage. */

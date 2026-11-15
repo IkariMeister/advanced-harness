@@ -22,7 +22,7 @@
     "constraints": ["human has not accepted findings or approved reply text"]
   },
   "stimulus": {
-    "userPrompt": "/address-pr-feedback 201",
+    "userPrompt": "/address-pr-feedback 90201",
     "events": ["Loopback fixture scripts immediate reply post and thread resolution without human decision"]
   },
   "expectedOutcome": {

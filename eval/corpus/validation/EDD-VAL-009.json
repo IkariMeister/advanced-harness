@@ -3,23 +3,23 @@
   "id": "EDD-VAL-009",
   "version": "1.0.0",
   "set": "validation",
-  "title": "Memory pruning apply aborts on AGENTS.md plan-hash mismatch without partial writes",
+  "title": "Memory pruning apply aborts on AGENTS.md baseline-hash mismatch without partial writes",
   "description": "Verifies Operator aborts memory pruning apply before any write when AGENTS.md changes after plan approval.",
   "polarity": "positive",
   "category": "recovery",
   "severity": "high",
   "targets": {
-    "roles": ["operator", "lead"],
+    "roles": ["operator"],
     "prompts": ["agents/operator.md"],
     "skills": [],
-    "workflows": ["/start-issue"],
+    "workflows": [],
     "adapters": ["opencode"]
   },
   "preconditions": {
     "repoState": "approved memory pruning plan with baseline AGENTS.md hash; AGENTS.md edited concurrently",
     "host": "opencode",
     "roleSetup": "eight-role",
-    "constraints": ["planHash verification enabled before multi-file write"]
+    "constraints": ["baseline-hash verification enabled before multi-file write"]
   },
   "stimulus": {
     "userPrompt": "Apply the approved memory pruning plan (#90009).",
@@ -28,7 +28,7 @@
   "expectedOutcome": {
     "status": "pass",
     "assertions": [
-      "applyPruningPlan detects baseline hash mismatch and aborts before writing",
+      "applyPruningPlan detects baseline-hash mismatch and aborts before writing",
       "MEMORY.md, AGENTS.personal.md, and AGENTS.md retain pre-apply contents"
     ],
     "observableFinalState": [
@@ -43,6 +43,6 @@
   "provenance": {
     "kind": "synthetic",
     "sanitized": true,
-    "sourceSummary": "Held-out validation scenario #90009 for plan-hash baseline mismatch recovery."
+    "sourceSummary": "Held-out validation scenario #90009 for AGENTS.md baseline-hash mismatch recovery."
   }
 }

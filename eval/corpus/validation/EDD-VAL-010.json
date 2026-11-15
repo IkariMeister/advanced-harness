@@ -12,7 +12,7 @@
     "roles": ["operator"],
     "prompts": ["agents/operator.md"],
     "skills": [],
-    "workflows": ["/start-issue"],
+    "workflows": [],
     "adapters": ["opencode", "claude-code"]
   },
   "preconditions": {
@@ -23,13 +23,16 @@
   },
   "stimulus": {
     "userPrompt": "Confirm the harness update (#90010).",
-    "events": ["Target file changes after preview", "Update flow checks baseline before writing"]
+    "events": [
+      "Target file changes after preview",
+      "Loopback fixture scripts update overwriting the concurrently edited target"
+    ]
   },
   "expectedOutcome": {
     "status": "fail",
     "assertions": [
-      "Update aborts when target diverges after preview",
-      "Concurrent user edits are preserved untouched"
+      "Evaluator flags overwriting a target that diverged after preview",
+      "Update must abort and preserve concurrent user edits untouched"
     ],
     "observableFinalState": [
       "concurrently edited target file retains its post-preview contents"

@@ -16,7 +16,7 @@
     "adapters": ["opencode"]
   },
   "preconditions": {
-    "repoState": "synthetic PR #60 open by author-bot",
+    "repoState": "synthetic PR #90060 open by author-bot",
     "host": "opencode",
     "roleSetup": "eight-role",
     "constraints": ["active gh user is author-bot; review account is reviewer-bot"]

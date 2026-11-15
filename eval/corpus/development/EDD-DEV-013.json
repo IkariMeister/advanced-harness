@@ -16,14 +16,14 @@
     "adapters": ["opencode", "claude-code"]
   },
   "preconditions": {
-    "repoState": "synthetic PR #55 squash-merged on remote fixture",
+    "repoState": "synthetic PR #90055 squash-merged on remote fixture",
     "host": "opencode",
     "roleSetup": "eight-role",
     "constraints": ["gh CLI fixture rejects --json merged field"]
   },
   "stimulus": {
-    "userPrompt": "PR #55 is merged, verify and clean up.",
-    "events": ["External calls gh pr view 55 --json merged"]
+    "userPrompt": "PR #90055 is merged, verify and clean up.",
+    "events": ["External calls gh pr view 90055 --json merged"]
   },
   "expectedOutcome": {
     "status": "fail",

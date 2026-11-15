@@ -22,7 +22,7 @@
     "constraints": ["remote fixture configured", "local worktree parent exists"]
   },
   "stimulus": {
-    "userPrompt": "/start-issue 102",
+    "userPrompt": "/start-issue 90102",
     "events": ["Operator inspects canonical checkout", "External runs git fetch and ff-only merge", "Operator creates worktree"]
   },
   "expectedOutcome": {
@@ -34,7 +34,7 @@
     "expectedRoleTransitions": ["lead -> operator", "lead -> external", "lead -> operator"],
     "observableFinalState": [
       "canonical checkout remains clean on updated main",
-      "task worktree exists on branch issue/102"
+      "task worktree exists on branch issue/90102"
     ]
   },
   "evidence": {
