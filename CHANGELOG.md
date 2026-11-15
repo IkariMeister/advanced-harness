@@ -4,6 +4,8 @@ All notable changes to Advanced Harness are listed here. Versions follow the
 process in [docs/releasing.md](docs/releasing.md); `main` carries a `-dev`
 version between releases.
 
+## Unreleased
+
 ## v0.4.0 — 2026-11-15
 
 ### Changed
