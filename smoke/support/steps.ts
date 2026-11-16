@@ -43,7 +43,7 @@ export const antigravityInstall = (confirmation: string): Step[] => [
  * The sandbox project is always a Git checkout, so the preflight policy prompt is always offered; `policy` is its answer
  * ('' skips, 'policy' adds .harness/preflight.json).
  */
-export const setupSteps = (build: string, confirmation: string, gates: [string, string][] = [], policy = ''): Step[] => [
+export const setupSteps = (build: string, confirmation: string, gates: [string, string][] = [], policy = '', minimumRigor = ''): Step[] => [
   ask('Command shell', 'bash'),
   ask('Base branch'),
   ask('build: confirm command', build),
@@ -54,6 +54,7 @@ export const setupSteps = (build: string, confirmation: string, gates: [string, 
   ask('e2e: confirm command'),
   ...gates.flatMap(([name, command]) => [ask('Additional required project gate name', name), ask(`${name}: command`, command)]),
   ask('Additional required project gate name'),
+  ask('Project minimum rigor', minimumRigor),
   ask('Device preference', 'emulator'),
   ask('Optional device serial'),
   ask('Parent directory for future worktrees'),

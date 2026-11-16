@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
-import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, readLocalProjectContext, readSetupPreflightPolicy, resolveProjectLocations, runSetupFlow, saveSetup, setupConfirmation, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
+import { askProfile, askProjectShell, checkNames, confirmAndSaveSetup, emptyGlobalProjectDefaults, inspectProject, parseGlobalProjectDefaults, parseProfile, prepareSetup, readLocalProjectContext, readSetupPreflightPolicy, resolveProjectLocations, runSetupFlow, saveSetup, setupConfirmation, setupContextTarget, suggestedAdditionalChecks, suggestedCommands, updateProjectInstructions, validateGlobalProjectDefaults, validateProfile, type ProjectProfile } from '../src/project-setup.ts';
 import { contextData, updateContext } from '../src/project-context.ts';
 import { DEFAULT_PREFLIGHT_CONFIG } from '../src/preflight/policy.ts';
 
@@ -124,7 +124,7 @@ test('profile validation leaves unknown checks unconfigured, and rejects malform
 
 test('interactive collection confirms each command, supports explicit unconfigured and device serial', async t => {
   const { root, project } = fixture(t);
-  const responses = ['feature base', 'develop', 'unknown', 'bash', './gradlew :app:assembleDebug', '-', '-', '-', 'adb -s emulator-5554 shell am start -n app/.Main', '-', '', 'emulator', 'emulator-5554', join(root, 'trees'), join(root, 'memory', 'MEMORY.md')];
+  const responses = ['feature base', 'develop', 'unknown', 'bash', './gradlew :app:assembleDebug', '-', '-', '-', 'adb -s emulator-5554 shell am start -n app/.Main', '-', '', '-', 'emulator', 'emulator-5554', join(root, 'trees'), join(root, 'memory', 'MEMORY.md')];
   const prompts: string[] = [];
   const result = await askProfile(project, inspectProject(project), undefined, async question => {
     prompts.push(question);
@@ -147,6 +147,61 @@ test('repeat setup preserves explicitly unconfigured checks and previous choices
   const result = await askProfile(project, inspectProject(project), previous, async (question, suggested) => { shown[question] = suggested; return ''; });
   assert.deepEqual(result, previous);
   assert.equal(shown['build: confirm command, or - to leave UNCONFIGURED'], '-');
+});
+
+test('minimum rigor is optional, validated, preserved on Enter, and removed with dash', async t => {
+  const { root, project } = fixture(t);
+  const base = profile(root, project);
+  assert.deepEqual(parseProfile(JSON.stringify(base)), base);
+  for (const minimumRigor of ['minimal', 'standard', 'strict'] as const) {
+    assert.equal(validateProfile({ ...base, minimumRigor }).minimumRigor, minimumRigor);
+  }
+  for (const minimumRigor of ['none', '', 1, null, [], {}, ['strict'], { value: 'strict' }, true]) assert.throws(() => validateProfile({ ...base, minimumRigor }));
+  assert.throws(() => validateProfile({ ...base, surprise: true }));
+  const previous = { ...base, minimumRigor: 'standard' as const };
+  const kept = await askProfile(project, inspectProject(project), previous, async (question, suggested) => question.startsWith('Project minimum rigor:') ? '' : suggested ?? '');
+  assert.equal(kept.minimumRigor, 'standard');
+  const removed = await askProfile(project, inspectProject(project), previous, async question => question.startsWith('Project minimum rigor:') ? '-' : '');
+  assert.equal(Object.hasOwn(removed, 'minimumRigor'), false);
+  const instructions = updateProjectInstructions(undefined, previous);
+  assert.match(instructions, /Project minimum rigor is `standard`/);
+  assert.doesNotMatch(updateProjectInstructions(undefined, base), /minimum rigor/i);
+});
+
+test('minimum rigor prompt retries invalid values and global defaults reject the project-only key', async t => {
+  const { root, project } = fixture(t);
+  const answers = ['not-a-level', 'strict'];
+  const seen: string[] = [];
+  const result = await askProfile(project, inspectProject(project), undefined, async (question, suggested) => {
+    if (question.startsWith('Project minimum rigor:')) { seen.push(question); return answers.shift()!; }
+    return suggested ?? '';
+  });
+  assert.equal(result.minimumRigor, 'strict');
+  assert.equal(answers.length, 0);
+  assert.equal(seen.length, 2);
+  assert.throws(() => validateGlobalProjectDefaults({ ...emptyGlobalProjectDefaults(root), minimumRigor: 'strict' }), /Invalid|unknown/i);
+});
+
+test('minimum rigor full-preview CLI cancellation writes no context, directories, or backups', async t => {
+  const { root, project } = fixture(t);
+  const original = '# Preserve project instructions\n';
+  writeFileSync(join(project, 'AGENTS.md'), original);
+  const home = join(root, 'isolated-home');
+  mkdirSync(home);
+  const backupParent = join(root, 'backups');
+  const output: string[] = [];
+  const code = await runSetupFlow({ project }, {
+    ask: async question => question.startsWith('Full preview') ? '' : question.startsWith('Project minimum rigor:') ? 'strict' : '',
+    output: message => output.push(message),
+    error: message => output.push(message),
+    home,
+    xdgConfigHome: join(root, 'xdg'),
+    recoveryDirectory: backupParent,
+  });
+  assert.equal(code, 0);
+  assert.ok(output.some(line => /cancel/i.test(line)));
+  assert.equal(readFileSync(join(project, 'AGENTS.md'), 'utf8'), original);
+  for (const path of [join(root, 'trees'), join(root, 'memory'), backupParent, join(root, 'xdg')]) assert.equal(existsSync(path), false, path);
 });
 
 test('additional gates: Spotless/Detekt detection suggests root tasks, validation keeps them distinct from standard checks', t => {
@@ -472,6 +527,7 @@ test('runSetupFlow in project scope supports non-Git and non-Android directory, 
     'npm run build',              // build check (suggested from package.json)
     '-', '-', '-', '-',           // lint, unit, runtime, e2e (roborazzi skipped for non-Android!)
     '',                           // no additional gates
+    '-',                           // omit project minimum rigor
     join(home, 'worktrees'),
     join(home, 'data', 'MEMORY.md'),
     'save',
@@ -541,6 +597,33 @@ test('readLocalProjectContext: parses valid project section, reports missing, re
   // 4. Invalid schema -> throws on malformed project schema
   writeFileSync(join(project, 'AGENTS.md'), updateContext('', 'project', { version: 999 }, []));
   assert.throws(() => readLocalProjectContext(project), /Invalid or unsupported project profile metadata/);
+});
+
+test('minimum rigor survives explicit and linked context updates without relocation or unrelated prose loss', t => {
+  const { root, project } = fixture(t);
+  const saved = { ...profile(root, project), minimumRigor: 'strict' as const };
+  const agents = '# Keep this text\nRead `guides/context.md` for Advanced Harness project settings before planning.\n';
+  const linkedOriginal = '# Linked context prose\nKeep this paragraph.\n';
+  writeFileSync(join(project, 'AGENTS.md'), agents);
+  mkdirSync(join(project, 'guides'));
+  writeFileSync(join(project, 'guides', 'context.md'), linkedOriginal);
+  const linked = setupContextTarget(project);
+  const linkedFiles = prepareSetup(project, saved, linked.original, linked.target, linked.linked);
+  assert.equal(linkedFiles.length, 1);
+  assert.equal(linkedFiles[0]!.path, join(project, 'guides', 'context.md'));
+  assert.deepEqual(contextData(linkedFiles[0]!.updated, 'project'), saved);
+  assert.match(linkedFiles[0]!.updated, /Keep this paragraph\./);
+  assert.equal(linkedFiles.some(file => file.path === join(project, 'AGENTS.md')), false);
+
+  const explicit = prepareSetup(project, saved, linkedOriginal, join(project, 'explicit.md'));
+  assert.deepEqual(contextData(explicit[0]!.updated, 'project'), saved);
+  assert.equal(explicit.some(file => file.path === join(project, 'guides', 'context.md')), false);
+  assert.match(explicit[0]!.updated, /Keep this paragraph\./);
+  assert.match(explicit[1]!.updated, /Read `guides\/context\.md`/);
+
+  writeFileSync(join(project, 'guides', 'context.md'), linkedFiles[0]!.updated);
+  assert.equal(readLocalProjectContext(project).status, 'ok');
+  assert.equal((readLocalProjectContext(project) as { status: 'ok'; profile: ProjectProfile }).profile.minimumRigor, 'strict');
 });
 
 test('resolveProjectLocations: handles paths-only fallback and reports conflict when project and paths differ', t => {

@@ -114,6 +114,16 @@ Reusing a clearly matching artifact is useful, but advanced cache manifests, dur
 
 Reusable MCP connections/agent permissions and default GitHub/Jira/design choices are global. Repository identifiers, chosen optional services, Jira mappings, Android commands, and device/shared-path choices live only in project AGENTS.md or explicitly referenced context. There is no required separate project JSON profile. Existing profiles remain intact until migration is explicitly approved. See [configuration](configuration.md).
 
+Project context may optionally include `minimumRigor` (`minimal`, `standard`, or
+`strict`). It is a rigor floor, not a methodology selector or global default. Lead
+states conversational task rigor and rationale, applies the narrowest bounded scope
+that satisfies inherited and mandatory minima, and preserves/asks when exception
+authority is unspecified or conflicting. Setup confirmation and task-plan approval
+do not authorize lowering. The task decision is not persisted in a new task schema;
+role prompts remain advisory. Reviewer composes the floor with diff risk using the
+single mapping in [`agents/reviewer.md`](../agents/reviewer.md). This bounded
+clarification does not accept or otherwise change Proposed ADR-003.
+
 The Lead checklist includes feature/issue, worktree, latest plan and approval decision, implementation progress, required checks/results, findings and decisions, final publishing approval, PR, and cleanup. Summarize it before compaction/interruption. When resuming after an interruption or compaction, inspect actual state read-only, present the checklist with missing approvals marked unconfirmed, and obtain explicit human confirmation before resuming work. Missing or conflicting context means ask, not infer approval.
 
 Use the one `MEMORY.md` at the configured `memoryPath`, outside application worktrees and preferably in a visible project-data folder under `$HOME/Projects`. Operator maintains it with serialized atomic writes, baseline verification, source/scope/confirmation labels, deduplication, and rejection of secrets and raw operational dumps. Precedence is **Current Human Decision > `AGENTS.md` > personal rules > `MEMORY.md`**; surface conflicting facts or rule contradictions to the human via Lead rather than silently overwriting. Confirm additions to `AGENTS.md`; do not store secrets or operational artifacts in feature Git.

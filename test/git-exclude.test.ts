@@ -121,7 +121,7 @@ async function setup(project: string, root: string, confirm: string) {
   const outputs: string[] = [];
   const errors: string[] = [];
   const asked: string[] = [];
-  const responses = ['bash', 'main', '-', '-', '-', '-', '-', '', join(home, 'worktrees'), join(home, 'data', 'MEMORY.md'), confirm];
+  const responses = ['bash', 'main', '-', '-', '-', '-', '-', '', '-', join(home, 'worktrees'), join(home, 'data', 'MEMORY.md'), confirm];
   // The preflight policy prompt is answered by its text (Enter skips), so the positional queue stays aligned with the other prompts.
   const ask = async (question: string) => {
     asked.push(question);

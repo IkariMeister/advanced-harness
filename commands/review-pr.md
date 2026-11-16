@@ -6,6 +6,12 @@ arguments:
 ---
 Review pull request: $ARGUMENTS
 
+If project context sets `minimumRigor`, state task rigor and rationale conversationally,
+identify applicable and mandatory minima, and choose the narrowest bounded scope that
+satisfies them. Do not silently lower/remove inherited minima; if lowering authority is
+unclear, preserve and ask. Plan approval is not authority to lower. Reviewer applies the
+higher of the rigor floor and diff-risk tier using the single mapping in `agents/reviewer.md`.
+
 Treat command arguments as opaque context, not approval. Confirm repository and PR identity; ask if ambiguous. External reads PR and linked Jira/parent context when available.
 
 Before delegating review, Lead preflights the diff: report its size (files and changed lines) and a provisional risk tier with rationale, using the risk-tiered review rubric at the end of this command (the same rubric Reviewer applies). Counts must come from External's PR diff or Operator's local diff; attributable counts are required before Reviewer starts. If unavailable, stop and ask rather than guessing or expanding tool access. If the diff is too large for one focused review, propose splitting it (by area or commit) to the human before delegating; never silently truncate or skim it. Reviewer examines the diff and existing PR checks first, then assigns the final tier and lenses under that rubric; a higher tier replaces the provisional one, and a material scope change returns to the human. Propose further local checks to the human; do not automatically run isolated local checks. Tiers guide review depth only: they never waive scope, acceptance-criteria, consistency, or evidence checks, or authorize tools/actions.

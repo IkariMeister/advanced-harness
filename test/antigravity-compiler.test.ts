@@ -118,7 +118,7 @@ test('compileLeadOrchestrationRule carries all complete child instructions with 
     operator: 'Owns local Git, worktree lifecycle, and shared MEMORY.md updates. Does not edit app source.',
     external: 'Exclusively owns MCP tools, remote Git pushing, and GitHub CLI operations. Does not merge PRs.',
     researcher: 'Explores codebase, reads files, and surveys architecture with read-only tools.',
-    planner: 'Develops scoped implementation plans, authors and maintains ADRs and design rationale (an ADR remains Proposed until accepted through the project\'s approval process, and file writes are performed by Implementer after approval), identifies documentation impact (affected artifacts and whether an ADR is needed), and defines test strategies and risk assessments. Does not implement.',
+    planner: 'Develops scoped implementation plans, authors and maintains ADRs and design rationale (an ADR remains Proposed until accepted through the project\'s approval process, and file writes are performed by Implementer after approval), identifies documentation impact (affected artifacts and whether an ADR is needed), and defines test strategies and risk assessments. When project context sets minimumRigor, proposes conversational task rigor and rationale, identifies applicable inherited and mandatory minima, and chooses the narrowest bounded scope satisfying them. A task may raise but never silently lower or remove a minimum. If governance authority for lowering is unspecified, conflicting, or unconfirmed, preserve the minimum and ask Lead; plan approval is not authority to lower it. Does not implement.',
     implementer: 'Implements approved changes, unit tests, and affected implementation documentation (examples, integration notes, and developer instructions); records an explicit documentation-impact assessment when impact is uncertain or when no documentation changes are needed; escalates material deviations from an approved ADR to Lead instead of silently rewriting an approved ADR or decision. Does not touch remote Git or MCP.',
     reviewer: standaloneReviewer.instructionSummary,
     qa: 'Runs runtime/E2E verifications, Roborazzi, and device checks. Reports pass/fail findings.',
@@ -138,6 +138,17 @@ test('compileLeadOrchestrationRule carries all complete child instructions with 
   assert.match(rule.content, /\*\*Documentation & Verification Tracking:\*\* Lead tracks the documentation requirement, documentation-impact assessment, ADR\/documentation approval state, and Reviewer check verification basis \(\*\*re-run\*\* versus \*\*judged from evidence only\*\*, routing Reviewer re-run requests to an authorized command-running role when Reviewer cannot execute commands\) throughout the conversation and in the resume checklist on interruption or lost context\./);
   assert.match(extractBoundedRoleBody(rule.content, 'planner').body, /an ADR remains Proposed until accepted through the project's approval process, and file writes are performed by Implementer after approval/);
   assert.match(extractBoundedRoleBody(rule.content, 'implementer').body, /records an explicit documentation-impact assessment when impact is uncertain or when no documentation changes are needed; escalates material deviations from an approved ADR to Lead/);
+  assert.match(rule.content, /When project context sets `minimumRigor`, state conversational task rigor and rationale/);
+  for (const role of ['planner'] as const) {
+    const body = extractBoundedRoleBody(rule.content, role).body;
+    assert.match(body, /minimumRigor/);
+    assert.match(body, /task rigor and rationale|conversational task rigor and rationale/);
+    assert.match(body, /inherited and mandatory minima/);
+    assert.match(body, /never silently lower or remove a minimum/);
+    assert.match(body, /governance authority for lowering is unspecified, conflicting, or unconfirmed, preserve the minimum and ask Lead|governance authority for lowering is unspecified, conflicting, or unconfirmed, preserve the minimum and ask the human/);
+    assert.match(body, /approval is not authority to lower it|approval are not authority to lower it/);
+  }
+  assert.ok(Buffer.byteLength(rule.content, 'utf8') <= 24_000, 'added guidance remains within the existing compiled-rule size limit');
 });
 
 test('instruction fences expand to avoid embedded delimiter collisions', () => {

@@ -211,3 +211,16 @@ The `smoke` job in `.github/workflows/ci.yml` runs `npm run smoke` on
 `opencode.exe` stub). It runs on every push and pull request to `main`. It
 needs no secrets or network access beyond `npm ci`. `todo` cases do not fail
 the job.
+# Issue #134 project rigor setup and workflow smoke
+
+Use Node.js 24, installed dependencies, a usable interactive TTY, a disposable project,
+and isolated home/config/backup locations. Do not use redirected stdin as interactive
+evidence. Verify omitted rigor leaves existing behavior and globals unchanged; cancel
+the full preview and confirm no context, directory, or backup writes; save `standard`
+and confirm the project context alone changes; Enter preserves it, invalid input
+retries, and `-` removes it. Exercise explicit and linked context while preserving
+unrelated content. Walk through task selection/inheritance and the Reviewer mapping,
+including strict floor and an attempted lowering with unspecified authority (preserve
+and ask). These prompt walkthroughs establish no live-model compliance. If a usable
+TTY is unavailable, report the manual smoke blocked; the piped stub smoke is not a
+substitute.

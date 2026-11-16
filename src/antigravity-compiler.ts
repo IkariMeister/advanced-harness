@@ -128,7 +128,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: false, // Architectural planning only
         enableMCPTools: false,
         workspace: 'inherit',
-        instructionSummary: 'Develops scoped implementation plans, authors and maintains ADRs and design rationale (an ADR remains Proposed until accepted through the project\'s approval process, and file writes are performed by Implementer after approval), identifies documentation impact (affected artifacts and whether an ADR is needed), and defines test strategies and risk assessments. Does not implement.',
+        instructionSummary: 'Develops scoped implementation plans, authors and maintains ADRs and design rationale (an ADR remains Proposed until accepted through the project\'s approval process, and file writes are performed by Implementer after approval), identifies documentation impact (affected artifacts and whether an ADR is needed), and defines test strategies and risk assessments. When project context sets minimumRigor, proposes conversational task rigor and rationale, identifies applicable inherited and mandatory minima, and chooses the narrowest bounded scope satisfying them. A task may raise but never silently lower or remove a minimum. If governance authority for lowering is unspecified, conflicting, or unconfirmed, preserve the minimum and ask Lead; plan approval is not authority to lower it. Does not implement.',
       };
     case 'implementer':
       return {
@@ -173,7 +173,7 @@ export function compileAntigravitySubagentSpec(
         enableWriteTools: true,
         enableMCPTools: true,
         workspace: 'inherit',
-        instructionSummary: 'Coordinates child subagents, tracks documentation requirements, documentation-impact assessments, and ADR/documentation approval states throughout the conversation and resume checklist, routes Reviewer re-run requests when needed, presents plans to human, and gates consequential actions.',
+        instructionSummary: 'Coordinates child subagents, tracks documentation requirements, documentation-impact assessments, and ADR/documentation approval states throughout the conversation and resume checklist, routes Reviewer re-run requests when needed, presents plans to human, and gates consequential actions. When project context sets minimumRigor, Lead states conversational task rigor and rationale, including applicable inherited and mandatory minima, and selects the narrowest bounded scope satisfying them. A task may raise but never silently lower or remove a minimum. If governance authority for lowering is unspecified, conflicting, or unconfirmed, preserve the minimum and ask the human; setup confirmation and task-plan approval are not authority to lower it.',
       };
   }
 }
@@ -211,6 +211,7 @@ export function compileLeadOrchestrationRule(
     '2. **No Merging:** Merging pull requests is strictly human-only. External may push and open PRs upon final human approval, but never merges.',
     '3. **Child Subagent Delegation:** Lead coordinates the 7 specialized child roles using Antigravity\'s `define_subagent` and `invoke_subagent` APIs. Lead must configure child subagents with the exact parameters listed in the table below.',
     '4. **Documentation & Verification Tracking:** Lead tracks the documentation requirement, documentation-impact assessment, ADR/documentation approval state, and Reviewer check verification basis (**re-run** versus **judged from evidence only**, routing Reviewer re-run requests to an authorized command-running role when Reviewer cannot execute commands) throughout the conversation and in the resume checklist on interruption or lost context.',
+    '5. **Project Minimum Rigor:** When project context sets `minimumRigor`, state conversational task rigor and rationale, identify applicable inherited and mandatory minima, and choose the narrowest bounded scope satisfying them. A task may raise but never silently lower or remove a minimum. If governance authority for lowering is unspecified, conflicting, or unconfirmed, preserve the minimum and ask the human. Setup confirmation and task-plan approval are not authority to lower it.',
     '',
     '## Subagent Role Registration Table',
     'When invoking child roles, call `define_subagent` (or use existing definitions) matching these parameters. The role descriptions below are compact labels; pass each role\'s complete instruction content from the compiled spec, not merely its table description.',

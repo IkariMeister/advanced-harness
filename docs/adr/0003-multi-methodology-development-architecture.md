@@ -104,6 +104,8 @@ Rigor is selected independently of methodology for each selected scope. Each wor
 
 Rigor is not a proxy for choosing a methodology. For example, an ODD task can be `strict`, and a small RDD task can be `minimal`. HYBRID assigns a rigor level to each constituent scope; shared interfaces use the highest rigor required by their risks and governing policy. A broader scope may set a minimum rigor, and a narrower scope may raise it. Lowering an inherited or mandatory level requires the authority defined by project governance and cannot waive required controls.
 
+**Bounded clarification (issue #134; does not change this ADR's Proposed status or adopt its architecture):** project setup may optionally record a project-only minimum rigor independently of methodology. Absence preserves prior behavior; no global default, methodology routing, or migration is implied. For review, the higher of diff risk and the rigor floor applies: absent/minimal leaves Low/Medium/High unchanged; standard maps Low/Medium/High to Medium/Medium/High; strict maps all three to High. A narrower scope may not silently lower/remove an inherited or mandatory minimum. Lead identifies the source and confirmed governance authority for an exception; where authority is unspecified or conflicting, preserve the minimum and ask. Setup confirmation and task-plan approval are not that authority. These rules remain conversational guidance, not a persistent task schema, authority registry, or enforcement mechanism.
+
 For every mode and rigor level, scale planning depth, evidence, review, and approval to impact, uncertainty, reversibility, and failure cost. RDD does not require exhaustive documentation for a trivial task; ODD does not excuse weak safety controls; SDD does not guarantee a correct specification; hybrid does not dilute any constituent part's required rigor. Mandatory project, legal, safety, security, and release controls apply regardless of matrix score.
 
 The plan states required artifacts and checks. Lightweight work may use concise artifacts, while higher-risk work requires stronger traceability, independent review, and objective verification. Missing prerequisites or evidence remain explicit; they are not treated as passed because a methodology was selected.
@@ -132,6 +134,8 @@ Reconsider the weights, criteria, mode definitions, or scope rules if the matrix
 ## Adoption
 
 Adoption requires a separate approved implementation plan. That plan should define the project-context representation, selection and inheritance behavior, artifacts per mode, hybrid conflict handling, user-facing explanation, migration of existing tasks, evaluation data, and rollback. No tooling, templates, current role assignments, or project defaults change solely by accepting this ADR.
+
+Issue #134 is a bounded optional rigor-context clarification only; it does not accept this ADR or implement methodology selection. Alternatives considered were a global default (rejected because rigor floor is project-specific), replacing diff classification (rejected because rigor and diff risk are independent inputs), and a new exception/authority system (rejected because governance authority is not specified; uncertainty therefore preserves the minimum and requires asking).
 
 ## References
 

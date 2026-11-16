@@ -15,6 +15,7 @@ To add or change a term, edit this file in the same change that first uses the n
 | **methodology mode** | Which of RDD, SDD, ODD, or HYBRID governs a work unit. | Rigor. |
 | **rigor** | `minimal`, `standard`, or `strict`: how much planning, evidence, review, and approval a work unit needs. Chosen independently of the methodology mode; it sets a minimum review tier. | Review tier, model tier. |
 | **work unit** | The scope a methodology mode and rigor apply to: a project, a requirement group, or a task. | Install scope. |
+| **minimum rigor** | An optional project-context floor (`minimal`, `standard`, or `strict`) that a work unit's selected rigor must meet unless governance authority explicitly authorizes an exception. It does not select methodology or create enforcement. | Rigor selection; review tier. |
 | **selection scope** | The level at which a mode or rigor is chosen (project, requirement group, task). The narrowest clearly bounded scope governs. | Install scope; review scope. |
 
 ## Roles and agents

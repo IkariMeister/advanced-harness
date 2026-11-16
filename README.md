@@ -168,7 +168,8 @@ npm run harness:update -- --project "path/to/android-project"
 
 This compares the local checkout and installed version stamp, checks for a newer release tag (release-tag checkouts) or remote `origin/main` (development checkouts) on approval, previews per-role prompt diffs, preserves customizations, and records recovery receipts. See [safe harness update workflow](docs/installation.md#safe-harness-update-workflow).
 
-Configure an Android project interactively:
+Configure project settings interactively (including optional project-only minimum
+rigor; see [project setup](docs/project-setup.md)):
 
 ```text
 npm run harness:setup -- --project "path/to/android-checkout"
