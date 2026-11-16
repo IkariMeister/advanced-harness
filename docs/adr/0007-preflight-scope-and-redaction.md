@@ -3,7 +3,7 @@
 **Status:** Accepted\
 **Date:** 2026-11-09\
 **Decided:** 2026-11-16\
-**Decision record:** Pending verified PR\
+**Decision record:** [#263](https://github.com/IkariMeister/advanced-harness/pull/263)\
 **Project:** Advanced Harness\
 **Decision scope:** The preflight changeset and its sensitive-path and secret findings. Publication evidence ownership is addressed separately in [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md).
 

@@ -3,7 +3,7 @@
 **Status:** Accepted\
 **Date:** 2026-11-08\
 **Decided:** 2026-11-16\
-**Decision record:** Pending verified PR\
+**Decision record:** [#263](https://github.com/IkariMeister/advanced-harness/pull/263)\
 **Project:** Advanced Harness\
 **Decision scope:** Git ownership of an application repository's canonical checkout during task bootstrap, and how that ownership is enforced. It covers the application repository only.
 
