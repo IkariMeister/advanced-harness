@@ -1,7 +1,9 @@
 # ADR: Project Guardrail Policy in `.harness/preflight.json`, Read From origin/HEAD
 
-**Status:** Proposed\
+**Status:** Accepted\
 **Date:** 2026-11-12\
+**Decided:** 2026-11-16\
+**Decision record:** Pending verified PR\
 **Project:** Advanced Harness\
 **Decision scope:** Which built-in preflight checks a project may enable, disable, or re-severity; how the policy is stored, read, and reported; and how forbidden-path globs combine with the built-in list.
 

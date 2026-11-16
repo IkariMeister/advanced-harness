@@ -2,6 +2,7 @@
 
 **Status:** Proposed\
 **Date:** 2026-11-10\
+**Pending:** Left Proposed after review because Codex full-access role launches and managed forbidden-rule enforcement remain unverified. Revisit when an explicitly approved live validation records per-launch host permission behavior and whether managed rules bind Operator and External under danger-full-access.\
 **Project:** Advanced Harness\
 **Decision scope:** The Codex sandbox mode for the Operator and External child roles in [role-process mode](../glossary.md#hosts-installation-and-permissions), and what still bounds them. Other roles, other hosts, and Lead's own settings are out of scope.
 

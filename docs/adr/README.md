@@ -7,11 +7,11 @@ This directory contains proposed and accepted architecture decisions for Advance
 | [ADR-001](0001-documentation-ownership-through-shared-skills.md) | Documentation Ownership Through Shared Skills | Accepted | Documentation ownership and quality assurance |
 | [ADR-002](0002-consolidate-agent-responsibilities.md) | Consolidate Agent Responsibilities While Preserving Specialized Reasoning and Independent Review | Accepted | Agent architecture and workflow orchestration |
 | [ADR-003](0003-multi-methodology-development-architecture.md) | Multi-Methodology Development Architecture | Proposed | Methodology selection, scope, and governance |
-| [ADR-004](0004-canonical-checkout-remote-updates-only.md) | Keep the Canonical Checkout Read-Only Except for Remote Updates | Proposed | Git ownership of the canonical checkout during task bootstrap |
+| [ADR-004](0004-canonical-checkout-remote-updates-only.md) | Keep the Canonical Checkout Read-Only Except for Remote Updates | Accepted | Git ownership of the canonical checkout during task bootstrap |
 | [ADR-005](0005-claude-code-operator-bash.md) | Give Operator Bash on Claude Code With Advisory Remote-Git Denies | Proposed | Claude Code tool mapping for Operator and its shell deny patterns |
 | [ADR-006](0006-codex-operator-external-full-access.md) | Run Codex Operator and External Outside the Sandbox, With Per-Launch Host Permission and Unverified Forbidden Rules | Proposed | Codex sandbox for Operator and External, and what still bounds them |
-| [ADR-007](0007-preflight-scope-and-redaction.md) | Preflight Scope, Redaction, and Secret Scanning | Proposed | Changeset scope, secret scanning, and sanitized findings |
-| [ADR-008](0008-project-guardrail-policy.md) | Project Guardrail Policy in `.harness/preflight.json`, Read From origin/HEAD | Proposed | Preflight check enablement and severity, the policy result, and the trust anchor |
+| [ADR-007](0007-preflight-scope-and-redaction.md) | Preflight Scope, Redaction, and Secret Scanning | Accepted | Changeset scope, secret scanning, and sanitized findings |
+| [ADR-008](0008-project-guardrail-policy.md) | Project Guardrail Policy in `.harness/preflight.json`, Read From origin/HEAD | Accepted | Preflight check enablement and severity, the policy result, and the trust anchor |
 | [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md) | Operator-Owned Preflight Evidence and Human-Approved Publication Handoffs | Proposed | Preflight evidence ownership and publication handoffs |
 | [ADR-010](0010-okf-knowledge-projection-contract.md) | Open Knowledge Format Projection Contract | Proposed | Provenance-backed projection of selected documentation into an OKF v0.2 bundle |
 
