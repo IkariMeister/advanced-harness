@@ -136,3 +136,13 @@ To add or change a term, edit this file in the same change that first uses the n
 | **provenance** | A scenario's origin metadata (`kind`: `synthetic` or `sanitized-incident`, `sanitized: true`, and a non-sensitive `sourceSummary`). | Git commit history. |
 | **pilot role setup** | An experimental [role setup](#roles-and-agents) evaluated against the `eight-role` baseline in a [run manifest](#evaluation-edd): `engineer-pilot` or `operations-pilot`. | [Eight-role setup](#roles-and-agents). |
 | **retired scenario** | A scenario ID recorded in `eval/corpus/retired.json` (`retiredIds`) whose active file has been removed from `development/` or `validation/`. `loadScenarioCorpus` rejects any active scenario whose ID is retired, and new IDs must never reuse a retired ID. | Active scenario in `development/` or `validation/`. |
+
+## Knowledge format (future contract)
+
+| Term | Meaning in this project | Not to be confused with |
+| --- | --- | --- |
+| **OKF** | Open Knowledge Format, referring here to the upstream Open Knowledge Format specification version 0.2 and this project's documented future bundle contract. | An implemented harness feature or populated knowledge bundle. |
+| **knowledge bundle** | A future, repository-relative collection of Markdown knowledge documents and optional supporting files organized under the documented OKF v0.2 contract. No populated bundle or runtime support is established by this definition. | Repository-wide documentation; operational memory. |
+| **OKF concept** | A non-reserved Markdown knowledge document in a bundle, identified by its bundle-relative path without the `.md` suffix. | A concept in general usage; an implemented harness entity. |
+| **concept ID** | The OKF concept's path relative to its bundle, with the `.md` suffix removed. | A repository path or globally unique identifier. |
+| **OKF status** | A project's explicit `draft`, `stable`, or `deprecated` lifecycle value for a concept. OKF's default when status is absent is `stable`; this project requires explicit status, and `verified` is not approval. | Human approval, verification evidence, or upstream-required universal metadata. |
