@@ -212,7 +212,7 @@ jobs:
             # HARNESS_E2E_NETNS=1 only makes the suite report enforcement "netns" in the journey record; the
             # suite does not create the namespace, so this job creates it.
             # HARNESS_E2E_RECORD_DIR ($6) is the directory the upload step reads. Records replace the sandbox root and
-            # the parent's home directory with placeholders and record no credential value (see docs/agent-e2e.md).
+            # the home directory of the parent process with placeholders and record no credential value (see docs/agent-e2e.md).
             exec sudo -n -u "$1" env \
               "HARNESS_E2E_OPENCODE=$2" HARNESS_E2E_REQUIRE=1 HARNESS_E2E_NETNS=1 \
               "HARNESS_E2E_RECORD_DIR=$6" \
