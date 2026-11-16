@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -236,11 +237,16 @@ test('OpenCode install, update, and uninstall flows respect opt-in consent and c
   assert.equal(await runOpenCodeInstall('yes', 'install'), 0);
   assert.equal(isCanonicalHookInstalled(canonical), true);
 
-  // 4. Corrupt one hook script, run update -> refreshed after 'update' confirmation
+  // 4. Simulate an older attributed hook script, run update -> refreshed after 'update' confirmation
   const hookDir = resolveCanonicalHookDir(canonical)!;
   const preCommitPath = join(hookDir, canonicalHookNames[0]);
   const originalScript = readFileSync(preCommitPath, 'utf8');
-  writeFileSync(preCommitPath, '#!/bin/sh\necho stale\n');
+  const olderScript = '#!/bin/sh\necho older-harness-version\n';
+  writeFileSync(preCommitPath, olderScript);
+  const statePath = join(hookDir, '.state.json');
+  const hookState = JSON.parse(readFileSync(statePath, 'utf8'));
+  hookState.managedFiles['pre-commit'] = createHash('sha256').update(olderScript, 'utf8').digest('hex');
+  writeFileSync(statePath, JSON.stringify(hookState, null, 2) + '\n');
   assert.equal(await runUpdateFlow(
     { scope: 'project', project: canonical, host: 'opencode' },
     {
@@ -334,4 +340,154 @@ test('Claude Code and Antigravity project installs handle opt-in hook and cancel
   const state = JSON.parse(readFileSync(join(resolveCanonicalHookDir(canonical)!, '.state.json'), 'utf8'));
   assert.deepEqual(state.owners, ['antigravity', 'claude-code']);
   assert.ok(readdirSync(recovery).length > 0);
+});
+
+test('F-1: non-managed hooks (e.g. commit-msg) are forwarded and cleaned up on uninstall', t => {
+  const { root, canonical, worktree } = repoWithRemoteAndWorktree(t);
+  const marker = join(root, 'commit-msg-ran.txt');
+  const defaultCommitMsg = join(canonical, '.git', 'hooks', 'commit-msg');
+  writeFileSync(
+    defaultCommitMsg,
+    `#!/bin/sh\necho "commit-msg" >> "${marker.replace(/\\/g, '/')}"\nexit 0\n`
+  );
+  if (process.platform !== 'win32') chmodSync(defaultCommitMsg, 0o755);
+
+  const plan = planCanonicalHookInstall(canonical, 'opencode');
+  assert.equal(plan.status, 'change');
+  applyCanonicalHook(plan);
+  assert.equal(existsSync(join(resolveCanonicalHookDir(canonical)!, 'commit-msg')), true);
+
+  writeFileSync(join(worktree, 'msg.txt'), 'msg\n');
+  git(worktree, 'add', 'msg.txt');
+  assert.equal(gitResult(worktree, 'commit', '-m', 'check commit-msg').ok, true);
+  assert.equal(existsSync(marker), true, 'forwarded commit-msg hook ran in linked worktree');
+
+  applyCanonicalHook(planCanonicalHookRemoval(canonical, 'opencode'));
+  assert.equal(isCanonicalHookInstalled(canonical), false);
+  assert.equal(existsSync(defaultCommitMsg), true, 'original .git/hooks/commit-msg preserved');
+});
+
+test('F-2: inherited non-local core.hooksPath is chained and resumes on uninstall', t => {
+  const { root, canonical, worktree } = repoWithRemoteAndWorktree(t);
+  const globalHooks = join(root, 'global-hooks');
+  mkdirSync(globalHooks, { recursive: true });
+  const marker = join(root, 'global-hook-ran.txt');
+  const globalPreCommit = join(globalHooks, 'pre-commit');
+  writeFileSync(
+    globalPreCommit,
+    `#!/bin/sh\necho "global" >> "${marker.replace(/\\/g, '/')}"\nexit 0\n`
+  );
+  if (process.platform !== 'win32') chmodSync(globalPreCommit, 0o755);
+
+  const globalConfig = join(root, 'global.gitconfig');
+  writeFileSync(globalConfig, `[core]\n\thooksPath = ${globalHooks.replace(/\\/g, '/')}\n`);
+
+  const prevGlobal = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = globalConfig;
+  t.after(() => {
+    if (prevGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = prevGlobal;
+  });
+
+  const plan = planCanonicalHookInstall(canonical, 'opencode');
+  assert.equal(plan.status, 'change');
+  assert.equal(plan.previousLocalHooksPath, undefined);
+  assert.equal(plan.previousEffectiveHooksPath, globalHooks.replace(/\\/g, '/'));
+  applyCanonicalHook(plan);
+
+  writeFileSync(join(worktree, 'g.txt'), 'g\n');
+  git(worktree, 'add', 'g.txt');
+  assert.equal(gitResult(worktree, 'commit', '-m', 'wt with global hook').ok, true);
+  assert.equal(existsSync(marker), true, 'inherited global core.hooksPath ran');
+
+  applyCanonicalHook(planCanonicalHookRemoval(canonical, 'opencode'));
+  assert.equal(gitResult(canonical, 'config', '--local', '--get', 'core.hooksPath').ok, false);
+  assert.equal(git(canonical, 'config', '--get', 'core.hooksPath'), globalHooks.replace(/\\/g, '/'));
+});
+
+test('F-3: foreign or modified files in hook directory are rejected on install and preserved on uninstall', t => {
+  const { canonical } = repoWithRemoteAndWorktree(t);
+  const hookDir = resolveCanonicalHookDir(canonical)!;
+  mkdirSync(hookDir, { recursive: true });
+  const foreignFile = join(hookDir, 'custom-note.txt');
+  writeFileSync(foreignFile, 'keep me\n');
+
+  const blocked = planCanonicalHookInstall(canonical, 'opencode');
+  assert.equal(blocked.status, 'unavailable');
+  assert.match(blocked.reason, /Unowned files exist/);
+  assert.equal(readFileSync(foreignFile, 'utf8'), 'keep me\n');
+
+  rmSync(foreignFile);
+  applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
+
+  // Modify a managed hook and add a foreign file; uninstall must preserve both
+  const preCommit = join(hookDir, 'pre-commit');
+  writeFileSync(preCommit, '#!/bin/sh\necho custom\n');
+  writeFileSync(foreignFile, 'foreign\n');
+  const removePlan = planCanonicalHookRemoval(canonical, 'opencode');
+  assert.equal(removePlan.status, 'change');
+  applyCanonicalHook(removePlan);
+  assert.equal(existsSync(preCommit), true, 'user-modified hook preserved');
+  assert.equal(existsSync(foreignFile), true, 'foreign file preserved');
+  assert.match(removePlan.warning ?? '', /preserved foreign\/modified files/);
+});
+
+test('F-4: interleaved planning and apply rejects stale state without overwriting another owner', t => {
+  const { canonical } = repoWithRemoteAndWorktree(t);
+  const planA = planCanonicalHookInstall(canonical, 'opencode');
+  const planB = planCanonicalHookInstall(canonical, 'claude-code');
+  assert.equal(applyCanonicalHook(planB), true);
+  assert.throws(() => applyCanonicalHook(planA), /changed after preview/);
+  const state = JSON.parse(readFileSync(join(resolveCanonicalHookDir(canonical)!, '.state.json'), 'utf8'));
+  assert.deepEqual(state.owners, ['claude-code']);
+});
+
+test('F-5: config read/unset errors propagate and preserve hook files when unset fails', t => {
+  const { canonical } = repoWithRemoteAndWorktree(t);
+  applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
+
+  const failingRunner = (exe: string, args: string[], opts?: { cwd?: string }) => {
+    if (exe === 'git' && args[0] === 'config' && args.includes('--unset')) {
+      throw Object.assign(new Error('simulated unset failure'), { status: 5 });
+    }
+    if (exe === 'git' && args[0] === 'config' && args.includes('--get') && args.includes('extensions.worktreeConfig')) {
+      return '';
+    }
+    return execFileSync(exe, args, { cwd: opts?.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  };
+
+  const removePlan = planCanonicalHookRemoval(canonical, 'opencode', failingRunner);
+  assert.equal(removePlan.status, 'change');
+  assert.throws(() => applyCanonicalHook(removePlan, failingRunner), /simulated unset failure/);
+  assert.equal(isCanonicalHookInstalled(canonical), true, 'hook state preserved on failed unset');
+  assert.equal(existsSync(join(resolveCanonicalHookDir(canonical)!, 'pre-commit')), true);
+
+  const badReadRunner = (exe: string, args: string[]) => {
+    if (exe === 'git' && args[0] === 'config') {
+      throw Object.assign(new Error('corrupt config'), { status: 128 });
+    }
+    return execFileSync(exe, args, { cwd: canonical, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  };
+  const readBlocked = planCanonicalHookInstall(canonical, 'claude-code', badReadRunner);
+  assert.equal(readBlocked.status, 'unavailable');
+  assert.match(readBlocked.reason, /corrupt config/);
+});
+
+test('F-7: nested subdirectory, linked worktree, and worktreeConfig precedence are handled', t => {
+  const { canonical, worktree } = repoWithRemoteAndWorktree(t);
+  const nested = join(canonical, 'packages', 'app');
+  mkdirSync(nested, { recursive: true });
+
+  // Installing from a nested subdirectory resolves relative to repo top-level
+  const plan = planCanonicalHookInstall(nested, 'opencode');
+  assert.equal(plan.status, 'change');
+  applyCanonicalHook(plan);
+  assert.equal(planCanonicalHookInstall(worktree, 'opencode').status, 'current', 'linked worktree sees current hook');
+
+  // Worktree-scoped core.hooksPath overrides --local and is rejected safely
+  git(canonical, 'config', '--local', 'extensions.worktreeConfig', 'true');
+  git(worktree, 'config', '--worktree', 'core.hooksPath', '.wt-hooks');
+  const blocked = planCanonicalHookInstall(worktree, 'claude-code');
+  assert.equal(blocked.status, 'unavailable');
+  assert.match(blocked.reason, /worktree-scoped core\.hooksPath/);
 });

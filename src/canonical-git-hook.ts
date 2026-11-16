@@ -1,7 +1,18 @@
-import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import type { Runner } from './harness-version.ts';
 
@@ -15,7 +26,9 @@ export interface CanonicalHookState {
   version: 1;
   owners: CanonicalHookOwner[];
   previousLocalHooksPath?: string;
+  previousEffectiveHooksPath?: string;
   installedHooksPath: string;
+  managedFiles: Record<string, string>;
 }
 
 export type CanonicalHookPlan =
@@ -28,10 +41,11 @@ export type CanonicalHookPlan =
       hookDir: string;
       installedHooksPath: string;
       previousLocalHooksPath: string | undefined;
+      previousEffectiveHooksPath: string | undefined;
       expectedLocalHooksPath: string | undefined;
+      expectedStateText: string | undefined;
       nextState: CanonicalHookState | undefined;
-      scripts: Record<CanonicalHookName, string> | undefined;
-      effectiveExternalHooksPath: string | undefined;
+      scripts: Record<string, string> | undefined;
       restoreHooksPath: boolean;
       warning?: string;
     };
@@ -48,6 +62,7 @@ const defaultRun: Runner = (executable, args, options) => execFileSync(executabl
 }).trim();
 
 const toForwardSlashes = (value: string) => value.replace(/\\/g, '/');
+const sha256 = (content: string) => createHash('sha256').update(content, 'utf8').digest('hex');
 
 function samePath(a: string, b: string): boolean {
   const left = resolve(a);
@@ -55,60 +70,121 @@ function samePath(a: string, b: string): boolean {
   return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
-function isOwnHooksPath(root: string, configured: string | undefined, hookDir: string): boolean {
+function isOwnHooksPath(topLevel: string, configured: string | undefined, hookDir: string): boolean {
   if (!configured) return false;
-  return samePath(resolve(root, configured), hookDir);
+  return samePath(resolve(topLevel, configured), hookDir);
+}
+
+function resolveGitRepo(root: string, run: Runner): { commonDir: string; topLevel: string } | undefined {
+  try {
+    if (run('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root }) !== 'true') return undefined;
+    const commonDir = run('git', ['rev-parse', '--git-common-dir'], { cwd: root });
+    const topLevel = run('git', ['rev-parse', '--show-toplevel'], { cwd: root });
+    if (!commonDir || !topLevel) return undefined;
+    return { commonDir: resolve(root, commonDir), topLevel: resolve(root, topLevel) };
+  } catch {
+    return undefined;
+  }
 }
 
 /** Resolves `<git-common-dir>/advanced-harness-hooks` for the repository containing `root`. */
 export function resolveCanonicalHookDir(root: string, run: Runner = defaultRun): string | undefined {
-  try {
-    if (run('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root }) !== 'true') return undefined;
-    const commonDir = run('git', ['rev-parse', '--git-common-dir'], { cwd: root });
-    if (!commonDir) return undefined;
-    return join(resolve(root, commonDir), HOOKS_DIR_NAME);
-  } catch {
-    return undefined;
-  }
+  const repo = resolveGitRepo(root, run);
+  return repo ? join(repo.commonDir, HOOKS_DIR_NAME) : undefined;
 }
 
+/**
+ * Reads a `git config` key. Exit status 1 (key unset) returns `undefined`;
+ * any other non-zero exit status or spawn error propagates.
+ */
 function readGitConfig(root: string, args: string[], run: Runner): string | undefined {
+  if (run === defaultRun) {
+    const res = spawnSync('git', ['config', ...args], {
+      cwd: root,
+      timeout: 10000,
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (res.error) throw res.error;
+    if (res.status === 0) return res.stdout.trim() || undefined;
+    if (res.status === 1) return undefined;
+    throw new Error(`git config ${args.join(' ')} failed (${res.status}): ${res.stderr.trim()}`);
+  }
   try {
     const value = run('git', ['config', ...args], { cwd: root });
     return value || undefined;
-  } catch {
-    return undefined;
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 1) return undefined;
+    throw err;
   }
 }
 
-function readState(statePath: string): CanonicalHookState | undefined {
+function readState(statePath: string): { state: CanonicalHookState; raw: string } | undefined {
   if (!existsSync(statePath)) return undefined;
   assertSafeFilesystemPath(statePath, 'file');
-  const parsed = JSON.parse(readFileSync(statePath, 'utf8')) as Partial<CanonicalHookState>;
+  const raw = readFileSync(statePath, 'utf8');
+  const parsed = JSON.parse(raw) as Partial<CanonicalHookState>;
   if (
     parsed.version !== 1
     || !Array.isArray(parsed.owners)
     || typeof parsed.installedHooksPath !== 'string'
+    || typeof parsed.managedFiles !== 'object'
+    || parsed.managedFiles === null
   ) {
     throw new Error(`Malformed canonical hook state in ${statePath}`);
   }
   return {
-    version: 1,
-    owners: [...new Set(parsed.owners)].sort() as CanonicalHookOwner[],
-    ...(typeof parsed.previousLocalHooksPath === 'string' && parsed.previousLocalHooksPath
-      ? { previousLocalHooksPath: parsed.previousLocalHooksPath }
-      : {}),
-    installedHooksPath: parsed.installedHooksPath,
+    raw,
+    state: {
+      version: 1,
+      owners: [...new Set(parsed.owners)].sort() as CanonicalHookOwner[],
+      ...(typeof parsed.previousLocalHooksPath === 'string' && parsed.previousLocalHooksPath
+        ? { previousLocalHooksPath: parsed.previousLocalHooksPath }
+        : {}),
+      ...(typeof parsed.previousEffectiveHooksPath === 'string' && parsed.previousEffectiveHooksPath
+        ? { previousEffectiveHooksPath: parsed.previousEffectiveHooksPath }
+        : {}),
+      installedHooksPath: parsed.installedHooksPath,
+      managedFiles: { ...parsed.managedFiles },
+    },
   };
 }
 
 const shellSingleQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
 
-function renderHookScript(hookName: CanonicalHookName, previousHooksPath: string | undefined): string {
+function renderChainedLookup(previousHooksPath: string | undefined): string {
   const prevAssignment = previousHooksPath
     ? `prev_hooks_dir=${shellSingleQuote(toForwardSlashes(previousHooksPath))}`
     : `prev_hooks_dir=''`;
 
+  return [
+    prevAssignment,
+    'if [ -n "$prev_hooks_dir" ]; then',
+    '  case "$prev_hooks_dir" in',
+    '    /*|[A-Za-z]:/*|[A-Za-z]:\\\\*) ;;',
+    '    *)',
+    '      toplevel=$(git rev-parse --show-toplevel 2>/dev/null || true)',
+    '      [ -n "$toplevel" ] && prev_hooks_dir="$toplevel/$prev_hooks_dir"',
+    '      ;;',
+    '  esac',
+    '  prev_hook="$prev_hooks_dir/$hook_name"',
+    'else',
+    '  prev_hook="$common_dir/hooks/$hook_name"',
+    'fi',
+    '',
+    'if [ -x "$prev_hook" ]; then',
+    '  "$prev_hook" "$@"',
+    '  rc=$?',
+    '  if [ "$rc" -ne 0 ]; then',
+    '    exit "$rc"',
+    '  fi',
+    'fi',
+  ].join('\n');
+}
+
+function renderHookScript(hookName: CanonicalHookName, previousHooksPath: string | undefined): string {
   const canonicalAction: Record<CanonicalHookName, string> = {
     'pre-commit': [
       'if [ "$git_dir" = "$common_dir" ]; then',
@@ -139,45 +215,86 @@ function renderHookScript(hookName: CanonicalHookName, previousHooksPath: string
     '#!/bin/sh',
     '# Managed by advanced-harness (ADR-004 canonical-checkout guardrail).',
     `hook_name=${shellSingleQuote(hookName)}`,
-    prevAssignment,
-    '',
     'git_dir=$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P) || exit 0',
     'common_dir=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) || exit 0',
-    '',
-    'if [ -n "$prev_hooks_dir" ]; then',
-    '  case "$prev_hooks_dir" in',
-    '    /*|[A-Za-z]:/*|[A-Za-z]:\\\\*) ;;',
-    '    *)',
-    '      toplevel=$(git rev-parse --show-toplevel 2>/dev/null || true)',
-    '      [ -n "$toplevel" ] && prev_hooks_dir="$toplevel/$prev_hooks_dir"',
-    '      ;;',
-    '  esac',
-    '  prev_hook="$prev_hooks_dir/$hook_name"',
-    'else',
-    '  prev_hook="$common_dir/hooks/$hook_name"',
-    'fi',
-    '',
-    'if [ -x "$prev_hook" ]; then',
-    '  "$prev_hook" "$@"',
-    '  rc=$?',
-    '  if [ "$rc" -ne 0 ]; then',
-    '    exit "$rc"',
-    '  fi',
-    'fi',
-    '',
+    renderChainedLookup(previousHooksPath),
     canonicalAction[hookName],
     'exit 0',
     '',
   ].join('\n');
 }
 
-function buildScripts(previousHooksPath: string | undefined): Record<CanonicalHookName, string> {
-  return {
-    'pre-commit': renderHookScript('pre-commit', previousHooksPath),
-    'pre-merge-commit': renderHookScript('pre-merge-commit', previousHooksPath),
-    'pre-rebase': renderHookScript('pre-rebase', previousHooksPath),
-    'post-checkout': renderHookScript('post-checkout', previousHooksPath),
-  };
+function renderForwardingScript(hookName: string, previousHooksPath: string | undefined): string {
+  return [
+    '#!/bin/sh',
+    '# Forwarding wrapper managed by advanced-harness.',
+    `hook_name=${shellSingleQuote(hookName)}`,
+    'common_dir=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) || exit 0',
+    renderChainedLookup(previousHooksPath),
+    'exit 0',
+    '',
+  ].join('\n');
+}
+
+function discoverExternalHookNames(
+  topLevel: string,
+  commonDir: string,
+  previousHooksPath: string | undefined
+): string[] {
+  const sourceDir = previousHooksPath
+    ? (isAbsolute(previousHooksPath) ? previousHooksPath : resolve(topLevel, previousHooksPath))
+    : join(commonDir, 'hooks');
+  if (!existsSync(sourceDir)) return [];
+  const managed = new Set<string>(canonicalHookNames);
+  const names: string[] = [];
+  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+    const name = entry.name;
+    if (name.endsWith('.sample') || name === STATE_FILE || managed.has(name)) continue;
+    const full = join(sourceDir, name);
+    const stat = lstatSync(full, { throwIfNoEntry: false });
+    if (!stat || !stat.isFile()) continue;
+    if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) continue;
+    names.push(name);
+  }
+  return names.sort();
+}
+
+function buildScripts(
+  topLevel: string,
+  commonDir: string,
+  previousHooksPath: string | undefined
+): Record<string, string> {
+  const scripts: Record<string, string> = {};
+  for (const name of canonicalHookNames) {
+    scripts[name] = renderHookScript(name, previousHooksPath);
+  }
+  for (const name of discoverExternalHookNames(topLevel, commonDir, previousHooksPath)) {
+    scripts[name] = renderForwardingScript(name, previousHooksPath);
+  }
+  return scripts;
+}
+
+function validateHookDirOwnership(hookDir: string, state: CanonicalHookState | undefined): void {
+  if (!existsSync(hookDir)) return;
+  const entries = readdirSync(hookDir).filter(name => name !== STATE_FILE);
+  if (!state) {
+    if (entries.length > 0) {
+      throw new Error(`Unowned files exist in ${hookDir}: ${entries.join(', ')}`);
+    }
+    return;
+  }
+  const foreign = entries.filter(name => !(name in state.managedFiles));
+  if (foreign.length > 0) {
+    throw new Error(`Unattributed files exist in ${hookDir}: ${foreign.join(', ')}`);
+  }
+  for (const [name, expectedDigest] of Object.entries(state.managedFiles)) {
+    const filePath = join(hookDir, name);
+    if (!existsSync(filePath)) continue;
+    const actualDigest = sha256(readFileSync(filePath, 'utf8'));
+    if (actualDigest !== expectedDigest) {
+      throw new Error(`Hook file ${filePath} was modified outside advanced-harness`);
+    }
+  }
 }
 
 function atomicWriteFile(path: string, content: string, executable = false): void {
@@ -193,50 +310,76 @@ function atomicWriteFile(path: string, content: string, executable = false): voi
   }
 }
 
+function checkWorktreeConfigBlock(root: string, run: Runner): string | undefined {
+  const enabled = readGitConfig(root, ['--local', '--bool', '--get', 'extensions.worktreeConfig'], run);
+  if (enabled === 'true') {
+    const worktreePath = readGitConfig(root, ['--worktree', '--get', 'core.hooksPath'], run);
+    if (worktreePath) {
+      return `worktree-scoped core.hooksPath "${worktreePath}" overrides --local config`;
+    }
+  }
+  return undefined;
+}
+
 /** Plans installing or updating the opt-in canonical-checkout Git hook for `owner`. */
 export function planCanonicalHookInstall(
   root: string,
   owner: CanonicalHookOwner,
   run: Runner = defaultRun
 ): CanonicalHookPlan {
-  const hookDir = resolveCanonicalHookDir(root, run);
-  if (!hookDir) return { status: 'unavailable', reason: 'not inside a Git work tree (or Git is unavailable)' };
+  const repo = resolveGitRepo(root, run);
+  if (!repo) return { status: 'unavailable', reason: 'not inside a Git work tree (or Git is unavailable)' };
+  const hookDir = join(repo.commonDir, HOOKS_DIR_NAME);
   assertSafeFilesystemPath(hookDir, 'directory');
 
   const statePath = join(hookDir, STATE_FILE);
-  let state: CanonicalHookState | undefined;
+  let loaded: { state: CanonicalHookState; raw: string } | undefined;
+  let localHooksPath: string | undefined;
+  let effectiveHooksPath: string | undefined;
   try {
-    state = readState(statePath);
+    const wtBlock = checkWorktreeConfigBlock(root, run);
+    if (wtBlock) return { status: 'unavailable', reason: wtBlock };
+    loaded = readState(statePath);
+    validateHookDirOwnership(hookDir, loaded?.state);
+    localHooksPath = readGitConfig(root, ['--local', '--get', 'core.hooksPath'], run);
+    effectiveHooksPath = readGitConfig(root, ['--get', 'core.hooksPath'], run);
   } catch (err) {
     return { status: 'unavailable', reason: (err as Error).message };
   }
 
+  const state = loaded?.state;
   const installedHooksPath = toForwardSlashes(hookDir);
-  const localHooksPath = readGitConfig(root, ['--local', '--get', 'core.hooksPath'], run);
-  const effectiveHooksPath = readGitConfig(root, ['--get', 'core.hooksPath'], run);
-  const ownConfigured = isOwnHooksPath(root, localHooksPath, hookDir);
+  const ownConfigured = isOwnHooksPath(repo.topLevel, localHooksPath, hookDir);
 
   const previousLocalHooksPath = ownConfigured
     ? state?.previousLocalHooksPath
     : localHooksPath ?? state?.previousLocalHooksPath;
-  const effectiveExternalHooksPath = !localHooksPath && effectiveHooksPath && !isOwnHooksPath(root, effectiveHooksPath, hookDir)
-    ? effectiveHooksPath
-    : undefined;
+  const previousEffectiveHooksPath = ownConfigured
+    ? state?.previousEffectiveHooksPath
+    : (!localHooksPath && effectiveHooksPath && !isOwnHooksPath(repo.topLevel, effectiveHooksPath, hookDir)
+        ? effectiveHooksPath
+        : state?.previousEffectiveHooksPath);
+
+  const chainedHooksPath = previousLocalHooksPath ?? previousEffectiveHooksPath;
+  const scripts = buildScripts(repo.topLevel, repo.commonDir, chainedHooksPath);
+  const managedFiles = Object.fromEntries(
+    Object.entries(scripts).map(([name, content]) => [name, sha256(content)])
+  );
 
   const nextOwners = [...new Set([...(state?.owners ?? []), owner])].sort() as CanonicalHookOwner[];
   const nextState: CanonicalHookState = {
     version: 1,
     owners: nextOwners,
     ...(previousLocalHooksPath ? { previousLocalHooksPath } : {}),
+    ...(previousEffectiveHooksPath ? { previousEffectiveHooksPath } : {}),
     installedHooksPath,
+    managedFiles,
   };
-  const scripts = buildScripts(previousLocalHooksPath);
 
-  const stateCurrent = state !== undefined
-    && JSON.stringify(state) === JSON.stringify(nextState);
-  const scriptsCurrent = canonicalHookNames.every(name => {
+  const stateCurrent = state !== undefined && JSON.stringify(state) === JSON.stringify(nextState);
+  const scriptsCurrent = Object.entries(scripts).every(([name, content]) => {
     const file = join(hookDir, name);
-    return existsSync(file) && readFileSync(file, 'utf8') === scripts[name];
+    return existsSync(file) && readFileSync(file, 'utf8') === content;
   });
   const configCurrent = ownConfigured && localHooksPath === installedHooksPath;
 
@@ -251,10 +394,11 @@ export function planCanonicalHookInstall(
     hookDir,
     installedHooksPath,
     previousLocalHooksPath,
+    previousEffectiveHooksPath,
     expectedLocalHooksPath: localHooksPath,
+    expectedStateText: loaded?.raw,
     nextState,
     scripts,
-    effectiveExternalHooksPath,
     restoreHooksPath: false,
   };
 }
@@ -265,24 +409,27 @@ export function planCanonicalHookRemoval(
   owner: CanonicalHookOwner,
   run: Runner = defaultRun
 ): CanonicalHookPlan {
-  const hookDir = resolveCanonicalHookDir(root, run);
-  if (!hookDir) return { status: 'unavailable', reason: 'not inside a Git work tree (or Git is unavailable)' };
+  const repo = resolveGitRepo(root, run);
+  if (!repo) return { status: 'unavailable', reason: 'not inside a Git work tree (or Git is unavailable)' };
+  const hookDir = join(repo.commonDir, HOOKS_DIR_NAME);
 
   const statePath = join(hookDir, STATE_FILE);
   if (!existsSync(statePath)) return { status: 'current', hookDir };
   assertSafeFilesystemPath(hookDir, 'directory');
 
-  let state: CanonicalHookState | undefined;
+  let loaded: { state: CanonicalHookState; raw: string } | undefined;
+  let localHooksPath: string | undefined;
   try {
-    state = readState(statePath);
+    loaded = readState(statePath);
+    localHooksPath = readGitConfig(root, ['--local', '--get', 'core.hooksPath'], run);
   } catch (err) {
     return { status: 'unavailable', reason: (err as Error).message };
   }
+  const state = loaded?.state;
   if (!state || !state.owners.includes(owner)) return { status: 'current', hookDir };
 
   const remaining = state.owners.filter(item => item !== owner);
-  const localHooksPath = readGitConfig(root, ['--local', '--get', 'core.hooksPath'], run);
-  const ownConfigured = isOwnHooksPath(root, localHooksPath, hookDir);
+  const ownConfigured = isOwnHooksPath(repo.topLevel, localHooksPath, hookDir);
 
   if (remaining.length > 0) {
     const nextState: CanonicalHookState = {
@@ -296,10 +443,11 @@ export function planCanonicalHookRemoval(
       hookDir,
       installedHooksPath: state.installedHooksPath,
       previousLocalHooksPath: state.previousLocalHooksPath,
+      previousEffectiveHooksPath: state.previousEffectiveHooksPath,
       expectedLocalHooksPath: localHooksPath,
+      expectedStateText: loaded?.raw,
       nextState,
       scripts: undefined,
-      effectiveExternalHooksPath: undefined,
       restoreHooksPath: false,
     };
   }
@@ -316,10 +464,11 @@ export function planCanonicalHookRemoval(
     hookDir,
     installedHooksPath: state.installedHooksPath,
     previousLocalHooksPath: state.previousLocalHooksPath,
+    previousEffectiveHooksPath: state.previousEffectiveHooksPath,
     expectedLocalHooksPath: localHooksPath,
+    expectedStateText: loaded?.raw,
     nextState: undefined,
     scripts: undefined,
-    effectiveExternalHooksPath: undefined,
     restoreHooksPath,
     ...(warning ? { warning } : {}),
   };
@@ -337,9 +486,9 @@ export function describeCanonicalHook(plan: CanonicalHookPlan): string {
   if (plan.status === 'current') return `Canonical-checkout Git hook: ${plan.hookDir} (already current; no change).`;
   if (plan.action === 'install') {
     const chainNote = plan.previousLocalHooksPath
-      ? `; chains to and preserves existing core.hooksPath "${plan.previousLocalHooksPath}"`
-      : plan.effectiveExternalHooksPath
-        ? `; warning: non-local core.hooksPath "${plan.effectiveExternalHooksPath}" is set`
+      ? `; chains to and preserves existing local core.hooksPath "${plan.previousLocalHooksPath}"`
+      : plan.previousEffectiveHooksPath
+        ? `; chains to inherited core.hooksPath "${plan.previousEffectiveHooksPath}"`
         : '; chains to any existing .git/hooks/*';
     return `Canonical-checkout Git hook: install in ${plan.hookDir} and set local git config core.hooksPath=${plan.installedHooksPath}${chainNote}.`;
   }
@@ -359,47 +508,88 @@ export function describeCanonicalHook(plan: CanonicalHookPlan): string {
   return `Canonical-checkout Git hook: remove ${plan.hookDir}${restoreNote}.`;
 }
 
-/** Applies a planned canonical-checkout hook change after confirming local config did not drift. */
+/** Applies a planned canonical-checkout hook change under a lockfile after revalidating config and state. */
 export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaultRun): boolean {
   if (plan.status !== 'change') return false;
   assertSafeFilesystemPath(plan.hookDir, 'directory');
 
-  const currentLocal = readGitConfig(plan.root, ['--local', '--get', 'core.hooksPath'], run);
-  if (currentLocal !== plan.expectedLocalHooksPath) {
-    throw new Error(`Local git config core.hooksPath changed after preview ("${currentLocal ?? 'unset'}"); left untouched.`);
-  }
-
-  const statePath = join(plan.hookDir, STATE_FILE);
-  if (plan.action === 'install' || plan.action === 'update') {
-    mkdirSync(plan.hookDir, { recursive: true });
-    for (const name of canonicalHookNames) {
-      atomicWriteFile(join(plan.hookDir, name), plan.scripts![name], true);
+  mkdirSync(dirname(plan.hookDir), { recursive: true });
+  const lockPath = `${plan.hookDir}.harness.lock`;
+  writeFileSync(lockPath, String(process.pid), { flag: 'wx' });
+  try {
+    const currentLocal = readGitConfig(plan.root, ['--local', '--get', 'core.hooksPath'], run);
+    if (currentLocal !== plan.expectedLocalHooksPath) {
+      throw new Error(`Local git config core.hooksPath changed after preview ("${currentLocal ?? 'unset'}"); left untouched.`);
     }
-    atomicWriteFile(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
-    if (currentLocal !== plan.installedHooksPath) {
-      run('git', ['config', '--local', 'core.hooksPath', plan.installedHooksPath], { cwd: plan.root });
+
+    const statePath = join(plan.hookDir, STATE_FILE);
+    const currentStateText = existsSync(statePath) ? readFileSync(statePath, 'utf8') : undefined;
+    if (currentStateText !== plan.expectedStateText) {
+      throw new Error(`Canonical hook state in ${statePath} changed after preview; left untouched.`);
     }
-    return true;
-  }
 
-  if (plan.action === 'release') {
-    atomicWriteFile(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
-    return true;
-  }
+    const loaded = currentStateText ? readState(statePath) : undefined;
 
-  if (plan.restoreHooksPath) {
-    if (plan.previousLocalHooksPath) {
-      run('git', ['config', '--local', 'core.hooksPath', plan.previousLocalHooksPath], { cwd: plan.root });
-    } else {
-      try {
+    if (plan.action === 'install' || plan.action === 'update') {
+      validateHookDirOwnership(plan.hookDir, loaded?.state);
+      mkdirSync(plan.hookDir, { recursive: true });
+      const prevManaged = Object.keys(loaded?.state.managedFiles ?? {});
+      const nextManaged = new Set(Object.keys(plan.scripts!));
+      for (const stale of prevManaged) {
+        if (!nextManaged.has(stale) && existsSync(join(plan.hookDir, stale))) {
+          unlinkSync(join(plan.hookDir, stale));
+        }
+      }
+      for (const [name, content] of Object.entries(plan.scripts!)) {
+        atomicWriteFile(join(plan.hookDir, name), content, true);
+      }
+      atomicWriteFile(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
+      if (currentLocal !== plan.installedHooksPath) {
+        run('git', ['config', '--local', 'core.hooksPath', plan.installedHooksPath], { cwd: plan.root });
+      }
+      return true;
+    }
+
+    if (plan.action === 'release') {
+      atomicWriteFile(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
+      return true;
+    }
+
+    // Last-owner removal: update Git config first so failures never leave core.hooksPath dangling.
+    if (plan.restoreHooksPath) {
+      if (plan.previousLocalHooksPath) {
+        run('git', ['config', '--local', 'core.hooksPath', plan.previousLocalHooksPath], { cwd: plan.root });
+      } else {
         run('git', ['config', '--local', '--unset', 'core.hooksPath'], { cwd: plan.root });
-      } catch {
-        // Already unset.
       }
     }
+
+    const managedFiles = loaded?.state.managedFiles ?? {};
+    const preserved: string[] = [];
+    if (existsSync(plan.hookDir)) {
+      for (const entry of readdirSync(plan.hookDir)) {
+        if (entry === STATE_FILE) continue;
+        const entryPath = join(plan.hookDir, entry);
+        const expectedDigest = managedFiles[entry];
+        if (expectedDigest && lstatSync(entryPath).isFile() && sha256(readFileSync(entryPath, 'utf8')) === expectedDigest) {
+          unlinkSync(entryPath);
+        } else {
+          preserved.push(entry);
+        }
+      }
+      if (existsSync(statePath)) unlinkSync(statePath);
+      if (preserved.length === 0) {
+        rmdirSync(plan.hookDir);
+      } else {
+        plan.warning = [plan.warning, `preserved foreign/modified files in ${plan.hookDir}: ${preserved.join(', ')}`]
+          .filter(Boolean)
+          .join('; ');
+      }
+    }
+    return true;
+  } finally {
+    if (existsSync(lockPath)) unlinkSync(lockPath);
   }
-  rmSync(plan.hookDir, { recursive: true, force: true });
-  return true;
 }
 
 /**
@@ -422,16 +612,14 @@ export async function promptCanonicalHook(
   }
 
   const alreadyInstalled = isCanonicalHookInstalled(root, run);
-  if (!alreadyInstalled || !options.updateOnly) {
-    if (!alreadyInstalled) {
-      const answer = (await ask(
-        'Install opt-in local Git hook to protect canonical checkout? (writes local git config core.hooksPath) (yes/no)',
-        'no'
-      )).trim().toLowerCase();
-      if (answer !== 'yes' && answer !== 'y') {
-        output('Canonical-checkout Git hook: declined (left unconfigured).');
-        return undefined;
-      }
+  if (!alreadyInstalled) {
+    const answer = (await ask(
+      'Install opt-in local Git hook to protect canonical checkout? (writes local git config core.hooksPath) (yes/no)',
+      'no'
+    )).trim().toLowerCase();
+    if (answer !== 'yes' && answer !== 'y') {
+      output('Canonical-checkout Git hook: declined (left unconfigured).');
+      return undefined;
     }
   }
 

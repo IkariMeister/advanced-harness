@@ -77,13 +77,14 @@ Rollback is a revert of that text change followed by a harness update, which rec
 
 ## Reconsideration
 
-- A harness-installed Git hook (the deferred follow-up) is approved, or a host gains a worktree-bound permission primitive. Either would supersede Decision 2.
+- A harness-installed Git hook (implemented as an opt-in guardrail in issue #202) reinforces Decision 2 locally for commits, non-fast-forward merges, and rebases, while warning on branch switches (`post-checkout`); role contracts remain the primary rule when the hook is declined or bypassed.
 - Recorded outcomes show an agent changing the canonical checkout outside the rule, which the documentation could not prevent.
 - Pilot use shows that the bootstrap stop on a dirty canonical checkout blocks routine work too often, which would call for a superseding ADR rather than an in-place edit.
 
 ## References
 
 - Issue #172, "Keep the canonical checkout read-only except for remote updates".
+- Issue #202, "Enforce the canonical-checkout rule with an opt-in local Git hook" (opt-in local guardrail).
 - [worktree-permission-proposal.md](../worktree-permission-proposal.md): why shell patterns cannot bind a grant to a worktree.
 - [releasing.md](../releasing.md): consumer harness checkouts pinned to a release tag, which are out of scope.
 - [Glossary: canonical checkout](../glossary.md#hosts-installation-and-permissions).
