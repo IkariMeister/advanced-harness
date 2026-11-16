@@ -153,3 +153,11 @@ test('npm options before the script name are not read as script names', async t 
     'README.md:5: Unknown npm run script: nope',
   ]);
 });
+
+test('backticked e2e repository paths are checked like the other top-level directories', async t => {
+  const root = await docsFixture(t);
+  await mkdir(join(root, 'e2e', 'support'), { recursive: true });
+  await writeFile(join(root, 'e2e', 'support', 'present.ts'), 'export {};\n');
+  await writeFile(join(root, 'README.md'), '# Root\n\n`e2e/support/present.ts` and `e2e/support/absent.ts`.\n');
+  assert.deepEqual(summary(root), ['README.md:3: Repository-relative path does not exist: e2e/support/absent.ts']);
+});

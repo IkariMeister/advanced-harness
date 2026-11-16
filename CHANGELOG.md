@@ -6,6 +6,10 @@ version between releases.
 
 ## Unreleased
 
+### Added
+
+- Agent E2E suite (BH-034, #62): `npm run e2e:opencode` drives the real OpenCode 2.3.0 CLI through scripted journeys against a loopback model fixture, with the installed harness prompts and policy in a sandbox. The suite has six tests. Journey J3 (skill invocation) is `todo`, because the installed policy denies the `skill` tool to Implementer (tracked in #261; #62 stays open for it); J3a asserts the denial as it is today and fails if the skill loads. `HARNESS_E2E_RECORD_DIR` keeps a copy of each journey record, `HARNESS_E2E_NETNS=1` is checked against the live network interfaces, and every journey fails on a credential-shaped header. A new `agent-e2e` CI job runs the suite in a loopback-only network namespace and uploads the records as an artifact; it is not a required check and has not yet run. See [ADR-0011](docs/adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md) (Proposed) and [docs/agent-e2e.md](docs/agent-e2e.md).
+
 ## v0.4.0 — 2026-11-15
 
 ### Changed

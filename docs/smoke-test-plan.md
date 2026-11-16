@@ -168,6 +168,21 @@ Setup: a disposable Git checkout whose project context names a `worktreeDirector
 | PF-05 | Run with `--criteria <file>` where the file holds `{"items":[{"text":"APPROVED","done":false},{"text":"Tests written","done":true}]}` | `acceptance-criteria` is `warn` and lists `"APPROVED"` as pending; JSON `approved` equals the run without `--criteria`; exit code unchanged |
 | PF-06 | Run with `--criteria` pointing at malformed JSON, then at a missing path | `acceptance-criteria` is `inconclusive` in both; exit 2; `approved` is `false` |
 
+### BH-034: agent E2E suite (manual, not in `npm run smoke`)
+
+The agent E2E suite (`npm run e2e:opencode`, `e2e/opencode-journeys.e2e.ts`) is separate from this smoke suite. It runs the real OpenCode 2.3.0 CLI against a loopback model fixture, and it is documented in the [agent E2E guide](agent-e2e.md). Its cases below are manual; this plan records no run. They are non-interactive (no TTY), and whoever runs them records the machine, the OpenCode version, and the output.
+
+Prerequisites for AE-02 to AE-04: Node.js 24.x, `npm ci` at the repository root, and the OpenCode 2.3.0 executable at an absolute path, given in `HARNESS_E2E_OPENCODE`. AE-01 needs only Node.js and `npm ci`.
+
+| ID | Case | Expected |
+| --- | --- | --- |
+| AE-01 | `npm run e2e:opencode` with `HARNESS_E2E_OPENCODE` unset | Every journey is SKIPPED with its reason; exit code 0 (a skip is not a pass) |
+| AE-02 | `npm run e2e:opencode` with `HARNESS_E2E_OPENCODE` set to the OpenCode 2.3.0 executable and `HARNESS_E2E_REQUIRE=1` | Exit code 0. Six tests: **5 pass, 1 todo, 0 fail**. J1, J2, J3a, and both J4 cases pass; J3 is reported as TODO (#261). A different count is a finding to report |
+| AE-03 | Scope a sentinel change to one journey: change the text expected by J4a's second step to another string, and run again | J4a run 1 fails on its assertion that the violation names the commit-subject sentinel (`J4a: the violation must name the commit-subject sentinel`), so the suite exits non-zero. Run 2 is never executed, and no `.run2.json` is written. With `HARNESS_E2E_RECORD_DIR` set, only `violations-fail-deterministically-case-a.run1.json` is written. It has one violation at step 1 whose `expected` names the new string and whose `received` is the shell tool result. Revert the change afterwards. J4b has no expectation to change (its only scripted step has none), so this check does not apply to it |
+| AE-04 | Run with `HARNESS_E2E_RECORD_DIR` set to an absolute directory, then inspect the retained records | `lead-reads-repository.json`: `network.unexpectedDestinations` is empty, `network.toleratedDestinations` holds at most `CONNECT models.opencode.ai:443`, and `credentialHeaders` is empty. `implementer-loads-skill-and-edits.json`: `handoffCount` is 1 and the `skillInvocations` entry has `loaded: false`. No `Authorization` value appears in any file |
+
+The CI job that runs this suite is described under [Continuous integration](#continuous-integration). It is not a required check and has never run.
+
 ## Known gaps found by the suite
 
 Gaps are recorded as `todo` tests. They report on every run but do not fail
@@ -178,6 +193,11 @@ Antigravity confirmation-default gap (AG-02), and install version-stamp gap (OC-
 are resolved by the host-aware uninstall, #81, and #82 respectively. Codex now has
 automated global role-process install/update/uninstall coverage; this is not
 interactive TTY or Codex Desktop runtime validation.
+
+The agent E2E suite's journey J3 (`implementer` loads the documentation-impact
+skill) is `todo`: the installed policy denies the `skill` tool to Implementer, tracked
+in #261. J3a asserts the denial as it is today and fails if the skill loads. See
+[agent E2E guide](agent-e2e.md), journeys J3 and J3a.
 
 Codex Windows/macOS TTY validation remains pending; the human waived this manual
 test for this pass only. The Operator/External full-access manual case (CX-M2) is
@@ -197,7 +217,8 @@ The suite also made these observations, which are not asserted:
 ## Out of scope
 
 - Real OpenCode, Claude Code, or Antigravity runtime discovery and model access.
-  BH-034 (loopback model fixture) covers that direction.
+  BH-034's [agent E2E suite](agent-e2e.md) covers that direction, with scripted
+  model replies and not a live model.
 - `--check` connection checks, `--check-remote`, and anything else that would
   reach GitHub, Jira, MCP servers, or `origin`.
 - Interactive TTY QA by a human, the MarsRoverIA pilot, and Android
@@ -211,6 +232,13 @@ The `smoke` job in `.github/workflows/ci.yml` runs `npm run smoke` on
 `opencode.exe` stub). It runs on every push and pull request to `main`. It
 needs no secrets or network access beyond `npm ci`. `todo` cases do not fail
 the job.
+
+The `agent-e2e` job in the same file runs `npm run e2e:opencode` on `ubuntu-latest` against
+the pinned OpenCode 2.3.0 release asset, after a sha256 check, inside a loopback-only
+network namespace. It is not a required check. It has never run, so its result is
+unverified until it runs on a pull request. The steps are in
+[agent E2E guide](agent-e2e.md#continuous-integration).
+
 # Issue #134 project rigor setup and workflow smoke
 
 Use Node.js 24, installed dependencies, a usable interactive TTY, a disposable project,

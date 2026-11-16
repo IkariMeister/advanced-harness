@@ -146,3 +146,17 @@ To add or change a term, edit this file in the same change that first uses the n
 | **OKF concept** | A non-reserved Markdown knowledge document in a bundle, identified by its bundle-relative path without the `.md` suffix. | A concept in general usage; an implemented harness entity. |
 | **concept ID** | The OKF concept's path relative to its bundle, with the `.md` suffix removed. | A repository path or globally unique identifier. |
 | **OKF status** | A project's explicit `draft`, `stable`, or `deprecated` lifecycle value for a concept. OKF's default when status is absent is `stable`; this project requires explicit status, and `verified` is not approval. | Human approval, verification evidence, or upstream-required universal metadata. |
+
+## Testing
+
+| Term | Meaning in this project | Not to be confused with |
+| --- | --- | --- |
+| **agent E2E suite** | The `npm run e2e:opencode` journeys that drive a real host CLI against a loopback model fixture. | An application's private E2E framework; the `e2e` entry in project context checks. |
+| **loopback model fixture** | A local 127.0.0.1 server that imitates a model provider with scripted turns and records requests. It is not a model and shows nothing about real model behaviour. | A live model or provider connection. |
+| **journey** | One scripted agent task with expected tool calls, roles, and assertions, run by the agent E2E suite. | A smoke journey, which runs a harness script with a stub binary. |
+| **journey record** | The structured result of one journey run: tool calls, role transitions, handoff count, skill invocations, and violations. Version 1 is a suite-level artifact; it is not an [evaluation result](#evaluation-edd), and mapping it into one belongs to #226. | An [evaluation result](#evaluation-edd) or evaluation run record; a scenario result. |
+| **role transition** | A change, between consecutive model requests in a journey, in which role's agent sent the request. | An approval given within one role (see **approval**). |
+| **handoff count** | The number of completed Lead-to-child delegations in a journey. A delegation completes when Lead receives the child's report with `state="completed"`. | Publication handoff. |
+| **skill invocation** | A `skill` tool call by a role, recorded in the journey record's `skillInvocations` with `loaded` set to whether the host confirmed the load (the result contains the skill's sentinel line). A journey asserts that a skill was invoked only when `loaded` is `true`. A denied call is an invocation with `loaded: false`. | A role reading a skill file directly, or an advisory skill reference in a prompt. |
+| **credential-shaped header** | An `Authorization`, `X-Api-Key`, `Api-Key`, or `Cookie` header on any request the loopback fixture receives, auxiliary requests included. The suite sends no API key, so any such header fails the journey. The record keeps the header name, never its value. | A credential the suite passes to OpenCode (none is passed). |
+| **tolerated startup destination** | A network attempt that OpenCode 2.3.0 makes on its own at startup, matched on method, host, and port: `CONNECT models.opencode.ai:443`, a models catalogue refresh. An attempt is recorded and is not a violation; any other attempt, including a plain-HTTP request to the same host and port, is. Tied to the pinned OpenCode version. | An allowed connection: an attempt is not a successful connection, and a journey's own traffic is not tolerated. |

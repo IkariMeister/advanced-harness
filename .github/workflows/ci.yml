@@ -133,3 +133,101 @@ jobs:
 
       - name: Run sandboxed CLI smoke suite
         run: npm run smoke
+
+  # Not a required check yet (BH-034, ADR-0011). This job has never run on a pull request, so it is unverified
+  # until it does. Its outbound-call guarantee comes from the loopback-only network namespace below.
+  agent-e2e:
+    name: Agent E2E (Ubuntu / Node 24 / OpenCode 2.3.0)
+    runs-on: ubuntu-latest
+    # Worst case: 7 OpenCode runs (J1 1, J2 1, J3 and J3a 1 shared, J4a 2, J4b 2) x 150 s = 17.5 minutes, before
+    # checkout, npm ci, and the download. 20 minutes is the smallest value that covers the runs; setup adds more.
+    timeout-minutes: 20
+    env:
+      # The CI pin for OpenCode. A re-pin also changes REQUIRED_OPENCODE_VERSION in e2e/support/opencode-sandbox.ts.
+      # Procedure: docs/agent-e2e.md, "Re-pinning OpenCode".
+      OPENCODE_VERSION: '2.3.0'
+      OPENCODE_SHA256: 'fc0f81522aceeabac47693d88389efa2bc517ce74c2c38fd6967819fcc6e4d3b'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+
+      # Dependencies are installed before the network namespace is entered, so npm needs no network inside it.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download and verify pinned OpenCode
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive_name="opencode-linux-x64.tar.gz"
+          download_dir="$(mktemp -d "$RUNNER_TEMP/opencode-download.XXXXXX")"
+          curl --fail --location --silent --show-error --retry 3 \
+            "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${archive_name}" \
+            -o "$download_dir/$archive_name"
+          # The check runs before extraction. --check exits non-zero on a mismatch and fails the step.
+          (cd "$download_dir" && printf '%s  %s\n' "$OPENCODE_SHA256" "$archive_name" | sha256sum --check)
+
+          # The archive layout is not pinned, so the executable is located rather than hard-coded.
+          # Exactly one regular file named opencode must exist; a symlink or a second candidate is an error.
+          extract_dir="$(mktemp -d "$RUNNER_TEMP/opencode-${OPENCODE_VERSION}.XXXXXX")"
+          tar -xzf "$download_dir/$archive_name" -C "$extract_dir"
+          mapfile -t candidates < <(find "$extract_dir" -type f -name opencode)
+          if [ "${#candidates[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one regular file named opencode in the OpenCode release archive; found ${#candidates[@]}." >&2
+            exit 1
+          fi
+          chmod +x "${candidates[0]}"
+          # GITHUB_ENV makes the absolute path visible to later steps. The suite requires an absolute path.
+          echo "HARNESS_E2E_OPENCODE=${candidates[0]}" >> "$GITHUB_ENV"
+
+      - name: Run agent E2E suite in a loopback-only network namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Resolved here, outside the namespace, so the inner command does not depend on the root PATH.
+          npm_bin="$(command -v npm)"
+          runner_user="$(id -un)"
+          # Created here, as the runner user, so the suite can write retained journey records into it from inside
+          # the namespace. The upload step below reads the same directory.
+          record_dir="$RUNNER_TEMP/e2e-records"
+          mkdir -p "$record_dir"
+          # sudo unshare --net starts the command in a new network namespace (run as root by sudo). The
+          # namespace has only a loopback interface, and it starts down. The suite's model fixture and proxy
+          # recorder bind 127.0.0.1, so they need loopback up. Nothing else is reachable from inside.
+          sudo unshare --net -- bash -c '
+            set -euo pipefail
+            ip link set lo up
+            # sudo resets the environment. The suite gets only the variables passed explicitly through env(1),
+            # so no proxy variable or other runner setting is inherited. Passing values as positional arguments
+            # ($1..$5) avoids quoting them into the script text.
+            # The command runs as the runner user, not root. Credentials are not passed.
+            # HARNESS_E2E_NETNS=1 only makes the suite report enforcement "netns" in the journey record; the
+            # suite does not create the namespace, so this job creates it.
+            # HARNESS_E2E_RECORD_DIR ($6) is the directory the upload step reads. Records replace the sandbox root and
+            # the parent's home directory with placeholders and record no credential value (see docs/agent-e2e.md).
+            exec sudo -n -u "$1" env \
+              "HARNESS_E2E_OPENCODE=$2" HARNESS_E2E_REQUIRE=1 HARNESS_E2E_NETNS=1 \
+              "HARNESS_E2E_RECORD_DIR=$6" \
+              "PATH=$3" "HOME=$4" \
+              "$5" run e2e:opencode
+          ' bash "$runner_user" "$HARNESS_E2E_OPENCODE" "$PATH" "$HOME" "$npm_bin" "$record_dir"
+
+      # Runs even when the suite fails, so a failing run keeps its records. The records are the JSON journey records
+      # the suite writes (one per journey, and one per run for J4). The sandbox root and the parent's home directory
+      # are replaced with placeholders, no credential value is recorded, and no host is recorded beyond the recorded
+      # destinations. Other absolute paths that a tool result quotes are not rewritten.
+      - name: Upload journey records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-e2e-journey-records
+          path: ${{ runner.temp }}/e2e-records
+          if-no-files-found: warn

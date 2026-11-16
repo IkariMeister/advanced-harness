@@ -161,7 +161,7 @@ export function checkDocumentation(rootPath = process.cwd()): DocumentationDiagn
         const name = scriptName(m[1]!);
         if (!scripts.has(name)) report(index, `Unknown npm run script: ${name}`);
       }
-      for (const m of line.matchAll(/`((?:docs|agents|commands|skills|src|test|scripts|smoke|\.github)\/[^`\s]+)`/g)) {
+      for (const m of line.matchAll(/`((?:docs|agents|commands|skills|src|test|scripts|smoke|e2e|\.github)\/[^`\s]+)`/g)) {
         const path = repositoryPath(m[1]!);
         if (path !== undefined && !existsRepoPath(root, path)) report(index, `Repository-relative path does not exist: ${path}`);
       }
