@@ -5,6 +5,7 @@ import { planUninstall } from './installation-receipt.ts';
 import { applyManagedFilePlan, planV2Restore, prepareManagedFilePlan } from './receipt-lineage.ts';
 import type { HostId } from './host-registry.ts';
 import { finishGitExclude, previewGitExclude, type GitExcludeOwner } from './git-exclude.ts';
+import { finishCanonicalHook, previewCanonicalHookRemoval, type CanonicalHookOwner } from './canonical-git-hook.ts';
 
 export async function runUninstallFlow(input: {
   receipt: AnyReceipt;
@@ -41,6 +42,7 @@ export async function runUninstallFlow(input: {
   for (const action of [...plan.actions, ...(input.hostStep?.actions ?? [])]) input.output(`  ${action}`);
   const excludeOwner = (['opencode', 'claude-code', 'antigravity'] as const).find(owner => owner === (input.host ?? 'opencode')) as GitExcludeOwner | undefined;
   const exclude = excludeOwner ? previewGitExclude(input.excludeRoot, excludeOwner, input.output, { remove: true }) : undefined;
+  const canonicalHook = excludeOwner ? previewCanonicalHookRemoval(input.excludeRoot, excludeOwner as CanonicalHookOwner, input.output) : undefined;
   if ((await input.confirm('Type uninstall to continue: ')).trim() !== 'uninstall') {
     input.output('Cancelled; no configuration writes made.');
     return 0;
@@ -94,6 +96,7 @@ export async function runUninstallFlow(input: {
     }
   }
   finishGitExclude(exclude, input.output, input.error);
+  finishCanonicalHook(canonicalHook, input.output, input.error);
   return 0;
 }
 

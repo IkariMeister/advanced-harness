@@ -260,6 +260,14 @@ Project-scope `harness:setup` and `harness:install` (OpenCode, Claude Code, Anti
 
 Because the block excludes `.harness/`, a tracked policy file under `.harness/` (for example `.harness/preflight.json`) needs `git add -f` when you first commit it.
 
+## Opt-in canonical-checkout Git hook
+
+Project-scope `harness:install` and `harness:update` (OpenCode, Claude Code, Antigravity) offer an opt-in local Git hook that reinforces [ADR-004](adr/0004-canonical-checkout-remote-updates-only.md) in the canonical checkout. Consent is asked before previewing any local Git config change (`core.hooksPath`), and nothing is written until the final command confirmation (`install`, `update`, or `yes`); cancelling leaves no writes, config changes, or backups.
+
+- **How it works:** Hook scripts (`pre-commit`, `pre-merge-commit`, `pre-rebase`, `post-checkout`) and `.state.json` live under `<git-common-dir>/advanced-harness-hooks`, and local `core.hooksPath` is set to that directory's absolute path so it applies across all worktrees.
+- **Canonical vs. task worktrees:** Each hook compares `git rev-parse --git-dir` and `git rev-parse --git-common-dir`. In the canonical checkout (where they match), `pre-commit` blocks commits, `pre-merge-commit` blocks non-fast-forward merges while allowing `git merge --ff-only`, `pre-rebase` blocks rebases, and `post-checkout` warns on branch switches (Git's `post-checkout` cannot abort a completed switch). In linked task worktrees, all operations are allowed.
+- **Existing hooks and uninstall:** Any pre-existing local `core.hooksPath` (or `.git/hooks/*`) is chained before the canonical-checkout check. Project-scope `harness:uninstall` releases the host's owner and, when the last owner leaves, removes the hook directory and restores or unsets local `core.hooksPath` (unless it was changed by the user after install).
+
 ## What is installed and preserved
 
 The selected config receives inline V2 `agents` definitions: description, primary/subagent mode, selected model, role permissions, and the native conversational system prompt. Inline definitions avoid the historical `agent/` versus `agents/` file-layout discrepancy. No harness plugin, host, IPC service, workflow database, or Markdown agent copies are installed.

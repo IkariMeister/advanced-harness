@@ -7,6 +7,7 @@ import type { HarnessVersionStamp } from './receipt-lineage.ts';
 import { formatVersionStamp } from './harness-version.ts';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
+import { finishCanonicalHook, promptCanonicalHook } from './canonical-git-hook.ts';
 import {
   createSuccessorReceipt,
   discoverReceiptChain,
@@ -324,8 +325,9 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   const configChanged = targetFinal !== (targetInitial ?? '');
   // A user-level install has no project whose Git exclude could hold harness scratch state.
   const exclude = scope === 'project' ? previewGitExclude(project, 'claude-code', output) : undefined;
+  const canonicalHook = scope === 'project' ? await promptCanonicalHook(project, 'claude-code', ask, output) : undefined;
   const filesChanged = selectedFilesToWrite.length > 0 || configChanged || selectedSkills.size > 0;
-  if (!filesChanged && exclude?.status !== 'change') {
+  if (!filesChanged && exclude?.status !== 'change' && canonicalHook?.status !== 'change') {
     output('No selected file needs changes; no files, backups, or receipts were modified.');
     return 0;
   }
@@ -353,6 +355,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   if (!filesChanged) {
     output('Harness files already match; no files, backups, or receipts were modified.');
     finishGitExclude(exclude, output, error);
+    finishCanonicalHook(canonicalHook, output, error);
     return 0;
   }
 
@@ -426,6 +429,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   }
   finalizeSuccessor(pending, targetFinal);
   finishGitExclude(exclude, output, error);
+  finishCanonicalHook(canonicalHook, output, error);
 
   output('\nClaude Code harness deployment complete (runtime not verified).');
   if (selectedSkills.size) output('Reusable procedure skills deployed.');

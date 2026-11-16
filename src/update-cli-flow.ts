@@ -44,6 +44,7 @@ import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeMod
 import { globalDefaultsNotice, lookupGlobalDefaults, runSharedLocationStep } from './project-setup.ts';
 import { checkAntigravityConfigMerge } from './antigravity-adapter.ts';
 import { canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims } from './procedure-deployment.ts';
+import { finishCanonicalHook, promptCanonicalHook } from './canonical-git-hook.ts';
 
 const canonicalManagedPath = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 
@@ -496,6 +497,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   output(`  Configuration file: ${target}`);
   output(`  Private backup will be created under: ${backupParent}`);
   output(`  Recovery: If update fails or is rejected, restore via existing receipt restore chain.`);
+  const canonicalHook = await promptCanonicalHook(project, 'opencode', ask, output, { updateOnly: true });
 
   const confirm = await ask('Type update to apply these changes', 'cancel');
   if (confirm.trim() !== 'update') {
@@ -602,6 +604,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     output(`Backup created: ${backup}`);
   }
   output(`Successor receipt finalized at: ${receiptPath}`);
+  finishCanonicalHook(canonicalHook, output, errorOutput);
 
   // Runtime diagnostic verification
   const directory = project ?? cwd;

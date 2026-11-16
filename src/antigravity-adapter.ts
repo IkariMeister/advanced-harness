@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
+import { finishCanonicalHook, promptCanonicalHook } from './canonical-git-hook.ts';
 import {
   createSuccessorReceipt,
   discoverReceiptChain,
@@ -480,6 +481,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   else output('  None (preferences already match).');
 
   const exclude = previewGitExclude(scope === 'project' ? project : undefined, 'antigravity', output);
+  const canonicalHook = scope === 'project' ? await promptCanonicalHook(project, 'antigravity', ask, output) : undefined;
   if (options.harnessVersion) output(`Harness version: ${formatVersionStamp(options.harnessVersion)}`);
   // Enter does not apply a default here: only an explicit yes writes files.
   output('');
@@ -537,6 +539,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   if (!hasWrites && !configChanged) {
     output('Configuration and artifacts already match; no files, backups, or receipts were modified.');
     finishGitExclude(exclude, output, error);
+    finishCanonicalHook(canonicalHook, output, error);
     return 0;
   }
 
@@ -588,6 +591,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
 
   finalizeSuccessor(pending, targetFinal);
   finishGitExclude(exclude, output, error);
+  finishCanonicalHook(canonicalHook, output, error);
 
   output('\nAntigravity harness deployment complete.');
   if (selectedSkills.size) output('• Reusable procedure skills deployed.');
