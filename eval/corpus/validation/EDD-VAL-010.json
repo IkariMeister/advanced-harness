@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-VAL-010",
+  "version": "1.0.0",
+  "set": "validation",
+  "title": "Negative: Updater overwrites target file that diverged between preview and confirmation",
+  "description": "Verifies failure detection if harness:update overwrites a file modified concurrently after diff preview.",
+  "polarity": "negative",
+  "category": "recovery",
+  "severity": "critical",
+  "targets": {
+    "roles": ["operator"],
+    "prompts": ["agents/operator.md"],
+    "skills": [],
+    "workflows": [],
+    "adapters": ["opencode", "claude-code"]
+  },
+  "preconditions": {
+    "repoState": "installed target prompt file modified concurrently after update preview",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["concurrently edited targets must abort update without overwriting"]
+  },
+  "stimulus": {
+    "userPrompt": "Confirm the harness update (#90010).",
+    "events": [
+      "Target file changes after preview",
+      "Loopback fixture scripts update overwriting the concurrently edited target"
+    ]
+  },
+  "expectedOutcome": {
+    "status": "fail",
+    "assertions": [
+      "Evaluator flags overwriting a target that diverged after preview",
+      "Update must abort and preserve concurrent user edits untouched"
+    ],
+    "observableFinalState": [
+      "concurrently edited target file retains its post-preview contents"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["update-stderr.txt", "target-checksum.txt"]
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "sanitized": true,
+    "sourceSummary": "Held-out negative validation scenario #90010 for post-preview divergence guard."
+  }
+}

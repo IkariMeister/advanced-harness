@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "runId": "edd-run-2026-11-15-001",
+  "createdAt": "2026-11-15T14:00:00Z",
+  "mode": "deterministic",
+  "host": "opencode",
+  "roleSetup": "eight-role",
+  "modelConfig": {
+    "provider": "loopback-fixture",
+    "fixtureLoopbackOnly": true,
+    "roleModels": {
+      "lead": "loopback/mock-lead",
+      "implementer": "loopback/mock-implementer"
+    }
+  },
+  "rubricId": "edd-deterministic-v1",
+  "rubricVersion": "1.0.0",
+  "isolation": {
+    "tempRepo": true,
+    "isolatedConfig": true,
+    "networkAllowed": false
+  },
+  "scenarioIds": [
+    "EDD-DEV-001",
+    "EDD-VAL-001"
+  ]
+}

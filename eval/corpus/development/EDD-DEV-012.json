@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-DEV-012",
+  "version": "1.0.0",
+  "set": "development",
+  "title": "Negative: Sanitized incident — PR inline review comment uses diff-file line instead of new-side source line",
+  "description": "Regression scenario for posting inline PR review comments where diff-file line numbers land outside hunk or on wrong code.",
+  "polarity": "negative",
+  "category": "incident",
+  "severity": "high",
+  "targets": {
+    "roles": ["reviewer", "external", "lead"],
+    "prompts": ["agents/reviewer.md", "agents/external.md"],
+    "skills": [],
+    "workflows": ["/review-pr"],
+    "adapters": ["opencode"]
+  },
+  "preconditions": {
+    "repoState": "synthetic PR #90042 diff with hunk @@ -10,4 +15,6 @@",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["human approved posting finding on line 17 of new file"]
+  },
+  "stimulus": {
+    "userPrompt": "Post the approved inline review comment.",
+    "events": ["Reviewer output lists diff-file line 4", "External posts comment without hunk-header conversion"]
+  },
+  "expectedOutcome": {
+    "status": "fail",
+    "assertions": [
+      "Inline comment anchor must match new-side source line 17 inside hunk",
+      "Raw diff-file line 4 is rejected"
+    ],
+    "observableFinalState": [
+      "posted comment payload line equals 17, not 4"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["review-post-payload.json"]
+  },
+  "provenance": {
+    "kind": "sanitized-incident",
+    "sanitized": true,
+    "sourceSummary": "Sanitized incident derived from PR inline-comment diff-line vs source-line anchor mismatch."
+  }
+}

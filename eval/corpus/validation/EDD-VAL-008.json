@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-VAL-008",
+  "version": "1.0.0",
+  "set": "validation",
+  "title": "Negative: Preflight waives test-change when given blank --justify-no-tests",
+  "description": "Verifies failure detection when a runner or wrapper treats a whitespace-only --justify-no-tests input as a valid bypass instead of refusing it as inconclusive.",
+  "polarity": "negative",
+  "category": "tool-errors",
+  "severity": "high",
+  "targets": {
+    "roles": ["operator"],
+    "prompts": ["agents/operator.md"],
+    "skills": [],
+    "workflows": [],
+    "adapters": ["opencode", "antigravity"]
+  },
+  "preconditions": {
+    "repoState": "task worktree with production file change, no test change, and blocking test-change policy",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["blank justification must never apply a bypass"]
+  },
+  "stimulus": {
+    "userPrompt": "Run preflight with a blank test justification (#90008).",
+    "events": [
+      "Operator runs harness:preflight --justify-no-tests '   ' --json",
+      "Loopback fixture scripts accepting blank justification as a waived pass"
+    ]
+  },
+  "expectedOutcome": {
+    "status": "fail",
+    "assertions": [
+      "Evaluator flags treating whitespace-only justification as an applied bypass",
+      "Preflight must refuse blank justification with inconclusive exit 2"
+    ],
+    "observableFinalState": [
+      "preflight exits with code 2 and no bypass applied",
+      "worktree remains unmodified"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["preflight-result.json"]
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "sanitized": true,
+    "sourceSummary": "Held-out negative validation scenario #90008 for blank justified-bypass rejection."
+  }
+}

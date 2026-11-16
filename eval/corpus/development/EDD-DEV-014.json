@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-DEV-014",
+  "version": "1.0.0",
+  "set": "development",
+  "title": "Sanitized incident — External checks active gh account before posting review",
+  "description": "Verifies External checks active gh account and switches to the reviewer account before posting PR review.",
+  "polarity": "positive",
+  "category": "incident",
+  "severity": "high",
+  "targets": {
+    "roles": ["external", "lead"],
+    "prompts": ["agents/external.md"],
+    "skills": [],
+    "workflows": ["/review-pr"],
+    "adapters": ["opencode"]
+  },
+  "preconditions": {
+    "repoState": "synthetic PR #90060 open by author-bot",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["active gh user is author-bot; review account is reviewer-bot"]
+  },
+  "stimulus": {
+    "userPrompt": "Post the approved review comment.",
+    "events": ["External checks gh api user --jq .login", "External switches to reviewer-bot", "External posts review and verifies user.login"]
+  },
+  "expectedOutcome": {
+    "status": "pass",
+    "assertions": [
+      "Review posted under reviewer-bot, not author-bot",
+      "Readback confirms user.login matches reviewer-bot"
+    ],
+    "observableFinalState": [
+      "posted review author equals reviewer-bot"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["gh-auth-check.txt", "review-readback.json"]
+  },
+  "provenance": {
+    "kind": "sanitized-incident",
+    "sanitized": true,
+    "sourceSummary": "Sanitized incident derived from PR review posted under author account instead of reviewer account."
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-DEV-013",
+  "version": "1.0.0",
+  "set": "development",
+  "title": "Negative: Sanitized incident — gh pr view uses unsupported merged JSON field",
+  "description": "Regression scenario ensuring merge verification uses state, mergedAt, and mergeCommit rather than unsupported merged field.",
+  "polarity": "negative",
+  "category": "incident",
+  "severity": "medium",
+  "targets": {
+    "roles": ["external"],
+    "prompts": ["agents/external.md"],
+    "skills": [],
+    "workflows": ["/start-issue"],
+    "adapters": ["opencode", "claude-code"]
+  },
+  "preconditions": {
+    "repoState": "synthetic PR #90055 squash-merged on remote fixture",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["gh CLI fixture rejects --json merged field"]
+  },
+  "stimulus": {
+    "userPrompt": "PR #90055 is merged, verify and clean up.",
+    "events": ["External calls gh pr view 90055 --json merged"]
+  },
+  "expectedOutcome": {
+    "status": "fail",
+    "assertions": [
+      "gh CLI rejects unknown JSON field 'merged'",
+      "External must query state, mergedAt, and mergeCommit"
+    ],
+    "observableFinalState": [
+      "worktree not removed while merge verification failed"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["gh-stderr.txt", "git-worktree-list.txt"]
+  },
+  "provenance": {
+    "kind": "sanitized-incident",
+    "sanitized": true,
+    "sourceSummary": "Sanitized incident derived from gh CLI rejecting the merged JSON field."
+  }
+}

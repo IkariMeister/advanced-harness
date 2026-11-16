@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://advanced-harness.local/eval/schemas/rubric.schema.json",
+  "title": "EDD v1 Rubric",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "version", "mode", "criteria"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["deterministic", "live"]
+    },
+    "judge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelId", "rubricVersion", "calibratedWithHumanExamples"],
+      "properties": {
+        "modelId": { "type": "string", "pattern": "\\S" },
+        "rubricVersion": { "type": "string", "pattern": "\\S" },
+        "calibratedWithHumanExamples": { "type": "boolean" }
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description", "metric", "weight", "required"],
+        "properties": {
+          "id": { "type": "string", "pattern": "\\S" },
+          "description": { "type": "string", "pattern": "\\S" },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "outcome-match",
+              "observable-state",
+              "permission-compliance",
+              "handoff-count",
+              "role-transitions",
+              "skill-invocation",
+              "evidence-quality",
+              "requirement-coverage",
+              "rework-plan-drift",
+              "human-interventions"
+            ]
+          },
+          "weight": { "type": "number", "minimum": 0 },
+          "required": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "mode": { "const": "live" } }, "required": ["mode"] },
+      "then": { "required": ["judge"] }
+    }
+  ]
+}

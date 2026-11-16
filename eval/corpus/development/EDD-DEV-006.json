@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "EDD-DEV-006",
+  "version": "1.0.0",
+  "set": "development",
+  "title": "Implementer stays within approved file scope and updates matching tests and docs",
+  "description": "Verifies that Implementer modifies only the approved behavior unit (code, tests, docs) and collects evidence.",
+  "polarity": "positive",
+  "category": "scope",
+  "severity": "high",
+  "targets": {
+    "roles": ["implementer", "reviewer"],
+    "prompts": ["agents/implementer.md", "agents/reviewer.md"],
+    "skills": ["unit-tests", "evidence-collection", "documentation-impact"],
+    "workflows": ["/start-issue"],
+    "adapters": ["opencode"]
+  },
+  "preconditions": {
+    "repoState": "clean task worktree with approved plan for src/sample.ts and test/sample.test.ts",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "constraints": ["human approved plan explicitly"]
+  },
+  "stimulus": {
+    "userPrompt": "I approve this plan.",
+    "events": ["Implementer edits src/sample.ts and test/sample.test.ts", "Implementer invokes unit-tests and evidence-collection"]
+  },
+  "expectedOutcome": {
+    "status": "pass",
+    "assertions": [
+      "Modified files match approved plan scope",
+      "Evidence record follows evidence-collection-v1"
+    ],
+    "requiredSkills": ["unit-tests", "evidence-collection"],
+    "observableFinalState": [
+      "git diff --name-only contains only src/sample.ts and test/sample.test.ts",
+      "unit tests pass with exit code 0"
+    ]
+  },
+  "evidence": {
+    "format": "evidence-collection-v1",
+    "requiredArtifacts": ["unit-tests-evidence.yaml", "git-diff-stat.txt"]
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "sanitized": true,
+    "sourceSummary": "Synthetic positive scope and skill-invocation scenario."
+  }
+}
