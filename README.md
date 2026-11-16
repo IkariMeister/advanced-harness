@@ -14,6 +14,8 @@ The workflow specification is in [`docs/opencode-native-workflow.md`](docs/openc
 
 Architecture decisions are indexed in [`docs/adr/`](docs/adr/README.md), including the proposed [multi-methodology development architecture](docs/adr/0003-multi-methodology-development-architecture.md). Project terms (for example RDD, ODD, procedure skill, review tier) are defined in the [glossary](docs/glossary.md).
 
+The [Open Knowledge Format (OKF) v0.2 knowledge-bundle contract](docs/knowledge-bundle-contract.md) is a future documentation contract, not a populated bundle or runtime feature.
+
 Antigravity can store per-role **desired model labels** as non-enforcing preferences; see [global defaults and project context](docs/configuration.md#4-antigravity-desired-model-preferences). Labels do not change the runtime tiers (chosen separately per child role) or verify exact model assignment. The separate manual `model: inherit` procedure remains [experimental](docs/antigravity-model-inheritance-experiment.md), with exact child-model binding unverified; neither this preference feature nor the experiment satisfies issue #70 acceptance.
 
 Seven native project commands implement the human-approved task workflows in [task workflows](docs/task-workflows.md): `/start-issue`, `/review-pr`, `/address-pr-feedback`, `/report-defect`, `/assess-debt`, `/grill-me`, and `/document-agents`. Command Markdown is a prompt template, not an independently enforced approval gate. Arguments provide context, never approval. Project commands/arguments override global commands with the same names.
