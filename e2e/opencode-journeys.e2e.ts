@@ -230,8 +230,12 @@ async function execute<T>(suite: SuiteConfig, definition: JourneyDefinition, mes
     const value = check({ sandbox, run, requests: fixture.requests, headBefore });
     return { run, value };
   } finally {
-    await fixture.close();
-    sandbox?.dispose();
+    // The sandbox is removed even when the fixture fails to close.
+    try {
+      await fixture.close();
+    } finally {
+      sandbox?.dispose();
+    }
   }
 }
 
@@ -275,13 +279,13 @@ const JOURNEY_TITLES = [
 
 if (preflightFailures.length > 0) {
   // A failing preflight means no journey runs as passing.
-  test('OpenCode binary check', () => {
+  test('OpenCode E2E preflight check', () => {
     assert.fail(preflightFailures.join(' '));
   });
 } else if (resolution.status === 'skip') {
   for (const title of JOURNEY_TITLES) test(title, { skip: resolution.reason }, () => undefined);
 } else if (resolution.status === 'error') {
-  test('OpenCode binary check', () => {
+  test('OpenCode E2E preflight check', () => {
     assert.fail(resolution.reason);
   });
 } else {

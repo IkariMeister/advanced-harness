@@ -172,16 +172,17 @@ Setup: a disposable Git checkout whose project context names a `worktreeDirector
 
 The agent E2E suite (`npm run e2e:opencode`, `e2e/opencode-journeys.e2e.ts`) is separate from this smoke suite. It runs the real OpenCode 2.3.0 CLI against a loopback model fixture, and it is documented in the [agent E2E guide](agent-e2e.md). Its cases below are manual; this plan records no run. They are non-interactive (no TTY), and whoever runs them records the machine, the OpenCode version, and the output.
 
-Prerequisites for AE-02 to AE-04: Node.js 24.x, `npm ci` at the repository root, and the OpenCode 2.3.0 executable at an absolute path, given in `HARNESS_E2E_OPENCODE`. AE-01 needs only Node.js and `npm ci`.
+Prerequisites for AE-02 to AE-04: Node.js 24.x, `npm ci` at the repository root, and the OpenCode 2.3.0 executable at an absolute path, given in `HARNESS_E2E_OPENCODE`. AE-01 and AE-05 need only Node.js and `npm ci`.
 
 | ID | Case | Expected |
 | --- | --- | --- |
 | AE-01 | `npm run e2e:opencode` with `HARNESS_E2E_OPENCODE` unset | Every journey is SKIPPED with its reason; exit code 0 (a skip is not a pass) |
-| AE-02 | `npm run e2e:opencode` with `HARNESS_E2E_OPENCODE` set to the OpenCode 2.3.0 executable and `HARNESS_E2E_REQUIRE=1` | Exit code 0. Six tests: **5 pass, 1 todo, 0 fail**. J1, J2, J3a, and both J4 cases pass; J3 is reported as TODO (#261). A different count is a finding to report |
+| AE-02 | `npm run e2e:opencode` with `HARNESS_E2E_OPENCODE` set to the OpenCode 2.3.0 executable and `HARNESS_E2E_REQUIRE=1` | Exit code 0. Six tests: **5 pass, 1 todo, 0 fail**. J1, J2, J3a, and both J4 cases pass; J3 is reported as TODO (#261). Node prints the `todo` J3 test under a "failing tests" heading although the summary shows fail 0 and the exit status is 0, so the outcome to check is exit 0 and fail 0. A different count is a finding to report |
 | AE-03 | Scope a sentinel change to one journey: change the text expected by J4a's second step to another string, and run again | J4a run 1 fails on its assertion that the violation names the commit-subject sentinel (`J4a: the violation must name the commit-subject sentinel`), so the suite exits non-zero. Run 2 is never executed, and no `.run2.json` is written. With `HARNESS_E2E_RECORD_DIR` set, only `violations-fail-deterministically-case-a.run1.json` is written. It has one violation at step 1 whose `expected` names the new string and whose `received` is the shell tool result. Revert the change afterwards. J4b has no expectation to change (its only scripted step has none), so this check does not apply to it |
 | AE-04 | Run with `HARNESS_E2E_RECORD_DIR` set to an absolute directory, then inspect the retained records | `lead-reads-repository.json`: `network.unexpectedDestinations` is empty, `network.toleratedDestinations` holds at most `CONNECT models.opencode.ai:443`, and `credentialHeaders` is empty. `implementer-loads-skill-and-edits.json`: `handoffCount` is 1 and the `skillInvocations` entry has `loaded: false`. No `Authorization` value appears in any file |
+| AE-05 | `npm run e2e:opencode` with `HARNESS_E2E_REQUIRE=1` and `HARNESS_E2E_OPENCODE` unset (missing-binary path) | Exit code is non-zero. The failing test is `OpenCode E2E preflight check`, and its message names the missing binary setting (`HARNESS_E2E_REQUIRE=1 but HARNESS_E2E_OPENCODE is not set`) |
 
-The CI job that runs this suite is described under [Continuous integration](#continuous-integration). It is not a required check and has never run.
+The CI job that runs this suite is described under [Continuous integration](#continuous-integration). It is not a required check. The only recorded run is run 43974715793 on PR 262, at head `172d19e` (the pre-fix commit). It passed (6 tests: 5 pass, 1 todo), predates the current fixes, and post-fix CI is pending.
 
 ## Known gaps found by the suite
 
@@ -235,8 +236,9 @@ the job.
 
 The `agent-e2e` job in the same file runs `npm run e2e:opencode` on `ubuntu-latest` against
 the pinned OpenCode 2.3.0 release asset, after a sha256 check, inside a loopback-only
-network namespace. It is not a required check. It has never run, so its result is
-unverified until it runs on a pull request. The steps are in
+network namespace. It is not a required check. The only recorded run is run 43974715793
+on PR 262, at head `172d19e` (the pre-fix commit); it passed and predates the current
+fixes, and post-fix CI is pending. The details are in the guide. The steps are in
 [agent E2E guide](agent-e2e.md#continuous-integration).
 
 # Issue #134 project rigor setup and workflow smoke

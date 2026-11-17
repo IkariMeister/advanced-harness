@@ -51,7 +51,9 @@ export const GIT_CONFIG = '[user]\n\tname = Harness E2E Sandbox\n\temail = e2e-s
  * Denylist of inherited variables removed from the child environment. Pattern-based and case-insensitive: a name
  * that matches any pattern is removed, so this is not an allowlist and an unlisted secret name is not caught by
  * design. Covers credential shapes (secret, password, credential, key, token, PAT suffixes, and vendor prefixes),
- * OpenCode and npm state, Git configuration, launch-directory state, and HARNESS_E2E_* variables.
+ * OpenCode and npm state, every GIT_* variable (repository location, index, object store, identity, and config
+ * overrides), HTTP, HTTPS, ALL, and NO proxy variables in any letter case, the test runner's NODE_TEST_CONTEXT,
+ * the Windows HOMEDRIVE and HOMEPATH variables, launch-directory state, and HARNESS_E2E_* variables.
  * Names the child needs (PATH, SystemRoot, COMSPEC, TEMP, TMP, and the home variables set by childEnvironment)
  * match none of these patterns; the unit tests assert that.
  */
@@ -59,9 +61,11 @@ export const REMOVED_ENVIRONMENT: readonly RegExp[] = [
   // Credential shapes.
   /SECRET/i, /PASSWORD/i, /PASSWD/i, /CREDENTIAL/i, /_KEY$/i, /_TOKEN$/i, /_PAT$/i, /^NODE_AUTH_TOKEN$/i,
   /^SSH_/i, /^GH_/i, /^GITHUB_/i, /^NPM_CONFIG_/i, /^AWS_/i, /^AZURE_/i, /^GOOGLE_/i, /^ANTHROPIC_/i, /^OPENAI_/i,
-  // Provider and tool state.
-  /^OPENCODE_/i, /^GIT_CONFIG/i, /^NODE_OPTIONS$/i, /^NODE_TEST_CONTEXT$/i, /^XDG_/i,
+  // Provider, tool, and Git state. Every GIT_* name is removed; childEnvironment then sets its own Git variables.
+  /^OPENCODE_/i, /^GIT_/i, /^NODE_OPTIONS$/i, /^NODE_TEST_CONTEXT$/i, /^XDG_/i,
   /^HOMEDRIVE$/i, /^HOMEPATH$/i, /^HARNESS_E2E_/i,
+  // Proxy variables, in every letter case.
+  /^(?:HTTP|HTTPS|ALL|NO)_PROXY$/i,
   // Launch-directory and npm state. An inherited PWD made OpenCode boot in the launch directory (observed).
   /^PWD$/i, /^OLDPWD$/i, /^INIT_CWD$/i, /^npm_/i,
 ];
@@ -76,14 +80,21 @@ export function parseOpenCodeVersion(stdout: string): string | undefined {
   return VERSION_LINE.exec(stdout.trim())?.[1];
 }
 
-/** Removes absolute sandbox paths, including forward-slash and JSON-escaped forms. */
-export function scrubSandbox(text: string, root: string): string {
+/**
+ * Removes absolute sandbox paths, including forward-slash and JSON-escaped forms, replacing each with `<sandbox>`.
+ * `caseInsensitive` (pass true on Windows) also matches the root regardless of letter case. Absent: case-sensitive.
+ */
+export function scrubSandbox(text: string, root: string, caseInsensitive = false): string {
   if (root === '') return text;
   const forward = root.replaceAll('\\', '/');
   const variants = new Set([root, forward, JSON.stringify(root).slice(1, -1), JSON.stringify(forward).slice(1, -1)]);
-  let result = text;
-  for (const variant of variants) result = result.replaceAll(variant, '<sandbox>');
-  return result;
+  if (!caseInsensitive) {
+    let result = text;
+    for (const variant of variants) result = result.replaceAll(variant, '<sandbox>');
+    return result;
+  }
+  const ordered = [...variants].sort((a, b) => b.length - a.length);
+  return text.replace(new RegExp(ordered.map(escapeForPattern).join('|'), 'gi'), '<sandbox>');
 }
 
 /**
@@ -231,7 +242,8 @@ export function childEnvironment(inherited: NodeJS.ProcessEnv, layout: SandboxLa
     PWD: directory,
   };
   if (options.proxyUrl !== undefined) {
-    for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY']) env[name] = options.proxyUrl;
+    // Set after the removal above, so these are the suite's own values and never inherited ones.
+    for (const name of ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy']) env[name] = options.proxyUrl;
     env.NO_PROXY = '127.0.0.1,localhost,::1';
     env.no_proxy = '127.0.0.1,localhost,::1';
   }

@@ -267,21 +267,23 @@ test('serialisation is byte-identical for equal inputs and ends with a newline',
 });
 
 test('violation text is normalised against the sandbox root, so two runs of one failure serialise identically', () => {
-  const violation = (root: string): Violation => ({ step: 0, role: 'lead', expected: 'a file', received: `read ${root}\\project\\README.md ses_run${root.length}` });
+  // Each run has its own sandbox root and its own session identifiers. The identifiers differ between the two runs,
+  // so equal output can only come from the normalisation (ses_ numbering and the sandbox placeholder).
+  const violation = (root: string, session: string): Violation => ({ step: 0, role: 'lead', expected: 'a file', received: `read ${root}\\project\\README.md ${session}` });
   const rootA = 'C:\\Temp\\harness-e2e-a-1';
   const rootB = 'C:\\Temp\\harness-e2e-b-2';
-  const make = (root: string) => serializeJourneyRecord(buildJourneyRecord({
+  const make = (root: string, session: string) => serializeJourneyRecord(buildJourneyRecord({
     journey: 'unit-journey',
     opencodeVersion: '2.3.0',
-    requests: [chat(1, 'lead', [user('a')], { session: 'ses_stable' })],
-    violations: [{ ...violation(root), received: `read ${root}\\project\\README.md ses_stable` }],
+    requests: [chat(1, 'lead', [user('a')], { session })],
+    violations: [violation(root, session)],
     leftoverSteps: [],
     network,
     sandboxRoot: root,
   }));
-  assert.equal(make(rootA), make(rootB));
-  assert.match(make(rootA), /<sandbox>\/project\/README\.md/);
-  assert.equal(make(rootA).includes('harness-e2e'), false);
+  assert.equal(make(rootA, 'ses_aaa1'), make(rootB, 'ses_bbb2'));
+  assert.match(make(rootA, 'ses_aaa1'), /<sandbox>\/project\/README\.md ses_1/);
+  assert.equal(make(rootA, 'ses_aaa1').includes('harness-e2e'), false);
 });
 
 test('the normaliser replaces raw, forward-slash, and JSON-escaped sandbox roots and numbers identifiers by first appearance', () => {
@@ -291,6 +293,23 @@ test('the normaliser replaces raw, forward-slash, and JSON-escaped sandbox roots
   assert.equal(normalise('{"path":"C:\\\\Temp\\\\harness-e2e-x-1\\\\project"}'), '{"path":"<sandbox>/project"}');
   assert.equal(normalise('ses_zzz ses_aaa ses_zzz'), 'ses_1 ses_2 ses_1');
   assert.equal(normalise('prt_9 msg_3 prt_9'), 'prt_1 msg_1 prt_1');
+});
+
+test('with caseInsensitive the normaliser matches a sandbox root in any letter case, in raw, forward-slash, and JSON-escaped forms', () => {
+  const normalise = journeyNormaliser('C:\\Temp\\Harness-E2E-x-1', true);
+  assert.equal(normalise('at c:\\temp\\harness-e2e-x-1\\project\\README.md'), 'at <sandbox>/project/README.md');
+  assert.equal(normalise('at c:/TEMP/harness-e2e-x-1/project/notes.md'), 'at <sandbox>/project/notes.md');
+  assert.equal(normalise('{"path":"c:\\\\temp\\\\HARNESS-E2E-X-1\\\\project"}'), '{"path":"<sandbox>/project"}');
+});
+
+test('without caseInsensitive the normaliser leaves a sandbox root that differs only in letter case unchanged', () => {
+  const normalise = journeyNormaliser('C:\\Temp\\Harness-E2E-x-1');
+  const raw = 'at c:\\temp\\harness-e2e-x-1\\project\\README.md';
+  const forward = 'at c:/TEMP/harness-e2e-x-1/project/notes.md';
+  const json = '{"path":"c:\\\\temp\\\\harness-e2e-x-1\\\\project"}';
+  assert.equal(normalise(raw), raw);
+  assert.equal(normalise(forward), forward);
+  assert.equal(normalise(json), json);
 });
 
 test('the normaliser gives the same output for the same text within one record, and works without a root', () => {
@@ -392,13 +411,17 @@ test('varying repeat counts of the tolerated destination serialise to identical 
 });
 
 test('a request carrying an Authorization header is a violation; the record names the header but never its value', () => {
-  const authorised: RecordedRequest = { ...chat(1, 'lead', [user('a')]), headers: { authorization: '[redacted]' }, authorizationPresent: true };
+  // The raw header value is passed in deliberately (the fixture redacts it before recording; see loopback-model.test.ts).
+  // buildJourneyRecord must still never copy a header value into the record, so the sentinel must not appear.
+  const authorised: RecordedRequest = { ...chat(1, 'lead', [user('a')]), headers: { authorization: 'Bearer secret-value' }, authorizationPresent: true };
   const record = build([authorised]);
   assert.deepEqual(record.credentialHeaders, ['authorization']);
   assert.equal(record.outcome, 'fail');
   assert.equal(record.violations.length, 1);
   assert.match(record.violations[0]?.received ?? '', /authorization/);
-  assert.equal(serializeJourneyRecord(record).includes('secret-value'), false);
+  const serialized = serializeJourneyRecord(record);
+  assert.equal(serialized.includes('secret-value'), false);
+  assert.equal(serialized.includes('Bearer'), false);
 });
 
 test('an auxiliary request with an Authorization header, and a credential-shaped header such as X-Api-Key, are violations too', () => {
@@ -436,7 +459,7 @@ test('HARNESS_E2E_RECORD_DIR is off when unset, and an empty or relative value i
 });
 
 /** Serialises a record whose only violation has the given received text. */
-function serialiseReceived(received: string, options: { sandboxRoot?: string; homeDirectories?: readonly string[]; caseInsensitiveHomes?: boolean } = {}): string {
+function serialiseReceived(received: string, options: { sandboxRoot?: string; caseInsensitiveSandbox?: boolean; homeDirectories?: readonly string[]; caseInsensitiveHomes?: boolean } = {}): string {
   return serializeJourneyRecord(buildJourneyRecord({
     journey: 'unit-journey',
     opencodeVersion: '2.3.0',
@@ -467,6 +490,13 @@ test('a record with no home path serialises exactly as it does without home dire
   const withHomes = serialiseReceived(text, { homeDirectories: ['C:\\Users\\Alice'], caseInsensitiveHomes: true });
   assert.equal(withHomes, serialiseReceived(text));
   assert.equal(JSON.parse(withHomes).violations[0].received, text);
+});
+
+test('the record normalises a sandbox root that differs only in letter case only when caseInsensitiveSandbox is set', () => {
+  const sandboxRoot = 'C:\\Temp\\Harness-E2E-x-1';
+  const text = 'read c:\\temp\\harness-e2e-x-1\\project\\README.md';
+  assert.equal(JSON.parse(serialiseReceived(text, { sandboxRoot, caseInsensitiveSandbox: true })).violations[0].received, 'read <sandbox>/project/README.md');
+  assert.equal(JSON.parse(serialiseReceived(text, { sandboxRoot })).violations[0].received, text);
 });
 
 test('the sandbox placeholder wins for a sandbox root that lies inside the home directory', () => {

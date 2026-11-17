@@ -116,6 +116,8 @@ export interface JourneyRecordInput {
   handoffTargetKeys?: readonly string[] | undefined;
   /** Sandbox root. When given, violation text is normalised (see journeyNormaliser). */
   sandboxRoot?: string | undefined;
+  /** Match the sandbox root regardless of letter case (Windows). Absent: case-sensitive. */
+  caseInsensitiveSandbox?: boolean | undefined;
   /** Parent home directories replaced with `<home>` in every string of the record. Absent: none. */
   homeDirectories?: readonly string[] | undefined;
   /** Match home directories regardless of letter case (Windows). Absent: case-sensitive. */
@@ -183,13 +185,14 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/
  * Normaliser for recorded text. Replaces the sandbox root (raw, forward-slash, and JSON-escaped forms) with
  * `<sandbox>`, collapses separators in the sandbox-relative part to `/`, and numbers `ses_`, `prt_`, and `msg_`
  * identifiers as `ses_1`, `prt_1`, `msg_1` in order of first appearance. One normaliser per record, so the same
- * text always yields the same output for a given run.
+ * text always yields the same output for a given run. `caseInsensitive` (pass true on Windows) also matches the
+ * sandbox root regardless of letter case. Absent: case-sensitive.
  */
-export function journeyNormaliser(sandboxRoot: string | undefined): (text: string) => string {
+export function journeyNormaliser(sandboxRoot: string | undefined, caseInsensitive = false): (text: string) => string {
   const roots = sandboxRoot === undefined || sandboxRoot === ''
     ? []
     : [...new Set([sandboxRoot, sandboxRoot.replaceAll('\\', '/'), JSON.stringify(sandboxRoot).slice(1, -1)])].sort((a, b) => b.length - a.length);
-  const rootPattern = roots.length > 0 ? new RegExp(`(?:${roots.map(escapeRegExp).join('|')})([^\\s"',;]*)`, 'g') : undefined;
+  const rootPattern = roots.length > 0 ? new RegExp(`(?:${roots.map(escapeRegExp).join('|')})([^\\s"',;]*)`, caseInsensitive ? 'gi' : 'g') : undefined;
   const labels = new Map<string, Map<string, number>>();
   const label = (kind: string, raw: string): string => {
     const byKind = labels.get(kind) ?? new Map<string, number>();
@@ -371,7 +374,7 @@ export function buildJourneyRecord(input: JourneyRecordInput): JourneyRecord {
     .filter(request => request.method === 'POST' && request.path === CHAT_PATH && !request.auxiliary)
     .sort((a, b) => a.seq - b.seq);
   const label = sessionLabeller();
-  const normalise = journeyNormaliser(input.sandboxRoot);
+  const normalise = journeyNormaliser(input.sandboxRoot, input.caseInsensitiveSandbox === true);
   const sites: ToolCallSite[] = ordered.flatMap(request => request.replyToolCalls.map(call => ({ seq: request.seq, role: request.role, call })));
   // Credential headers are checked on every request, including auxiliary and rejected ones.
   const credentialHeaders = sortedUnique(input.requests.flatMap(credentialHeaderNamesOf));
@@ -556,6 +559,7 @@ export async function runJourney(sandbox: OpenCodeSandbox, fixture: LoopbackMode
     },
     skillSentinels: definition.skillSentinels,
     sandboxRoot: sandbox.root,
+    caseInsensitiveSandbox: process.platform === 'win32',
     homeDirectories: parentHomeDirectories(process.env, homedir()),
     caseInsensitiveHomes: process.platform === 'win32',
   });
@@ -576,7 +580,7 @@ export function formatJourneyFailure(result: JourneyRun): string {
   const violations = result.record.violations.length === 0
     ? '  (none)'
     : result.record.violations.map(violation => `  - step ${violation.step ?? 'none'}: expected ${violation.expected}; received ${violation.received}`).join('\n');
-  const stderrLines = scrubSandbox(result.run.stderr, result.sandboxRoot).split(/\r?\n/).filter(line => line !== '').slice(-40);
+  const stderrLines = scrubSandbox(result.run.stderr, result.sandboxRoot, process.platform === 'win32').split(/\r?\n/).filter(line => line !== '').slice(-40);
   const hosts = networkHostsIn(result.run.stderr);
   const text = [
     `journey ${result.record.journey} (OpenCode ${result.record.opencodeVersion}): outcome ${result.record.outcome}, run ${result.run.status}, exit ${String(result.run.exitCode)}`,

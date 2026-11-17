@@ -134,8 +134,10 @@ jobs:
       - name: Run sandboxed CLI smoke suite
         run: npm run smoke
 
-  # Not a required check yet (BH-034, ADR-0011). This job has never run on a pull request, so it is unverified
-  # until it does. Its outbound-call guarantee comes from the loopback-only network namespace below.
+  # Not a required check yet (BH-034, ADR-0011). The only recorded run is run 43974715793 on PR 262, at head 172d19e
+  # (the pre-fix commit): it passed (Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 1 todo) and predates the current
+  # fixes. Post-fix CI is pending. J3 is still todo (#261), and no journey yet demonstrates the edit tool. Its outbound-call
+  # guarantee comes from the loopback-only network namespace below.
   agent-e2e:
     name: Agent E2E (Ubuntu / Node 24 / OpenCode 2.3.0)
     runs-on: ubuntu-latest
@@ -205,9 +207,9 @@ jobs:
           sudo unshare --net -- bash -c '
             set -euo pipefail
             ip link set lo up
-            # sudo resets the environment. The suite gets only the variables passed explicitly through env(1),
-            # so no proxy variable or other runner setting is inherited. Passing values as positional arguments
-            # ($1..$5) avoids quoting them into the script text.
+            # sudo resets the environment to its policy defaults, and env then sets the listed variables. So no proxy
+            # variable or other runner variable is inherited beyond the sudo defaults. Passing values as positional
+            # arguments ($1..$6) avoids quoting them into the script text.
             # The command runs as the runner user, not root. Credentials are not passed.
             # HARNESS_E2E_NETNS=1 only makes the suite report enforcement "netns" in the journey record; the
             # suite does not create the namespace, so this job creates it.

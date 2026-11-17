@@ -15,7 +15,7 @@
 // fixture and never consume a scripted step. All response construction lives in the
 // "Wire format" section so it can be adjusted in one place.
 
-import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 
 export type JsonObject = Record<string, unknown>;
@@ -103,6 +103,11 @@ export interface LoopbackModel {
   /** Every request in arrival order, including the GET /v1/models and rejected requests. */
   readonly requests: RecordedRequest[];
   readonly violations: Violation[];
+  /**
+   * Test-only seam: the underlying `http.Server`, so a fixture test can stop it directly or emit an error on it.
+   * Production code must not use it; the fixture itself stops the server only through `close()`.
+   */
+  readonly server: Server;
   /** Appends steps to a role's queue. Steps are consumed in order per role. */
   enqueue(role: string, steps: readonly ScriptStep[]): void;
   /** Steps queued but never requested. Does not modify the queues. */
@@ -536,6 +541,10 @@ export function startLoopbackModel(options: LoopbackModelOptions): Promise<Loopb
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => {
       server.off('error', reject);
+      // A server error after listen is recorded as a violation (no step, as for other fixture-level violations).
+      server.on('error', error => {
+        violations.push({ step: null, role: null, expected: 'the loopback fixture server to run without error until it is closed', received: `server error: ${error.message}` });
+      });
       const address = server.address();
       if (address === null || typeof address === 'string' || address.address !== '127.0.0.1') {
         server.close();
@@ -548,13 +557,18 @@ export function startLoopbackModel(options: LoopbackModelOptions): Promise<Loopb
         port,
         requests,
         violations,
+        server,
         enqueue,
         leftoverSteps,
         discardSteps,
         close: () => {
           if (closing === undefined) {
             closing = new Promise<void>((done, fail) => {
-              server.close(error => (error ? fail(error) : done()));
+              server.close(error => {
+                // A fixture whose server is already closed is not an error: close() stays idempotent.
+                if (error !== undefined && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') fail(error);
+                else done();
+              });
               server.closeAllConnections();
               for (const socket of sockets) socket.destroy();
             });

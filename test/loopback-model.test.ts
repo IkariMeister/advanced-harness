@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { connect } from 'node:net';
 import test from 'node:test';
-import { callTool, finalText } from '../e2e/support/journey.ts';
+import { buildJourneyRecord, callTool, finalText, serializeJourneyRecord } from '../e2e/support/journey.ts';
 import { classifyRequest, formatViolations, startLoopbackModel, type LoopbackModel, type LoopbackModelOptions } from '../e2e/support/loopback-model.ts';
 
 async function open(t: { after: (fn: () => Promise<void>) => void }, options: LoopbackModelOptions): Promise<LoopbackModel> {
@@ -257,6 +257,26 @@ test('Authorization presence is recorded, its value is never stored, and the hea
   assert.equal(JSON.stringify(model.requests).includes('loopback-placeholder'), false);
 });
 
+test('a real Authorization bearer value is redacted at recording: the header name is kept, and the value appears in neither the requests nor the serialized record', async t => {
+  const model = await open(t, { journey: 'unit', roleByModel: { lead: 'lead' }, mode: 'record' });
+  await chat(model.baseURL, { model: 'lead', messages: [user('with')], tools: TOOLS }, { Authorization: 'Bearer SENTINEL-credential-7f3a' });
+  const [request] = model.requests;
+  assert.equal(request?.headers.authorization, '[redacted]');
+  assert.equal(request?.authorizationPresent, true);
+  assert.equal(JSON.stringify(model.requests).includes('SENTINEL-credential-7f3a'), false);
+  const serialized = serializeJourneyRecord(buildJourneyRecord({
+    journey: 'unit',
+    opencodeVersion: '2.3.0',
+    requests: model.requests,
+    violations: model.violations,
+    leftoverSteps: model.leftoverSteps(),
+    network: { enforcement: 'none', toleratedDestinations: [], unexpectedDestinations: [] },
+  }));
+  assert.equal(serialized.includes('SENTINEL-credential-7f3a'), false);
+  assert.equal(serialized.includes('Bearer'), false);
+  assert.deepEqual(JSON.parse(serialized).credentialHeaders, ['authorization']);
+});
+
 test('record mode records every request without violations and answers with the default reply', async t => {
   const model = await open(t, { journey: 'unit', mode: 'record', defaultReply: 'recorded', roleByModel: { lead: 'lead' } });
   const first: any = await (await chat(model.baseURL, { model: 'lead', messages: [user('one')], tools: TOOLS })).json();
@@ -383,10 +403,38 @@ test('the session header value is recorded raw, and a request without the header
 test('close resolves while a client connection is still open', { timeout: 5000 }, async t => {
   const model = await open(t, { journey: 'unit', roleByModel: { lead: 'lead' } });
   const socket = connect(model.port, '127.0.0.1');
+  t.after(() => { socket.destroy(); });
   socket.on('error', () => undefined);
   await once(socket, 'connect');
   // Headers promise a body that never completes, so the server keeps this connection open.
   socket.write('POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{"model":');
   await model.close();
-  socket.destroy();
+});
+
+test('close() is idempotent', { timeout: 5000 }, async t => {
+  const model = await open(t, { journey: 'unit', roleByModel: { lead: 'lead' } });
+  await model.close();
+  await model.close();
+  assert.deepEqual(model.violations, []);
+});
+
+test('a server error after listen is recorded as a violation and does not crash', async t => {
+  const model = await open(t, { journey: 'unit', roleByModel: { lead: 'lead' } });
+  // Emitting 'error' with no listener would throw here; the fixture's post-listen listener must absorb it.
+  model.server.emit('error', new Error('loopback-test-boom'));
+  assert.equal(model.violations.length, 1);
+  const violation = model.violations[0]!;
+  assert.equal(violation.step, null);
+  assert.equal(violation.role, null);
+  assert.match(violation.received, /server error: .*loopback-test-boom/);
+});
+
+test('close() resolves when the server was already stopped by someone else', { timeout: 5000 }, async t => {
+  const model = await open(t, { journey: 'unit', roleByModel: { lead: 'lead' } });
+  // Stop the underlying server directly, bypassing the fixture, so close() later meets ERR_SERVER_NOT_RUNNING.
+  await new Promise<void>((done, fail) => {
+    model.server.close(error => (error ? fail(error) : done()));
+  });
+  await model.close();
+  assert.deepEqual(model.violations, []);
 });

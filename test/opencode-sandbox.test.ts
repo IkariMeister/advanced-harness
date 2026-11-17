@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -146,18 +146,76 @@ test('the child environment removes credential, OpenCode, npm, and launch-direct
   assert.equal(env.NO_PROXY, undefined);
 });
 
-test('the child environment sets the proxy variables and loopback NO_PROXY only when a proxy URL is given', () => {
+const SUITE_PROXY_NAMES = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy'];
+const SUITE_NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
+const AMBIENT_PROXY_NAMES = [...SUITE_PROXY_NAMES, ...SUITE_NO_PROXY_NAMES];
+
+test('the child environment sets the full proxy set and loopback NO_PROXY only when a proxy URL is given', () => {
   const layout = sandboxLayout(join(tmpdir(), 'harness-e2e-proxy-unit'));
   const env = childEnvironment({ PATH: '/usr/bin' }, layout, layout.project, { proxyUrl: 'http://127.0.0.1:4000' });
-  for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY']) assert.equal(env[name], 'http://127.0.0.1:4000', name);
-  assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1');
-  assert.equal(env.no_proxy, '127.0.0.1,localhost,::1');
+  for (const name of SUITE_PROXY_NAMES) assert.equal(env[name], 'http://127.0.0.1:4000', name);
+  for (const name of SUITE_NO_PROXY_NAMES) assert.equal(env[name], '127.0.0.1,localhost,::1', name);
+  assert.deepEqual(
+    Object.keys(env).filter(name => /_proxy$/i.test(name)).sort(),
+    [...AMBIENT_PROXY_NAMES].sort(),
+    'exactly the eight proxy names: HTTP, HTTPS, ALL, and NO in both letter cases',
+  );
+  const withoutProxy = childEnvironment({ PATH: '/usr/bin' }, layout, layout.project);
+  assert.deepEqual(Object.keys(withoutProxy).filter(name => /_proxy$/i.test(name)), []);
+});
+
+test('inherited proxy variables in any letter case are removed when no proxy URL is given, and replaced when one is', () => {
+  const layout = sandboxLayout(join(tmpdir(), 'harness-e2e-ambient-proxy-unit'));
+  const inherited: NodeJS.ProcessEnv = {
+    PATH: '/usr/bin',
+    ...Object.fromEntries(AMBIENT_PROXY_NAMES.map(name => [name, 'http://ambient.example:3128'])),
+  };
+  const bare = childEnvironment(inherited, layout, layout.project);
+  for (const name of AMBIENT_PROXY_NAMES) assert.equal(bare[name], undefined, `${name} must be removed`);
+  assert.equal(bare.PATH, '/usr/bin');
+  for (const name of AMBIENT_PROXY_NAMES) assert.equal(isRemovedEnvironmentName(name), true, `${name} must match the denylist`);
+
+  const withProxy = childEnvironment(inherited, layout, layout.project, { proxyUrl: 'http://127.0.0.1:4000' });
+  for (const name of SUITE_PROXY_NAMES) assert.equal(withProxy[name], 'http://127.0.0.1:4000', `${name} must be the suite's value`);
+  for (const name of SUITE_NO_PROXY_NAMES) assert.equal(withProxy[name], '127.0.0.1,localhost,::1', `${name} must be the suite's value`);
+});
+
+test('every inherited GIT_* variable is removed, and the sandbox Git variables survive conflicting inherited values', () => {
+  const layout = sandboxLayout(join(tmpdir(), 'harness-e2e-git-unit'));
+  const gitNames = [
+    'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_COMMON_DIR', 'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL',
+    'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_CONFIG_COUNT',
+  ];
+  const inherited: NodeJS.ProcessEnv = {
+    PATH: '/usr/bin',
+    ...Object.fromEntries(gitNames.map(name => [name, '/elsewhere'])),
+    GIT_CONFIG_GLOBAL: '/real/gitconfig',
+    GIT_CONFIG_NOSYSTEM: '0',
+    GIT_TERMINAL_PROMPT: '1',
+  };
+  const env = childEnvironment(inherited, layout, layout.project);
+  for (const name of gitNames) {
+    assert.equal(env[name], undefined, `${name} must be removed`);
+    assert.equal(isRemovedEnvironmentName(name), true, `${name} must match the denylist`);
+  }
+  assert.equal(env.GIT_CONFIG_GLOBAL, layout.gitConfig);
+  assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.equal(env.GIT_TERMINAL_PROMPT, '0');
 });
 
 test('scrubSandbox replaces the raw, forward-slash, and JSON-escaped sandbox roots', () => {
   const text = 'a C:\\Temp\\root\\project b C:/Temp/root/project "C:\\\\Temp\\\\root"';
   assert.equal(scrubSandbox(text, 'C:\\Temp\\root'), 'a <sandbox>\\project b <sandbox>/project "<sandbox>"');
   assert.equal(scrubSandbox('unchanged', ''), 'unchanged');
+});
+
+test('scrubSandbox matches the root regardless of letter case only when case-insensitive matching is asked for', () => {
+  const root = 'C:\\Temp\\Harness-Root';
+  const text = 'a c:\\temp\\harness-root\\project b C:/TEMP/harness-root/project "c:\\\\temp\\\\HARNESS-ROOT\\\\project"';
+  assert.equal(scrubSandbox(text, root, true), 'a <sandbox>\\project b <sandbox>/project "<sandbox>\\\\project"');
+  assert.equal(scrubSandbox(text, root, false), text);
+  assert.equal(scrubSandbox(text, root), text);
 });
 
 test('networkHostsIn lists distinct non-loopback host names from URLs, lower-cased and sorted', () => {
@@ -177,24 +235,21 @@ test('parseProxyRequestLine keeps only the method and host, and treats anything 
   assert.equal(isLoopbackHost('example.com:443'), false);
 });
 
-test('the proxy recorder counts a connection, records only the request line, and never stores headers', async () => {
+test('the proxy recorder counts a connection, records only the request line, and never stores headers', async t => {
   const recorder = await startProxyRecorder();
+  t.after(() => recorder.close());
   const socket = connect(Number(new URL(recorder.url).port), '127.0.0.1');
+  t.after(() => { socket.destroy(); });
   socket.on('error', () => undefined);
-  try {
-    await new Promise<void>(done => socket.once('connect', () => done()));
-    const closed = new Promise<void>(done => socket.once('close', () => done()));
-    socket.write('CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nProxy-Authorization: Basic c2VjcmV0\r\n\r\n');
-    await closed;
-    const attempts = recorder.attempts();
-    assert.deepEqual(attempts, [{ method: 'CONNECT', host: 'example.com:443' }]);
-    const serialised = JSON.stringify(attempts);
-    assert.equal(serialised.includes('c2VjcmV0'), false);
-    assert.equal(serialised.includes('Proxy-Authorization'), false);
-  } finally {
-    socket.destroy();
-    await recorder.close();
-  }
+  await new Promise<void>(done => socket.once('connect', () => done()));
+  const closed = new Promise<void>(done => socket.once('close', () => done()));
+  socket.write('CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nProxy-Authorization: Basic c2VjcmV0\r\n\r\n');
+  await closed;
+  const attempts = recorder.attempts();
+  assert.deepEqual(attempts, [{ method: 'CONNECT', host: 'example.com:443' }]);
+  const serialised = JSON.stringify(attempts);
+  assert.equal(serialised.includes('c2VjcmV0'), false);
+  assert.equal(serialised.includes('Proxy-Authorization'), false);
 });
 
 test('creating a sandbox installs the harness with the installer functions and commits it cleanly', async t => {
@@ -233,12 +288,49 @@ test('creating a sandbox installs the harness with the installer functions and c
   assert.deepEqual(globalConfig, { update: 'disable' });
 });
 
-test('sandbox names must be lower-case words separated by hyphens, and dispose removes the sandbox', () => {
+test('sandbox names must be lower-case words separated by hyphens, and dispose removes the sandbox', t => {
   assert.throws(() => createOpenCodeSandbox('Bad Name', { baseURL: 'http://127.0.0.1:9/v1' }), /lower-case words/);
   const sandbox = createOpenCodeSandbox('unit-dispose', { baseURL: 'http://127.0.0.1:9/v1' });
+  // Safety net only: the assertions below dispose the sandbox themselves, and a second dispose is a no-op.
+  t.after(() => sandbox.dispose());
   assert.equal(existsSync(sandbox.root), true);
   sandbox.dispose();
   assert.equal(existsSync(sandbox.root), false);
+});
+
+test('a sandbox created with inherited GIT_DIR, GIT_WORK_TREE, and identity variables still commits into the sandbox repository', t => {
+  const decoy = makeTempRoot('harness-e2e-git-decoy-');
+  t.after(() => rmSync(decoy, { recursive: true, force: true, maxRetries: 5 }));
+  const decoyGit = join(decoy, '.git');
+  const init = spawnSync('git', ['init', '--quiet', decoy], { encoding: 'utf8' });
+  assert.equal(init.status, 0, init.stderr);
+
+  // Conflicting values are set on the real process environment, which createOpenCodeSandbox reads through childEnvironment.
+  const overrides: Record<string, string> = {
+    GIT_DIR: decoyGit,
+    GIT_WORK_TREE: decoy,
+    GIT_INDEX_FILE: join(decoyGit, 'index'),
+    GIT_OBJECT_DIRECTORY: join(decoyGit, 'objects'),
+    GIT_CONFIG_GLOBAL: join(decoy, 'inherited-gitconfig'),
+    GIT_AUTHOR_EMAIL: 'inherited@example.invalid',
+  };
+  const saved: Record<string, string | undefined> = {};
+  for (const name of Object.keys(overrides)) saved[name] = process.env[name];
+  t.after(() => {
+    for (const name of Object.keys(overrides)) {
+      const value = saved[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  Object.assign(process.env, overrides);
+
+  const sandbox = createOpenCodeSandbox('unit-git-env', { baseURL: 'http://127.0.0.1:9/v1' });
+  t.after(() => sandbox.dispose());
+  assert.deepEqual(sandbox.git(['log', '--format=%s']).trim().split('\n'), ['e2e-harness-install', 'e2e-sentinel-commit']);
+  assert.equal(sandbox.git(['log', '-1', '--format=%ae']).trim(), 'e2e-sandbox@sandbox.invalid');
+  const decoyHead = spawnSync('git', ['--git-dir', decoyGit, 'rev-parse', '--verify', '--quiet', 'HEAD'], { encoding: 'utf8' });
+  assert.notEqual(decoyHead.status, 0, 'the inherited repository must receive no commit');
 });
 
 test('the only tolerated startup destination is CONNECT models.opencode.ai:443, matched on method, host, and port', () => {
@@ -388,28 +480,25 @@ test('a child that outlives its overall timeout is terminated and the result sta
   assert.ok(result.durationMs < 60_000, `the run must end at the timeout, not at the child's own sleep (took ${result.durationMs} ms)`);
 });
 
-test('an unrelated sleeping node process with the same image name survives the termination', async () => {
+test('an unrelated sleeping node process with the same image name survives the termination', async t => {
   const bystander = sleepingNode();
   const pid = bystander.pid;
+  t.after(() => { if (pid !== undefined) killOwnPid(pid); });
   assert.notEqual(pid, undefined, 'the bystander must start');
-  try {
-    const result = await runChild(process.execPath, ['-e', SLEEP_SCRIPT], {
-      cwd: tmpdir(),
-      env: { ...process.env },
-      timeoutMs: SHORT_TIMEOUT_MS,
-      idleTimeoutMs: IDLE_TIMEOUT_MS,
-    });
-    assert.equal(result.status, 'timed-out');
-    assert.equal(bystander.exitCode, null, 'the bystander must not have exited');
-    assert.equal(bystander.signalCode, null, 'the bystander must not have been signalled');
-    assert.equal(alive(pid ?? -1), true, 'the unrelated process must still be alive');
-  } finally {
-    if (pid !== undefined) killOwnPid(pid);
-  }
+  const result = await runChild(process.execPath, ['-e', SLEEP_SCRIPT], {
+    cwd: tmpdir(),
+    env: { ...process.env },
+    timeoutMs: SHORT_TIMEOUT_MS,
+    idleTimeoutMs: IDLE_TIMEOUT_MS,
+  });
+  assert.equal(result.status, 'timed-out');
+  assert.equal(bystander.exitCode, null, 'the bystander must not have exited');
+  assert.equal(bystander.signalCode, null, 'the bystander must not have been signalled');
+  assert.equal(alive(pid ?? -1), true, 'the unrelated process must still be alive');
 });
 
 test('a grandchild of the timed-out child is also gone (Windows: taskkill /T by PID)', {
-  skip: process.platform === 'win32' ? false : 'POSIX: a killed grandchild may remain as a zombie until init reaps it, so kill(pid, 0) cannot tell it from a live process; the process-group kill is not asserted here',
+  skip: process.platform === 'win32' ? false : 'Windows only; the POSIX process-group variant follows',
   timeout: 60_000,
 }, async t => {
   const root = makeTempRoot('harness-e2e-grandchild-');
@@ -435,6 +524,70 @@ test('a grandchild of the timed-out child is also gone (Windows: taskkill /T by 
   const deadline = Date.now() + 5000;
   while (alive(grandchild) && Date.now() < deadline) await new Promise(done => setTimeout(done, 100));
   assert.equal(alive(grandchild), false, 'the grandchild must be gone after the child was terminated');
+});
+
+/**
+ * POSIX: true when a PID is gone or is a zombie (killed but not yet reaped by its parent or init). kill(pid, 0)
+ * succeeds for a zombie, so the state is read from /proc/<pid>/stat where /proc exists, and from `ps` elsewhere.
+ * An unknown state (ps cannot run) is reported as not gone, so the test fails rather than passes by accident.
+ */
+function posixProcessGone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true;
+  }
+  if (existsSync('/proc')) {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      // Format: "pid (comm) state ...". The command name may hold spaces or parentheses, so read after the last ')'.
+      const state = stat.charAt(stat.lastIndexOf(')') + 2);
+      return state === 'Z' || state === 'X';
+    } catch {
+      // The file vanished between the checks: the process has been reaped.
+      return true;
+    }
+  }
+  const ps = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+  if (ps.error !== undefined) return false;
+  const state = ps.stdout.trim();
+  return state === '' || state.startsWith('Z');
+}
+
+test('POSIX: a grandchild of the timed-out child is also gone after the process group is killed', {
+  skip: process.platform === 'win32' ? 'POSIX only; the Windows variant is above' : false,
+  timeout: 60_000,
+}, async t => {
+  const root = makeTempRoot('harness-e2e-grandchild-posix-');
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5 }));
+  const pidFile = join(root, 'grandchild.pid');
+  // The child is spawned with detached: true (its own process group), and the grandchild inherits that group.
+  const script = [
+    "const { spawn } = require('node:child_process');",
+    "const { writeFileSync } = require('node:fs');",
+    `const grandchild = spawn(process.execPath, ['-e', ${JSON.stringify(SLEEP_SCRIPT)}], { stdio: 'ignore' });`,
+    'writeFileSync(process.argv[1], String(grandchild.pid));',
+    'setTimeout(() => {}, 60000);',
+  ].join('\n');
+  const runTimeoutMs = 4000;
+  const result = await runChild(process.execPath, ['-e', script, pidFile], {
+    cwd: root,
+    env: { ...process.env },
+    timeoutMs: runTimeoutMs,
+    idleTimeoutMs: IDLE_TIMEOUT_MS,
+  });
+  assert.equal(result.status, 'timed-out');
+  // A missing or empty PID file gets a named failure instead of an opaque ENOENT from readFileSync.
+  const pidText = existsSync(pidFile) ? readFileSync(pidFile, 'utf8') : '';
+  if (pidText.trim() === '') {
+    assert.fail(`the child did not write the grandchild PID file ${pidFile} within the ${runTimeoutMs} ms timeout (status ${result.status}); stderr: ${result.stderr.slice(0, 200)}`);
+  }
+  const grandchild = Number(pidText);
+  assert.ok(Number.isInteger(grandchild) && grandchild > 0, `the child must have written its grandchild PID; stderr: ${result.stderr.slice(0, 200)}`);
+  t.after(() => killOwnPid(grandchild));
+  const deadline = Date.now() + 5000;
+  while (!posixProcessGone(grandchild) && Date.now() < deadline) await new Promise(done => setTimeout(done, 100));
+  assert.equal(posixProcessGone(grandchild), true, 'the grandchild must be gone (dead or a reaped zombie) after the process group was killed');
 });
 
 test('classification keeps sorted, de-duplicated destination lists and no counts', () => {

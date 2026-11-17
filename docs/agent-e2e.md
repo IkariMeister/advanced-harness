@@ -93,7 +93,7 @@ Every journey runs in a sandbox under the OS temporary directory.
 | OpenCode database | `OPENCODE_DB` is a file in the sandbox |
 | Git | `GIT_CONFIG_GLOBAL` is a sandbox file, `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0` |
 | Launch directory | `PWD` is the scratch project. OpenCode 2.3.0 boots in the directory named by `PWD`, not the child's working directory, so an inherited `PWD`, `OLDPWD`, or `INIT_CWD` is removed |
-| Inherited variables | Removed by a **pattern-based denylist**, not an allowlist, matched case-insensitively. Removed: names containing `SECRET`, `PASSWORD`, `PASSWD`, or `CREDENTIAL`; names ending in `_KEY`, `_TOKEN`, or `_PAT`; names starting with `SSH_`, `GH_`, `GITHUB_`, `NPM_CONFIG_`, `AWS_`, `AZURE_`, `GOOGLE_`, `ANTHROPIC_`, or `OPENAI_`; `NODE_AUTH_TOKEN`; `OPENCODE_*`, `GIT_CONFIG*`, `NODE_OPTIONS`, `npm_*`, `XDG_*`, `HARNESS_E2E_*`, and the launch-directory names above. A secret whose name matches none of these is **not** removed. `PATH`, `SystemRoot`, `COMSPEC`, `TEMP`, and `TMP` are kept |
+| Inherited variables | Removed by a **pattern-based denylist**, not an allowlist, matched case-insensitively. Removed: names containing `SECRET`, `PASSWORD`, `PASSWD`, or `CREDENTIAL`; names ending in `_KEY`, `_TOKEN`, or `_PAT`; `NODE_AUTH_TOKEN`; names starting with `SSH_`, `GH_`, `GITHUB_`, `NPM_CONFIG_`, `AWS_`, `AZURE_`, `GOOGLE_`, `ANTHROPIC_`, `OPENAI_`, `OPENCODE_`, `GIT_`, `XDG_`, `HARNESS_E2E_`, or `npm_`; `NODE_OPTIONS`, `NODE_TEST_CONTEXT`, `HOMEDRIVE`, and `HOMEPATH`; `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` in any letter case; and the launch-directory names above (`PWD`, `OLDPWD`, `INIT_CWD`). Every `GIT_*` variable is removed, including `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`, and the author and committer identity variables; the sandbox then sets its own `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`, and `GIT_TERMINAL_PROMPT`. A secret whose name matches none of these is **not** removed. `PATH`, `SystemRoot`, `COMSPEC`, `TEMP`, and `TMP` are kept |
 | Server | Every run uses `--standalone` (a private server, never the background service). The suite refuses to spawn without `--standalone` or with `--server` |
 
 The scratch project is a Git repository with `README.md` and `notes.md`, each
@@ -143,13 +143,16 @@ attempts one.
   every interface address internal) and does not merely declare it. The check
   cannot tell a network namespace from a host with no active non-loopback
   interface; the CI job creates the namespace, and the suite only checks that no
-  non-loopback address is present. The CI job has
-  never run; it is unverified until it runs on a pull request.
+  non-loopback address is present. The only recorded CI run is run 43974715793 on
+  PR 262, at head `172d19e` (the pre-fix commit); it passed, predates the current
+  fixes, and post-fix CI is pending (see [Continuous integration](#continuous-integration)).
 - **Locally**: the suite only detects attempts. It starts a loopback proxy
-  recorder, sets `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (and lower-case forms)
-  to it, and sets `NO_PROXY` to `127.0.0.1,localhost,::1`. Each connection the
-  recorder accepts is classified as a tolerated startup destination or an
-  unexpected one. Nothing blocks a client that ignores the proxy.
+  recorder and sets `HTTP_PROXY`, `http_proxy`, `HTTPS_PROXY`, `https_proxy`,
+  `ALL_PROXY`, and `all_proxy` to it, and sets `NO_PROXY` and `no_proxy` to
+  `127.0.0.1,localhost,::1`. Inherited proxy variables are removed first, so the
+  child sees only these values. Each connection the recorder accepts is
+  classified as a tolerated startup destination or an unexpected one. Nothing
+  blocks a client that ignores the proxy.
 
 The namespace guards against accidental egress. It is **not a security boundary**
 against a hostile binary, because the runner user has passwordless sudo. The
@@ -448,7 +451,9 @@ to be that path.
    reported as skipped, and the command exits 0.
 2. Run it with `HARNESS_E2E_OPENCODE` and `HARNESS_E2E_REQUIRE=1`. The expected
    result is exit code 0 and **5 passed, 1 todo, 0 failed** across six tests: J1,
-   J2, J3a, and both J4 cases pass; J3 is reported as TODO. A different count is a
+   J2, J3a, and both J4 cases pass; J3 is reported as TODO. Node prints the `todo` J3
+   test under a "failing tests" heading although the summary shows fail 0 and the exit
+   status is 0, so the outcome to check is exit 0 and fail 0. A different count is a
    finding to report, not a pass.
 3. Scope a sentinel change to one journey: in `e2e/opencode-journeys.e2e.ts`, change
    the text expected by J4a's second step (`toolResultsInclude`) to a different
@@ -467,6 +472,11 @@ to be that path.
    and `credentialHeaders` is empty. Inspect `implementer-loads-skill-and-edits.json`:
    `handoffCount` is 1, and the `skillInvocations` entry has `loaded: false`. No
    `Authorization` value appears in any record.
+5. Missing-binary path. Run `npm run e2e:opencode` with `HARNESS_E2E_REQUIRE=1` and
+   `HARNESS_E2E_OPENCODE` unset. The expected result is a non-zero exit status. The
+   failing test is `OpenCode E2E preflight check`, and its message names the missing
+   binary setting: `HARNESS_E2E_REQUIRE=1 but HARNESS_E2E_OPENCODE is not set`. This is
+   case AE-05 in the [smoke test plan](smoke-test-plan.md).
 
 Tests for the harness itself (`npm test`) and the smoke suite (`npm run smoke`)
 never start OpenCode.
@@ -476,8 +486,15 @@ never start OpenCode.
 The `agent-e2e` job in `.github/workflows/ci.yml` runs on `ubuntu-latest` with a
 20-minute timeout. The timeout covers the worst case of seven OpenCode runs at 150
 seconds each (17.5 minutes), so setup and the download add further time. It is
-**not a required check**, and it **has never run**. Its result is unverified until
-it runs on a pull request. It runs on the same events as the other CI jobs. The
+**not a required check**. The only recorded run is run 43974715793 on PR 262, at head
+`172d19e` (the pre-fix commit). It passed and predates the current fixes; post-fix CI is
+pending. Observed on that run: Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 0 fail, 1 todo (J3, #261);
+all seven journey records show `enforcement: "netns"`; the only tolerated destination
+was `CONNECT models.opencode.ai:443`; no unexpected destination; no credential-shaped
+header; the sha256 check passed; the executable was found in the archive; and
+`sudo unshare --net` worked on the hosted runner. That is one run, and it does not cover the current tree. The scripted
+`edit` call is still not demonstrated. Local Windows runs are still not hermetic.
+The job runs on the same events as the other CI jobs. The
 decision is recorded in [ADR-0011](adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md).
 
 1. Checkout (without persisted Git credentials), Node.js 24.x, and `npm ci`.
@@ -498,7 +515,8 @@ decision is recorded in [ADR-0011](adr/0011-deterministic-agent-e2e-via-loopback
    loopback is brought up. The command runs as the runner user, not root. The suite
    receives `HARNESS_E2E_OPENCODE`, `HARNESS_E2E_REQUIRE=1`, `HARNESS_E2E_NETNS=1`,
    `HARNESS_E2E_RECORD_DIR`, `PATH`, and `HOME`, and nothing else. `sudo` resets the
-   environment, so proxy variables and runner settings are not inherited.
+   environment to its policy defaults, and `env` then sets the listed variables, so no
+   proxy or runner variable is inherited beyond the sudo defaults.
    `HARNESS_E2E_NETNS=1` makes the suite check that the interfaces are loopback
    only; the namespace itself is created by the job, not by the suite.
 6. An `if: always()` step uploads the records directory as the
