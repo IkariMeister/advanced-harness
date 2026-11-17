@@ -46,6 +46,7 @@ import {
   type OpenCodeSandbox,
   type ProxyAttempt,
 } from './opencode-sandbox.ts';
+import { escapeForPattern } from './text.ts';
 
 // ---------------------------------------------------------------------------
 // Defining journeys
@@ -179,8 +180,6 @@ export function sessionLabeller(): (raw: string | null) => string | null {
   };
 }
 
-const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 /**
  * Normaliser for recorded text. Replaces the sandbox root (raw, forward-slash, and JSON-escaped forms) with
  * `<sandbox>`, collapses separators in the sandbox-relative part to `/`, and numbers `ses_`, `prt_`, and `msg_`
@@ -192,7 +191,7 @@ export function journeyNormaliser(sandboxRoot: string | undefined, caseInsensiti
   const roots = sandboxRoot === undefined || sandboxRoot === ''
     ? []
     : [...new Set([sandboxRoot, sandboxRoot.replaceAll('\\', '/'), JSON.stringify(sandboxRoot).slice(1, -1)])].sort((a, b) => b.length - a.length);
-  const rootPattern = roots.length > 0 ? new RegExp(`(?:${roots.map(escapeRegExp).join('|')})([^\\s"',;]*)`, caseInsensitive ? 'gi' : 'g') : undefined;
+  const rootPattern = roots.length > 0 ? new RegExp(`(?:${roots.map(escapeForPattern).join('|')})([^\\s"',;]*)`, caseInsensitive ? 'gi' : 'g') : undefined;
   const labels = new Map<string, Map<string, number>>();
   const label = (kind: string, raw: string): string => {
     const byKind = labels.get(kind) ?? new Map<string, number>();

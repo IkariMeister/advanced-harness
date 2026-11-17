@@ -22,6 +22,7 @@ import { loadNativeDefinitions, updateNativeConfiguration } from '../../src/nati
 import { nativeRoles, type NativeRole } from '../../src/native-role-types.ts';
 import { applyProcedureFiles, canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment } from '../../src/procedure-deployment.ts';
 import { applyCommandDeployment, filterCommandPlanForExecution, loadWorkflowCommands, planCommandDeployment } from '../../src/command-deployment.ts';
+import { escapeForPattern, pathVariants } from './text.ts';
 
 /** The single source of truth for the pinned OpenCode version (`opencode --version` prints `opencode v2.3.0`). */
 export const REQUIRED_OPENCODE_VERSION = '2.3.0';
@@ -86,8 +87,7 @@ export function parseOpenCodeVersion(stdout: string): string | undefined {
  */
 export function scrubSandbox(text: string, root: string, caseInsensitive = false): string {
   if (root === '') return text;
-  const forward = root.replaceAll('\\', '/');
-  const variants = new Set([root, forward, JSON.stringify(root).slice(1, -1), JSON.stringify(forward).slice(1, -1)]);
+  const variants = new Set(pathVariants(root));
   if (!caseInsensitive) {
     let result = text;
     for (const variant of variants) result = result.replaceAll(variant, '<sandbox>');
@@ -105,8 +105,6 @@ export function parentHomeDirectories(env: NodeJS.ProcessEnv, home: string): str
   return [...new Set([home, env.USERPROFILE ?? '', env.HOME ?? ''].filter(value => value !== ''))];
 }
 
-const escapeForPattern = (text: string): string => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-
 /**
  * Replaces each home directory, in raw, forward-slash, and JSON-escaped forms, with `<home>`. Longest variants
  * first. `caseInsensitive` is passed by the caller (true on Windows, where path case is not significant).
@@ -114,11 +112,7 @@ const escapeForPattern = (text: string): string => text.replace(/[.*+?^${}()|[\]
 export function scrubHome(text: string, homes: readonly string[], caseInsensitive: boolean): string {
   const variants = new Set<string>();
   for (const home of homes) {
-    if (home === '') continue;
-    const forward = home.replaceAll('\\', '/');
-    for (const variant of [home, forward, JSON.stringify(home).slice(1, -1), JSON.stringify(forward).slice(1, -1)]) {
-      if (variant !== '') variants.add(variant);
-    }
+    for (const variant of pathVariants(home)) variants.add(variant);
   }
   if (variants.size === 0) return text;
   const ordered = [...variants].sort((a, b) => b.length - a.length);
