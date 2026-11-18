@@ -1,7 +1,9 @@
 # ADR: Keep the Canonical Checkout Read-Only Except for Remote Updates
 
-**Status:** Proposed\
+**Status:** Accepted\
 **Date:** 2026-11-08\
+**Decided:** 2026-11-16\
+**Decision record:** [#263](https://github.com/IkariMeister/advanced-harness/pull/263)\
 **Project:** Advanced Harness\
 **Decision scope:** Git ownership of an application repository's canonical checkout during task bootstrap, and how that ownership is enforced. It covers the application repository only.
 
