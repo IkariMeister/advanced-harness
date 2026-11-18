@@ -15,6 +15,8 @@ This directory contains proposed and accepted architecture decisions for Advance
 | [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md) | Operator-Owned Preflight Evidence and Human-Approved Publication Handoffs | Proposed | Preflight evidence ownership and publication handoffs |
 | [ADR-010](0010-okf-knowledge-projection-contract.md) | Open Knowledge Format Projection Contract | Proposed | Provenance-backed projection of selected documentation into an OKF v0.2 bundle |
 
+The November 2026 ADR review took place on 2026-11-15; ADR-004, ADR-007, and ADR-008 were accepted on 2026-11-16.
+
 ## Status lifecycle
 
 | Status | Meaning |
