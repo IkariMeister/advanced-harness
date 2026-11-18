@@ -144,6 +144,8 @@ npm run smoke
 
 `npm run smoke` runs the real `harness:*` CLIs end to end in an isolated temporary home with a stub OpenCode runtime (no credentials or network); see the [smoke test plan](docs/smoke-test-plan.md). Its answers are piped, so it is not interactive TTY QA.
 
+`npm run e2e:opencode` is the agent E2E suite. It runs the real OpenCode 2.3.0 CLI through scripted journeys against a loopback model fixture, and every journey is skipped unless `HARNESS_E2E_OPENCODE` names that executable. Set `HARNESS_E2E_RECORD_DIR` to an absolute directory to keep a copy of each journey record. It is not part of `npm test` or `npm run smoke`. See the [agent E2E guide](docs/agent-e2e.md) and [ADR-0011](docs/adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md).
+
 Check an installed harness without reinstalling:
 
 ```text

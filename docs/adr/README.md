@@ -14,6 +14,7 @@ This directory contains proposed and accepted architecture decisions for Advance
 | [ADR-008](0008-project-guardrail-policy.md) | Project Guardrail Policy in `.harness/preflight.json`, Read From origin/HEAD | Accepted | Preflight check enablement and severity, the policy result, and the trust anchor |
 | [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md) | Operator-Owned Preflight Evidence and Human-Approved Publication Handoffs | Proposed | Preflight evidence ownership and publication handoffs |
 | [ADR-010](0010-okf-knowledge-projection-contract.md) | Open Knowledge Format Projection Contract | Proposed | Provenance-backed projection of selected documentation into an OKF v0.2 bundle |
+| [ADR-011](0011-deterministic-agent-e2e-via-loopback-model-fixture.md) | Deterministic Agent E2E via a Loopback Model Fixture | Proposed | Agent E2E suite: pinned OpenCode, loopback model fixture, and CI network bounds |
 
 The November 2026 ADR review took place on 2026-11-15; ADR-004, ADR-007, and ADR-008 were accepted on 2026-11-16.
 
