@@ -134,9 +134,9 @@ jobs:
       - name: Run sandboxed CLI smoke suite
         run: npm run smoke
 
-  # Not a required check yet (BH-034, ADR-0011). The only recorded run is run 43974715793 on PR 262, at head 172d19e
-  # (the pre-fix commit): it passed (Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 1 todo) and predates the current
-  # fixes. Post-fix CI is pending. J3 is still todo (#261), and no journey yet demonstrates the edit tool. Its outbound-call
+  # Not a required check yet (BH-034, ADR-0011). Two runs have passed. Run 43974715793 on PR 262 passed at head 172d19e
+  # (before the review fixes; Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 1 todo). Run 44264679242 passed on the
+  # current head 3a901183d59a85ea8dc0a4871c4105151b1e0684 (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). J3 is still todo (#261), and no journey yet demonstrates the edit tool. Its outbound-call
   # guarantee comes from the loopback-only network namespace below.
   agent-e2e:
     name: Agent E2E (Ubuntu / Node 24 / OpenCode 2.3.0)

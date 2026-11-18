@@ -182,7 +182,7 @@ Prerequisites for AE-02 to AE-04: Node.js 24.x, `npm ci` at the repository root,
 | AE-04 | Run with `HARNESS_E2E_RECORD_DIR` set to an absolute directory, then inspect the retained records | `lead-reads-repository.json`: `network.unexpectedDestinations` is empty, `network.toleratedDestinations` holds at most `CONNECT models.opencode.ai:443`, and `credentialHeaders` is empty. `implementer-loads-skill-and-edits.json`: `handoffCount` is 1 and the `skillInvocations` entry has `loaded: false`. No `Authorization` value appears in any file |
 | AE-05 | `npm run e2e:opencode` with `HARNESS_E2E_REQUIRE=1` and `HARNESS_E2E_OPENCODE` unset (missing-binary path) | Exit code is non-zero. The failing test is `OpenCode E2E preflight check`, and its message names the missing binary setting (`HARNESS_E2E_REQUIRE=1 but HARNESS_E2E_OPENCODE is not set`) |
 
-The CI job that runs this suite is described under [Continuous integration](#continuous-integration). It is not a required check. The only recorded run is run 43974715793 on PR 262, at head `172d19e` (the pre-fix commit). It passed (6 tests: 5 pass, 1 todo), predates the current fixes, and post-fix CI is pending.
+The CI job that runs this suite is described under [Continuous integration](#continuous-integration). It is not a required check. Two runs have passed. Run 43974715793 on PR 262 passed at head `172d19e` (before the review fixes; 6 tests: 5 pass, 1 todo). Run 44264679242 passed on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0).
 
 ## Known gaps found by the suite
 
@@ -236,9 +236,7 @@ the job.
 
 The `agent-e2e` job in the same file runs `npm run e2e:opencode` on `ubuntu-latest` against
 the pinned OpenCode 2.3.0 release asset, after a sha256 check, inside a loopback-only
-network namespace. It is not a required check. The only recorded run is run 43974715793
-on PR 262, at head `172d19e` (the pre-fix commit); it passed and predates the current
-fixes, and post-fix CI is pending. The details are in the guide. The steps are in
+network namespace. It is not a required check. Two runs have passed: run 43974715793 on PR 262 at head `172d19e` (before the review fixes), and run 44264679242 on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). The details are in the guide. The steps are in
 [agent E2E guide](agent-e2e.md#continuous-integration).
 
 # Issue #134 project rigor setup and workflow smoke

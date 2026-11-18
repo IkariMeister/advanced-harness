@@ -143,9 +143,8 @@ attempts one.
   every interface address internal) and does not merely declare it. The check
   cannot tell a network namespace from a host with no active non-loopback
   interface; the CI job creates the namespace, and the suite only checks that no
-  non-loopback address is present. The only recorded CI run is run 43974715793 on
-  PR 262, at head `172d19e` (the pre-fix commit); it passed, predates the current
-  fixes, and post-fix CI is pending (see [Continuous integration](#continuous-integration)).
+  non-loopback address is present. Two CI runs have passed: run 43974715793 on
+  PR 262, at head `172d19e` (before the review fixes), and run 44264679242 on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0; see [Continuous integration](#continuous-integration)).
 - **Locally**: the suite only detects attempts. It starts a loopback proxy
   recorder and sets `HTTP_PROXY`, `http_proxy`, `HTTPS_PROXY`, `https_proxy`,
   `ALL_PROXY`, and `all_proxy` to it, and sets `NO_PROXY` and `no_proxy` to
@@ -486,13 +485,12 @@ never start OpenCode.
 The `agent-e2e` job in `.github/workflows/ci.yml` runs on `ubuntu-latest` with a
 20-minute timeout. The timeout covers the worst case of seven OpenCode runs at 150
 seconds each (17.5 minutes), so setup and the download add further time. It is
-**not a required check**. The only recorded run is run 43974715793 on PR 262, at head
-`172d19e` (the pre-fix commit). It passed and predates the current fixes; post-fix CI is
-pending. Observed on that run: Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 0 fail, 1 todo (J3, #261);
+**not a required check**. Two runs have passed. Run 43974715793 on PR 262 passed at head
+`172d19e` (before the review fixes). Run 44264679242 passed on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). Observed on that run: Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 0 fail, 1 todo (J3, #261);
 all seven journey records show `enforcement: "netns"`; the only tolerated destination
 was `CONNECT models.opencode.ai:443`; no unexpected destination; no credential-shaped
 header; the sha256 check passed; the executable was found in the archive; and
-`sudo unshare --net` worked on the hosted runner. That is one run, and it does not cover the current tree. The scripted
+`sudo unshare --net` worked on the hosted runner. The current head has a passing run (44264679242), and the earlier run (43974715793) predates the review fixes. The scripted
 `edit` call is still not demonstrated. Local Windows runs are still not hermetic.
 The job runs on the same events as the other CI jobs. The
 decision is recorded in [ADR-0011](adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md).
