@@ -355,7 +355,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   if (!filesChanged) {
     output('Harness files already match; no files, backups, or receipts were modified.');
     finishGitExclude(exclude, output, error);
-    finishCanonicalHook(canonicalHook, output, error);
+    if (!finishCanonicalHook(canonicalHook, output, error)) return 1;
     return 0;
   }
 
@@ -429,7 +429,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   }
   finalizeSuccessor(pending, targetFinal);
   finishGitExclude(exclude, output, error);
-  finishCanonicalHook(canonicalHook, output, error);
+  if (!finishCanonicalHook(canonicalHook, output, error)) return 1;
 
   output('\nClaude Code harness deployment complete (runtime not verified).');
   if (selectedSkills.size) output('Reusable procedure skills deployed.');

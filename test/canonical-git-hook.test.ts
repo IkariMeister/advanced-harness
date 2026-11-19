@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
@@ -484,10 +484,183 @@ test('F-7: nested subdirectory, linked worktree, and worktreeConfig precedence a
   applyCanonicalHook(plan);
   assert.equal(planCanonicalHookInstall(worktree, 'opencode').status, 'current', 'linked worktree sees current hook');
 
-  // Worktree-scoped core.hooksPath overrides --local and is rejected safely
+  // Worktree-scoped core.hooksPath overrides --local and is rejected safely from any worktree (R2-F4)
   git(canonical, 'config', '--local', 'extensions.worktreeConfig', 'true');
   git(worktree, 'config', '--worktree', 'core.hooksPath', '.wt-hooks');
-  const blocked = planCanonicalHookInstall(worktree, 'claude-code');
-  assert.equal(blocked.status, 'unavailable');
-  assert.match(blocked.reason, /worktree-scoped core\.hooksPath/);
+  const blockedFromWorktree = planCanonicalHookInstall(worktree, 'claude-code');
+  assert.equal(blockedFromWorktree.status, 'unavailable');
+  assert.match(blockedFromWorktree.reason, /worktree-scoped core\.hooksPath/);
+  const blockedFromCanonical = planCanonicalHookInstall(canonical, 'claude-code');
+  assert.equal(blockedFromCanonical.status, 'unavailable');
+  assert.match(blockedFromCanonical.reason, /worktree-scoped core\.hooksPath/);
+});
+
+test('R2-F1: symlinked hook in .git/hooks is refused without writing', t => {
+  const { root, canonical } = repoWithRemoteAndWorktree(t);
+  const target = join(root, 'external-hook.sh');
+  writeFileSync(target, '#!/bin/sh\nexit 0\n');
+  const symlinkPath = join(canonical, '.git', 'hooks', 'commit-msg');
+  try {
+    symlinkSync(target, symlinkPath);
+  } catch {
+    t.skip('file symlinks are not available');
+    return;
+  }
+  const plan = planCanonicalHookInstall(canonical, 'opencode');
+  assert.equal(plan.status, 'unavailable');
+  assert.match(plan.reason, /Refusing symlinked hook/);
+});
+
+test('R2-F2: partial write failure rolls back hookDir and finishCanonicalHook propagates non-zero CLI exit', async t => {
+  const { root, canonical } = repoWithRemoteAndWorktree(t);
+  const plan = planCanonicalHookInstall(canonical, 'opencode');
+  assert.equal(plan.status, 'change');
+
+  const failingConfigRunner = (exe: string, args: string[], opts?: { cwd?: string }) => {
+    if (exe === 'git' && args[0] === 'config' && args.includes('--local') && args.includes('core.hooksPath') && !args.includes('--get')) {
+      throw new Error('simulated config write failure');
+    }
+    return execFileSync(exe, args, { cwd: opts?.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  };
+
+  assert.throws(() => applyCanonicalHook(plan, failingConfigRunner), /simulated config write failure/);
+  assert.equal(existsSync(resolveCanonicalHookDir(canonical)!), false, 'rolled back newly created hookDir on failure');
+
+  // Also verify CLI flow returns exit code 1 when finishCanonicalHook fails (e.g., stale lock)
+  const lockPath = `${resolveCanonicalHookDir(canonical)!}.harness.lock`;
+  writeFileSync(lockPath, JSON.stringify({ pid: 99999, createdAt: '2026-11-16T00:00:00Z' }));
+  const errors: string[] = [];
+  const exitCode = await runInstallerFlow(
+    { scope: 'project', project: canonical, host: 'opencode' },
+    {
+      ask: async question => {
+        if (question.includes(': model ID')) return 'local/model#low';
+        if (question.includes(': reasoning variant')) return 'low';
+        if (question.startsWith('Install opt-in local Git hook')) return 'yes';
+        if (question.startsWith('Type install')) return 'install';
+        return 'no';
+      },
+      output: () => {},
+      error: line => errors.push(line),
+      home: root,
+      recoveryDirectory: join(root, 'recovery'),
+      verify: async () => ({ ok: true, checks: [] }) as never,
+      printReport: () => {},
+    }
+  );
+  assert.equal(exitCode, 1);
+  assert.ok(errors.some(e => e.includes('PID 99999')));
+  rmSync(lockPath);
+});
+
+test('R2-F3: update cancellation with real pending shared-location changes writes zero files or backups', async t => {
+  const { root, canonical } = repoWithRemoteAndWorktree(t);
+  const recovery = join(root, 'recovery');
+
+  // Install OpenCode first
+  assert.equal(await runInstallerFlow(
+    { scope: 'project', project: canonical, host: 'opencode' },
+    {
+      ask: async question => {
+        if (question.includes(': model ID')) return 'local/model#low';
+        if (question.includes(': reasoning variant')) return 'low';
+        if (question.startsWith('Install opt-in local Git hook')) return 'no';
+        if (question.startsWith('Type install')) return 'install';
+        return 'no';
+      },
+      output: () => {},
+      error: line => assert.fail(line),
+      home: root,
+      recoveryDirectory: recovery,
+      verify: async () => ({ ok: true, checks: [] }) as never,
+      printReport: () => {},
+    }
+  ), 0);
+
+  // Seed AGENTS.md with valid project settings pointing to a missing worktree/memory path so
+  // real prepareSharedLocationStep has pending creations and prompts "Type paths".
+  const wtDir = join(root, 'pending-worktrees');
+  const memFile = join(root, 'pending-memory', 'MEMORY.md');
+  const agentsContent = [
+    '# Project',
+    '',
+    '<!-- advanced-harness:project:start -->',
+    '```json',
+    JSON.stringify({
+      version: 1,
+      baseBranch: 'main',
+      shell: 'bash',
+      checks: {
+        build: { status: 'unconfigured' },
+        lint: { status: 'unconfigured' },
+        unit: { status: 'unconfigured' },
+        roborazzi: { status: 'unconfigured' },
+        runtime: { status: 'unconfigured' },
+        e2e: { status: 'unconfigured' },
+      },
+      device: { preference: 'ask' },
+      worktreeDirectory: wtDir,
+      memoryPath: memFile,
+    }, null, 2),
+    '```',
+    '<!-- advanced-harness:project:end -->',
+    '',
+  ].join('\n');
+  writeFileSync(join(canonical, 'AGENTS.md'), agentsContent);
+  const receiptsBefore = readdirSync(recovery).length;
+
+  const code = await runUpdateFlow(
+    { scope: 'project', project: canonical, host: 'opencode' },
+    {
+      ask: async question => {
+        if (question.startsWith('Type paths to apply')) return 'paths';
+        if (question.startsWith('Type update')) return 'cancel';
+        return 'no';
+      },
+      output: () => {},
+      error: line => assert.fail(line),
+      home: root,
+      recoveryDirectory: recovery,
+      verify: async () => ({ ok: true, checks: [] }) as never,
+      printReport: () => {},
+    }
+  );
+
+  assert.equal(code, 0);
+  assert.equal(existsSync(wtDir), false, 'deferred worktreeDirectory not created on cancel');
+  assert.equal(existsSync(memFile), false, 'deferred MEMORY.md not created on cancel');
+  assert.equal(readFileSync(join(canonical, 'AGENTS.md'), 'utf8'), agentsContent);
+  assert.equal(readdirSync(recovery).length, receiptsBefore, 'no backup or receipt created on cancel');
+});
+
+test('R2-F6: non-executable hook script on POSIX is not classified as current', t => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX executable mode bits do not apply on Windows');
+    return;
+  }
+  const { canonical } = repoWithRemoteAndWorktree(t);
+  applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
+  const preCommit = join(resolveCanonicalHookDir(canonical)!, 'pre-commit');
+  chmodSync(preCommit, 0o644);
+  const plan = planCanonicalHookInstall(canonical, 'opencode');
+  assert.equal(plan.status, 'unavailable');
+  assert.match(plan.reason, /lost executable permission/);
+});
+
+test('R2-F7: stale lockfile reports conservative diagnostics without auto-deleting and recovers after manual removal', t => {
+  const { canonical } = repoWithRemoteAndWorktree(t);
+  const plan = planCanonicalHookInstall(canonical, 'opencode');
+  assert.equal(plan.status, 'change');
+  const lockPath = `${resolveCanonicalHookDir(canonical)!}.harness.lock`;
+  writeFileSync(lockPath, JSON.stringify({ pid: 42424, createdAt: '2026-11-16T12:00:00.000Z' }));
+
+  assert.throws(
+    () => applyCanonicalHook(plan),
+    /PID 42424, started 2026-11-16T12:00:00\.000Z.*remove .* manually and rerun/
+  );
+  assert.equal(existsSync(lockPath), true, 'lockfile preserved without auto-deletion');
+
+  rmSync(lockPath);
+  assert.equal(applyCanonicalHook(plan), true);
+  assert.equal(isCanonicalHookInstalled(canonical), true);
 });

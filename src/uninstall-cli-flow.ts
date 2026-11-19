@@ -96,7 +96,7 @@ export async function runUninstallFlow(input: {
     }
   }
   finishGitExclude(exclude, input.output, input.error);
-  finishCanonicalHook(canonicalHook, input.output, input.error);
+  if (!finishCanonicalHook(canonicalHook, input.output, input.error)) return 1;
   return 0;
 }
 

@@ -252,7 +252,11 @@ function discoverExternalHookNames(
     if (name.endsWith('.sample') || name === STATE_FILE || managed.has(name)) continue;
     const full = join(sourceDir, name);
     const stat = lstatSync(full, { throwIfNoEntry: false });
-    if (!stat || !stat.isFile()) continue;
+    if (!stat) continue;
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing symlinked hook ${full}`);
+    }
+    if (!stat.isFile()) continue;
     if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) continue;
     names.push(name);
   }
@@ -290,6 +294,10 @@ function validateHookDirOwnership(hookDir: string, state: CanonicalHookState | u
   for (const [name, expectedDigest] of Object.entries(state.managedFiles)) {
     const filePath = join(hookDir, name);
     if (!existsSync(filePath)) continue;
+    const stat = lstatSync(filePath);
+    if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) {
+      throw new Error(`Hook file ${filePath} lost executable permission outside advanced-harness`);
+    }
     const actualDigest = sha256(readFileSync(filePath, 'utf8'));
     if (actualDigest !== expectedDigest) {
       throw new Error(`Hook file ${filePath} was modified outside advanced-harness`);
@@ -310,12 +318,25 @@ function atomicWriteFile(path: string, content: string, executable = false): voi
   }
 }
 
+function listWorktreeRoots(root: string, run: Runner): string[] {
+  const output = run('git', ['worktree', 'list', '--porcelain'], { cwd: root });
+  const roots: string[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) {
+      roots.push(line.slice('worktree '.length).trim());
+    }
+  }
+  return roots.length > 0 ? roots : [root];
+}
+
 function checkWorktreeConfigBlock(root: string, run: Runner): string | undefined {
   const enabled = readGitConfig(root, ['--local', '--bool', '--get', 'extensions.worktreeConfig'], run);
   if (enabled === 'true') {
-    const worktreePath = readGitConfig(root, ['--worktree', '--get', 'core.hooksPath'], run);
-    if (worktreePath) {
-      return `worktree-scoped core.hooksPath "${worktreePath}" overrides --local config`;
+    for (const worktreeRoot of listWorktreeRoots(root, run)) {
+      const worktreePath = readGitConfig(worktreeRoot, ['--worktree', '--get', 'core.hooksPath'], run);
+      if (worktreePath) {
+        return `worktree-scoped core.hooksPath "${worktreePath}" in ${worktreeRoot} overrides --local config`;
+      }
     }
   }
   return undefined;
@@ -379,7 +400,9 @@ export function planCanonicalHookInstall(
   const stateCurrent = state !== undefined && JSON.stringify(state) === JSON.stringify(nextState);
   const scriptsCurrent = Object.entries(scripts).every(([name, content]) => {
     const file = join(hookDir, name);
-    return existsSync(file) && readFileSync(file, 'utf8') === content;
+    if (!existsSync(file) || readFileSync(file, 'utf8') !== content) return false;
+    if (process.platform !== 'win32' && (lstatSync(file).mode & 0o111) === 0) return false;
+    return true;
   });
   const configCurrent = ownConfigured && localHooksPath === installedHooksPath;
 
@@ -508,6 +531,62 @@ export function describeCanonicalHook(plan: CanonicalHookPlan): string {
   return `Canonical-checkout Git hook: remove ${plan.hookDir}${restoreNote}.`;
 }
 
+function acquireLock(lockPath: string): void {
+  const payload = JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }) + '\n';
+  try {
+    writeFileSync(lockPath, payload, { flag: 'wx' });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      let ownerInfo = 'unknown owner';
+      try {
+        const parsed = JSON.parse(readFileSync(lockPath, 'utf8')) as { pid?: unknown; createdAt?: unknown };
+        ownerInfo = `PID ${String(parsed.pid ?? 'unknown')}, started ${String(parsed.createdAt ?? 'unknown')}`;
+      } catch {
+        // Leave lock intact; report conservative unknown owner.
+      }
+      throw new Error(
+        `Canonical hook lock exists at ${lockPath} (${ownerInfo}). Verify no other advanced-harness process is running, then remove ${lockPath} manually and rerun.`
+      );
+    }
+    throw err;
+  }
+}
+
+function snapshotHookDir(hookDir: string): Map<string, string> | undefined {
+  if (!existsSync(hookDir)) return undefined;
+  const snapshot = new Map<string, string>();
+  for (const name of readdirSync(hookDir)) {
+    const file = join(hookDir, name);
+    if (lstatSync(file).isFile()) {
+      snapshot.set(name, readFileSync(file, 'utf8'));
+    }
+  }
+  return snapshot;
+}
+
+function restoreHookDirSnapshot(hookDir: string, snapshot: Map<string, string> | undefined): void {
+  if (!snapshot) {
+    if (existsSync(hookDir)) {
+      for (const name of readdirSync(hookDir)) {
+        const file = join(hookDir, name);
+        if (lstatSync(file).isFile()) unlinkSync(file);
+      }
+      if (readdirSync(hookDir).length === 0) rmdirSync(hookDir);
+    }
+    return;
+  }
+  mkdirSync(hookDir, { recursive: true });
+  for (const name of readdirSync(hookDir)) {
+    if (!snapshot.has(name)) {
+      const file = join(hookDir, name);
+      if (lstatSync(file).isFile()) unlinkSync(file);
+    }
+  }
+  for (const [name, content] of snapshot) {
+    atomicWriteFile(join(hookDir, name), content, name !== STATE_FILE);
+  }
+}
+
 /** Applies a planned canonical-checkout hook change under a lockfile after revalidating config and state. */
 export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaultRun): boolean {
   if (plan.status !== 'change') return false;
@@ -515,7 +594,7 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
 
   mkdirSync(dirname(plan.hookDir), { recursive: true });
   const lockPath = `${plan.hookDir}.harness.lock`;
-  writeFileSync(lockPath, String(process.pid), { flag: 'wx' });
+  acquireLock(lockPath);
   try {
     const currentLocal = readGitConfig(plan.root, ['--local', '--get', 'core.hooksPath'], run);
     if (currentLocal !== plan.expectedLocalHooksPath) {
@@ -532,20 +611,30 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
 
     if (plan.action === 'install' || plan.action === 'update') {
       validateHookDirOwnership(plan.hookDir, loaded?.state);
-      mkdirSync(plan.hookDir, { recursive: true });
-      const prevManaged = Object.keys(loaded?.state.managedFiles ?? {});
-      const nextManaged = new Set(Object.keys(plan.scripts!));
-      for (const stale of prevManaged) {
-        if (!nextManaged.has(stale) && existsSync(join(plan.hookDir, stale))) {
-          unlinkSync(join(plan.hookDir, stale));
+      const snapshot = snapshotHookDir(plan.hookDir);
+      try {
+        mkdirSync(plan.hookDir, { recursive: true });
+        const prevManaged = Object.keys(loaded?.state.managedFiles ?? {});
+        const nextManaged = new Set(Object.keys(plan.scripts!));
+        for (const stale of prevManaged) {
+          if (!nextManaged.has(stale) && existsSync(join(plan.hookDir, stale))) {
+            unlinkSync(join(plan.hookDir, stale));
+          }
         }
-      }
-      for (const [name, content] of Object.entries(plan.scripts!)) {
-        atomicWriteFile(join(plan.hookDir, name), content, true);
-      }
-      atomicWriteFile(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
-      if (currentLocal !== plan.installedHooksPath) {
-        run('git', ['config', '--local', 'core.hooksPath', plan.installedHooksPath], { cwd: plan.root });
+        for (const [name, content] of Object.entries(plan.scripts!)) {
+          atomicWriteFile(join(plan.hookDir, name), content, true);
+        }
+        atomicWriteFile(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
+        if (currentLocal !== plan.installedHooksPath) {
+          run('git', ['config', '--local', 'core.hooksPath', plan.installedHooksPath], { cwd: plan.root });
+        }
+      } catch (err) {
+        try {
+          restoreHookDirSnapshot(plan.hookDir, snapshot);
+        } catch {
+          // Best-effort rollback; preserve original error.
+        }
+        throw err;
       }
       return true;
     }
@@ -643,21 +732,23 @@ export function previewCanonicalHookRemoval(
   return plan;
 }
 
-/** Applies a confirmed canonical-checkout hook plan; reports errors without rolling back primary writes. */
+/** Applies a confirmed canonical-checkout hook plan; returns false and reports on failure. */
 export function finishCanonicalHook(
   plan: CanonicalHookPlan | undefined,
   output: (message: string) => void,
   error: (message: string) => void,
   run: Runner = defaultRun
-): void {
-  if (!plan || plan.status !== 'change') return;
+): boolean {
+  if (!plan || plan.status !== 'change') return true;
   try {
     if (applyCanonicalHook(plan, run)) {
       const verb = plan.action === 'install' ? 'installed' : plan.action === 'update' ? 'updated' : plan.action === 'release' ? 'released' : 'removed';
       output(`Canonical-checkout Git hook ${verb}: ${plan.hookDir}`);
       if (plan.warning) output(`Canonical-checkout Git hook note: ${plan.warning}.`);
     }
+    return true;
   } catch (err) {
     error(`Canonical-checkout Git hook step failed (primary files were preserved): ${(err as Error).message}`);
+    return false;
   }
 }

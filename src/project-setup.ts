@@ -537,11 +537,16 @@ async function askLegacyWorktreeLocations(root: string, deps: Pick<SharedLocatio
   return (await deps.ask('Type migrate to use its locations as suggestions', 'no')).trim() === 'migrate' ? legacy : undefined;
 }
 
+export interface PreparedSharedLocationStep {
+  status: 'skipped' | 'current' | 'saved';
+  apply?: () => void;
+}
+
 /**
- * harness:update step: confirm or record shared locations and create missing ones.
- * Projects without any harness settings are pointed to harness:setup instead of being prompted.
+ * Prepares shared-location updates for `harness:update`, deferring file/directory writes
+ * to the returned `apply` callback until the caller's final confirmation succeeds.
  */
-export async function runSharedLocationStep(root: string, deps: SharedLocationStepDependencies): Promise<'skipped' | 'current' | 'saved'> {
+export async function prepareSharedLocationStep(root: string, deps: SharedLocationStepDependencies): Promise<PreparedSharedLocationStep> {
   const { ask, output, home } = deps;
   const { target, original } = locateProjectContext(root);
   const data = contextData(original, 'project');
@@ -551,7 +556,7 @@ export async function runSharedLocationStep(root: string, deps: SharedLocationSt
   const legacy = existsSync(legacyPath);
   if (!profile && !recorded && !legacy && !hasContextSection(original, 'project')) {
     output('Shared locations: no Advanced Harness project settings found. Run harness:setup to choose worktree and shared MEMORY.md locations.');
-    return 'skipped';
+    return { status: 'skipped' };
   }
   const resolution = resolveLocationSettings(root, { project: profile, paths: recorded }, home);
   let chosen: SharedLocations;
@@ -595,18 +600,32 @@ export async function runSharedLocationStep(root: string, deps: SharedLocationSt
   }
   if (!files.length && emptyLocationPlan(plan)) {
     output(`Shared locations are recorded and present: ${describeStoredLocation(chosen.worktreeDirectory, home)}; ${describeStoredLocation(chosen.memoryPath, home)}`);
-    return 'current';
+    return { status: 'current' };
   }
   output('\nShared-location changes:');
   for (const file of files) output(`  ${file.path}${file.original === undefined ? ' (new)' : ' (backup before updating)'}`);
   for (const line of describeLocationPlan(plan)) output(line);
   if ((await ask('Type paths to apply these shared-location changes; Enter skips them and continues the update', 'skip')).trim() !== 'paths') {
     output('Shared locations skipped: no files, directories, or backups were created.');
-    return 'skipped';
+    return { status: 'skipped' };
   }
-  for (const backup of (deps.save ?? saveSetup)(files, deps.backupParent)) if (backup) output(`Backup (keep private): ${backup}`);
-  for (const created of createSharedLocations(plan)) output(`Created: ${created}`);
-  return 'saved';
+  return {
+    status: 'saved',
+    apply: () => {
+      for (const backup of (deps.save ?? saveSetup)(files, deps.backupParent)) if (backup) output(`Backup (keep private): ${backup}`);
+      for (const created of createSharedLocations(plan)) output(`Created: ${created}`);
+    },
+  };
+}
+
+/**
+ * harness:update step: confirm or record shared locations and create missing ones.
+ * Projects without any harness settings are pointed to harness:setup instead of being prompted.
+ */
+export async function runSharedLocationStep(root: string, deps: SharedLocationStepDependencies): Promise<'skipped' | 'current' | 'saved'> {
+  const prepared = await prepareSharedLocationStep(root, deps);
+  prepared.apply?.();
+  return prepared.status;
 }
 
 export function saveSetup(files: readonly SetupFile[], backupParent: string): (string | undefined)[] {

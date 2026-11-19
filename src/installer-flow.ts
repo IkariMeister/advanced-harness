@@ -277,7 +277,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (!receipt && !configChanged && !commandsChanged && !skillsChanged) {
     output('Configuration and workflow commands already match; no configuration, backup, or receipt writes are needed.');
     finishGitExclude(exclude, output, errorOutput);
-    finishCanonicalHook(canonicalHook, output, errorOutput);
+    if (!finishCanonicalHook(canonicalHook, output, errorOutput)) return 1;
     return 0;
   }
   const pending = (deps.writePending ?? writePendingSuccessor)(history, receipt!);
@@ -331,7 +331,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (backup) output(`Backup: ${backup}`);
   output(`Private uninstall receipt retained at ${receiptPath}`);
   finishGitExclude(exclude, output, errorOutput);
-  finishCanonicalHook(canonicalHook, output, errorOutput);
+  if (!finishCanonicalHook(canonicalHook, output, errorOutput)) return 1;
   const directory = project ?? cwd;
   try {
     const saved = parseConfiguration(finalText, target);

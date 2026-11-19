@@ -41,7 +41,7 @@ import {
   type WorkflowCommandId
 } from './workflow-commands.ts';
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, isCodexOnly, selectNativeHost, type HostId } from './host-registry.ts';
-import { globalDefaultsNotice, lookupGlobalDefaults, runSharedLocationStep } from './project-setup.ts';
+import { globalDefaultsNotice, lookupGlobalDefaults, prepareSharedLocationStep, runSharedLocationStep, type PreparedSharedLocationStep } from './project-setup.ts';
 import { checkAntigravityConfigMerge } from './antigravity-adapter.ts';
 import { canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims } from './procedure-deployment.ts';
 import { finishCanonicalHook, promptCanonicalHook } from './canonical-git-hook.ts';
@@ -150,19 +150,26 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     }
   }
 
+  let deferredSharedLocations: PreparedSharedLocationStep | undefined;
   if (project) {
-    // Shared locations are host-neutral, so they are settled once before any host update.
+    // Shared locations are host-neutral, so they are settled once before any host update;
+    // actual writes are deferred until the host update is confirmed.
     const lookup = lookupGlobalDefaults({ home, environment: env, xdgConfigHome: deps.xdgConfigHome });
     const notice = globalDefaultsNotice(lookup);
     if (notice) output(notice);
-    await (deps.sharedLocations ?? runSharedLocationStep)(project, {
+    const sharedDeps = {
       ask,
       output,
       home,
       globalDefaults: lookup.defaults,
       backupParent: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups'),
       changeLocations: options.changeSharedLocations,
-    });
+    };
+    if (deps.sharedLocations) {
+      await deps.sharedLocations(project, sharedDeps);
+    } else {
+      deferredSharedLocations = await prepareSharedLocationStep(project, sharedDeps);
+    }
   }
 
   if (dispatch.host === 'claude-code') {
@@ -180,7 +187,9 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       output,
       error: errorOutput,
     });
-    return typeof result === 'number' ? result : 0;
+    const code = typeof result === 'number' ? result : 0;
+    if (code === 0) deferredSharedLocations?.apply?.();
+    return code;
   }
 
   if (dispatch.host === 'codex') {
@@ -216,7 +225,9 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       output,
       error: errorOutput,
     });
-    return typeof result === 'number' ? result : 0;
+    const code = typeof result === 'number' ? result : 0;
+    if (code === 0) deferredSharedLocations?.apply?.();
+    return code;
   }
 
   const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
@@ -604,7 +615,8 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     output(`Backup created: ${backup}`);
   }
   output(`Successor receipt finalized at: ${receiptPath}`);
-  finishCanonicalHook(canonicalHook, output, errorOutput);
+  deferredSharedLocations?.apply?.();
+  if (!finishCanonicalHook(canonicalHook, output, errorOutput)) return 1;
 
   // Runtime diagnostic verification
   const directory = project ?? cwd;

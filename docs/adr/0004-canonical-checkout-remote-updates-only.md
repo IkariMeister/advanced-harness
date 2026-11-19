@@ -1,6 +1,6 @@
 # ADR: Keep the Canonical Checkout Read-Only Except for Remote Updates
 
-**Status:** Proposed\
+**Status:** Accepted (Decision 2 amended by #202)\
 **Date:** 2026-11-08\
 **Project:** Advanced Harness\
 **Decision scope:** Git ownership of an application repository's canonical checkout during task bootstrap, and how that ownership is enforced. It covers the application repository only.
@@ -44,7 +44,7 @@ A project-level flag could disable the rule. This is rejected. The rule applies 
 ## Decision
 
 1. **Update path.** External performs the fast-forward update of the base branch in the canonical checkout (`git fetch`, then `git merge --ff-only origin/<base>`), only during task bootstrap relayed by Lead and only when the local base is not ahead of or diverged from `origin/<base>`. Operator's `git fetch` exception is retained but optional; not part of bootstrap; the bootstrap fetch is External's. `git pull` stays denied for Operator, and External never pulls, forces, resets, rebases, or switches branches in the canonical checkout.
-2. **Enforcement.** Role contracts and documentation only. No Git hook is installed, no permission rule is added or changed, and the hook is deferred as Option D describes.
+2. **Enforcement.** Role contracts and documentation remain primary, reinforced by an **opt-in local Git hook** (#202) installed under `<git-common-dir>/advanced-harness-hooks` via local `core.hooksPath` when the human consents during project-scope `harness:install` or `harness:update`. In the canonical checkout, the hook blocks commits (`pre-commit`), non-fast-forward merges (`pre-merge-commit`, while allowing `git merge --ff-only`), and rebases (`pre-rebase`), and warns after branch switches (`post-checkout`, since Git has no `pre-checkout` hook and cannot abort a completed switch). No permission rule is added or changed.
 3. **No opt-out.** The rule applies only when the project uses task worktrees (a `worktreeDirectory` is configured). A single-checkout project with no `worktreeDirectory` is not affected.
 4. **Scope.** The application repository's canonical checkout only. A consumer harness checkout pinned to a release tag (see [releasing.md](../releasing.md)) is out of scope and keeps following `docs/releasing.md`.
 
