@@ -539,6 +539,7 @@ async function askLegacyWorktreeLocations(root: string, deps: Pick<SharedLocatio
 
 export interface PreparedSharedLocationStep {
   status: 'skipped' | 'current' | 'saved';
+  preflight?: () => void;
   apply?: () => void;
 }
 
@@ -611,6 +612,7 @@ export async function prepareSharedLocationStep(root: string, deps: SharedLocati
   }
   return {
     status: 'saved',
+    preflight: () => preflightSetupFiles(files),
     apply: () => {
       for (const backup of (deps.save ?? saveSetup)(files, deps.backupParent)) if (backup) output(`Backup (keep private): ${backup}`);
       for (const created of createSharedLocations(plan)) output(`Created: ${created}`);
@@ -628,8 +630,7 @@ export async function runSharedLocationStep(root: string, deps: SharedLocationSt
   return prepared.status;
 }
 
-export function saveSetup(files: readonly SetupFile[], backupParent: string): (string | undefined)[] {
-  // Preflight the whole set before the first write. Each write rechecks too.
+function preflightSetupFiles(files: readonly SetupFile[]): void {
   for (const file of files) {
     const entry = lstatSync(file.path, { throwIfNoEntry: false });
     if (entry && (!entry.isFile() || entry.isSymbolicLink())) throw new Error('Refusing non-regular project setup targets.');
@@ -642,6 +643,11 @@ export function saveSetup(files: readonly SetupFile[], backupParent: string): (s
     const current = entry ? readFileSync(file.path, 'utf8') : undefined;
     if (current !== file.original) throw new Error('Project files changed during setup. Rerun; nothing was overwritten.');
   }
+}
+
+export function saveSetup(files: readonly SetupFile[], backupParent: string): (string | undefined)[] {
+  // Preflight the whole set before the first write. Each write rechecks too.
+  preflightSetupFiles(files);
   const backups: (string | undefined)[] = [];
   for (const file of files) {
     try { backups.push(saveInstallation(file.path, file.original, file.updated, backupParent)); }

@@ -609,13 +609,16 @@ test('R2-F3: update cancellation with real pending shared-location changes write
   writeFileSync(join(canonical, 'AGENTS.md'), agentsContent);
   const receiptsBefore = readdirSync(recovery).length;
 
+  let r2f3Prompts = 0;
   const code = await runUpdateFlow(
     { scope: 'project', project: canonical, host: 'opencode' },
     {
       ask: async question => {
+        if (++r2f3Prompts > 25) throw new Error(`Too many prompts in R2-F3; last: ${question}`);
         if (question.startsWith('Type paths to apply')) return 'paths';
         if (question.startsWith('Type update')) return 'cancel';
-        return 'no';
+        if (question.startsWith('Check remote') || question.startsWith('Choose new models') || question.startsWith('Install opt-in')) return 'no';
+        return '';
       },
       output: () => {},
       error: line => assert.fail(line),
@@ -663,4 +666,227 @@ test('R2-F7: stale lockfile reports conservative diagnostics without auto-deleti
   rmSync(lockPath);
   assert.equal(applyCanonicalHook(plan), true);
   assert.equal(isCanonicalHookInstalled(canonical), true);
+});
+
+function lightweightRepo(t: { after(fn: () => void): void }) {
+  const root = makeTempRoot('harness-hook-r3-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const canonical = join(root, 'canonical');
+  mkdirSync(canonical, { recursive: true });
+  git(canonical, 'init', '--initial-branch=main', '--quiet');
+  writeFileSync(join(canonical, 'README.md'), 'init\n');
+  git(canonical, 'add', 'README.md');
+  git(canonical, 'commit', '--quiet', '-m', 'init');
+  return { root, canonical };
+}
+
+test('R3-F1: cross-worktree relative hooks directory discovers external hook names', t => {
+  const { root, canonical } = lightweightRepo(t);
+  const worktree = join(root, 'wt');
+  git(canonical, 'worktree', 'add', '--quiet', '-b', 'feat', worktree);
+  const wtHooks = join(worktree, '.wt-rel-hooks');
+  mkdirSync(wtHooks, { recursive: true });
+  const hookFile = join(wtHooks, 'commit-msg');
+  writeFileSync(hookFile, '#!/bin/sh\nexit 0\n');
+  if (process.platform !== 'win32') chmodSync(hookFile, 0o755);
+  git(canonical, 'config', '--local', 'core.hooksPath', '.wt-rel-hooks');
+
+  const plan = planCanonicalHookInstall(canonical, 'opencode');
+  assert.equal(plan.status, 'change');
+  assert.ok(plan.scripts && 'commit-msg' in plan.scripts, 'discovered commit-msg from linked worktree relative hooksPath');
+});
+
+test('R3-F2: interrupted removal after config unset reports partial-cleanup error', t => {
+  const { canonical } = lightweightRepo(t);
+  applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
+  const removePlan = planCanonicalHookRemoval(canonical, 'opencode');
+  assert.equal(removePlan.status, 'change');
+
+  // Place a subdirectory inside hookDir so lstatSync/unlinkSync/rmdirSync encounters unexpected state after unset
+  mkdirSync(join(resolveCanonicalHookDir(canonical)!, 'unexpected-subdir'));
+  // Ensure core.hooksPath is unset and warning/preservation is recorded without silent failure
+  assert.equal(applyCanonicalHook(removePlan), true);
+  assert.equal(gitResult(canonical, 'config', '--local', '--get', 'core.hooksPath').ok, false);
+  assert.match(removePlan.warning ?? '', /preserved foreign\/modified files/);
+});
+
+test('R3-F3: Claude Code early no-change path still prompts when deferred shared locations are pending, and cancel skips apply', async t => {
+  const { root, canonical } = lightweightRepo(t);
+  const recovery = join(root, 'recovery');
+  const agentsDirectory = fileURLToPath(new URL('../agents/', import.meta.url));
+  const commandsDirectory = fileURLToPath(new URL('../commands/', import.meta.url));
+
+  // Install Claude Code once
+  assert.equal(await runInstallerFlow(
+    { scope: 'project', project: canonical, host: 'claude-code' },
+    {
+      ask: async question => question.startsWith('Install opt-in local Git hook') ? 'no' : question.startsWith('Type yes') ? 'yes' : '',
+      output: () => {},
+      error: line => assert.fail(line),
+      home: root,
+      recoveryDirectory: recovery,
+      agentsDirectory,
+      commandsDirectory,
+    }
+  ), 0);
+
+  // Add pending shared-location paths in AGENTS.md
+  const wtDir = join(root, 'cc-pending-wt');
+  const memFile = join(root, 'cc-pending-mem', 'MEMORY.md');
+  writeFileSync(join(canonical, 'AGENTS.md'), [
+    '# Project',
+    '',
+    '<!-- advanced-harness:project:start -->',
+    '```json',
+    JSON.stringify({
+      version: 1,
+      baseBranch: 'main',
+      shell: 'bash',
+      checks: {
+        build: { status: 'unconfigured' },
+        lint: { status: 'unconfigured' },
+        unit: { status: 'unconfigured' },
+        roborazzi: { status: 'unconfigured' },
+        runtime: { status: 'unconfigured' },
+        e2e: { status: 'unconfigured' },
+      },
+      device: { preference: 'ask' },
+      worktreeDirectory: wtDir,
+      memoryPath: memFile,
+    }, null, 2),
+    '```',
+    '<!-- advanced-harness:project:end -->',
+    '',
+  ].join('\n'));
+
+  // Cancel at final Claude Code confirmation -> shared locations must NOT be created
+  let ccPrompts = 0;
+  const cancelledCode = await runUpdateFlow(
+    { scope: 'project', project: canonical, host: 'claude-code' },
+    {
+      ask: async question => {
+        if (++ccPrompts > 25) throw new Error(`Too many prompts in R3-F3; last: ${question}`);
+        if (question.startsWith('Type paths to apply')) return 'paths';
+        if (question.startsWith('Type yes')) return 'no';
+        return '';
+      },
+      output: () => {},
+      error: line => assert.fail(line),
+      home: root,
+      recoveryDirectory: recovery,
+      agentsDirectory,
+      workflowCommandsDirectory: commandsDirectory,
+    }
+  );
+  assert.equal(cancelledCode, 1);
+  assert.equal(existsSync(wtDir), false);
+  assert.equal(existsSync(memFile), false);
+});
+
+test('R3-F4: intervening worktree core.hooksPath introduced after preview blocks apply', t => {
+  const { root, canonical } = lightweightRepo(t);
+  const worktree = join(root, 'wt');
+  git(canonical, 'worktree', 'add', '--quiet', '-b', 'feat', worktree);
+  const preview = planCanonicalHookInstall(canonical, 'opencode');
+  assert.equal(preview.status, 'change');
+
+  git(canonical, 'config', '--local', 'extensions.worktreeConfig', 'true');
+  git(worktree, 'config', '--worktree', 'core.hooksPath', '.wt-hooks');
+
+  assert.throws(() => applyCanonicalHook(preview), /Cannot apply canonical hook: worktree-scoped core\.hooksPath/);
+  assert.equal(isCanonicalHookInstalled(canonical), false);
+});
+
+test('R3-F6: POSIX uninstall preserves managed script whose executable bit was removed', t => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX executable mode bits do not apply on Windows');
+    return;
+  }
+  const { canonical } = lightweightRepo(t);
+  applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
+  const preCommit = join(resolveCanonicalHookDir(canonical)!, 'pre-commit');
+  chmodSync(preCommit, 0o644);
+  const removePlan = planCanonicalHookRemoval(canonical, 'opencode');
+  assert.equal(removePlan.status, 'change');
+  applyCanonicalHook(removePlan);
+  assert.equal(existsSync(preCommit), true, 'mode-modified script preserved on uninstall');
+  assert.match(removePlan.warning ?? '', /preserved foreign\/modified files/);
+});
+
+test('R3-F7: deferred shared-location failure after host update reports explicit partial outcome', async t => {
+  const { root, canonical } = lightweightRepo(t);
+  const recovery = join(root, 'recovery');
+
+  assert.equal(await runInstallerFlow(
+    { scope: 'project', project: canonical, host: 'opencode' },
+    {
+      ask: async question => {
+        if (question.includes(': model ID')) return 'local/model#low';
+        if (question.includes(': reasoning variant')) return 'low';
+        if (question.startsWith('Install opt-in local Git hook')) return 'no';
+        if (question.startsWith('Type install')) return 'install';
+        return 'no';
+      },
+      output: () => {},
+      error: line => assert.fail(line),
+      home: root,
+      recoveryDirectory: recovery,
+      verify: async () => ({ ok: true, checks: [] }) as never,
+      printReport: () => {},
+    }
+  ), 0);
+
+  const blocker = join(root, 'not-a-dir');
+  const wtDir = join(blocker, 'sub');
+  writeFileSync(join(canonical, 'AGENTS.md'), [
+    '# Project',
+    '',
+    '<!-- advanced-harness:project:start -->',
+    '```json',
+    JSON.stringify({
+      version: 1,
+      baseBranch: 'main',
+      shell: 'bash',
+      checks: {
+        build: { status: 'unconfigured' },
+        lint: { status: 'unconfigured' },
+        unit: { status: 'unconfigured' },
+        roborazzi: { status: 'unconfigured' },
+        runtime: { status: 'unconfigured' },
+        e2e: { status: 'unconfigured' },
+      },
+      device: { preference: 'ask' },
+      worktreeDirectory: wtDir,
+      memoryPath: join(root, 'mem', 'MEMORY.md'),
+    }, null, 2),
+    '```',
+    '<!-- advanced-harness:project:end -->',
+    '',
+  ].join('\n'));
+
+  const errors: string[] = [];
+  let ocPrompts = 0;
+  const code = await runUpdateFlow(
+    { scope: 'project', project: canonical, host: 'opencode' },
+    {
+      ask: async question => {
+        if (++ocPrompts > 25) throw new Error(`Too many prompts in R3-F7; last: ${question}`);
+        if (question.startsWith('Type paths to apply')) return 'paths';
+        if (question.startsWith('Type update')) {
+          writeFileSync(blocker, 'file blocking mkdir');
+          return 'update';
+        }
+        if (question.startsWith('Check remote') || question.startsWith('Choose new models') || question.startsWith('Install opt-in')) return 'no';
+        return '';
+      },
+      output: () => {},
+      error: line => errors.push(line),
+      home: root,
+      recoveryDirectory: recovery,
+      verify: async () => ({ ok: true, checks: [] }) as never,
+      printReport: () => {},
+    }
+  );
+  assert.equal(code, 1);
+  assert.ok(errors.some(e => e.includes('Host update and receipt already completed, but deferred shared-location step failed')));
 });

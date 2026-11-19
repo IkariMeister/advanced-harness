@@ -172,6 +172,19 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     }
   }
 
+  const applyDeferredSharedLocations = () => {
+    if (!deferredSharedLocations?.apply) return true;
+    try {
+      deferredSharedLocations.apply();
+      return true;
+    } catch (err) {
+      errorOutput(
+        `Host update and receipt already completed, but deferred shared-location step failed: ${err instanceof Error ? err.message : String(err)}. Inspect project context and recovery backups before rerunning.`
+      );
+      return false;
+    }
+  };
+
   if (dispatch.host === 'claude-code') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('claude-code');
     if (!adapter || !adapter.update) throw new Error('Claude Code host adapter update is not available.');
@@ -183,13 +196,14 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       agentsDirectory: deps.agentsDirectory,
       commandsDirectory: deps.workflowCommandsDirectory,
       harnessVersion: toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand)),
+      hasPendingSharedLocations: deferredSharedLocations?.status === 'saved',
+      onBeforeApply: deferredSharedLocations?.preflight,
+      onConfirmed: applyDeferredSharedLocations,
       ask,
       output,
       error: errorOutput,
     });
-    const code = typeof result === 'number' ? result : 0;
-    if (code === 0) deferredSharedLocations?.apply?.();
-    return code;
+    return typeof result === 'number' ? result : 0;
   }
 
   if (dispatch.host === 'codex') {
@@ -221,13 +235,14 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       commandsDirectory: deps.workflowCommandsDirectory,
       context: options.context,
       harnessVersion: toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand)),
+      hasPendingSharedLocations: deferredSharedLocations?.status === 'saved',
+      onBeforeApply: deferredSharedLocations?.preflight,
+      onConfirmed: applyDeferredSharedLocations,
       ask,
       output,
       error: errorOutput,
     });
-    const code = typeof result === 'number' ? result : 0;
-    if (code === 0) deferredSharedLocations?.apply?.();
-    return code;
+    return typeof result === 'number' ? result : 0;
   }
 
   const globalDirectory = resolve(join(deps.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? join(home, '.config'), 'opencode'));
@@ -549,6 +564,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   // Fail before creating a pending receipt; retain the guarded recheck below for races.
   assertNoForeignManagedFileClaims(backupParent, 'opencode', selectedSkillItems.map(file => file.path));
 
+  deferredSharedLocations?.preflight?.();
   const pending = (deps.writePending ?? writePendingSuccessor)(history, successor);
   const receiptPath = pending.path;
   let backup: string | undefined;
@@ -615,7 +631,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     output(`Backup created: ${backup}`);
   }
   output(`Successor receipt finalized at: ${receiptPath}`);
-  deferredSharedLocations?.apply?.();
+  if (!applyDeferredSharedLocations()) return 1;
   if (!finishCanonicalHook(canonicalHook, output, errorOutput)) return 1;
 
   // Runtime diagnostic verification

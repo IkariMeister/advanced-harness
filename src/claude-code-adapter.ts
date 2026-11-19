@@ -51,6 +51,9 @@ export interface ClaudeCodeInstallOptions {
   commandsDirectory?: string | undefined;
   skillsDirectory?: string | undefined;
   harnessVersion?: HarnessVersionStamp | undefined;
+  hasPendingSharedLocations?: boolean | undefined;
+  onBeforeApply?: (() => void) | undefined;
+  onConfirmed?: (() => boolean | void) | undefined;
   ask: Ask;
   output(message: string): void;
   error(message: string): void;
@@ -327,7 +330,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   const exclude = scope === 'project' ? previewGitExclude(project, 'claude-code', output) : undefined;
   const canonicalHook = scope === 'project' ? await promptCanonicalHook(project, 'claude-code', ask, output) : undefined;
   const filesChanged = selectedFilesToWrite.length > 0 || configChanged || selectedSkills.size > 0;
-  if (!filesChanged && exclude?.status !== 'change' && canonicalHook?.status !== 'change') {
+  if (!filesChanged && exclude?.status !== 'change' && canonicalHook?.status !== 'change' && !options.hasPendingSharedLocations) {
     output('No selected file needs changes; no files, backups, or receipts were modified.');
     return 0;
   }
@@ -352,10 +355,12 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
     output('Installation canceled by user. No files written.');
     return 1;
   }
+  options.onBeforeApply?.();
   if (!filesChanged) {
     output('Harness files already match; no files, backups, or receipts were modified.');
     finishGitExclude(exclude, output, error);
     if (!finishCanonicalHook(canonicalHook, output, error)) return 1;
+    if (options.onConfirmed?.() === false) return 1;
     return 0;
   }
 
@@ -430,6 +435,7 @@ export async function installClaudeCode(options: ClaudeCodeInstallOptions): Prom
   finalizeSuccessor(pending, targetFinal);
   finishGitExclude(exclude, output, error);
   if (!finishCanonicalHook(canonicalHook, output, error)) return 1;
+  if (options.onConfirmed?.() === false) return 1;
 
   output('\nClaude Code harness deployment complete (runtime not verified).');
   if (selectedSkills.size) output('Reusable procedure skills deployed.');

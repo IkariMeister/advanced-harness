@@ -237,34 +237,38 @@ function renderForwardingScript(hookName: string, previousHooksPath: string | un
 }
 
 function discoverExternalHookNames(
-  topLevel: string,
+  worktreeRoots: readonly string[],
   commonDir: string,
   previousHooksPath: string | undefined
 ): string[] {
-  const sourceDir = previousHooksPath
-    ? (isAbsolute(previousHooksPath) ? previousHooksPath : resolve(topLevel, previousHooksPath))
-    : join(commonDir, 'hooks');
-  if (!existsSync(sourceDir)) return [];
+  const sourceDirs = previousHooksPath
+    ? (isAbsolute(previousHooksPath)
+        ? [previousHooksPath]
+        : [...new Set(worktreeRoots.map(wt => resolve(wt, previousHooksPath)))])
+    : [join(commonDir, 'hooks')];
   const managed = new Set<string>(canonicalHookNames);
-  const names: string[] = [];
-  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
-    const name = entry.name;
-    if (name.endsWith('.sample') || name === STATE_FILE || managed.has(name)) continue;
-    const full = join(sourceDir, name);
-    const stat = lstatSync(full, { throwIfNoEntry: false });
-    if (!stat) continue;
-    if (stat.isSymbolicLink()) {
-      throw new Error(`Refusing symlinked hook ${full}`);
+  const names = new Set<string>();
+  for (const sourceDir of sourceDirs) {
+    if (!existsSync(sourceDir)) continue;
+    for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+      const name = entry.name;
+      if (name.endsWith('.sample') || name === STATE_FILE || managed.has(name)) continue;
+      const full = join(sourceDir, name);
+      const stat = lstatSync(full, { throwIfNoEntry: false });
+      if (!stat) continue;
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Refusing symlinked hook ${full}`);
+      }
+      if (!stat.isFile()) continue;
+      if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) continue;
+      names.add(name);
     }
-    if (!stat.isFile()) continue;
-    if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) continue;
-    names.push(name);
   }
-  return names.sort();
+  return [...names].sort();
 }
 
 function buildScripts(
-  topLevel: string,
+  worktreeRoots: readonly string[],
   commonDir: string,
   previousHooksPath: string | undefined
 ): Record<string, string> {
@@ -272,7 +276,7 @@ function buildScripts(
   for (const name of canonicalHookNames) {
     scripts[name] = renderHookScript(name, previousHooksPath);
   }
-  for (const name of discoverExternalHookNames(topLevel, commonDir, previousHooksPath)) {
+  for (const name of discoverExternalHookNames(worktreeRoots, commonDir, previousHooksPath)) {
     scripts[name] = renderForwardingScript(name, previousHooksPath);
   }
   return scripts;
@@ -357,6 +361,7 @@ export function planCanonicalHookInstall(
   let loaded: { state: CanonicalHookState; raw: string } | undefined;
   let localHooksPath: string | undefined;
   let effectiveHooksPath: string | undefined;
+  let worktreeRoots: string[] = [repo.topLevel];
   try {
     const wtBlock = checkWorktreeConfigBlock(root, run);
     if (wtBlock) return { status: 'unavailable', reason: wtBlock };
@@ -364,6 +369,7 @@ export function planCanonicalHookInstall(
     validateHookDirOwnership(hookDir, loaded?.state);
     localHooksPath = readGitConfig(root, ['--local', '--get', 'core.hooksPath'], run);
     effectiveHooksPath = readGitConfig(root, ['--get', 'core.hooksPath'], run);
+    worktreeRoots = listWorktreeRoots(root, run);
   } catch (err) {
     return { status: 'unavailable', reason: (err as Error).message };
   }
@@ -382,7 +388,12 @@ export function planCanonicalHookInstall(
         : state?.previousEffectiveHooksPath);
 
   const chainedHooksPath = previousLocalHooksPath ?? previousEffectiveHooksPath;
-  const scripts = buildScripts(repo.topLevel, repo.commonDir, chainedHooksPath);
+  let scripts: Record<string, string>;
+  try {
+    scripts = buildScripts(worktreeRoots, repo.commonDir, chainedHooksPath);
+  } catch (err) {
+    return { status: 'unavailable', reason: (err as Error).message };
+  }
   const managedFiles = Object.fromEntries(
     Object.entries(scripts).map(([name, content]) => [name, sha256(content)])
   );
@@ -601,6 +612,11 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
       throw new Error(`Local git config core.hooksPath changed after preview ("${currentLocal ?? 'unset'}"); left untouched.`);
     }
 
+    const wtBlock = checkWorktreeConfigBlock(plan.root, run);
+    if (wtBlock) {
+      throw new Error(`Cannot apply canonical hook: ${wtBlock}.`);
+    }
+
     const statePath = join(plan.hookDir, STATE_FILE);
     const currentStateText = existsSync(statePath) ? readFileSync(statePath, 'utf8') : undefined;
     if (currentStateText !== plan.expectedStateText) {
@@ -631,8 +647,10 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
       } catch (err) {
         try {
           restoreHookDirSnapshot(plan.hookDir, snapshot);
-        } catch {
-          // Best-effort rollback; preserve original error.
+        } catch (rollbackErr) {
+          throw new Error(
+            `${(err as Error).message}; rollback of ${plan.hookDir} also failed: ${(rollbackErr as Error).message}`
+          );
         }
         throw err;
       }
@@ -655,25 +673,33 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
 
     const managedFiles = loaded?.state.managedFiles ?? {};
     const preserved: string[] = [];
-    if (existsSync(plan.hookDir)) {
-      for (const entry of readdirSync(plan.hookDir)) {
-        if (entry === STATE_FILE) continue;
-        const entryPath = join(plan.hookDir, entry);
-        const expectedDigest = managedFiles[entry];
-        if (expectedDigest && lstatSync(entryPath).isFile() && sha256(readFileSync(entryPath, 'utf8')) === expectedDigest) {
-          unlinkSync(entryPath);
+    try {
+      if (existsSync(plan.hookDir)) {
+        for (const entry of readdirSync(plan.hookDir)) {
+          if (entry === STATE_FILE) continue;
+          const entryPath = join(plan.hookDir, entry);
+          const expectedDigest = managedFiles[entry];
+          const stat = lstatSync(entryPath);
+          const modeValid = process.platform === 'win32' || (stat.mode & 0o111) !== 0;
+          if (expectedDigest && stat.isFile() && modeValid && sha256(readFileSync(entryPath, 'utf8')) === expectedDigest) {
+            unlinkSync(entryPath);
+          } else {
+            preserved.push(entry);
+          }
+        }
+        if (existsSync(statePath)) unlinkSync(statePath);
+        if (preserved.length === 0) {
+          rmdirSync(plan.hookDir);
         } else {
-          preserved.push(entry);
+          plan.warning = [plan.warning, `preserved foreign/modified files in ${plan.hookDir}: ${preserved.join(', ')}`]
+            .filter(Boolean)
+            .join('; ');
         }
       }
-      if (existsSync(statePath)) unlinkSync(statePath);
-      if (preserved.length === 0) {
-        rmdirSync(plan.hookDir);
-      } else {
-        plan.warning = [plan.warning, `preserved foreign/modified files in ${plan.hookDir}: ${preserved.join(', ')}`]
-          .filter(Boolean)
-          .join('; ');
-      }
+    } catch (removeErr) {
+      throw new Error(
+        `Git config core.hooksPath was already restored/unset, but cleanup of ${plan.hookDir} partially failed: ${(removeErr as Error).message}`
+      );
     }
     return true;
   } finally {
