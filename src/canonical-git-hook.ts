@@ -306,11 +306,11 @@ function validateHookDirOwnership(hookDir: string, state: CanonicalHookState | u
     const stat = lstatSync(filePath);
     if (process.platform !== 'win32') {
       const expectedMode = state.managedModes?.[name];
-      if (expectedMode !== undefined && (stat.mode & 0o777) !== expectedMode) {
-        throw new Error(`Hook file ${filePath} permission mode changed outside advanced-harness`);
+      if (expectedMode === undefined) {
+        throw new Error(`Hook file ${filePath} has no recorded permission mode in state`);
       }
-      if ((stat.mode & 0o111) === 0) {
-        throw new Error(`Hook file ${filePath} lost executable permission outside advanced-harness`);
+      if ((stat.mode & 0o7777) !== expectedMode) {
+        throw new Error(`Hook file ${filePath} permission mode changed outside advanced-harness`);
       }
     }
     const actualDigest = sha256(readFileSync(filePath, 'utf8'));
@@ -429,7 +429,7 @@ export function planCanonicalHookInstall(
     if (!existsSync(file) || readFileSync(file, 'utf8') !== content) return false;
     if (process.platform !== 'win32') {
       const expectedMode = nextState.managedModes?.[name] ?? 0o755;
-      if ((lstatSync(file).mode & 0o777) !== expectedMode) return false;
+      if ((lstatSync(file).mode & 0o7777) !== expectedMode) return false;
     }
     return true;
   });
@@ -646,6 +646,7 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
     if (plan.action === 'install' || plan.action === 'update') {
       validateHookDirOwnership(plan.hookDir, loaded?.state);
       const snapshot = snapshotHookDir(plan.hookDir);
+      const configAlreadyActive = currentLocal === plan.installedHooksPath;
       try {
         mkdirSync(plan.hookDir, { recursive: true });
         const prevManaged = Object.keys(loaded?.state.managedFiles ?? {});
@@ -659,22 +660,24 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
           atomicWriteFile(join(plan.hookDir, name), content, true);
         }
         atomicWriteFile(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
-        if (currentLocal !== plan.installedHooksPath) {
+        if (!configAlreadyActive) {
           run('git', ['config', '--local', 'core.hooksPath', plan.installedHooksPath], { cwd: plan.root });
         }
       } catch (err) {
-        let readback: string | undefined;
-        try {
-          readback = readGitConfig(plan.root, ['--local', '--get', 'core.hooksPath'], run);
-        } catch (readbackErr) {
-          throw new Error(
-            `${(err as Error).message}; config readback failed (${(readbackErr as Error).message}); preserved ${plan.hookDir} and recovery state`
-          );
-        }
-        if (readback === plan.installedHooksPath) {
-          throw new Error(
-            `${(err as Error).message}; core.hooksPath is already set to ${plan.installedHooksPath}; preserved ${plan.hookDir} and recovery state`
-          );
+        if (!configAlreadyActive) {
+          let readback: string | undefined;
+          try {
+            readback = readGitConfig(plan.root, ['--local', '--get', 'core.hooksPath'], run);
+          } catch (readbackErr) {
+            throw new Error(
+              `${(err as Error).message}; config readback failed (${(readbackErr as Error).message}); preserved ${plan.hookDir} and recovery state`
+            );
+          }
+          if (readback === plan.installedHooksPath) {
+            throw new Error(
+              `${(err as Error).message}; core.hooksPath is already set to ${plan.installedHooksPath}; preserved ${plan.hookDir} and recovery state`
+            );
+          }
         }
         try {
           restoreHookDirSnapshot(plan.hookDir, snapshot);
@@ -714,7 +717,7 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
           const stat = lstatSync(entryPath);
           const expectedMode = managedModes?.[entry];
           const modeValid = process.platform === 'win32'
-            || (expectedMode !== undefined && (stat.mode & 0o777) === expectedMode);
+            || (expectedMode !== undefined && (stat.mode & 0o7777) === expectedMode);
           if (expectedDigest && stat.isFile() && modeValid && sha256(readFileSync(entryPath, 'utf8')) === expectedDigest) {
             unlinkSync(entryPath);
           } else {

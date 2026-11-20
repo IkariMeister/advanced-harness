@@ -35,9 +35,9 @@ Operator would run `git merge --ff-only origin/<base>` itself, which requires a 
 
 External performs `git fetch` and `git merge --ff-only origin/<base>` in the canonical checkout only during task bootstrap, when Lead relays the step after Operator's read-only inspection. The `git merge` command stays ASK for External and gets no allow rule. Operator's read-only inspection is unchanged, and its `git fetch` exception is retained but optional; not part of bootstrap; the bootstrap fetch is External's. The rule is stated in the role contracts and in the workflow documentation. This meets drivers 1 to 5 within the current permission model, and it can be reversed by reverting the text.
 
-### D. Enforce with a harness-installed local Git hook (deferred)
+### D. Enforce with a harness-installed local Git hook (originally deferred; later implemented as opt-in in #202)
 
-A hook could refuse writes in the canonical checkout. This is deferred to a follow-up issue; no follow-up issue for the hook exists yet. The reasons are that shell patterns cannot identify a worktree, that the hook writes local Git configuration and would need consent, and that install, update, and uninstall handling would be needed. Until that issue is decided, the rule depends on role compliance, and the documentation says so.
+In the initial ADR-004 draft (#172), a local Git hook was deferred to a follow-up issue because shell patterns cannot identify a worktree, local Git config requires consent, and install/update/uninstall handling was needed. Issue #202 later implemented that opt-in hook as recorded in Decision 2 below.
 
 ### E. An opt-out setting
 
@@ -69,13 +69,16 @@ This replaces the earlier allowances "untouched canonical changes do not block b
 
 **Negative:** Role compliance remains required when the opt-in hook is declined or bypassed (`--no-verify`, `core.hooksPath` override), and `post-checkout` only warns after a canonical branch switch. A dirty or mid-operation canonical checkout stops bootstrap until a human confirms, which is more friction. Each External fast-forward is an ASK prompt, since no allow rule is added.
 
-**Neutral:** Single-checkout projects see no change. Installed hosts receive the new role text on the next install or update. The permission frontmatter, receipts, and installed rules do not change.
+**Neutral:** Single-checkout projects that do not configure `worktreeDirectory` and decline the opt-in hook (default `no`) see no workflow or Git-config change. Installed hosts receive the new role text on the next install or update. The permission frontmatter, receipts, and installed rules do not change.
 
 ## Adoption
 
-Accepting this ADR establishes the canonical-checkout rule in role contracts and documentation, plus the opt-in local Git hook in project-scope `harness:install`, `harness:update`, and `harness:uninstall` (#202). The permission frontmatter of every role stays as it is.
+Accepting this ADR records the architectural direction (the canonical-checkout rule in role contracts and documentation, plus the opt-in local Git hook in project-scope `harness:install`, `harness:update`, and `harness:uninstall` from #202). ADR acceptance does not by itself authorize unrelated implementation or publication. The permission frontmatter of every role stays as it is.
 
-Rollback is a revert of those changes followed by `harness:uninstall` / `harness:update` to remove the opt-in hook (restoring local `core.hooksPath`) and recompile installed role text.
+**Rollback:** Uninstall the hook **before** reverting or downgrading the harness checkout, using a version that still supports hook removal:
+1. Run `npm run harness:uninstall -- --host <host> --scope project --project <repo>` for every owning host (when multiple hosts share the hook, each earlier uninstall releases only its owner; the last owner removes the hook directory and restores or unsets local `core.hooksPath`, preserving any user-changed `core.hooksPath` or modified/foreign files).
+2. Verify `git -C <repo> config --local --get core.hooksPath` is restored/unset as expected before proceeding.
+3. Revert the code/doc changes (or downgrade) and run `npm run harness:update` to recompile installed role text (`harness:update` does not remove an already-installed hook).
 
 ## Reconsideration
 
