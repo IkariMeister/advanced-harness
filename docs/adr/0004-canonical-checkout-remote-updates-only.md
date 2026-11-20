@@ -1,7 +1,9 @@
 # ADR: Keep the Canonical Checkout Read-Only Except for Remote Updates
 
-**Status:** Proposed\
+**Status:** Accepted\
 **Date:** 2026-11-08\
+**Decided:** 2026-11-20\
+**Decision record:** [PR #258](https://github.com/IkariMeister/advanced-harness/pull/258)\
 **Project:** Advanced Harness\
 **Decision scope:** Git ownership of an application repository's canonical checkout during task bootstrap, and how that ownership is enforced. It covers the application repository only.
 
@@ -44,7 +46,7 @@ A project-level flag could disable the rule. This is rejected. The rule applies 
 ## Decision
 
 1. **Update path.** External performs the fast-forward update of the base branch in the canonical checkout (`git fetch`, then `git merge --ff-only origin/<base>`), only during task bootstrap relayed by Lead and only when the local base is not ahead of or diverged from `origin/<base>`. Operator's `git fetch` exception is retained but optional; not part of bootstrap; the bootstrap fetch is External's. `git pull` stays denied for Operator, and External never pulls, forces, resets, rebases, or switches branches in the canonical checkout.
-2. **Enforcement.** Role contracts and documentation only. No Git hook is installed, no permission rule is added or changed, and the hook is deferred as Option D describes. (See issue #202 for the opt-in local Git hook follow-up.)
+2. **Enforcement.** Role contracts and documentation remain primary, reinforced by an **opt-in local Git hook** (#202) installed under `<git-common-dir>/advanced-harness-hooks` via local `core.hooksPath` when the human consents during project-scope `harness:install` or `harness:update`. In the canonical checkout, the hook blocks commits (`pre-commit`), non-fast-forward merges (`pre-merge-commit`, while allowing `git merge --ff-only`), and rebases (`pre-rebase`), and **warns** after branch switches (`post-checkout`, accepted for #202 because Git has no `pre-checkout` hook and cannot abort a completed switch). No permission rule is added or changed.
 3. **No opt-out.** The rule applies only when the project uses task worktrees (a `worktreeDirectory` is configured). A single-checkout project with no `worktreeDirectory` is not affected.
 4. **Scope.** The application repository's canonical checkout only. A consumer harness checkout pinned to a release tag (see [releasing.md](../releasing.md)) is out of scope and keeps following `docs/releasing.md`.
 
@@ -65,15 +67,15 @@ This replaces the earlier allowances "untouched canonical changes do not block b
 
 **Positive:** Tasks start from the current remote base. The canonical checkout stays free of agent-made edits and commits. The rule is stated in every role that touches Git, and no permission changes.
 
-**Negative:** The rule depends on role compliance, because no hook enforces it. A dirty or mid-operation canonical checkout now stops bootstrap until a human confirms, which is more friction. Each External fast-forward is an ASK prompt, since no allow rule is added.
+**Negative:** Role compliance remains required when the opt-in hook is declined or bypassed (`--no-verify`, `core.hooksPath` override), and `post-checkout` only warns after a canonical branch switch. A dirty or mid-operation canonical checkout stops bootstrap until a human confirms, which is more friction. Each External fast-forward is an ASK prompt, since no allow rule is added.
 
 **Neutral:** Single-checkout projects see no change. Installed hosts receive the new role text on the next install or update. The permission frontmatter, receipts, and installed rules do not change.
 
 ## Adoption
 
-Accepting this ADR does not change tooling, roles, permissions, or defaults. It confers no further authority. The contract and documentation changes ship with this ADR as one text change, under the human plan approval that covers them: the Operator, External, and Lead contracts, `commands/start-issue.md` and its OpenCode output, the workflow documentation, the glossary entries for canonical checkout, base branch, dirty, and mid-operation, the CHANGELOG, and the regression tests. The permission frontmatter of every role stays as it is.
+Accepting this ADR establishes the canonical-checkout rule in role contracts and documentation, plus the opt-in local Git hook in project-scope `harness:install`, `harness:update`, and `harness:uninstall` (#202). The permission frontmatter of every role stays as it is.
 
-Rollback is a revert of that text change followed by a harness update, which recompiles the installed role text. No receipt or installed configuration needs migration.
+Rollback is a revert of those changes followed by `harness:uninstall` / `harness:update` to remove the opt-in hook (restoring local `core.hooksPath`) and recompile installed role text.
 
 ## Reconsideration
 

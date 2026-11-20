@@ -204,18 +204,28 @@ test('update step: asked to change, embedded settings are retried on invalid pat
   assert.equal(existsSync(settings.memoryPath), false, 'old path is not created');
 });
 
-test('harness:update settles shared locations before the host update, independent of host cancellation', async t => {
+test('harness:update defers shared-location writes until final update confirmation', async t => {
   const { root, project, home } = fixture(t);
   writeFileSync(join(project, 'opencode.json'), JSON.stringify({ agents: Object.fromEntries(nativeRoles.map(role => [role, { description: 'd', mode: role === 'lead' ? 'primary' : 'subagent', model: 'custom/model#low', permissions: [], system: 'old' }])) }));
   const recorded = { worktreeDirectory: join(root, 'trees'), memoryPath: join(root, 'data', 'MEMORY.md') };
   writeFileSync(join(project, 'AGENTS.md'), updateContext('# App\n', 'paths', { version: 1, ...recorded }, ['interim']));
-  const steps = script([['Parent directory', recorded.worktreeDirectory], ['Shared MEMORY.md', recorded.memoryPath], ['Type paths', 'paths']]);
-  const status = await runUpdateFlow({ scope: 'project', project, checkRemote: false }, {
-    ask: async question => steps.remaining.length ? steps.ask(question) : question.includes('system prompt to latest') ? 'no' : question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'cancel' : assert.fail(question),
+  const cancelSteps = script([['Parent directory', recorded.worktreeDirectory], ['Shared MEMORY.md', recorded.memoryPath], ['Type paths', 'paths']]);
+  const cancelled = await runUpdateFlow({ scope: 'project', project, checkRemote: false }, {
+    ask: async question => cancelSteps.remaining.length ? cancelSteps.ask(question) : question.includes('system prompt to latest') ? 'no' : question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'cancel' : assert.fail(question),
     output: () => {}, error: () => {}, home, xdgConfigHome: join(root, 'xdg'), recoveryDirectory: join(root, 'recovery'), runCommand: () => '',
   });
-  assert.equal(status, 0);
-  assert.equal(steps.remaining.length, 0);
+  assert.equal(cancelled, 0);
+  assert.equal(cancelSteps.remaining.length, 0);
+  assert.equal(existsSync(recorded.memoryPath), false, 'shared locations are not written on update cancel');
+
+  const confirmSteps = script([['Parent directory', recorded.worktreeDirectory], ['Shared MEMORY.md', recorded.memoryPath], ['Type paths', 'paths']]);
+  await runUpdateFlow({ scope: 'project', project, checkRemote: false }, {
+    ask: async question => confirmSteps.remaining.length ? confirmSteps.ask(question) : question.includes('system prompt to latest') ? 'no' : question.startsWith('Choose new models') ? 'no' : question.startsWith('Type update') ? 'update' : assert.fail(question),
+    output: () => {}, error: () => {}, home, xdgConfigHome: join(root, 'xdg'), recoveryDirectory: join(root, 'recovery'),
+    runCommand: (_exe, args) => args.includes('rev-parse') ? '0'.repeat(40) : '',
+    verify: async () => ({ ok: true, checks: [] }) as never,
+    printReport: () => {},
+  });
   assert.equal(readFileSync(recorded.memoryPath, 'utf8'), '# Shared Operator memory\n\n');
 
   let called = 0;

@@ -29,6 +29,7 @@ export interface CanonicalHookState {
   previousEffectiveHooksPath?: string;
   installedHooksPath: string;
   managedFiles: Record<string, string>;
+  managedModes?: Record<string, number>;
 }
 
 export type CanonicalHookPlan =
@@ -148,6 +149,9 @@ function readState(statePath: string): { state: CanonicalHookState; raw: string 
         : {}),
       installedHooksPath: parsed.installedHooksPath,
       managedFiles: { ...parsed.managedFiles },
+      ...(parsed.managedModes && typeof parsed.managedModes === 'object'
+        ? { managedModes: { ...parsed.managedModes } }
+        : {}),
     },
   };
 }
@@ -252,13 +256,14 @@ function discoverExternalHookNames(
     if (!existsSync(sourceDir)) continue;
     for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
       const name = entry.name;
-      if (name.endsWith('.sample') || name === STATE_FILE || managed.has(name)) continue;
+      if (name.endsWith('.sample') || name === STATE_FILE) continue;
       const full = join(sourceDir, name);
       const stat = lstatSync(full, { throwIfNoEntry: false });
       if (!stat) continue;
       if (stat.isSymbolicLink()) {
         throw new Error(`Refusing symlinked hook ${full}`);
       }
+      if (managed.has(name)) continue;
       if (!stat.isFile()) continue;
       if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) continue;
       names.add(name);
@@ -299,8 +304,14 @@ function validateHookDirOwnership(hookDir: string, state: CanonicalHookState | u
     const filePath = join(hookDir, name);
     if (!existsSync(filePath)) continue;
     const stat = lstatSync(filePath);
-    if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) {
-      throw new Error(`Hook file ${filePath} lost executable permission outside advanced-harness`);
+    if (process.platform !== 'win32') {
+      const expectedMode = state.managedModes?.[name];
+      if (expectedMode !== undefined && (stat.mode & 0o777) !== expectedMode) {
+        throw new Error(`Hook file ${filePath} permission mode changed outside advanced-harness`);
+      }
+      if ((stat.mode & 0o111) === 0) {
+        throw new Error(`Hook file ${filePath} lost executable permission outside advanced-harness`);
+      }
     }
     const actualDigest = sha256(readFileSync(filePath, 'utf8'));
     if (actualDigest !== expectedDigest) {
@@ -397,6 +408,9 @@ export function planCanonicalHookInstall(
   const managedFiles = Object.fromEntries(
     Object.entries(scripts).map(([name, content]) => [name, sha256(content)])
   );
+  const managedModes = process.platform !== 'win32'
+    ? Object.fromEntries(Object.keys(scripts).map(name => [name, 0o755]))
+    : undefined;
 
   const nextOwners = [...new Set([...(state?.owners ?? []), owner])].sort() as CanonicalHookOwner[];
   const nextState: CanonicalHookState = {
@@ -406,13 +420,17 @@ export function planCanonicalHookInstall(
     ...(previousEffectiveHooksPath ? { previousEffectiveHooksPath } : {}),
     installedHooksPath,
     managedFiles,
+    ...(managedModes ? { managedModes } : {}),
   };
 
   const stateCurrent = state !== undefined && JSON.stringify(state) === JSON.stringify(nextState);
   const scriptsCurrent = Object.entries(scripts).every(([name, content]) => {
     const file = join(hookDir, name);
     if (!existsSync(file) || readFileSync(file, 'utf8') !== content) return false;
-    if (process.platform !== 'win32' && (lstatSync(file).mode & 0o111) === 0) return false;
+    if (process.platform !== 'win32') {
+      const expectedMode = nextState.managedModes?.[name] ?? 0o755;
+      if ((lstatSync(file).mode & 0o777) !== expectedMode) return false;
+    }
     return true;
   });
   const configCurrent = ownConfigured && localHooksPath === installedHooksPath;
@@ -645,6 +663,19 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
           run('git', ['config', '--local', 'core.hooksPath', plan.installedHooksPath], { cwd: plan.root });
         }
       } catch (err) {
+        let readback: string | undefined;
+        try {
+          readback = readGitConfig(plan.root, ['--local', '--get', 'core.hooksPath'], run);
+        } catch (readbackErr) {
+          throw new Error(
+            `${(err as Error).message}; config readback failed (${(readbackErr as Error).message}); preserved ${plan.hookDir} and recovery state`
+          );
+        }
+        if (readback === plan.installedHooksPath) {
+          throw new Error(
+            `${(err as Error).message}; core.hooksPath is already set to ${plan.installedHooksPath}; preserved ${plan.hookDir} and recovery state`
+          );
+        }
         try {
           restoreHookDirSnapshot(plan.hookDir, snapshot);
         } catch (rollbackErr) {
@@ -672,6 +703,7 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
     }
 
     const managedFiles = loaded?.state.managedFiles ?? {};
+    const managedModes = loaded?.state.managedModes;
     const preserved: string[] = [];
     try {
       if (existsSync(plan.hookDir)) {
@@ -680,7 +712,9 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
           const entryPath = join(plan.hookDir, entry);
           const expectedDigest = managedFiles[entry];
           const stat = lstatSync(entryPath);
-          const modeValid = process.platform === 'win32' || (stat.mode & 0o111) !== 0;
+          const expectedMode = managedModes?.[entry];
+          const modeValid = process.platform === 'win32'
+            || (expectedMode !== undefined && (stat.mode & 0o777) === expectedMode);
           if (expectedDigest && stat.isFile() && modeValid && sha256(readFileSync(entryPath, 'utf8')) === expectedDigest) {
             unlinkSync(entryPath);
           } else {

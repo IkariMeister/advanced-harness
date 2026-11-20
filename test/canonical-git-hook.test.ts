@@ -553,8 +553,8 @@ test('R2-F2: partial write failure rolls back hookDir and finishCanonicalHook pr
   rmSync(lockPath);
 });
 
-test('R2-F3: update cancellation with real pending shared-location changes writes zero files or backups', async t => {
-  const { root, canonical } = repoWithRemoteAndWorktree(t);
+test('R2-F3: deferred shared-location changes write nothing on cancel and apply on final confirmation', async t => {
+  const { root, canonical } = lightweightRepo(t);
   const recovery = join(root, 'recovery');
 
   // Install OpenCode first
@@ -609,31 +609,39 @@ test('R2-F3: update cancellation with real pending shared-location changes write
   writeFileSync(join(canonical, 'AGENTS.md'), agentsContent);
   const receiptsBefore = readdirSync(recovery).length;
 
-  let r2f3Prompts = 0;
-  const code = await runUpdateFlow(
-    { scope: 'project', project: canonical, host: 'opencode' },
-    {
-      ask: async question => {
-        if (++r2f3Prompts > 25) throw new Error(`Too many prompts in R2-F3; last: ${question}`);
-        if (question.startsWith('Type paths to apply')) return 'paths';
-        if (question.startsWith('Type update')) return 'cancel';
-        if (question.startsWith('Check remote') || question.startsWith('Choose new models') || question.startsWith('Install opt-in')) return 'no';
-        return '';
-      },
-      output: () => {},
-      error: line => assert.fail(line),
-      home: root,
-      recoveryDirectory: recovery,
-      verify: async () => ({ ok: true, checks: [] }) as never,
-      printReport: () => {},
-    }
-  );
+  const runDeferredUpdate = async (finalAnswer: string) => {
+    let prompts = 0;
+    return runUpdateFlow(
+      { scope: 'project', project: canonical, host: 'opencode' },
+      {
+        ask: async question => {
+          if (++prompts > 25) throw new Error(`Too many prompts in R2-F3; last: ${question}`);
+          if (question.startsWith('Type paths to apply')) return 'paths';
+          if (question.startsWith('Type update')) return finalAnswer;
+          if (question.startsWith('Check remote') || question.startsWith('Choose new models') || question.startsWith('Install opt-in')) return 'no';
+          return '';
+        },
+        output: () => {},
+        error: line => assert.fail(line),
+        home: root,
+        recoveryDirectory: recovery,
+        verify: async () => ({ ok: true, checks: [] }) as never,
+        printReport: () => {},
+      }
+    );
+  };
 
-  assert.equal(code, 0);
+  // Case 1: cancellation writes nothing
+  assert.equal(await runDeferredUpdate('cancel'), 0);
   assert.equal(existsSync(wtDir), false, 'deferred worktreeDirectory not created on cancel');
   assert.equal(existsSync(memFile), false, 'deferred MEMORY.md not created on cancel');
   assert.equal(readFileSync(join(canonical, 'AGENTS.md'), 'utf8'), agentsContent);
   assert.equal(readdirSync(recovery).length, receiptsBefore, 'no backup or receipt created on cancel');
+
+  // Case 2: final confirmation creates the deferred shared locations
+  assert.equal(await runDeferredUpdate('update'), 0);
+  assert.equal(existsSync(wtDir), true, 'deferred worktreeDirectory created on confirmation');
+  assert.equal(existsSync(memFile), true, 'deferred MEMORY.md created on confirmation');
 });
 
 test('R2-F6: non-executable hook script on POSIX is not classified as current', t => {
@@ -889,4 +897,111 @@ test('R3-F7: deferred shared-location failure after host update reports explicit
   );
   assert.equal(code, 1);
   assert.ok(errors.some(e => e.includes('Host update and receipt already completed, but deferred shared-location step failed')));
+});
+
+test('R258-13: symlinked managed and forwarding hooks are both refused without touching config or files', t => {
+  for (const hookName of ['pre-commit', 'commit-msg']) {
+    const { root, canonical } = lightweightRepo(t);
+    const target = join(root, `${hookName}-target.sh`);
+    writeFileSync(target, '#!/bin/sh\nexit 0\n');
+    const symlinkPath = join(canonical, '.git', 'hooks', hookName);
+    try {
+      symlinkSync(target, symlinkPath);
+    } catch {
+      t.skip('file symlinks are not available');
+      return;
+    }
+    const plan = planCanonicalHookInstall(canonical, 'opencode');
+    assert.equal(plan.status, 'unavailable', `symlinked ${hookName} refused`);
+    assert.match(plan.reason, /Refusing symlinked hook/);
+    assert.equal(isCanonicalHookInstalled(canonical), false);
+    assert.equal(gitResult(canonical, 'config', '--local', '--get', 'core.hooksPath').ok, false);
+  }
+});
+
+test('R258-09: POSIX permission ownership preserves modified modes (0700, 0750, 0644) and removes unchanged files', t => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX permission modes do not apply on Windows');
+    return;
+  }
+  for (const mode of [0o700, 0o750, 0o644]) {
+    const { canonical } = lightweightRepo(t);
+    applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
+    const hookDir = resolveCanonicalHookDir(canonical)!;
+    const preCommit = join(hookDir, 'pre-commit');
+    chmodSync(preCommit, mode);
+    const removePlan = planCanonicalHookRemoval(canonical, 'opencode');
+    assert.equal(removePlan.status, 'change');
+    applyCanonicalHook(removePlan);
+    assert.equal(existsSync(preCommit), true, `mode 0${mode.toString(8)} preserved`);
+    assert.equal(existsSync(join(hookDir, 'pre-rebase')), false, 'unchanged file removed');
+  }
+
+  // Older state without managedModes is handled conservatively on POSIX (preserves scripts)
+  const { canonical } = lightweightRepo(t);
+  applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
+  const hookDir = resolveCanonicalHookDir(canonical)!;
+  const statePath = join(hookDir, '.state.json');
+  const legacyState = JSON.parse(readFileSync(statePath, 'utf8'));
+  delete legacyState.managedModes;
+  writeFileSync(statePath, JSON.stringify(legacyState, null, 2) + '\n');
+  const removeLegacy = planCanonicalHookRemoval(canonical, 'opencode');
+  applyCanonicalHook(removeLegacy);
+  assert.equal(existsSync(join(hookDir, 'pre-commit')), true, 'older state without managedModes preserved');
+});
+
+test('R258-05: uncertain config write, failed readback, failed rollback, and partial removal preserve recovery diagnostics', t => {
+  // 1. Write-then-throw where core.hooksPath WAS written -> hookDir preserved
+  {
+    const { canonical } = lightweightRepo(t);
+    const plan = planCanonicalHookInstall(canonical, 'opencode');
+    const writeThenThrowRunner = (exe: string, args: string[], opts?: { cwd?: string }) => {
+      const out = execFileSync(exe, args, { cwd: opts?.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      if (exe === 'git' && args[0] === 'config' && args.includes('--local') && args.includes('core.hooksPath') && !args.includes('--get')) {
+        throw new Error('post-write failure');
+      }
+      return out;
+    };
+    assert.throws(() => applyCanonicalHook(plan, writeThenThrowRunner), /post-write failure; core\.hooksPath is already set/);
+    assert.equal(isCanonicalHookInstalled(canonical), true, 'hookDir preserved when config write succeeded');
+  }
+
+  // 2. Config write fails and readback also fails -> hookDir preserved with both errors
+  {
+    const { canonical } = lightweightRepo(t);
+    const plan = planCanonicalHookInstall(canonical, 'opencode');
+    let configWrites = 0;
+    const failedReadbackRunner = (exe: string, args: string[], opts?: { cwd?: string }) => {
+      if (exe === 'git' && args[0] === 'config' && args.includes('--local') && args.includes('core.hooksPath')) {
+        if (!args.includes('--get')) {
+          configWrites++;
+          throw new Error('config write failed');
+        }
+        if (configWrites > 0) {
+          throw Object.assign(new Error('readback failed'), { status: 128 });
+        }
+      }
+      return execFileSync(exe, args, { cwd: opts?.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    };
+    assert.throws(() => applyCanonicalHook(plan, failedReadbackRunner), /config write failed; config readback failed/);
+    assert.equal(isCanonicalHookInstalled(canonical), true, 'hookDir preserved on uncertain readback');
+  }
+
+  // 3. Rollback failure after config write failure (blocked by directory in hookDir during restore)
+  {
+    const { canonical } = lightweightRepo(t);
+    const plan = planCanonicalHookInstall(canonical, 'opencode');
+    const hookDir = resolveCanonicalHookDir(canonical)!;
+    const blockingRollbackRunner = (exe: string, args: string[], opts?: { cwd?: string }) => {
+      if (exe === 'git' && args[0] === 'config' && args.includes('--local') && args.includes('core.hooksPath') && !args.includes('--get')) {
+        // Inject an undeletable subdirectory name matching a hook or non-empty dir to force rmdirSync failure on rollback
+        mkdirSync(join(hookDir, 'rollback-blocker'), { recursive: true });
+        throw new Error('config write failed');
+      }
+      return execFileSync(exe, args, { cwd: opts?.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    };
+    // Hook files are unlinked, rollback-blocker keeps hookDir non-empty so restoreHookDirSnapshot leaves it safely without crashing;
+    // verify config write error is still reported cleanly.
+    assert.throws(() => applyCanonicalHook(plan, blockingRollbackRunner), /config write failed/);
+  }
 });
