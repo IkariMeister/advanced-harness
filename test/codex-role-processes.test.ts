@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { codexForbiddenPrefixes, compileCodexMergeRule, diagnoseCodex, disableMultiAgent, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
 import { codexChildRoles, codexRoleLauncherSource, codexRolePolicies, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from '../src/codex-role-processes.ts';
-import { assertResumable, buildRoleInvocation, isEntryPoint, listMcpServers, main as launcherMain, parseProfile, readSelectedMcpServers, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
+import { assertResumable, boundedStderrTail, buildRoleInvocation, isEntryPoint, listMcpServers, main as launcherMain, parseProfile, readSelectedMcpServers, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 
 const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -530,4 +530,66 @@ test('External launches only with a readable MCP selection from the install (#45
   assert.throws(() => launcherMain(['external', '--task', 't'], env), /ENOENT/, 'a valid selection moves on to the listing, whose failure also stops the launch');
   rmSync(state);
   assert.throws(() => launcherMain(['reviewer', '--task', 't'], env), /ENOENT/, 'roles without MCP never read the selection');
+});
+
+test('a failed run with no status report shows its stderr tail as Needs your decision and records no thread (#256)', t => {
+  const { codex } = sandbox(t);
+  const bindings = threadBindingsPath(codex);
+  const stderrTail = boundedStderrTail('Error: first line\n  second line\n');
+  const failed = reportRun({ role: 'implementer', bindingsPath: bindings, stdout: '', exitCode: 1, resultText: undefined, stderrTail });
+  assert.equal(failed.code, 1);
+  assert.equal(failed.report.status, 'Needs your decision');
+  assert.equal(failed.report.summary, 'The role ended without a parseable status report.');
+  assert.equal(failed.report.details, 'Error: first line second line');
+  assert.equal(failed.report.exitCode, 1);
+  assert.equal(failed.report.threadId, undefined, 'no thread.started event, so no thread ID');
+  assert.equal(existsSync(bindings), false, 'no thread was started, so no binding is written');
+
+  const silent = reportRun({ role: 'implementer', bindingsPath: bindings, stdout: '', exitCode: 1, resultText: undefined });
+  assert.equal(silent.report.details, '', 'without stderr the details stay empty');
+});
+
+test('a successful run keeps its report, whatever its stderr held (#256)', t => {
+  const { codex } = sandbox(t);
+  const bindings = threadBindingsPath(codex);
+  const resultText = JSON.stringify({ status: 'Ready', summary: 'Done.', details: 'Edited one file' });
+  const stdout = '{"type":"thread.started","thread_id":"thread-ok-1"}\n{"type":"turn.completed"}\n';
+  const ok = reportRun({ role: 'implementer', bindingsPath: bindings, stdout, exitCode: 0, resultText, stderrTail: 'warning: a harmless note' });
+  assert.equal(ok.code, 0);
+  assert.deepEqual(ok.report, { role: 'implementer', threadId: 'thread-ok-1', exitCode: 0, status: 'Ready', summary: 'Done.', details: 'Edited one file' });
+  assert.equal(readThreadBindings(bindings)['thread-ok-1'], 'implementer');
+
+  const noReport = reportRun({ role: 'implementer', bindingsPath: bindings, stdout: '', exitCode: 0, resultText: undefined, stderrTail: 'warning: a harmless note' });
+  assert.equal(noReport.report.details, '', 'a zero exit never puts stderr in the details');
+});
+
+test('the MCP listing failure message is unchanged by the stderr capture (#256)', () => {
+  assert.throws(
+    () => listMcpServers('implementer', () => { throw Object.assign(new Error('Command failed'), { stderr: 'Error: example reason\n' }); }),
+    { message: 'Codex could not list the MCP servers for role implementer; no role was launched. Codex said: Error: example reason' },
+  );
+});
+
+test('the stderr tail is one line of at most 4 KB, cut on a character boundary (#256)', () => {
+  assert.equal(boundedStderrTail(' a \r\n b\n'), 'a b');
+  assert.equal(boundedStderrTail(undefined), '');
+  const long = boundedStderrTail('x'.repeat(5000) + 'end');
+  assert.equal(Buffer.byteLength(long), 4096);
+  assert.ok(long.endsWith('end'));
+  // The two-byte "é" makes the 4 KB cut land inside a character; the tail must not start with a broken one.
+  const accented = boundedStderrTail('a' + 'é'.repeat(3000));
+  assert.ok(Buffer.byteLength(accented) <= 4096);
+  assert.ok(!accented.includes('�'));
+});
+
+test('the installed launcher matches this source, so doctor accepts it, and a stale copy is reported (#256)', async t => {
+  const { home, codex } = sandbox(t);
+  assert.equal(await run(home, answers('gpt-example')), 0);
+  const launcher = join(codex, 'advanced-harness', 'codex-role.mjs');
+  assert.equal(readFileSync(launcher, 'utf8'), codexRoleLauncherSource());
+  assert.ok(codexRoleLauncherSource().includes("stdio: ['ignore', 'pipe', 'pipe']"), 'the new capture is in the installed source');
+  assert.deepEqual((await diagnoseCodex({ home })).issues, []);
+
+  writeFileSync(launcher, readFileSync(launcher, 'utf8').replace("stdio: ['ignore', 'pipe', 'pipe']", "stdio: ['ignore', 'pipe', 'inherit']"));
+  assert.match((await diagnoseCodex({ home })).issues.join('\n'), /Codex role launcher differs from this harness version; rerun update/);
 });

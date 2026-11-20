@@ -140,17 +140,26 @@ export function recordThread(dir, threadId, role) {
   }
 }
 
+/** Codex's stderr as one line, bounded to its last 4 KB (cut on a character boundary), for a failed run's report. */
+export function boundedStderrTail(text) {
+  const bytes = Buffer.from(String(text ?? '').replace(/\s+/g, ' ').trim(), 'utf8');
+  let start = Math.max(0, bytes.length - 4096);
+  while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++;
+  return bytes.subarray(start).toString('utf8');
+}
+
 /**
  * Turns a finished child run into Lead's report and the launcher exit code. A new thread that cannot be
  * recorded is reported, never thrown: the child has already done its work, so its thread ID, exit status
  * and result are kept and the outcome needs a human decision rather than a blind retry.
+ * With no parseable status report and a non-zero exit, the bounded stderr tail becomes the details.
  */
-export function reportRun({ role, resumeId, bindingsPath, stdout, exitCode, resultText }) {
+export function reportRun({ role, resumeId, bindingsPath, stdout, exitCode, resultText, stderrTail }) {
   const startedId = (stdout ?? '').split(/\r?\n/).map(line => { try { return JSON.parse(line); } catch { return undefined; } })
     .find(event => event?.type === 'thread.started')?.thread_id;
   let result;
   try { result = JSON.parse(resultText ?? ''); }
-  catch { result = { status: 'Needs your decision', summary: 'The role ended without a parseable status report.', details: '' }; }
+  catch { result = { status: 'Needs your decision', summary: 'The role ended without a parseable status report.', details: exitCode !== 0 ? (stderrTail ?? '') : '' }; }
   const threadId = startedId ?? resumeId;
   if (resumeId === undefined && typeof startedId === 'string' && threadIdPattern.test(startedId)) {
     try { recordThread(bindingsPath, startedId, role); }
@@ -220,10 +229,13 @@ export function main(argv = process.argv.slice(2), env = process.env) {
     role: options.role, profileText, mcpServers, mcpAllowed, mcpSelected, resumeId: options['--resume'], task: options['--task'],
     schemaPath: join(home, 'advanced-harness', 'role-status.schema.json'), resultPath,
   });
-  const run = spawnSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
+  const run = spawnSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Codex's stderr is written back to the terminal after the run; its bounded tail goes into the report for a failed run.
+  const stderr = run.stderr ?? '';
+  if (stderr) process.stderr.write(stderr);
   let resultText;
   try { resultText = readFileSync(resultPath, 'utf8'); } catch { resultText = undefined; }
-  const { code, report } = reportRun({ role: options.role, resumeId: options['--resume'], bindingsPath, stdout: run.stdout, exitCode: run.status, resultText });
+  const { code, report } = reportRun({ role: options.role, resumeId: options['--resume'], bindingsPath, stdout: run.stdout, exitCode: run.status, resultText, stderrTail: boundedStderrTail(stderr) });
   console.log(JSON.stringify(report, null, 2));
   return code;
 }
