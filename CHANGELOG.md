@@ -13,6 +13,7 @@ version between releases.
 ### Changed
 
 - Codex role launcher (#256): when a role's `codex exec` run exits non-zero without a status report, the report's `details` now carries the last 4 KB of Codex's stderr as one line, marked Needs your decision, and no thread is recorded when none was started. Codex's stderr is still written to the terminal, but after the run finishes rather than live. Launch arguments are unchanged. The Windows trusted-directory requirement for the `--cd` directory is unverified pending a recorded Codex error (manual case CX-M3). Upgrade: run `npm run harness:update -- --host codex`.
+- Codex role launcher: a failed role run now also reports a spawn or buffer error message (for example ENOBUFS or E2BIG) in its details and on stderr.
 
 ## v0.4.0 — 2026-11-15
 

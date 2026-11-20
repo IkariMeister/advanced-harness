@@ -1,4 +1,5 @@
 import test from 'node:test';
+import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -549,6 +550,21 @@ test('a failed run with no status report shows its stderr tail as Needs your dec
   assert.equal(silent.report.details, '', 'without stderr the details stay empty');
 });
 
+test('a spawn failure with no exit status is reported as Needs your decision with its message, and records no thread (#256)', t => {
+  const { codex } = sandbox(t);
+  const bindings = threadBindingsPath(codex);
+  // main() passes spawnSync's run.error message into the stderr tail when the child never ran to an exit status.
+  const spawnError = 'spawnSync codex ENOBUFS';
+  const stderrTail = boundedStderrTail(spawnError);
+  const failed = reportRun({ role: 'implementer', bindingsPath: bindings, stdout: '', exitCode: null, resultText: undefined, stderrTail });
+  assert.equal(failed.code, 1);
+  assert.equal(failed.report.status, 'Needs your decision');
+  assert.equal(failed.report.exitCode, null);
+  assert.match(String(failed.report.details), /spawnSync codex ENOBUFS$/);
+  assert.equal(failed.report.threadId, undefined, 'no thread.started event, so no thread ID');
+  assert.equal(existsSync(bindings), false, 'no thread was started, so no binding is written');
+});
+
 test('a successful run keeps its report, whatever its stderr held (#256)', t => {
   const { codex } = sandbox(t);
   const bindings = threadBindingsPath(codex);
@@ -576,9 +592,12 @@ test('the stderr tail is one line of at most 4 KB, cut on a character boundary (
   const long = boundedStderrTail('x'.repeat(5000) + 'end');
   assert.equal(Buffer.byteLength(long), 4096);
   assert.ok(long.endsWith('end'));
-  // The two-byte "é" makes the 4 KB cut land inside a character; the tail must not start with a broken one.
-  const accented = boundedStderrTail('a' + 'é'.repeat(3000));
-  assert.ok(Buffer.byteLength(accented) <= 4096);
+  // 'é' is two bytes. The 6001-byte input is cut at byte 1905, a continuation byte (0xA9), so the loop must skip
+  // forward to the next lead byte: the tail is then exactly 4095 bytes and starts with a whole "é".
+  const accented = boundedStderrTail('é'.repeat(3000) + 'a');
+  assert.equal(Buffer.byteLength(accented), 4095, 'the loop drops the broken leading byte; a plain cut would keep 4096');
+  assert.equal(accented, 'é'.repeat(2047) + 'a');
+  assert.ok(accented.startsWith('é'));
   assert.ok(!accented.includes('�'));
 });
 
@@ -592,4 +611,77 @@ test('the installed launcher matches this source, so doctor accepts it, and a st
 
   writeFileSync(launcher, readFileSync(launcher, 'utf8').replace("stdio: ['ignore', 'pipe', 'pipe']", "stdio: ['ignore', 'pipe', 'inherit']"));
   assert.match((await diagnoseCodex({ home })).issues.join('\n'), /Codex role launcher differs from this harness version; rerun update/);
+});
+
+// The first line printed through the captured console.log; throws a clear message if nothing was printed.
+function firstPrinted(printed: string[]): string {
+  const line = printed[0];
+  if (line === undefined) throw new Error('expected the role run to print a report, but nothing was printed');
+  return line;
+}
+
+// main() through the runner seam: a stub stands in for Codex, so no process is spawned. Only the reviewer role is used
+// (no MCP), so the listing stub is never asked about a selection. stderr and the printed report are captured, not shown.
+function stubbedRoleRun(t: TestContext, exec: (args: string[]) => { status: number | null; stdout?: string; stderr?: string; error?: Error }) {
+  const { root, codex } = sandbox(t);
+  mkdirSync(codex, { recursive: true });
+  writeFileSync(join(codex, 'harness-reviewer.config.toml'), compileCodexRoleProfile('reviewer', policies.reviewer, 'm', 'low', 'x'));
+  const stderrWrites: string[] = [];
+  const printed: string[] = [];
+  t.mock.method(process.stderr, 'write', (chunk: unknown) => { stderrWrites.push(String(chunk)); return true; });
+  t.mock.method(console, 'log', (line: unknown) => { printed.push(String(line)); });
+  const launch = (resultWriter?: (path: string) => void) => launcherMain(['reviewer', '--task', 'review the diff', '--cd', root], { CODEX_HOME: codex, CODEX_BIN: 'stub-codex' }, {
+    list: () => '[]',
+    exec: (_codex: string, args: string[]) => {
+      const resultPath = args[args.indexOf('-o') + 1];
+      if (resultPath === undefined) throw new Error('expected the role run to pass a result path after -o');
+      t.after(() => rmSync(resultPath, { force: true }));
+      resultWriter?.(resultPath);
+      return exec(args);
+    },
+  });
+  return { codex, launch, stderrWrites, printed };
+}
+
+test('a failing run through the runner replays its stderr and reports the tail as Needs your decision, with no thread (#256)', t => {
+  const stderr = 'Error: boom\n  second line\n';
+  const { codex, launch, stderrWrites, printed } = stubbedRoleRun(t, () => ({ status: 1, stdout: '', stderr }));
+  const code = launch();
+  assert.equal(code, 1);
+  assert.equal(stderrWrites.join(''), stderr, 'the raw stderr is replayed');
+  assert.equal(printed.length, 1);
+  const report = JSON.parse(firstPrinted(printed));
+  assert.equal(report.status, 'Needs your decision');
+  assert.equal(report.summary, 'The role ended without a parseable status report.');
+  assert.equal(report.details, 'Error: boom second line', 'one line, the stderr tail');
+  assert.ok(!String(report.details).includes('\n') && Buffer.byteLength(report.details) <= 4096);
+  assert.equal(report.threadId, undefined, 'no thread.started event, so no thread ID');
+  assert.equal(report.exitCode, 1);
+  assert.equal(existsSync(threadBindingsPath(codex)), false, 'no thread was recorded');
+});
+
+test('a succeeding run replays its stderr and keeps the role report unchanged (#256)', t => {
+  const resultText = JSON.stringify({ status: 'Ready', summary: 'Done.', details: 'Edited one file' });
+  const stdout = '{"type":"thread.started","thread_id":"thread-stub-ok"}\n{"type":"turn.completed"}\n';
+  const stderr = 'warning: a harmless note\n';
+  const { codex, launch, stderrWrites, printed } = stubbedRoleRun(t, () => ({ status: 0, stdout, stderr }));
+  const code = launch(path => writeFileSync(path, resultText));
+  assert.equal(code, 0);
+  assert.equal(stderrWrites.join(''), stderr, 'the raw stderr is replayed');
+  assert.deepEqual(JSON.parse(firstPrinted(printed)), { role: 'reviewer', threadId: 'thread-stub-ok', exitCode: 0, status: 'Ready', summary: 'Done.', details: 'Edited one file' });
+  assert.equal(readThreadBindings(threadBindingsPath(codex))['thread-stub-ok'], 'reviewer');
+});
+
+test('a spawn error from the runner is written to stderr and kept in the report details, with no thread (#256)', t => {
+  const message = 'spawnSync stub-codex E2BIG';
+  const { codex, launch, stderrWrites, printed } = stubbedRoleRun(t, () => ({ status: null, stdout: '', stderr: '', error: new Error(message) }));
+  const code = launch();
+  assert.equal(code, 1);
+  assert.equal(stderrWrites.join(''), `${message}\n`, 'the spawn error is written to stderr');
+  const report = JSON.parse(firstPrinted(printed));
+  assert.equal(report.status, 'Needs your decision');
+  assert.equal(report.exitCode, null);
+  assert.equal(report.details, message);
+  assert.equal(report.threadId, undefined);
+  assert.equal(existsSync(threadBindingsPath(codex)), false, 'no thread was recorded');
 });

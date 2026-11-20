@@ -32,4 +32,19 @@ export function reportRun(options: {
 }): { code: number; report: Record<string, unknown> };
 export function findCodexBinary(env?: NodeJS.ProcessEnv): string;
 export function isEntryPoint(scriptPath: string | undefined, moduleUrl?: string): boolean;
-export function main(argv?: string[], env?: NodeJS.ProcessEnv): number;
+export interface CodexRunOptions {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}
+export interface CodexRunResult {
+  status: number | null;
+  stdout?: string | null | undefined;
+  stderr?: string | null | undefined;
+  error?: Error | undefined;
+}
+export interface CodexRunner {
+  list(codex: string, args: string[], options: CodexRunOptions): string;
+  exec(codex: string, args: string[], options: CodexRunOptions): CodexRunResult;
+}
+export const defaultCodexRunner: CodexRunner;
+export function main(argv?: string[], env?: NodeJS.ProcessEnv, runner?: CodexRunner): number;

@@ -204,7 +204,16 @@ function parseArgs(argv) {
   return options;
 }
 
-export function main(argv = process.argv.slice(2), env = process.env) {
+/**
+ * The two Codex calls main() makes: `list` for the MCP discovery (returns stdout, throws on failure) and `exec` for the role run
+ * (returns the spawnSync-shaped result). Production uses defaultCodexRunner; tests pass a stub so no Codex binary is spawned.
+ */
+export const defaultCodexRunner = {
+  list: (codex, args, { cwd, env }) => execFileSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true }),
+  exec: (codex, args, { cwd, env }) => spawnSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }),
+};
+
+export function main(argv = process.argv.slice(2), env = process.env, runner = defaultCodexRunner) {
   const options = parseArgs(argv);
   const home = env.CODEX_HOME || join(homedir(), '.codex');
   const profilePath = join(home, `harness-${options.role}.config.toml`);
@@ -221,7 +230,7 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   const cwd = options['--cd'] ?? process.cwd();
   const mcpSelected = mcpAllowed ? readSelectedMcpServers(home) : [];
   // A failed listing aborts the launch rather than starting a role with unknown MCP servers enabled.
-  const mcpServers = listMcpServers(options.role, args => execFileSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true }));
+  const mcpServers = listMcpServers(options.role, args => runner.list(codex, args, { cwd, env }));
   const outputDir = join(tmpdir(), 'advanced-harness-codex');
   mkdirSync(outputDir, { recursive: true });
   const resultPath = join(outputDir, `${options.role}-${Date.now()}.json`);
@@ -229,13 +238,17 @@ export function main(argv = process.argv.slice(2), env = process.env) {
     role: options.role, profileText, mcpServers, mcpAllowed, mcpSelected, resumeId: options['--resume'], task: options['--task'],
     schemaPath: join(home, 'advanced-harness', 'role-status.schema.json'), resultPath,
   });
-  const run = spawnSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = runner.exec(codex, args, { cwd, env });
   // Codex's stderr is written back to the terminal after the run; its bounded tail goes into the report for a failed run.
+  // spawnSync returns a spawn or buffer failure (ENOBUFS, E2BIG, ...) in run.error instead of throwing: it is written to
+  // the terminal and kept in the tail too, so the failure is not silently dropped.
   const stderr = run.stderr ?? '';
+  const spawnError = run.error ? run.error.message : '';
   if (stderr) process.stderr.write(stderr);
+  if (spawnError) process.stderr.write(`${spawnError}\n`);
   let resultText;
   try { resultText = readFileSync(resultPath, 'utf8'); } catch { resultText = undefined; }
-  const { code, report } = reportRun({ role: options.role, resumeId: options['--resume'], bindingsPath, stdout: run.stdout, exitCode: run.status, resultText, stderrTail: boundedStderrTail(stderr) });
+  const { code, report } = reportRun({ role: options.role, resumeId: options['--resume'], bindingsPath, stdout: run.stdout, exitCode: run.status, resultText, stderrTail: boundedStderrTail([stderr, spawnError].filter(Boolean).join('\n')) });
   console.log(JSON.stringify(report, null, 2));
   return code;
 }
