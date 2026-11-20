@@ -47,7 +47,7 @@ A project-level flag could disable the rule. This is rejected. The rule applies 
 
 1. **Update path.** External performs the fast-forward update of the base branch in the canonical checkout (`git fetch`, then `git merge --ff-only origin/<base>`), only during task bootstrap relayed by Lead and only when the local base is not ahead of or diverged from `origin/<base>`. Operator's `git fetch` exception is retained but optional; not part of bootstrap; the bootstrap fetch is External's. `git pull` stays denied for Operator, and External never pulls, forces, resets, rebases, or switches branches in the canonical checkout.
 2. **Enforcement.** Role contracts and documentation remain primary, reinforced by an **opt-in local Git hook** (#202) installed under `<git-common-dir>/advanced-harness-hooks` via local `core.hooksPath` when the human consents during project-scope `harness:install` or `harness:update`. In the canonical checkout, the hook blocks commits (`pre-commit`), non-fast-forward merges (`pre-merge-commit`, while allowing `git merge --ff-only`), and rebases (`pre-rebase`), and **warns** after branch switches (`post-checkout`, accepted for #202 because Git has no `pre-checkout` hook and cannot abort a completed switch). No permission rule is added or changed.
-3. **No opt-out.** The rule applies only when the project uses task worktrees (a `worktreeDirectory` is configured). A single-checkout project with no `worktreeDirectory` is not affected.
+3. **No opt-out.** The bootstrap rule applies only when the project uses task worktrees (a `worktreeDirectory` is configured). A single-checkout project with no `worktreeDirectory` is unaffected by the bootstrap rule unless the human explicitly accepts the opt-in local Git hook (default `no`), which blocks commits, non-fast-forward merges, and rebases in the canonical checkout when installed.
 4. **Scope.** The application repository's canonical checkout only. A consumer harness checkout pinned to a release tag (see [releasing.md](../releasing.md)) is out of scope and keeps following `docs/releasing.md`.
 
 The rule, with the same wording in every contract and document:
@@ -73,7 +73,7 @@ This replaces the earlier allowances "untouched canonical changes do not block b
 
 ## Adoption
 
-Accepting this ADR records the architectural direction (the canonical-checkout rule in role contracts and documentation, plus the opt-in local Git hook in project-scope `harness:install`, `harness:update`, and `harness:uninstall` from #202). ADR acceptance does not by itself authorize unrelated implementation or publication. The permission frontmatter of every role stays as it is.
+Accepting this ADR records the architectural direction (the canonical-checkout rule in role contracts and documentation, plus the opt-in local Git hook in project-scope `harness:install`, `harness:update`, and `harness:uninstall` from #202). ADR acceptance does not itself authorize implementation or publication. The permission frontmatter of every role stays as it is.
 
 **Rollback:** Uninstall the hook **before** reverting or downgrading the harness checkout, using a version that still supports hook removal:
 1. Run `npm run harness:uninstall -- --host <host> --scope project --project <repo>` for every owning host (when multiple hosts share the hook, each earlier uninstall releases only its owner; the last owner removes the hook directory and restores or unsets local `core.hooksPath`, preserving any user-changed `core.hooksPath` or modified/foreign files).

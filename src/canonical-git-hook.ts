@@ -593,7 +593,11 @@ function snapshotHookDir(hookDir: string): Map<string, string> | undefined {
   return snapshot;
 }
 
-function restoreHookDirSnapshot(hookDir: string, snapshot: Map<string, string> | undefined): void {
+function restoreHookDirSnapshot(
+  hookDir: string,
+  snapshot: Map<string, string> | undefined,
+  writeAtomic: (path: string, content: string, executable?: boolean) => void = atomicWriteFile
+): void {
   if (!snapshot) {
     if (existsSync(hookDir)) {
       for (const name of readdirSync(hookDir)) {
@@ -612,12 +616,23 @@ function restoreHookDirSnapshot(hookDir: string, snapshot: Map<string, string> |
     }
   }
   for (const [name, content] of snapshot) {
-    atomicWriteFile(join(hookDir, name), content, name !== STATE_FILE);
+    writeAtomic(join(hookDir, name), content, name !== STATE_FILE);
   }
 }
 
+export interface CanonicalHookFsHooks {
+  writeAtomic?: (path: string, content: string, executable?: boolean) => void;
+  unlink?: (path: string) => void;
+}
+
 /** Applies a planned canonical-checkout hook change under a lockfile after revalidating config and state. */
-export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaultRun): boolean {
+export function applyCanonicalHook(
+  plan: CanonicalHookPlan,
+  run: Runner = defaultRun,
+  fsHooks: CanonicalHookFsHooks = {}
+): boolean {
+  const writeAtomic = fsHooks.writeAtomic ?? atomicWriteFile;
+  const unlinkFile = fsHooks.unlink ?? unlinkSync;
   if (plan.status !== 'change') return false;
   assertSafeFilesystemPath(plan.hookDir, 'directory');
 
@@ -657,9 +672,9 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
           }
         }
         for (const [name, content] of Object.entries(plan.scripts!)) {
-          atomicWriteFile(join(plan.hookDir, name), content, true);
+          writeAtomic(join(plan.hookDir, name), content, true);
         }
-        atomicWriteFile(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
+        writeAtomic(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
         if (!configAlreadyActive) {
           run('git', ['config', '--local', 'core.hooksPath', plan.installedHooksPath], { cwd: plan.root });
         }
@@ -680,7 +695,7 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
           }
         }
         try {
-          restoreHookDirSnapshot(plan.hookDir, snapshot);
+          restoreHookDirSnapshot(plan.hookDir, snapshot, writeAtomic);
         } catch (rollbackErr) {
           throw new Error(
             `${(err as Error).message}; rollback of ${plan.hookDir} also failed: ${(rollbackErr as Error).message}`
@@ -692,7 +707,7 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
     }
 
     if (plan.action === 'release') {
-      atomicWriteFile(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
+      writeAtomic(statePath, JSON.stringify(plan.nextState, null, 2) + '\n');
       return true;
     }
 
@@ -719,12 +734,12 @@ export function applyCanonicalHook(plan: CanonicalHookPlan, run: Runner = defaul
           const modeValid = process.platform === 'win32'
             || (expectedMode !== undefined && (stat.mode & 0o7777) === expectedMode);
           if (expectedDigest && stat.isFile() && modeValid && sha256(readFileSync(entryPath, 'utf8')) === expectedDigest) {
-            unlinkSync(entryPath);
+            unlinkFile(entryPath);
           } else {
             preserved.push(entry);
           }
         }
-        if (existsSync(statePath)) unlinkSync(statePath);
+        if (existsSync(statePath)) unlinkFile(statePath);
         if (preserved.length === 0) {
           rmdirSync(plan.hookDir);
         } else {

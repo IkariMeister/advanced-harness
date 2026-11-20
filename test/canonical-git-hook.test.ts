@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
@@ -1003,38 +1003,81 @@ test('R258-05: uncertain config write, failed readback, failed rollback, active-
     assert.equal(isCanonicalHookInstalled(canonical), true, 'hookDir preserved on uncertain readback');
   }
 
-  // 3. Rollback failure after config write failure (blocked by directory in hookDir during restore)
+  // 3. Actual rollback failure after config write failure reports both original and rollback failures
   {
     const { canonical } = lightweightRepo(t);
-    const plan = planCanonicalHookInstall(canonical, 'opencode');
+    applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
     const hookDir = resolveCanonicalHookDir(canonical)!;
-    const blockingRollbackRunner = (exe: string, args: string[], opts?: { cwd?: string }) => {
-      if (exe === 'git' && args[0] === 'config' && args.includes('--local') && args.includes('core.hooksPath') && !args.includes('--get')) {
-        // Inject an undeletable subdirectory name matching a hook or non-empty dir to force rmdirSync failure on rollback
-        mkdirSync(join(hookDir, 'rollback-blocker'), { recursive: true });
-        throw new Error('config write failed');
-      }
-      return execFileSync(exe, args, { cwd: opts?.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-    };
-    // Hook files are unlinked, rollback-blocker keeps hookDir non-empty so restoreHookDirSnapshot leaves it safely without crashing;
-    // verify config write error is still reported cleanly.
-    assert.throws(() => applyCanonicalHook(plan, blockingRollbackRunner), /config write failed/);
+    const updatePlan = planCanonicalHookInstall(canonical, 'claude-code');
+    let stateWriteCalls = 0;
+    assert.throws(
+      () => applyCanonicalHook(updatePlan, undefined, {
+        writeAtomic: (path, content, executable) => {
+          if (path.endsWith('.state.json')) {
+            stateWriteCalls++;
+            throw new Error(stateWriteCalls === 1 ? 'state write failed' : 'rollback write failed');
+          }
+          writeFileSync(path, content, 'utf8');
+          if (executable && process.platform !== 'win32') chmodSync(path, 0o755);
+        },
+      }),
+      /state write failed; rollback of .* also failed: rollback write failed/
+    );
+    assert.equal(existsSync(hookDir), true);
   }
 
-  // 4. Active update (core.hooksPath already points to hookDir) restores previous snapshot on partial failure
+  // 4. Active update (core.hooksPath already points to hookDir) restores scripts, state, modes, and core.hooksPath on mid-update failure
   {
     const { canonical } = lightweightRepo(t);
     applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
     const hookDir = resolveCanonicalHookDir(canonical)!;
     const preCommit = join(hookDir, 'pre-commit');
+    const statePath = join(hookDir, '.state.json');
     const beforeContent = readFileSync(preCommit, 'utf8');
+    const beforeState = readFileSync(statePath, 'utf8');
+    const beforeMode = lstatSync(preCommit).mode & 0o7777;
+    const hooksPathBefore = git(canonical, 'config', '--local', '--get', 'core.hooksPath');
+
     const updatePlan = planCanonicalHookInstall(canonical, 'claude-code');
     assert.equal(updatePlan.status, 'change');
-    // Simulate mid-update failure by making .state.json read-only/unwritable? Instead, inject a runner that throws
-    // or verify configAlreadyActive restores snapshot when an error occurs after script writes:
-    // Force an error in update by removing write permission or mocking; here we verify config stays active and snapshot matches.
-    const stateBefore = readFileSync(join(hookDir, '.state.json'), 'utf8');
-    assert.equal(readFileSync(preCommit, 'utf8'), beforeContent);
-    assert.ok(stateBefore.includes('opencode'));
+    assert.throws(
+      () => applyCanonicalHook(updatePlan, undefined, {
+        writeAtomic: (path, content, executable) => {
+          if (path.endsWith('.state.json') && content.includes('claude-code')) {
+            throw new Error('injected mid-update state write failure');
+          }
+          const tmp = `${path}.test.tmp`;
+          writeFileSync(tmp, content, 'utf8');
+          if (executable && process.platform !== 'win32') chmodSync(tmp, 0o755);
+          renameSync(tmp, path);
+        },
+      }),
+      /injected mid-update state write failure/
+    );
+
+    assert.equal(readFileSync(preCommit, 'utf8'), beforeContent, 'script restored after active-update failure');
+    assert.equal(readFileSync(statePath, 'utf8'), beforeState, 'state restored after active-update failure');
+    assert.equal(lstatSync(preCommit).mode & 0o7777, beforeMode, 'mode restored after active-update failure');
+    assert.equal(git(canonical, 'config', '--local', '--get', 'core.hooksPath'), hooksPathBefore);
+  }
+
+  // 5. Partial removal failure after core.hooksPath unset reports explicit partial-cleanup error
+  {
+    const { canonical } = lightweightRepo(t);
+    applyCanonicalHook(planCanonicalHookInstall(canonical, 'opencode'));
+    const removePlan = planCanonicalHookRemoval(canonical, 'opencode');
+    assert.equal(removePlan.status, 'change');
+    let unlinks = 0;
+    assert.throws(
+      () => applyCanonicalHook(removePlan, undefined, {
+        unlink: path => {
+          unlinks++;
+          if (unlinks === 2) throw new Error('simulated unlink failure');
+          unlinkSync(path);
+        },
+      }),
+      /Git config core\.hooksPath was already restored\/unset, but cleanup of .* partially failed: simulated unlink failure/
+    );
+    assert.equal(gitResult(canonical, 'config', '--local', '--get', 'core.hooksPath').ok, false);
   }
 });
