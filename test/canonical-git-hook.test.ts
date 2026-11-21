@@ -1038,8 +1038,15 @@ test('R258-05: uncertain config write, failed readback, failed rollback, active-
     const beforeMode = lstatSync(preCommit).mode & 0o7777;
     const hooksPathBefore = git(canonical, 'config', '--local', '--get', 'core.hooksPath');
 
+    // Add a new forwarding hook and mutate pre-commit inside the update before injecting the state-write failure
+    const addedExternal = join(canonical, '.git', 'hooks', 'commit-msg');
+    writeFileSync(addedExternal, '#!/bin/sh\nexit 0\n');
+    if (process.platform !== 'win32') chmodSync(addedExternal, 0o755);
+
     const updatePlan = planCanonicalHookInstall(canonical, 'claude-code');
     assert.equal(updatePlan.status, 'change');
+    assert.ok(updatePlan.scripts && 'commit-msg' in updatePlan.scripts);
+    updatePlan.scripts['pre-commit'] = '#!/bin/sh\necho updated-pre-commit\n';
     assert.throws(
       () => applyCanonicalHook(updatePlan, undefined, {
         writeAtomic: (path, content, executable) => {
@@ -1055,7 +1062,8 @@ test('R258-05: uncertain config write, failed readback, failed rollback, active-
       /injected mid-update state write failure/
     );
 
-    assert.equal(readFileSync(preCommit, 'utf8'), beforeContent, 'script restored after active-update failure');
+    assert.equal(readFileSync(preCommit, 'utf8'), beforeContent, 'modified script restored after active-update failure');
+    assert.equal(existsSync(join(hookDir, 'commit-msg')), false, 'added forwarding wrapper removed by rollback');
     assert.equal(readFileSync(statePath, 'utf8'), beforeState, 'state restored after active-update failure');
     assert.equal(lstatSync(preCommit).mode & 0o7777, beforeMode, 'mode restored after active-update failure');
     assert.equal(git(canonical, 'config', '--local', '--get', 'core.hooksPath'), hooksPathBefore);
