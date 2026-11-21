@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import {
   EVAL_HOSTS,
   EVAL_SCHEMA_VERSION,
@@ -10,6 +10,21 @@ import {
   type EvalRunManifest,
   type ResultOutcome,
 } from './eval-contracts.ts';
+import {
+  assertAllowedKeys,
+  assertBoolean,
+  assertEnum,
+  assertIntegerMin,
+  assertNonEmptyString,
+  assertNonNegativeNumber,
+  assertObject,
+  assertRegexString,
+  assertStringArray,
+  assertUniqueEnumArray,
+  isValidIso8601Timestamp,
+  SCENARIO_ID_RE,
+  SEMVER_RE,
+} from './eval-validation-helpers.ts';
 
 export const RUN_RECORD_KINDS = ['baseline', 'candidate', 'template'] as const;
 export type RunRecordKind = (typeof RUN_RECORD_KINDS)[number];
@@ -221,138 +236,39 @@ export interface EvalRunRecord {
 }
 
 const COMMIT_SHA_RE = /^[0-9a-f]{7,40}$/;
-const SEMVER_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
-const SCENARIO_ID_RE = /^EDD-(DEV|VAL)-[0-9]{3,}$/;
-const ISO_8601_CAPTURE_RE =
-  /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]+)?(?:Z|([+-][0-9]{2}):([0-9]{2}))$/;
+const MAX_RUN_RECORD_BYTES = 10 * 1024 * 1024;
+const FORBIDDEN_PROTOTYPE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const FORBIDDEN_FREE_TEXT_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  { label: 'machine-local Unix path', pattern: /(?:^|[\s"'`(=])\/(?:mnt|home|Users|tmp)\// },
+  { label: 'file URI', pattern: /file:\/\//i },
+  { label: 'machine-local Windows path', pattern: /[A-Za-z]:(?:\\|\/)Users(?:\\|\/)/i },
+  { label: 'GitHub token', pattern: /\b(?:ghp|gho)_[A-Za-z0-9]{20,}\b/ },
+  { label: 'GitHub fine-grained PAT', pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
+  { label: 'Bearer authorization header', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/ },
+  { label: 'Authorization header', pattern: /\bAuthorization:\s*\S+/i },
+  { label: 'API secret key', pattern: /\bsk-[A-Za-z0-9]{16,}\b/ },
+];
 
-function isValidIso8601Timestamp(value: string): boolean {
-  const match = ISO_8601_CAPTURE_RE.exec(value);
-  if (!match) return false;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const hour = Number(match[4]);
-  const minute = Number(match[5]);
-  const second = Number(match[6]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
-  if (hour > 23 || minute > 59 || second > 59) return false;
-  const utc = new Date(Date.UTC(year, month - 1, day));
-  if (
-    utc.getUTCFullYear() !== year ||
-    utc.getUTCMonth() !== month - 1 ||
-    utc.getUTCDate() !== day
-  ) {
-    return false;
-  }
-  if (match[7] !== undefined && match[8] !== undefined) {
-    const offHour = Math.abs(Number(match[7]));
-    const offMin = Number(match[8]);
-    if (offHour > 23 || offMin > 59) return false;
-  }
-  return Number.isFinite(Date.parse(value));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function assertObject(value: unknown, path: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new Error(`${path} must be an object.`);
-  return value;
-}
-
-function assertAllowedKeys(
-  obj: Record<string, unknown>,
-  required: readonly string[],
-  optional: readonly string[],
-  path: string,
-): void {
-  const allowed = new Set([...required, ...optional]);
-  for (const key of required) {
-    if (!(key in obj)) throw new Error(`${path}.${key} is required.`);
-  }
-  for (const key of Object.keys(obj)) {
-    if (!allowed.has(key)) throw new Error(`${path}.${key} is not an allowed property.`);
-  }
-}
-
-function assertNonEmptyString(value: unknown, path: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`${path} must be a non-empty string.`);
-  }
-  return value;
-}
-
-function assertRegexString(value: unknown, pattern: RegExp, message: string, path: string): string {
+function assertSafeFreeText(value: unknown, path: string): string {
   const s = assertNonEmptyString(value, path);
-  if (!pattern.test(s)) throw new Error(`${path} ${message}.`);
+  for (const { label, pattern } of FORBIDDEN_FREE_TEXT_PATTERNS) {
+    if (pattern.test(s)) {
+      throw new Error(`${path} must not contain a ${label}.`);
+    }
+  }
   return s;
 }
 
-function assertBoolean(value: unknown, path: string): boolean {
-  if (typeof value !== 'boolean') throw new Error(`${path} must be a boolean.`);
-  return value;
-}
-
-function assertNonNegativeNumber(value: unknown, path: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    throw new Error(`${path} must be a non-negative finite number.`);
-  }
-  return value;
-}
-
-function assertIntegerMin(value: unknown, min: number, path: string): number {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < min) {
-    throw new Error(`${path} must be an integer >= ${min}.`);
-  }
-  return value;
-}
-
-function assertEnum<T extends string>(
-  value: unknown,
-  allowed: readonly T[],
-  path: string,
-): T {
-  const s = assertNonEmptyString(value, path);
-  if (!allowed.includes(s as T)) {
-    throw new Error(`${path} must be one of: ${allowed.join(', ')}.`);
-  }
-  return s as T;
-}
-
-function assertUniqueEnumArray<T extends string>(
-  value: unknown,
-  allowed: readonly T[],
-  path: string,
-  minItems = 0,
-): T[] {
-  if (!Array.isArray(value)) throw new Error(`${path} must be an array.`);
-  if (value.length < minItems) {
-    throw new Error(`${path} must contain at least ${minItems} item(s).`);
-  }
-  const seen = new Set<T>();
-  return value.map((item, idx) => {
-    const parsed = assertEnum(item, allowed, `${path}[${idx}]`);
-    if (seen.has(parsed)) throw new Error(`${path} contains duplicate item "${parsed}".`);
-    seen.add(parsed);
-    return parsed;
-  });
-}
-
-function assertNonEmptyStringArray(value: unknown, path: string, minItems = 0): string[] {
-  if (!Array.isArray(value)) throw new Error(`${path} must be an array.`);
-  if (value.length < minItems) {
-    throw new Error(`${path} must contain at least ${minItems} item(s).`);
-  }
-  return value.map((item, idx) => assertNonEmptyString(item, `${path}[${idx}]`));
+function assertSafeFreeTextArray(value: unknown, path: string, minItems = 0): string[] {
+  const items = assertStringArray(value, path, { minItems });
+  return items.map((item, idx) => assertSafeFreeText(item, `${path}[${idx}]`));
 }
 
 function validateNotMeasuredMetric(obj: Record<string, unknown>, path: string): NotMeasuredMetric {
   assertAllowedKeys(obj, ['status', 'note'], [], path);
   return {
     status: assertEnum(obj.status, NON_MEASURED_STATUSES, `${path}.status`),
-    note: assertNonEmptyString(obj.note, `${path}.note`),
+    note: assertSafeFreeText(obj.note, `${path}.note`),
   };
 }
 
@@ -364,7 +280,7 @@ function validateCountMetric(input: unknown, path: string): CountMetric {
     status: 'measured',
     count: assertIntegerMin(obj.count, 0, `${path}.count`),
   };
-  if (obj.note !== undefined) out.note = assertNonEmptyString(obj.note, `${path}.note`);
+  if (obj.note !== undefined) out.note = assertSafeFreeText(obj.note, `${path}.note`);
   return out;
 }
 
@@ -378,7 +294,7 @@ function validateRequirementCoverage(input: unknown, path: string): RequirementC
     throw new Error(`${path}.met (${met}) cannot exceed ${path}.total (${total}).`);
   }
   const out: RequirementCoverageMetric = { status: 'measured', met, total };
-  if (obj.note !== undefined) out.note = assertNonEmptyString(obj.note, `${path}.note`);
+  if (obj.note !== undefined) out.note = assertSafeFreeText(obj.note, `${path}.note`);
   return out;
 }
 
@@ -393,7 +309,7 @@ function validateEvidenceQuality(input: unknown, path: string): EvidenceQualityM
   );
   const out: EvidenceQualityMetric = {
     status: 'measured',
-    summary: assertNonEmptyString(obj.summary, `${path}.summary`),
+    summary: assertSafeFreeText(obj.summary, `${path}.summary`),
     checksReRun: assertIntegerMin(obj.checksReRun, 0, `${path}.checksReRun`),
     checksJudgedFromEvidence: assertIntegerMin(
       obj.checksJudgedFromEvidence,
@@ -402,7 +318,7 @@ function validateEvidenceQuality(input: unknown, path: string): EvidenceQualityM
     ),
     missingArtifacts: assertIntegerMin(obj.missingArtifacts, 0, `${path}.missingArtifacts`),
   };
-  if (obj.note !== undefined) out.note = assertNonEmptyString(obj.note, `${path}.note`);
+  if (obj.note !== undefined) out.note = assertSafeFreeText(obj.note, `${path}.note`);
   return out;
 }
 
@@ -430,9 +346,9 @@ function validateTokenUsage(input: unknown, path: string): TokenUsageMetric {
     );
   }
   if (obj.pricingBasis !== undefined) {
-    out.pricingBasis = assertNonEmptyString(obj.pricingBasis, `${path}.pricingBasis`);
+    out.pricingBasis = assertSafeFreeText(obj.pricingBasis, `${path}.pricingBasis`);
   }
-  if (obj.note !== undefined) out.note = assertNonEmptyString(obj.note, `${path}.note`);
+  if (obj.note !== undefined) out.note = assertSafeFreeText(obj.note, `${path}.note`);
   return out;
 }
 
@@ -533,6 +449,7 @@ function validateJourneyBaseline(
   if (!Array.isArray(obj.journeys) || obj.journeys.length === 0) {
     throw new Error(`${path}.journeys must be a non-empty array.`);
   }
+  const seenJourneyIds = new Set<string>();
   const journeys: JourneyBaselineEntry[] = obj.journeys.map((raw, idx) => {
     const jPath = `${path}.journeys[${idx}]`;
     const j = assertObject(raw, jPath);
@@ -574,23 +491,34 @@ function validateJourneyBaseline(
         `${jPath}.recordOutcome`,
       ),
       handoffCount: assertIntegerMin(j.handoffCount, 0, `${jPath}.handoffCount`),
-      roleTransitions: assertNonEmptyStringArray(j.roleTransitions, `${jPath}.roleTransitions`),
+      roleTransitions: assertStringArray(j.roleTransitions, `${jPath}.roleTransitions`),
       skillsInvoked,
       toolCallCount: assertIntegerMin(j.toolCallCount, 0, `${jPath}.toolCallCount`),
       violationCount: assertIntegerMin(j.violationCount, 0, `${jPath}.violationCount`),
     };
+    if (seenJourneyIds.has(entry.id)) {
+      throw new Error(`${path}.journeys contains duplicate id "${entry.id}".`);
+    }
+    seenJourneyIds.add(entry.id);
+    if (entry.recordOutcome === 'pass' && entry.violationCount !== 0) {
+      throw new Error(
+        `${jPath} has recordOutcome "pass" and must have violationCount 0 (found ${entry.violationCount}).`,
+      );
+    }
     if (j.repeatsByteIdentical !== undefined) {
       entry.repeatsByteIdentical = assertBoolean(
         j.repeatsByteIdentical,
         `${jPath}.repeatsByteIdentical`,
       );
     }
-    if (j.notes !== undefined) entry.notes = assertNonEmptyString(j.notes, `${jPath}.notes`);
+    if (j.notes !== undefined) entry.notes = assertSafeFreeText(j.notes, `${jPath}.notes`);
     return entry;
   });
 
+  // journeyBaseline.commit/ciRunId/artifactId intentionally identify the referenced #62 CI run
+  // independently of repository.commit when the baseline aggregates an archived suite run.
   return {
-    source: assertNonEmptyString(obj.source, `${path}.source`),
+    source: assertSafeFreeText(obj.source, `${path}.source`),
     commit: assertRegexString(
       obj.commit,
       COMMIT_SHA_RE,
@@ -608,6 +536,29 @@ function validateJourneyBaseline(
     recordedAt,
     journeys,
   };
+}
+
+function assertNotObservedMetricHasPlaceholderValue(
+  result: EvalResult,
+  metric: CoreMetricName,
+  path: string,
+): void {
+  const m = result.metrics;
+  const mismatch =
+    (metric === 'handoffCount' && m.handoffCount !== 0) ||
+    (metric === 'roleTransitions' && m.roleTransitions.length > 0) ||
+    (metric === 'skillsInvoked' && m.skillsInvoked.length > 0) ||
+    (metric === 'humanInterventions' && m.humanInterventions !== 0) ||
+    (metric === 'permissionAmbiguities' && m.permissionAmbiguities !== 0) ||
+    (metric === 'reviewDetectedDefects' && m.reviewDetectedDefects !== 0) ||
+    (metric === 'escapedDefects' && m.escapedDefects !== 0) ||
+    (metric === 'tokenCostUsd' && m.tokenCostUsd !== undefined) ||
+    (metric === 'durationMs' && result.durationMs !== 0);
+  if (mismatch) {
+    throw new Error(
+      `${path} records a non-placeholder value for "${metric}", which is listed in metricObservation.notObserved.`,
+    );
+  }
 }
 
 function assertNonObservedResultHasZeroMetrics(result: EvalResult, path: string): void {
@@ -661,7 +612,7 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
   if (obj.schemaVersion !== EVAL_SCHEMA_VERSION) {
     throw new Error(`${path}.schemaVersion must be ${EVAL_SCHEMA_VERSION}.`);
   }
-  const recordId = assertNonEmptyString(obj.recordId, `${path}.recordId`);
+  const recordId = assertSafeFreeText(obj.recordId, `${path}.recordId`);
   const protocolVersion = assertRegexString(
     obj.protocolVersion,
     SEMVER_RE,
@@ -672,7 +623,7 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
 
   let baselineRef: string | undefined;
   if (obj.baselineRef !== undefined) {
-    baselineRef = assertNonEmptyString(obj.baselineRef, `${path}.baselineRef`);
+    baselineRef = assertSafeFreeText(obj.baselineRef, `${path}.baselineRef`);
   } else if (recordKind === 'candidate') {
     throw new Error(`${path}.baselineRef is required when recordKind is "candidate".`);
   }
@@ -686,7 +637,7 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
       'must be a 7-40 character lower-case hex Git commit SHA',
       `${path}.repository.commit`,
     ),
-    harnessVersion: assertNonEmptyString(
+    harnessVersion: assertSafeFreeText(
       repoObj.harnessVersion,
       `${path}.repository.harnessVersion`,
     ),
@@ -706,11 +657,11 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
     `${path}.runner.executionKind`,
   );
   const runner: EvalRunRecord['runner'] = {
-    executedBy: assertNonEmptyString(runnerObj.executedBy, `${path}.runner.executedBy`),
+    executedBy: assertSafeFreeText(runnerObj.executedBy, `${path}.runner.executedBy`),
     executionKind,
   };
   if (runnerObj.authorizedBy !== undefined) {
-    runner.authorizedBy = assertNonEmptyString(
+    runner.authorizedBy = assertSafeFreeText(
       runnerObj.authorizedBy,
       `${path}.runner.authorizedBy`,
     );
@@ -720,7 +671,7 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
     );
   }
   if (runnerObj.ciRunRef !== undefined) {
-    runner.ciRunRef = assertNonEmptyString(runnerObj.ciRunRef, `${path}.runner.ciRunRef`);
+    runner.ciRunRef = assertSafeFreeText(runnerObj.ciRunRef, `${path}.runner.ciRunRef`);
   }
 
   const hostObj = assertObject(obj.hostEnvironment, `${path}.hostEnvironment`);
@@ -732,8 +683,8 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
   );
   const hostEnvironment: EvalRunRecord['hostEnvironment'] = {
     host: assertEnum(hostObj.host, EVAL_HOSTS, `${path}.hostEnvironment.host`),
-    hostVersion: assertNonEmptyString(hostObj.hostVersion, `${path}.hostEnvironment.hostVersion`),
-    os: assertNonEmptyString(hostObj.os, `${path}.hostEnvironment.os`),
+    hostVersion: assertSafeFreeText(hostObj.hostVersion, `${path}.hostEnvironment.hostVersion`),
+    os: assertSafeFreeText(hostObj.os, `${path}.hostEnvironment.os`),
     networkEnforcement: assertEnum(
       hostObj.networkEnforcement,
       NETWORK_ENFORCEMENTS,
@@ -742,7 +693,7 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
     hermetic: assertBoolean(hostObj.hermetic, `${path}.hostEnvironment.hermetic`),
   };
   if (hostObj.notes !== undefined) {
-    hostEnvironment.notes = assertNonEmptyString(hostObj.notes, `${path}.hostEnvironment.notes`);
+    hostEnvironment.notes = assertSafeFreeText(hostObj.notes, `${path}.hostEnvironment.notes`);
   }
 
   const mvObj = assertObject(obj.modelVerification, `${path}.modelVerification`);
@@ -759,7 +710,7 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
   );
   const modelVerification: EvalRunRecord['modelVerification'] = {
     status: mvStatus,
-    evidence: assertNonEmptyString(mvObj.evidence, `${path}.modelVerification.evidence`),
+    evidence: assertSafeFreeText(mvObj.evidence, `${path}.modelVerification.evidence`),
   };
   if (mvObj.observedRoleModels !== undefined) {
     if (mvStatus === 'unverified') {
@@ -771,9 +722,14 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
       mvObj.observedRoleModels,
       `${path}.modelVerification.observedRoleModels`,
     );
-    const observedRoleModels: Record<string, string> = {};
+    const observedRoleModels = Object.create(null) as Record<string, string>;
     for (const [role, model] of Object.entries(ormObj)) {
-      observedRoleModels[role] = assertNonEmptyString(
+      if (FORBIDDEN_PROTOTYPE_KEYS.has(role)) {
+        throw new Error(
+          `${path}.modelVerification.observedRoleModels contains forbidden key "${role}".`,
+        );
+      }
+      observedRoleModels[role] = assertSafeFreeText(
         model,
         `${path}.modelVerification.observedRoleModels.${role}`,
       );
@@ -847,7 +803,7 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
       `${path}.taskClassification.taskClasses`,
       1,
     ),
-    taskCriteria: assertNonEmptyStringArray(
+    taskCriteria: assertSafeFreeTextArray(
       tcObj.taskCriteria,
       `${path}.taskClassification.taskCriteria`,
       1,
@@ -869,6 +825,18 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
   }
 
   const runManifest = validateRunManifest(obj.runManifest, `${path}.runManifest`);
+  if (
+    modelVerification.observedRoleModels !== undefined &&
+    runManifest.modelConfig.roleModels !== undefined
+  ) {
+    for (const role of Object.keys(modelVerification.observedRoleModels)) {
+      if (!Object.hasOwn(runManifest.modelConfig.roleModels, role)) {
+        throw new Error(
+          `${path}.modelVerification.observedRoleModels.${role} is not declared in runManifest.modelConfig.roleModels.`,
+        );
+      }
+    }
+  }
   if (hostEnvironment.host !== runManifest.host) {
     throw new Error(
       `${path}.hostEnvironment.host "${hostEnvironment.host}" must match runManifest.host "${runManifest.host}".`,
@@ -1009,6 +977,7 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
     `${path}.metricObservation.notObserved`,
   );
   const observedSet = new Set(observed);
+  const notObservedSet = new Set(notObserved);
   for (const name of notObserved) {
     if (observedSet.has(name)) {
       throw new Error(
@@ -1016,11 +985,25 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
       );
     }
   }
+  if (observed.length + notObserved.length !== CORE_METRIC_NAMES.length) {
+    const missing = CORE_METRIC_NAMES.filter(
+      (name) => !observedSet.has(name) && !notObservedSet.has(name),
+    );
+    throw new Error(
+      `${path}.metricObservation must partition all core metrics; missing: ${missing.join(', ')}.`,
+    );
+  }
   const hasDecidedResult = results.some((r) => r.outcome === 'pass' || r.outcome === 'fail');
   if (!hasDecidedResult && observed.length > 0) {
     throw new Error(
       `${path}.metricObservation.observed must be empty when no result has outcome "pass" or "fail".`,
     );
+  }
+  for (const result of results) {
+    const rPath = `${path}.results[${result.scenarioId}]`;
+    for (const metric of notObserved) {
+      assertNotObservedMetricHasPlaceholderValue(result, metric, rPath);
+    }
   }
 
   const smObj = assertObject(obj.supplementaryMetrics, `${path}.supplementaryMetrics`);
@@ -1079,19 +1062,19 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
     journeyBaseline = validateJourneyBaseline(obj.journeyBaseline, `${path}.journeyBaseline`);
   }
 
-  const limitations = assertNonEmptyStringArray(obj.limitations, `${path}.limitations`, 1);
+  const limitations = assertSafeFreeTextArray(obj.limitations, `${path}.limitations`, 1);
   if (!Array.isArray(obj.waivers)) throw new Error(`${path}.waivers must be an array.`);
   const waivers = obj.waivers.map((raw, idx) => {
     const wPath = `${path}.waivers[${idx}]`;
     const w = assertObject(raw, wPath);
     assertAllowedKeys(w, ['scope', 'reason', 'approvedBy'], ['reference'], wPath);
     const entry: EvalRunRecord['waivers'][number] = {
-      scope: assertNonEmptyString(w.scope, `${wPath}.scope`),
-      reason: assertNonEmptyString(w.reason, `${wPath}.reason`),
-      approvedBy: assertNonEmptyString(w.approvedBy, `${wPath}.approvedBy`),
+      scope: assertSafeFreeText(w.scope, `${wPath}.scope`),
+      reason: assertSafeFreeText(w.reason, `${wPath}.reason`),
+      approvedBy: assertSafeFreeText(w.approvedBy, `${wPath}.approvedBy`),
     };
     if (w.reference !== undefined) {
-      entry.reference = assertNonEmptyString(w.reference, `${wPath}.reference`);
+      entry.reference = assertSafeFreeText(w.reference, `${wPath}.reference`);
     }
     return entry;
   });
@@ -1130,12 +1113,25 @@ export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRe
 
 /** Reads and validates an evaluation run record JSON file from disk. */
 export function loadRunRecord(filePath: string): EvalRunRecord {
-  let parsed: unknown;
+  let raw: string;
   try {
-    parsed = JSON.parse(readFileSync(filePath, 'utf8'));
+    const stat = statSync(filePath);
+    if (stat.size > MAX_RUN_RECORD_BYTES) {
+      throw new Error(
+        `file size ${stat.size} bytes exceeds maximum allowed ${MAX_RUN_RECORD_BYTES} bytes.`,
+      );
+    }
+    raw = readFileSync(filePath, 'utf8');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to parse run record ${filePath}: ${message}`);
+    throw new Error(`Unable to read run record ${filePath}: ${message}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid JSON in run record ${filePath}: ${message}`);
   }
   return validateRunRecord(parsed, filePath);
 }

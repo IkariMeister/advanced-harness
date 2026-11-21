@@ -878,7 +878,8 @@
   },
   "limitations": [
     "Scripted loopback replies prove host plumbing, installed prompt/policy delivery, and deterministic handoff/transition counts; they do not prove live model quality, reasoning, entitlement, or token/model cost.",
-    "Only 4 of 14 development scenarios (EDD-DEV-003, EDD-DEV-004, EDD-DEV-008, EDD-DEV-010) have deterministic bindings in #226; the remaining 10 development scenarios are skipped (requires live mode), and routine-implementation, research-then-implementation, and architecture tasks require live pilot runs (#128-#130, #228).",
+    "Only 4 of 14 development scenarios (EDD-DEV-003, EDD-DEV-004, EDD-DEV-008, EDD-DEV-010) executed with deterministic bindings in #226; the remaining 10 development scenarios are skipped (requires live mode) with #225 placeholder-zero metrics, and routine-implementation, research-then-implementation, and architecture tasks require live pilot runs (#128-#130, #228).",
+    "hostEnvironment.networkEnforcement (\"netns\") and hermetic (true) are operator-declared (HARNESS_E2E_NETNS=1 under unshare -rn); the evaluation suite cannot independently verify kernel network-namespace isolation.",
     "Validation corpus scenarios (eval/corpus/validation/) were not run or consulted (holdout rule).",
     "In #62 journey J3, implementer procedure-skill loading is denied (Permission denied: skill, defect #261) and scripted edit has not yet executed.",
     "The #226 runner run (run-20261121015622-c40a3e) was executed locally in WSL2 Ubuntu 24.04 inside unshare -rn (not GitHub Actions CI, which #229 owns).",

@@ -11,7 +11,20 @@ import {
   validateRunManifest,
 } from '../src/eval-contracts.ts';
 import {
+  CAPABILITY_STATUSES,
+  CORE_METRIC_NAMES,
+  EXECUTION_KINDS,
+  JOURNEY_NETWORK_ENFORCEMENTS,
+  JOURNEY_RECORD_OUTCOMES,
+  JOURNEY_TEST_OUTCOMES,
   loadRunRecord,
+  METHODOLOGY_MODES,
+  MODEL_VERIFICATION_STATUSES,
+  NETWORK_ENFORCEMENTS,
+  NON_MEASURED_STATUSES,
+  REPRESENTATIVE_TASK_CLASSES,
+  RIGOR_LEVELS,
+  RUN_RECORD_KINDS,
   validateRunRecord,
 } from '../src/eval-run-record.ts';
 
@@ -54,6 +67,28 @@ function assertSchemaValid(data: unknown, label: string): void {
   );
 }
 
+function collectJsonStrings(value: unknown, path = '$', out: Array<{ path: string; text: string }> = []): Array<{ path: string; text: string }> {
+  if (typeof value === 'string') {
+    out.push({ path, text: value });
+    return out;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, idx) => collectJsonStrings(item, `${path}[${idx}]`, out));
+    return out;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const [key, val] of Object.entries(value)) {
+      collectJsonStrings(val, `${path}.${key}`, out);
+    }
+  }
+  return out;
+}
+
+/**
+ * Coverage policy: exercise AJV schema + TS validator parity on committed artifacts and positive
+ * live/candidate variants, verify enum drift against run-record.schema.json, test cross-field and
+ * calendar invariants beyond JSON Schema, and derive corpus expectations dynamically from disk.
+ */
 describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', () => {
   it('validates the JSON run-record template against JSON Schema, TS validator, and #225 contracts', () => {
     const templatePath = join(REPO_ROOT, 'eval/templates/run-record.template.json');
@@ -154,16 +189,198 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
   });
 
   it('keeps committed template and baseline JSON free of machine-local paths and credentials', () => {
-    const forbidden = ['/mnt/', '/home/', 'C:\\Users', 'C:/Users', '/tmp/', 'gho_', 'sk-', 'Bearer ', 'Authorization:'];
+    const forbiddenPatterns: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+      { label: 'Unix local path', pattern: /(?:^|[\s"'`(=])\/(?:mnt|home|Users|tmp)\// },
+      { label: 'file URI', pattern: /file:\/\//i },
+      { label: 'Windows local path', pattern: /[A-Za-z]:(?:\\|\/)Users(?:\\|\/)/i },
+      { label: 'GitHub token', pattern: /\b(?:ghp|gho)_[A-Za-z0-9]{20,}\b/ },
+      { label: 'GitHub PAT', pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
+      { label: 'Bearer header', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/ },
+      { label: 'Authorization header', pattern: /\bAuthorization:\s*\S+/i },
+      { label: 'API secret key', pattern: /\bsk-[A-Za-z0-9]{16,}\b/ },
+    ];
     for (const relPath of [
       'eval/templates/run-record.template.json',
       'eval/baselines/eight-role-opencode-deterministic.json',
     ]) {
-      const content = readText(relPath);
-      for (const token of forbidden) {
-        assert.equal(content.includes(token), false, `${relPath} must not contain "${token}"`);
+      const parsed = readJson(relPath);
+      for (const { path, text } of collectJsonStrings(parsed)) {
+        for (const { label, pattern } of forbiddenPatterns) {
+          assert.equal(
+            pattern.test(text),
+            false,
+            `${relPath} (${path}) must not contain ${label}`,
+          );
+        }
       }
     }
+  });
+
+  it('keeps TypeScript enum constants aligned with run-record.schema.json', () => {
+    const schema = readJson('eval/schemas/run-record.schema.json') as {
+      properties: Record<
+        string,
+        {
+          enum?: string[];
+          properties?: Record<
+            string,
+            {
+              enum?: string[];
+              items?: {
+                enum?: string[];
+                properties?: Record<string, { enum?: string[] }>;
+              };
+            }
+          >;
+        }
+      >;
+      $defs: Record<string, { enum?: string[]; properties?: Record<string, { enum?: string[] }> }>;
+    };
+    const journeyProps = schema.properties.journeyBaseline?.properties?.journeys?.items?.properties;
+    const pairs: Array<[string, readonly string[], readonly string[] | undefined]> = [
+      ['RUN_RECORD_KINDS', RUN_RECORD_KINDS, schema.properties.recordKind?.enum],
+      ['EXECUTION_KINDS', EXECUTION_KINDS, schema.properties.runner?.properties?.executionKind?.enum],
+      ['NETWORK_ENFORCEMENTS', NETWORK_ENFORCEMENTS, schema.properties.hostEnvironment?.properties?.networkEnforcement?.enum],
+      ['MODEL_VERIFICATION_STATUSES', MODEL_VERIFICATION_STATUSES, schema.properties.modelVerification?.properties?.status?.enum],
+      ['CAPABILITY_STATUSES', CAPABILITY_STATUSES, schema.$defs.capabilityStatus?.enum],
+      ['REPRESENTATIVE_TASK_CLASSES', REPRESENTATIVE_TASK_CLASSES, schema.properties.taskClassification?.properties?.taskClasses?.items?.enum],
+      ['METHODOLOGY_MODES', METHODOLOGY_MODES, schema.properties.taskClassification?.properties?.methodologyMode?.enum],
+      ['RIGOR_LEVELS', RIGOR_LEVELS, schema.properties.taskClassification?.properties?.rigor?.enum],
+      ['CORE_METRIC_NAMES', CORE_METRIC_NAMES, schema.$defs.coreMetricName?.enum],
+      ['NON_MEASURED_STATUSES', NON_MEASURED_STATUSES, schema.$defs.notMeasuredMetric?.properties?.status?.enum],
+      ['JOURNEY_TEST_OUTCOMES', JOURNEY_TEST_OUTCOMES, journeyProps?.testOutcome?.enum],
+      ['JOURNEY_RECORD_OUTCOMES', JOURNEY_RECORD_OUTCOMES, journeyProps?.recordOutcome?.enum],
+      ['JOURNEY_NETWORK_ENFORCEMENTS', JOURNEY_NETWORK_ENFORCEMENTS, schema.properties.journeyBaseline?.properties?.networkEnforcement?.enum],
+    ];
+    for (const [name, tsValues, schemaValues] of pairs) {
+      assert.ok(schemaValues, `Schema enum missing for ${name}`);
+      assert.deepEqual([...tsValues].sort(), [...schemaValues].sort(), `${name} drifted from schema`);
+    }
+  });
+
+  it('validates positive candidate, live, measured supplementaryMetrics, waivers, and journeyBaseline records', () => {
+    const candidate = structuredClone(readJson('eval/templates/run-record.template.json')) as Record<
+      string,
+      unknown
+    >;
+    candidate.recordId = 'candidate-live-0001';
+    candidate.recordKind = 'candidate';
+    candidate.baselineRef = 'eight-role-opencode-deterministic-2026-11-21';
+    candidate.runner = {
+      executedBy: 'antigravity',
+      executionKind: 'agent-assisted',
+      authorizedBy: 'ikarimeister',
+      ciRunRef: 'https://github.com/IkariMeister/advanced-harness/actions/runs/44850716927',
+    };
+    candidate.modelVerification = {
+      status: 'verified',
+      evidence: 'Provider API response headers recorded per-role model IDs.',
+      observedRoleModels: {
+        lead: 'anthropic/claude-sonnet-4',
+        implementer: 'openai/gpt-5',
+      },
+    };
+    const manifest = candidate.runManifest as Record<string, unknown>;
+    manifest.mode = 'live';
+    manifest.roleSetup = 'engineer-pilot';
+    manifest.modelConfig = {
+      provider: 'anthropic',
+      fixtureLoopbackOnly: false,
+      roleModels: {
+        lead: 'anthropic/claude-sonnet-4',
+        implementer: 'openai/gpt-5',
+      },
+    };
+    const rep = candidate.repeatability as Record<string, unknown>;
+    rep.executedScenarios = 1;
+    (rep.scenarioSummaries as Array<Record<string, unknown>>)[0]!.outcomes = ['pass'];
+    (rep.scenarioSummaries as Array<Record<string, unknown>>)[0]!.bound = true;
+    const results = candidate.results as Array<Record<string, unknown>>;
+    results[0]!.outcome = 'pass';
+    results[0]!.reason = 'Live scenario completed all checks.';
+    results[0]!.durationMs = 1200;
+    results[0]!.observableStateChecks = [{ assertion: 'tests pass', passed: true, observed: 'ok' }];
+    results[0]!.evidence = [
+      {
+        schemaVersion: 1,
+        check: { name: 'npm test', category: 'unit-tests' },
+        execution: { command: 'npm test', exitStatus: 0, durationMs: 1200, basis: 're-run' },
+        artifacts: ['test-results/unit.txt'],
+      },
+    ];
+    (results[0]!.metrics as Record<string, unknown>).handoffCount = 2;
+    (results[0]!.metrics as Record<string, unknown>).tokenCostUsd = 0.04;
+    candidate.metricObservation = {
+      observed: ['handoffCount', 'tokenCostUsd', 'durationMs'],
+      notObserved: [
+        'roleTransitions',
+        'skillsInvoked',
+        'humanInterventions',
+        'permissionAmbiguities',
+        'reviewDetectedDefects',
+        'escapedDefects',
+      ],
+    };
+    candidate.supplementaryMetrics = {
+      requirementCoverage: { status: 'measured', met: 2, total: 2, note: 'All criteria met.' },
+      reworkCycles: { status: 'measured', count: 1 },
+      planDriftCount: { status: 'measured', count: 0 },
+      contextReconstructionCount: { status: 'measured', count: 0 },
+      evidenceQuality: {
+        status: 'measured',
+        summary: 'All checks re-run after final edit.',
+        checksReRun: 1,
+        checksJudgedFromEvidence: 0,
+        missingArtifacts: 0,
+      },
+      tokenUsage: {
+        status: 'measured',
+        inputTokens: 1000,
+        outputTokens: 500,
+        cachedTokens: 200,
+        estimatedCostUsd: 0.04,
+        pricingBasis: 'published-api-rates',
+      },
+      plannedApprovalGates: { status: 'measured', count: 1 },
+    };
+    candidate.waivers = [
+      {
+        scope: 'ui-visual',
+        reason: 'CLI-only scenario has no visual UI surface.',
+        approvedBy: 'ikarimeister',
+        reference: '#126',
+      },
+    ];
+    candidate.journeyBaseline = {
+      source: 'CI Agent E2E',
+      commit: '68219d552aede8ca347a6cca116be587e41418e5',
+      opencodeVersion: '2.3.0',
+      networkEnforcement: 'netns',
+      ciRunId: '44850716927',
+      artifactId: '14684054873',
+      recordedAt: '2026-11-21T01:32:19Z',
+      journeys: [
+        {
+          id: 'J1',
+          journey: 'lead-reads-repository',
+          testOutcome: 'pass',
+          recordOutcome: 'pass',
+          handoffCount: 0,
+          roleTransitions: [],
+          skillsInvoked: [],
+          toolCallCount: 2,
+          violationCount: 0,
+          repeatsByteIdentical: true,
+          notes: 'Deterministic baseline journey.',
+        },
+      ],
+    };
+
+    assertSchemaValid(candidate, 'positive candidate live record');
+    const validated = validateRunRecord(candidate, 'positive candidate live record');
+    assert.equal(validated.recordKind, 'candidate');
+    assert.equal(validated.waivers.length, 1);
+    assert.equal(validated.journeyBaseline?.journeys[0]?.id, 'J1');
   });
 
   it('enforces schema and TypeScript validator parity across invalid run records', () => {
@@ -314,7 +531,10 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
       {
         label: 'claiming observed metrics when all results are non-observed',
         mutate: (doc) => {
-          doc.metricObservation = { observed: ['handoffCount'], notObserved: [] };
+          doc.metricObservation = {
+            observed: ['handoffCount'],
+            notObserved: CORE_METRIC_NAMES.filter((name) => name !== 'handoffCount'),
+          };
         },
         pattern: /observed must be empty when no result has outcome "pass" or "fail"/,
       },
@@ -334,6 +554,160 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
         },
         pattern: /non-decided outcome "skipped" and must record zero\/empty metrics/,
       },
+      {
+        label: 'incomplete metricObservation partition',
+        mutate: (doc) => {
+          doc.metricObservation = { observed: [], notObserved: ['handoffCount'] };
+        },
+        pattern: /must partition all core metrics; missing:/,
+      },
+      {
+        label: 'non-placeholder value on a notObserved metric',
+        mutate: (doc) => {
+          const results = doc.results as Array<Record<string, unknown>>;
+          results[0]!.outcome = 'pass';
+          results[0]!.observableStateChecks = [{ assertion: 'ok', passed: true, observed: 'ok' }];
+          results[0]!.evidence = [
+            {
+              schemaVersion: 1,
+              check: { name: 'check', category: 'custom' },
+              execution: { command: 'true', exitStatus: 0, durationMs: 1, basis: 're-run' },
+              artifacts: ['a.txt'],
+            },
+          ];
+          results[0]!.durationMs = 42;
+          const rep = doc.repeatability as Record<string, unknown>;
+          rep.executedScenarios = 1;
+          (rep.scenarioSummaries as Array<Record<string, unknown>>)[0]!.outcomes = ['pass'];
+        },
+        pattern: /non-placeholder value for "durationMs"/,
+      },
+      {
+        label: 'free-text machine-local path leakage',
+        mutate: (doc) => {
+          (doc.hostEnvironment as Record<string, unknown>).notes = 'Captured in /home/dev/repo.';
+        },
+        pattern: /must not contain a machine-local Unix path/,
+      },
+      {
+        label: 'free-text credential leakage',
+        mutate: (doc) => {
+          const syntheticToken = ['ghp', 'abcdefghijklmnopqrstuvwxyz123456'].join('_');
+          doc.limitations = [`Token ${syntheticToken} leaked`];
+        },
+        pattern: /must not contain a GitHub token/,
+      },
+      {
+        label: 'observedRoleModels undeclared role key',
+        mutate: (doc) => {
+          const mv = doc.modelVerification as Record<string, unknown>;
+          (mv.observedRoleModels as Record<string, unknown>).unknownRole = 'loopback/mock';
+        },
+        pattern: /is not declared in runManifest\.modelConfig\.roleModels/,
+      },
+      {
+        label: 'observedRoleModels prototype-pollution key',
+        mutate: (doc) => {
+          const mv = doc.modelVerification as Record<string, unknown>;
+          mv.observedRoleModels = { constructor: 'loopback/mock' };
+        },
+        pattern: /contains forbidden key "constructor"/,
+      },
+      {
+        label: 'journeyBaseline duplicate journey ids',
+        mutate: (doc) => {
+          doc.journeyBaseline = {
+            source: 'CI',
+            commit: '68219d552aede8ca347a6cca116be587e41418e5',
+            opencodeVersion: '2.3.0',
+            networkEnforcement: 'netns',
+            ciRunId: '1',
+            artifactId: '2',
+            recordedAt: '2026-11-21T01:32:19Z',
+            journeys: [
+              {
+                id: 'J1',
+                journey: 'a',
+                testOutcome: 'pass',
+                recordOutcome: 'pass',
+                handoffCount: 0,
+                roleTransitions: [],
+                skillsInvoked: [],
+                toolCallCount: 1,
+                violationCount: 0,
+              },
+              {
+                id: 'J1',
+                journey: 'b',
+                testOutcome: 'pass',
+                recordOutcome: 'pass',
+                handoffCount: 0,
+                roleTransitions: [],
+                skillsInvoked: [],
+                toolCallCount: 1,
+                violationCount: 0,
+              },
+            ],
+          };
+        },
+        pattern: /journeys contains duplicate id "J1"/,
+      },
+      {
+        label: 'journeyBaseline pass with non-zero violationCount',
+        mutate: (doc) => {
+          doc.journeyBaseline = {
+            source: 'CI',
+            commit: '68219d552aede8ca347a6cca116be587e41418e5',
+            opencodeVersion: '2.3.0',
+            networkEnforcement: 'netns',
+            ciRunId: '1',
+            artifactId: '2',
+            recordedAt: '2026-11-21T01:32:19Z',
+            journeys: [
+              {
+                id: 'J1',
+                journey: 'a',
+                testOutcome: 'pass',
+                recordOutcome: 'pass',
+                handoffCount: 0,
+                roleTransitions: [],
+                skillsInvoked: [],
+                toolCallCount: 1,
+                violationCount: 1,
+              },
+            ],
+          };
+        },
+        pattern: /recordOutcome "pass" and must have violationCount 0/,
+      },
+      {
+        label: 'journeyBaseline invalid calendar date in recordedAt',
+        mutate: (doc) => {
+          doc.journeyBaseline = {
+            source: 'CI',
+            commit: '68219d552aede8ca347a6cca116be587e41418e5',
+            opencodeVersion: '2.3.0',
+            networkEnforcement: 'netns',
+            ciRunId: '1',
+            artifactId: '2',
+            recordedAt: '2026-02-30T00:00:00Z',
+            journeys: [
+              {
+                id: 'J1',
+                journey: 'a',
+                testOutcome: 'pass',
+                recordOutcome: 'pass',
+                handoffCount: 0,
+                roleTransitions: [],
+                skillsInvoked: [],
+                toolCallCount: 1,
+                violationCount: 0,
+              },
+            ],
+          };
+        },
+        pattern: /recordedAt must be a valid ISO 8601 timestamp/,
+      },
     ];
 
     for (const { label, mutate, pattern } of tsInvariantCases) {
@@ -348,11 +722,14 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
 
     const tmpDir = mkdtempSync(join(tmpdir(), 'edd-run-record-'));
     try {
+      const missingPath = join(tmpDir, 'does-not-exist.json');
+      assert.throws(() => loadRunRecord(missingPath), /Unable to read run record/);
+
       const badJsonPath = join(tmpDir, 'broken-record.json');
       writeFileSync(badJsonPath, '{broken', 'utf8');
       assert.throws(
         () => loadRunRecord(badJsonPath),
-        new RegExp(badJsonPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+        new RegExp(`Invalid JSON in run record ${badJsonPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
       );
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
