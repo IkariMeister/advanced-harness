@@ -70,7 +70,7 @@ describe('SMK-AGC global scope (hooks.json edited after a global install, as rep
   const configDir = () => join(box.home, '.gemini', 'config');
   before(async () => {
     box = createSandbox('antigravity-conflict-global');
-    const installed = await box.run('install-native-harness.ts', args, { steps: antigravityInstall('yes') });
+    const installed = await box.run('install-native-harness.ts', args, { steps: antigravityInstall('yes', '') });
     assert.equal(installed.code, 0, installed.transcript);
     const hooksPath = join(configDir(), 'hooks.json');
     const hooks = JSON.parse(readFileSync(hooksPath, 'utf8'));

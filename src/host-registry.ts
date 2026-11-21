@@ -355,6 +355,9 @@ export interface HostAdapterInstallOptions {
   commandsDirectory?: string | undefined;
   context?: string | undefined;
   harnessVersion?: HarnessVersionStamp | undefined;
+  hasPendingSharedLocations?: boolean | undefined;
+  onBeforeApply?: (() => void) | undefined;
+  onConfirmed?: (() => boolean | void) | undefined;
 }
 
 export interface HostAdapterUpdateOptions {
@@ -370,6 +373,9 @@ export interface HostAdapterUpdateOptions {
   commandsDirectory?: string | undefined;
   context?: string | undefined;
   harnessVersion?: HarnessVersionStamp | undefined;
+  hasPendingSharedLocations?: boolean | undefined;
+  onBeforeApply?: (() => void) | undefined;
+  onConfirmed?: (() => boolean | void) | undefined;
 }
 
 export interface HostAdapterDoctorOptions {
@@ -407,6 +413,9 @@ async function installClaudeCodeFromOptions(options: HostAdapterInstallOptions):
     agentsDirectory: options.agentsDirectory,
     commandsDirectory: options.commandsDirectory,
     harnessVersion: options.harnessVersion,
+    hasPendingSharedLocations: options.hasPendingSharedLocations,
+    onBeforeApply: options.onBeforeApply,
+    onConfirmed: options.onConfirmed,
     ask,
     output,
     error,
@@ -462,6 +471,9 @@ registerHostAdapter({
       commandsDirectory: options.commandsDirectory,
       context: options.context,
       harnessVersion: options.harnessVersion,
+      hasPendingSharedLocations: options.hasPendingSharedLocations,
+      onBeforeApply: options.onBeforeApply,
+      onConfirmed: options.onConfirmed,
       ask,
       output,
       error,

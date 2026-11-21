@@ -77,7 +77,7 @@ describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
     const receipts = () => [...tree(box.recoveryDirectory).keys()].filter(file => file.startsWith('native-install-')).sort();
     const beforeConfig = readFileSync(config(), 'utf8');
     const beforeReceipts = receipts();
-    const preview = [ask('Check remote repository', 'no'), ask('Choose new models')];
+    const preview = [ask('Check remote repository', 'no'), ask('Choose new models'), ask('Install opt-in local Git hook', 'no')];
     const cancelled = await box.run('update-native-harness.ts', projectArgs(), { steps: [...preview, ask('Type update to apply', '')] });
     assert.equal(cancelled.code, 0, cancelled.transcript);
     assert.match(cancelled.stdout, /Update cancelled\. No files or receipts were modified\./);
@@ -113,7 +113,7 @@ describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
     try {
       const install = await fresh.run('install-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: openCodeInstall('install') });
       assert.equal(install.code, 0, install.transcript);
-      const update = await fresh.run('update-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: [ask('Check remote repository', 'no'), ask('Choose new models'), ask('Type update to apply', '')] });
+      const update = await fresh.run('update-native-harness.ts', ['--host', 'opencode', '--scope', 'project', '--project', fresh.project], { steps: [ask('Check remote repository', 'no'), ask('Choose new models'), ask('Install opt-in local Git hook', 'no'), ask('Type update to apply', '')] });
       assert.doesNotMatch(update.stdout, /Installed version: unknown/);
       assert.match(update.stdout, /Installed version: \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)? \([0-9a-f]{40}\)/);
     } finally { fresh.dispose(); }
@@ -133,6 +133,7 @@ describe('SMK-OC OpenCode project lifecycle (non-TTY piped answers)', () => {
         ask('Choose new models', 'yes'),
         ask('Query the live OpenCode model catalog', 'yes'),
         ...roles.flatMap(role => [ask(`${role}: model ID`), ask(`${role}: reasoning variant`)]),
+        ask('Install opt-in local Git hook', 'no'),
         ask('Type update to apply', ''),
       ] });
       assert.equal(update.code, 0, update.transcript);
@@ -155,7 +156,7 @@ describe('SMK-GL OpenCode global scope + global integrations (non-TTY piped answ
   after(() => box.dispose());
 
   it('SMK-GL-01 global install, gh integration defaults, doctor, and uninstall stay inside the sandbox home', async () => {
-    const install = await box.run('install-native-harness.ts', ['--host', 'opencode', '--scope', 'global'], { steps: openCodeInstall('install') });
+    const install = await box.run('install-native-harness.ts', ['--host', 'opencode', '--scope', 'global'], { steps: openCodeInstall('install', undefined, '') });
     assert.equal(install.code, 0, install.transcript);
     const global = join(box.xdgConfigHome, 'opencode');
     assert.ok(existsSync(join(global, 'opencode.jsonc')) || existsSync(join(global, 'opencode.json')));

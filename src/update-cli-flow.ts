@@ -41,9 +41,10 @@ import {
   type WorkflowCommandId
 } from './workflow-commands.ts';
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, isCodexOnly, selectNativeHost, type HostId } from './host-registry.ts';
-import { globalDefaultsNotice, lookupGlobalDefaults, runSharedLocationStep } from './project-setup.ts';
+import { globalDefaultsNotice, lookupGlobalDefaults, prepareSharedLocationStep, runSharedLocationStep, type PreparedSharedLocationStep } from './project-setup.ts';
 import { checkAntigravityConfigMerge } from './antigravity-adapter.ts';
 import { canonicalProcedurePath, discoverProcedureSkills, planProcedureDeployment, procedureManagedEvidence, applyProcedureFiles, preflightProcedureFiles, assertNoForeignManagedFileClaims } from './procedure-deployment.ts';
+import { finishCanonicalHook, promptCanonicalHook } from './canonical-git-hook.ts';
 
 const canonicalManagedPath = (path: string) => process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 
@@ -149,20 +150,40 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     }
   }
 
+  let deferredSharedLocations: PreparedSharedLocationStep | undefined;
   if (project) {
-    // Shared locations are host-neutral, so they are settled once before any host update.
+    // Shared locations are host-neutral, so they are settled once before any host update;
+    // actual writes are deferred until the host update is confirmed.
     const lookup = lookupGlobalDefaults({ home, environment: env, xdgConfigHome: deps.xdgConfigHome });
     const notice = globalDefaultsNotice(lookup);
     if (notice) output(notice);
-    await (deps.sharedLocations ?? runSharedLocationStep)(project, {
+    const sharedDeps = {
       ask,
       output,
       home,
       globalDefaults: lookup.defaults,
       backupParent: deps.recoveryDirectory ?? env.ADVANCED_HARNESS_RECOVERY_DIR ?? join(home, 'Projects', 'advanced-harness-backups'),
       changeLocations: options.changeSharedLocations,
-    });
+    };
+    if (deps.sharedLocations) {
+      await deps.sharedLocations(project, sharedDeps);
+    } else {
+      deferredSharedLocations = await prepareSharedLocationStep(project, sharedDeps);
+    }
   }
+
+  const applyDeferredSharedLocations = () => {
+    if (!deferredSharedLocations?.apply) return true;
+    try {
+      deferredSharedLocations.apply();
+      return true;
+    } catch (err) {
+      errorOutput(
+        `Host update and receipt already completed, but deferred shared-location step failed: ${err instanceof Error ? err.message : String(err)}. Inspect project context and recovery backups before rerunning.`
+      );
+      return false;
+    }
+  };
 
   if (dispatch.host === 'claude-code') {
     const adapter = (deps.getHostAdapter ?? getHostAdapter)('claude-code');
@@ -175,6 +196,9 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       agentsDirectory: deps.agentsDirectory,
       commandsDirectory: deps.workflowCommandsDirectory,
       harnessVersion: toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand)),
+      hasPendingSharedLocations: deferredSharedLocations?.status === 'saved',
+      onBeforeApply: deferredSharedLocations?.preflight,
+      onConfirmed: applyDeferredSharedLocations,
       ask,
       output,
       error: errorOutput,
@@ -211,6 +235,9 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
       commandsDirectory: deps.workflowCommandsDirectory,
       context: options.context,
       harnessVersion: toVersionStamp(readSourceVersion(harnessRoot, deps.runCommand)),
+      hasPendingSharedLocations: deferredSharedLocations?.status === 'saved',
+      onBeforeApply: deferredSharedLocations?.preflight,
+      onConfirmed: applyDeferredSharedLocations,
       ask,
       output,
       error: errorOutput,
@@ -496,6 +523,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   output(`  Configuration file: ${target}`);
   output(`  Private backup will be created under: ${backupParent}`);
   output(`  Recovery: If update fails or is rejected, restore via existing receipt restore chain.`);
+  const canonicalHook = await promptCanonicalHook(project, 'opencode', ask, output, { updateOnly: true });
 
   const confirm = await ask('Type update to apply these changes', 'cancel');
   if (confirm.trim() !== 'update') {
@@ -536,6 +564,7 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
   // Fail before creating a pending receipt; retain the guarded recheck below for races.
   assertNoForeignManagedFileClaims(backupParent, 'opencode', selectedSkillItems.map(file => file.path));
 
+  deferredSharedLocations?.preflight?.();
   const pending = (deps.writePending ?? writePendingSuccessor)(history, successor);
   const receiptPath = pending.path;
   let backup: string | undefined;
@@ -602,6 +631,8 @@ export async function runUpdateFlow(options: UpdateFlowOptions, deps: UpdateFlow
     output(`Backup created: ${backup}`);
   }
   output(`Successor receipt finalized at: ${receiptPath}`);
+  if (!applyDeferredSharedLocations()) return 1;
+  if (!finishCanonicalHook(canonicalHook, output, errorOutput)) return 1;
 
   // Runtime diagnostic verification
   const directory = project ?? cwd;

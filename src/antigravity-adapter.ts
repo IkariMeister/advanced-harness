@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
+import { finishCanonicalHook, promptCanonicalHook } from './canonical-git-hook.ts';
 import {
   createSuccessorReceipt,
   discoverReceiptChain,
@@ -45,6 +46,9 @@ export interface AntigravityAdapterInstallOptions {
   commandsDirectory?: string | undefined;
   context?: string | undefined;
   harnessVersion?: HarnessVersionStamp | undefined;
+  hasPendingSharedLocations?: boolean | undefined;
+  onBeforeApply?: (() => void) | undefined;
+  onConfirmed?: (() => boolean | void) | undefined;
   ask: Ask;
   output(message: string): void;
   error(message: string): void;
@@ -480,6 +484,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   else output('  None (preferences already match).');
 
   const exclude = previewGitExclude(scope === 'project' ? project : undefined, 'antigravity', output);
+  const canonicalHook = scope === 'project' ? await promptCanonicalHook(project, 'antigravity', ask, output) : undefined;
   if (options.harnessVersion) output(`Harness version: ${formatVersionStamp(options.harnessVersion)}`);
   // Enter does not apply a default here: only an explicit yes writes files.
   output('');
@@ -490,6 +495,7 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   }
 
   // Preflight all planned files against snapshot taken before confirmation
+  options.onBeforeApply?.();
   preflightAntigravityDeployment(plan.filesToDeploy);
   assertNoForeignManagedFileClaims(backupParent, 'antigravity', [...selectedSkills]);
   preflightProcedureFiles(plan.skills.filter(file => selectedSkills.has(canonicalPath(file.path))));
@@ -537,6 +543,8 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
   if (!hasWrites && !configChanged) {
     output('Configuration and artifacts already match; no files, backups, or receipts were modified.');
     finishGitExclude(exclude, output, error);
+    if (!finishCanonicalHook(canonicalHook, output, error)) return 1;
+    if (options.onConfirmed?.() === false) return 1;
     return 0;
   }
 
@@ -588,6 +596,8 @@ export async function installAntigravity(options: AntigravityAdapterInstallOptio
 
   finalizeSuccessor(pending, targetFinal);
   finishGitExclude(exclude, output, error);
+  if (!finishCanonicalHook(canonicalHook, output, error)) return 1;
+  if (options.onConfirmed?.() === false) return 1;
 
   output('\nAntigravity harness deployment complete.');
   if (selectedSkills.size) output('• Reusable procedure skills deployed.');
