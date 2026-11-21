@@ -125,40 +125,39 @@ export function reconcilePermissions(options: ReconcileOptions): ReconciliationR
     const isNativeNonGuardrail = !requiredDenial(req.rule) && req.sources.length > 0 && req.sources.every(s => s.startsWith('native:'));
     const firstOverlappingGuardrail = req.rule.effect === 'deny' ? -1 : rules.findIndex(r => isOpenCodeGuardrailRule(r) && overlap(req.rule, r) !== false);
     const firstGuardrail = isNativeNonGuardrail ? rules.findIndex(isOpenCodeGuardrailRule) : -1;
-    const bound = firstOverlappingGuardrail >= 0 && firstGuardrail >= 0
-      ? Math.min(firstOverlappingGuardrail, firstGuardrail)
-      : firstOverlappingGuardrail >= 0
-        ? firstOverlappingGuardrail
-        : firstGuardrail >= 0
-          ? firstGuardrail
-          : rules.length;
+    const bounds = [firstOverlappingGuardrail, firstGuardrail].filter(index => index >= 0);
+    const bound = bounds.length ? Math.min(...bounds) : rules.length;
     const isFallbackFor = (r: PermissionRule) =>
       req.rule.effect === 'ask' && (req.rule.resource === '*' && r.resource !== '*' || req.rule.resource.endsWith(' *')
         && r.resource.startsWith(req.rule.resource.slice(0, -1)));
+    const isExemptBefore = (index: number, end: number, r: PermissionRule) =>
+      rules.slice(index + 1, end).some(later => covers(later, req.rule))
+      // Only attributable native universal defaults can be refined by later setup.
+      || r.action === '*' && r.resource === '*' && prior.some(p => same(p.rule, r) && p.sources.some(s => s.startsWith('native:')));
+    const conflictingRelation = (r: PermissionRule): boolean | 'unknown' => {
+      // A single new policy batch has an explicitly reviewed internal order.
+      if (additions.some(a => same(a, r))) return false;
+      const relation = overlap(req.rule, r);
+      return r.effect === req.rule.effect ? false : relation;
+    };
     let insertAt = bound;
     // Pass 1: compute the earliest insertion point before any conflicting or narrower pre-bound rule.
     for (let index = 0; index < bound; index++) {
       const r = rules[index]!;
-      if (additions.some(a => same(a, r))) continue;
-      if (overlap(req.rule, r) !== true || r.effect === req.rule.effect) continue;
-      if (rules.slice(index + 1, bound).some(later => covers(later, req.rule))) continue;
-      // Only attributable native universal defaults can be refined by later setup.
-      if (r.action === '*' && r.resource === '*' && prior.some(p => same(p.rule, r) && p.sources.some(s => s.startsWith('native:')))) continue;
+      if (conflictingRelation(r) !== true || isExemptBefore(index, bound, r)) continue;
       if (isFallbackFor(r)) insertAt = Math.min(insertAt, index);
     }
     // Pass 2: verify no overlap or last-match conflict on either side of insertAt.
+    // Invariant: guardrails at index >= insertAt are always lawful — non-deny rules land at or before
+    // firstOverlappingGuardrail (so later guardrails still win in last-match evaluation), and deny rules share the same effect.
     for (let index = 0; index < rules.length; index++) {
       const r = rules[index]!;
       if (index >= insertAt && isOpenCodeGuardrailRule(r)) continue;
-      // A single new policy batch has an explicitly reviewed internal order.
-      if (additions.some(a => same(a, r))) continue;
-      const relation = overlap(req.rule, r);
-      if (relation === 'unknown' && r.effect !== req.rule.effect) conflict('overlap', 'Cannot establish safe permission overlap.');
-      if (relation !== true || r.effect === req.rule.effect) continue;
+      const relation = conflictingRelation(r);
+      if (relation === 'unknown') conflict('overlap', 'Cannot establish safe permission overlap.');
+      if (relation !== true) continue;
       if (index < insertAt) {
-        if (rules.slice(index + 1, insertAt).some(later => covers(later, req.rule))) continue;
-        // Only attributable native universal defaults can be refined by later setup.
-        if (r.action === '*' && r.resource === '*' && prior.some(p => same(p.rule, r) && p.sources.some(s => s.startsWith('native:')))) continue;
+        if (isExemptBefore(index, insertAt, r)) continue;
         if (!isFallbackFor(r) && (req.rule.effect !== 'deny' && r.effect === 'deny' || req.rule.effect === 'allow' && r.effect === 'ask' && !covers(r, req.rule))) {
           conflict('last-match', `Cannot override existing restriction ${r.action} ${r.resource}.`);
         }

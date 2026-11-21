@@ -177,3 +177,54 @@ test('native non-guardrail rules conflict when inserted before overlapping post-
   assert.ok(fallbackBeforeAllow.rules.findIndex(rule => rule.action === 'shell' && rule.resource === 'gh *' && rule.effect === 'ask') < firstGuard);
   assert.deepEqual(fallbackBeforeAllow.rules.at(-1), postNarrowAllow);
 });
+
+test('non-skill native additions respect custom post-guardrail rules and conflicts', () => {
+  const base = [r('*', '*', 'deny'), r('read', '*', 'allow'), r('shell', '*', 'ask')];
+  const guardrails = openCodeGuardrailRules(base);
+  const existing = [...base, ...guardrails];
+  const prior = existing.map(rule => ({ rule, sources: ['native:implementer'] }));
+
+  const unrelatedPostGuardrail = r('shell', 'npm test', 'allow');
+  const readAllow = r('read', 'docs/*', 'allow');
+  const compatible = reconcilePermissions({
+    existing: [...existing, unrelatedPostGuardrail],
+    prior,
+    previousOrder: [...existing, unrelatedPostGuardrail],
+    desired: [{ rule: readAllow, sources: ['native:implementer'] }],
+  });
+  assert.deepEqual(compatible.preview.conflicts, []);
+  const firstGuard = compatible.rules.findIndex(isOpenCodeGuardrailRule);
+  assert.ok(compatible.rules.findIndex(rule => rule.action === 'read' && rule.resource === 'docs/*') < firstGuard);
+  assert.deepEqual(compatible.rules.at(-1), unrelatedPostGuardrail);
+
+  const postReadDeny = r('read', 'src/secret.txt', 'deny');
+  const readConflict = reconcilePermissions({
+    existing: [...existing, postReadDeny],
+    prior,
+    previousOrder: [...existing, postReadDeny],
+    desired: [{ rule: r('read', 'src/*', 'allow'), sources: ['native:implementer'] }],
+  });
+  assert.ok(readConflict.preview.conflicts.some(conflict => conflict.code === 'last-match'));
+  assert.deepEqual(readConflict.rules, [...existing, postReadDeny]);
+
+  const postShellDeny = r('shell', 'git *', 'deny');
+  const shellConflict = reconcilePermissions({
+    existing: [...existing, postShellDeny],
+    prior,
+    previousOrder: [...existing, postShellDeny],
+    desired: [{ rule: r('shell', 'git status', 'allow'), sources: ['native:implementer'] }],
+  });
+  assert.ok(shellConflict.preview.conflicts.some(conflict => conflict.code === 'last-match'));
+  assert.deepEqual(shellConflict.rules, [...existing, postShellDeny]);
+
+  const postShellAllow = r('shell', 'git status', 'allow');
+  const shellFallback = reconcilePermissions({
+    existing: [...existing, postShellAllow],
+    prior,
+    previousOrder: [...existing, postShellAllow],
+    desired: [{ rule: r('shell', 'git *', 'ask'), sources: ['native:implementer'] }],
+  });
+  assert.deepEqual(shellFallback.preview.conflicts, []);
+  assert.ok(shellFallback.rules.findIndex(rule => rule.action === 'shell' && rule.resource === 'git *' && rule.effect === 'ask') < shellFallback.rules.findIndex(isOpenCodeGuardrailRule));
+  assert.deepEqual(shellFallback.rules.at(-1), postShellAllow);
+});

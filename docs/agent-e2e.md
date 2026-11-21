@@ -4,7 +4,7 @@ The **agent E2E suite** drives a real OpenCode CLI through a set of scripted
 **journeys** against a **loopback model fixture**. It checks host plumbing: that
 the installed role prompts and permission policy reach OpenCode, that Lead can
 delegate to a child role, that a child role's tool calls execute in a sandbox
-(`shell` by Operator was demonstrated in pre-`#261` runs; enabled `skill` loading and `edit` in J3 are pending a live/CI run), and that
+(`shell` by Operator and `skill` loading + `edit` by Implementer passed in CI run `44845273743` against the loopback fixture; live OpenCode / interactive TTY spot-checks are waived), and that
 a violation is reported deterministically. The model's replies are scripted;
 tool results are real results produced by OpenCode.
 
@@ -26,10 +26,12 @@ It proves:
   reaches OpenCode 2.3.0 and is applied;
 - Lead can call `subagent`, a child role makes its own requests, and Lead
   receives the child's completed report;
-- child-role tool calls execute: the scripted `read` (J1) and `shell` (J2, run by
-  Operator in a child session) calls ran on OpenCode 2.3.0 in pre-`#261` runs, and
-  their results are real OpenCode results. Enabled J3 (`skill` and `edit`) has not yet
-  been executed in a recorded live/CI OpenCode 2.3.0 run after `#261`;
+- child-role tool calls execute: the scripted `read` (J1), `shell` (J2, run by
+  Operator in a child session), and `skill` load + `edit` (J3, run by Implementer
+  in a child session) calls ran on OpenCode 2.3.0 in CI run `44845273743` for head
+  `99c18069` (5/5 passed on PR merge ref `7276d92f`), and their results are real
+  OpenCode results against the loopback fixture (live OpenCode / interactive TTY
+  spot-checks remain **waived**, not passed);
 - a violation (an unscripted request, a mismatched expectation, a tool call the
   installed policy does not offer, an unexpected network destination, or a
   credential-shaped header) fails the journey with a precise, repeatable record.
@@ -142,8 +144,12 @@ attempts one.
   every interface address internal) and does not merely declare it. The check
   cannot tell a network namespace from a host with no active non-loopback
   interface; the CI job creates the namespace, and the suite only checks that no
-  non-loopback address is present. Two pre-`#261` CI runs have passed: run 43974715793 on
-  PR 262, at head `172d19e` (before the review fixes), and run 44264679242 on head `3a901183d59a85ea8dc0a4871c4105151b1e0684` (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0; 6 tests: 5 pass, 0 fail, 1 todo for J3); a live/CI OpenCode 2.3.0 run of enabled J3 is pending and not yet recorded (see [Continuous integration](#continuous-integration)).
+  non-loopback address is present. CI `agent-e2e` run `44845273743` for head
+  `99c18069` passed 5/5 on PR merge ref `7276d92f` (Ubuntu, Node 24, OpenCode 2.3.0;
+  see [Continuous integration](#continuous-integration)), following two pre-`#261`
+  CI runs (`43974715793` on PR 262 at head `172d19e`, and `44264679242` on head
+  `3a901183d59a85ea8dc0a4871c4105151b1e0684`, with 6 tests: 5 pass, 0 fail, 1 todo
+  for J3); live OpenCode / interactive TTY spot-checks remain **waived**, not passed.
 - **Locally**: the suite only detects attempts. It starts a loopback proxy
   recorder and sets `HTTP_PROXY`, `http_proxy`, `HTTPS_PROXY`, `https_proxy`,
   `ALL_PROXY`, and `all_proxy` to it, and sets `NO_PROXY` and `no_proxy` to
@@ -246,7 +252,9 @@ that download, so no journey scripts either tool.
 Earlier, J3 was registered as `todo` and J3a asserted the observed
 `Permission denied: skill` error because Implementer lacked a `skill.load` allow
 rule. `#261` adds per-role `skill.load` allow rules, enables J3, and retires J3a;
-a live/CI OpenCode 2.3.0 run of enabled J3 is pending and not yet recorded.
+CI `agent-e2e` run `44845273743` for head `99c18069` passed 5/5 on PR merge ref
+`7276d92f` against the loopback fixture, while live OpenCode / interactive TTY
+spot-checks remain **waived**, not passed.
 
 **J4 `violations-fail-deterministically`**
 
@@ -380,15 +388,15 @@ These were observed in early observation runs, not as a conformance test:
 - A skill result carries `Base directory for this skill:` followed by the skill's
   directory, when the skill loads.
 
-**Observed in pre-`#261` runs against OpenCode 2.3.0** (with the pre-`#261` installed
-policy; these are historical observations, not a conformance test, and a live/CI
-run of enabled J3 after `#261` is pending):
+**Observed in real runs against OpenCode 2.3.0** (with the installed policy; these
+are observations against the loopback fixture, not a conformance test; live OpenCode
+and interactive TTY spot-checks remain **waived**, not passed):
 
-- In pre-`#261` runs, only the `read` (J1) and `shell` (J2) tool calls executed
-  successfully. J2's shell calls were run by Operator in a child session. The
-  scripted `edit` in J3 had not executed, and a successful `skill` load was not
-  demonstrated because the pre-`#261` policy denied `skill` to Implementer
-  (`permission.rejected` with `Permission denied: skill`).
+- In pre-`#261` runs, `read` (J1) and `shell` (J2) executed successfully while J3
+  failed with `permission.rejected` (`Permission denied: skill`) because Implementer
+  lacked a `skill.load` allow rule. After `#261` added per-role `skill.load` allow
+  rules, CI run `44845273743` for head `99c18069` (PR merge ref `7276d92f`) passed
+  all 5 journeys including `skill` load and `edit` in J3.
 - `--auto` approved Operator's `ask` shell rule in the child session (J2): both
   shell calls ran, and the installed agent configuration was in effect for the
   child requests.
@@ -463,18 +471,18 @@ never start OpenCode.
 The `agent-e2e` job in `.github/workflows/ci.yml` runs on `ubuntu-latest` with a
 20-minute timeout. The timeout covers the worst case of seven OpenCode runs at 150
 seconds each (17.5 minutes), so setup and the download add further time. It is
-**not a required check**. Two pre-`#261` runs have passed: run 43974715793 on PR 262
-at head `172d19e` (before the review fixes) and run 44264679242 on head
-`3a901183d59a85ea8dc0a4871c4105151b1e0684` (Validate, Smoke Ubuntu and Windows,
-Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). Observed on that
-pre-`#261` run: Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 0 fail, 1 todo (J3,
-#261); all seven journey records show `enforcement: "netns"`; the only tolerated
-destination was `CONNECT models.opencode.ai:443`; no unexpected destination; no
-credential-shaped header; the sha256 check passed; the executable was found in the
-archive; and `sudo unshare --net` worked on the hosted runner. After `#261`, the suite
-has five tests (7 OpenCode runs), with J3 enabled and J3a retired; a live/CI OpenCode
-2.3.0 run of enabled J3 is pending and not yet recorded. Local Windows runs are still
-not hermetic. The job runs on the same events as the other CI jobs. The
+**not a required check**. Two pre-`#261` runs passed (`43974715793` on PR 262 at head
+`172d19e`, and `44264679242` on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, with
+6 tests: 5 pass, 0 fail, 1 todo for J3). After `#261` added per-role `skill.load`
+allow rules, enabled J3, and retired J3a, CI `agent-e2e` run `44845273743` for head
+`99c18069` passed **5/5** on PR merge ref `7276d92f` (Ubuntu, Node 24, OpenCode
+2.3.0; 5 tests across 7 OpenCode runs; all seven journey records show
+`enforcement: "netns"`; the only tolerated destination was
+`CONNECT models.opencode.ai:443`; no unexpected destination; no credential-shaped
+header; the sha256 check passed; the executable was found in the archive; and
+`sudo unshare --net` worked on the hosted runner). Live OpenCode and interactive TTY
+spot-checks remain **waived**, not passed, and local Windows runs remain non-hermetic.
+The job runs on the same events as the other CI jobs. The
 decision is recorded in [ADR-0011](adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md).
 
 1. Checkout (without persisted Git credentials), Node.js 24.x, and `npm ci`.
