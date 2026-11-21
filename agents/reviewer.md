@@ -85,6 +85,51 @@ policy:
       binding:
         host: opencode
         action: shell
+    - capability: skill.load
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: harness-procedure-documentation-review
+      effect: allow
+      binding:
+        host: opencode
+        action: skill
+    - capability: skill.load
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: harness-procedure-documentation-validation
+      effect: allow
+      binding:
+        host: opencode
+        action: skill
+    - capability: skill.load
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: harness-procedure-evidence-collection
+      effect: allow
+      binding:
+        host: opencode
+        action: skill
+    - capability: skill.load
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: harness-procedure-static-analysis
+      effect: allow
+      binding:
+        host: opencode
+        action: skill
+    - capability: skill.load
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: harness-procedure-unit-tests
+      effect: allow
+      binding:
+        host: opencode
+        action: skill
 ---
 
 Review the human-approved implementation for correctness, regressions, maintainability,

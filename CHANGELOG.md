@@ -6,9 +6,17 @@ version between releases.
 
 ## Unreleased
 
+### Fixed
+
+- Per-role procedure-skill (`skill.load`) OpenCode permissions (#261):
+  - Added `'skill.load'` (`action: skill`) to `src/capability-policy.ts` and added exact per-role `skill.load` allow rules matching canonical `skills/*/SKILL.md` `intendedRoles` to `lead` (1), `planner` (3), `implementer` (6), `reviewer` (5), and `qa` (3) with no `skill *` wildcard (`operator`, `external`, and `researcher` keep zero `skill.load` rules).
+  - Updated `reconcilePermissions` in `src/permission-reconciliation.ts` so `native:` non-guardrail rules insert before `openCodeGuardrailRules` while preserving `integration:*` append behavior and conflict detection against custom post-guardrail rules; existing OpenCode installs add the `skill` rules via `npm run harness:update` (`harness:deploy-prompts` preserves permissions).
+  - Updated `src/claude-permission-preflight.ts`, `src/claude-code-compiler.ts`, `src/host-permission-capabilities.ts`, and `docs/host-permission-capabilities.md` to report `skill.load` as unmapped/unverified on Claude Code without altering `tools`/`disallowedTools` and keeping `roleExposure` status `advisory`.
+  - Enabled Agent E2E journey J3 (`implementer-loads-skill-and-edits`) and retired J3a in `e2e/opencode-journeys.e2e.ts` (now 5 tests, 7 OpenCode runs; live/CI OpenCode 2.3.0 verification of enabled J3 is pending).
+
 ### Added
 
-- Agent E2E suite (BH-034, #62): `npm run e2e:opencode` drives the real OpenCode 2.3.0 CLI through scripted journeys against a loopback model fixture, with the installed harness prompts and policy in a sandbox. The suite has six tests. Journey J3 (skill invocation) is `todo`, because the installed policy denies the `skill` tool to Implementer (tracked in #261; #62 stays open for it); J3a asserts the denial as it is today and fails if the skill loads. `HARNESS_E2E_RECORD_DIR` keeps a copy of each journey record, `HARNESS_E2E_NETNS=1` is checked against the live network interfaces, and every journey fails on a credential-shaped header. A new `agent-e2e` CI job runs the suite in a loopback-only network namespace and uploads the records as an artifact; it is not a required check. Two CI runs have passed: run 43974715793 on PR 262, at head `172d19e` (before the review fixes), and run 44264679242 on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). See [ADR-0011](docs/adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md) (Proposed) and [docs/agent-e2e.md](docs/agent-e2e.md).
+- Agent E2E suite (BH-034, #62): `npm run e2e:opencode` drives the real OpenCode 2.3.0 CLI through scripted journeys against a loopback model fixture, with the installed harness prompts and policy in a sandbox. The suite has five tests (7 OpenCode runs): J1, J2, J3 (enabled in #261, retiring J3a), and both J4 determinism cases. `HARNESS_E2E_RECORD_DIR` keeps a copy of each journey record, `HARNESS_E2E_NETNS=1` is checked against the live network interfaces, and every journey fails on a credential-shaped header. A new `agent-e2e` CI job runs the suite in a loopback-only network namespace and uploads the records as an artifact; it is not a required check. Two pre-`#261` CI runs passed (run 43974715793 on PR 262 at head `172d19e` and run 44264679242 on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, with 6 tests: 5 pass, 1 todo for J3); a CI/live OpenCode 2.3.0 run of enabled J3 is pending. See [ADR-0011](docs/adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md) (Proposed) and [docs/agent-e2e.md](docs/agent-e2e.md).
 
 ## v0.4.0 — 2026-11-15
 

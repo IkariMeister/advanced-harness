@@ -360,6 +360,9 @@ npm run harness:deploy-prompts -- [--scope project|global] [--project <directory
 This refreshes native role descriptions and system prompts from `agents/*.md` into
 the target configuration while preserving configured models, reasoning variants,
 permission arrays, and unrelated fields, backed by pre-save backups and receipt lineage.
+Because `harness:deploy-prompts` preserves existing permission arrays, use
+`npm run harness:update` (not `harness:deploy-prompts`) to add new template permission
+rules such as per-role `skill` permissions to existing OpenCode installs.
 
 
 ## Safe harness update workflow

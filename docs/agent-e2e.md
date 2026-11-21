@@ -4,7 +4,7 @@ The **agent E2E suite** drives a real OpenCode CLI through a set of scripted
 **journeys** against a **loopback model fixture**. It checks host plumbing: that
 the installed role prompts and permission policy reach OpenCode, that Lead can
 delegate to a child role, that a child role's tool calls execute in a sandbox
-(`shell` by Operator is demonstrated; skill loading is not yet, see J3), and that
+(`shell` by Operator was demonstrated in pre-`#261` runs; enabled `skill` loading and `edit` in J3 are pending a live/CI run), and that
 a violation is reported deterministically. The model's replies are scripted;
 tool results are real results produced by OpenCode.
 
@@ -27,10 +27,9 @@ It proves:
 - Lead can call `subagent`, a child role makes its own requests, and Lead
   receives the child's completed report;
 - child-role tool calls execute: the scripted `read` (J1) and `shell` (J2, run by
-  Operator in a child session) calls ran on this version, and their results are
-  real OpenCode results. The scripted `edit` call has never executed, and a
-  successful `skill` load is not yet demonstrated (J3 is a known failure, see J3
-  and J3a);
+  Operator in a child session) calls ran on OpenCode 2.3.0 in pre-`#261` runs, and
+  their results are real OpenCode results. Enabled J3 (`skill` and `edit`) has not yet
+  been executed in a recorded live/CI OpenCode 2.3.0 run after `#261`;
 - a violation (an unscripted request, a mismatched expectation, a tool call the
   installed policy does not offer, an unexpected network destination, or a
   credential-shaped header) fails the journey with a precise, repeatable record.
@@ -80,8 +79,8 @@ To keep the records, add `HARNESS_E2E_RECORD_DIR=/absolute/path/to/records`.
 The journeys run one after another, each in a fresh sandbox, with no retries.
 Each journey has a generous per-test timeout. Each OpenCode run has an overall
 timeout and an idle timeout (no fixture request for 30 seconds once the first
-request has arrived). The suite has six tests and runs OpenCode seven times in
-total: J1 once, J2 once, J3 and J3a together once, J4a twice, and J4b twice.
+request has arrived). The suite has five tests and runs OpenCode seven times in
+total: J1 once, J2 once, J3 once, J4a twice, and J4b twice.
 
 ## Isolation
 
@@ -143,8 +142,8 @@ attempts one.
   every interface address internal) and does not merely declare it. The check
   cannot tell a network namespace from a host with no active non-loopback
   interface; the CI job creates the namespace, and the suite only checks that no
-  non-loopback address is present. Two CI runs have passed: run 43974715793 on
-  PR 262, at head `172d19e` (before the review fixes), and run 44264679242 on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0; see [Continuous integration](#continuous-integration)).
+  non-loopback address is present. Two pre-`#261` CI runs have passed: run 43974715793 on
+  PR 262, at head `172d19e` (before the review fixes), and run 44264679242 on head `3a901183d59a85ea8dc0a4871c4105151b1e0684` (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0; 6 tests: 5 pass, 0 fail, 1 todo for J3); a live/CI OpenCode 2.3.0 run of enabled J3 is pending and not yet recorded (see [Continuous integration](#continuous-integration)).
 - **Locally**: the suite only detects attempts. It starts a loopback proxy
   recorder and sets `HTTP_PROXY`, `http_proxy`, `HTTPS_PROXY`, `https_proxy`,
   `ALL_PROXY`, and `all_proxy` to it, and sets `NO_PROXY` and `no_proxy` to
@@ -229,45 +228,25 @@ that download, so no journey scripts either tool.
   1; the second shell result contains `e2e-harness-install`; `git status` and
   `HEAD` are unchanged.
 
-**J3 `implementer-loads-skill-and-edits`** (todo) and **J3a** (non-todo)
+**J3 `implementer-loads-skill-and-edits`**
 
 - Lead: as in J2, delegating to `implementer`.
 - Implementer: `skill {id: "harness-procedure-documentation-impact"}`, then
   `edit {path: "notes.md", oldString: <notes sentinel>, newString: <replacement>}`
   (whose `expect` requires the skill body in the tool results), then a final text
   reply.
-- J3 and J3a read **one** run's result. The run is made once, and both tests read
-  its snapshot.
+- Asserts: the `skill` result is present, not denied, and contains the skill
+  sentinel; its base directory is inside the sandbox; the first skill invocation
+  has `loaded: true` and `skillId: "harness-procedure-documentation-impact"`; the
+  outcome is `pass`; transitions include `lead` to `implementer` and `implementer`
+  back to `lead`; the handoff count is 1; `notes.md` equals exactly the scripted
+  change; `git status --porcelain` lists only `notes.md`; `HEAD` is unchanged;
+  `network.unexpectedDestinations` is empty; and `credentialHeaders` is empty.
 
-**J3 (todo).** Asserts the full journey: the skill result contains the skill
-sentinel; its base directory is inside the sandbox; the first skill invocation
-loads the procedure; the outcome is `pass`; the handoff count is 1; `notes.md`
-equals exactly the scripted change; `git status --porcelain` lists only `notes.md`.
-It is registered with node:test's `todo` option, so its body still runs, but a
-failure is reported as TODO and does not fail the run. The reason is that the
-installed policy denies the `skill` tool to Implementer (observed: `Permission
-denied: skill`, reported as `permission.rejected`). That is a product defect
-tracked in #261; issue 62 stays open for it. This suite does not change the
-permission or agent definitions. Remove the `todo` option once the defect is fixed.
-
-**J3a (non-todo).** Asserts only what is true today, and fails on anything else:
-
-- the handoff to Implementer completes: handoff count 1, transitions lead to
-  implementer and implementer back to lead;
-- the Implementer's `skill` call receives a tool result;
-- that result is exactly the known denial, `{"error":{"type":"permission.rejected",
-  "message":"Permission denied: skill"},"content":[]}`, compared as parsed JSON. If
-  the skill loads instead (the sentinel is present), J3a **fails** with a message
-  saying that defect #261 appears fixed and the J3 `todo` option should be removed;
-- `notes.md` still contains the notes sentinel and is unedited;
-- no unexpected network destination was attempted;
-- no request carried an `Authorization` or other credential-shaped header.
-
-J3a does not require the edit or the final text, so its outcome does not depend on
-them. The run's record therefore still shows the failed edit expectation as a
-violation; J3a does not assert the outcome. J3's record shows two violations from a
-single cause: the denied `skill` call fails step 1, the fixture then ends the
-script, and the unreached final-text step is reported as the second violation.
+Earlier, J3 was registered as `todo` and J3a asserted the observed
+`Permission denied: skill` error because Implementer lacked a `skill.load` allow
+rule. `#261` adds per-role `skill.load` allow rules, enables J3, and retires J3a;
+a live/CI OpenCode 2.3.0 run of enabled J3 is pending and not yet recorded.
 
 **J4 `violations-fail-deterministically`**
 
@@ -351,7 +330,7 @@ record there, creating the directory if needed. The file names are deterministic
 | --- | --- |
 | J1 `lead-reads-repository` | `lead-reads-repository.json` |
 | J2 `lead-delegates-git-to-operator` | `lead-delegates-git-to-operator.json` |
-| J3 and J3a (one run) | `implementer-loads-skill-and-edits.json` |
+| J3 `implementer-loads-skill-and-edits` | `implementer-loads-skill-and-edits.json` |
 | J4 case a, run 1 and run 2 | `violations-fail-deterministically-case-a.run1.json`, `.run2.json` |
 | J4 case b, run 1 and run 2 | `violations-fail-deterministically-case-b.run1.json`, `.run2.json` |
 
@@ -384,7 +363,7 @@ These were observed in early observation runs, not as a conformance test:
 
 - Each model request is `POST /v1/chat/completions` with `stream: true` and
   `stream_options.include_usage`. Agent turns offer a `tools` array. No
-  `Authorization` header is sent (J3a and every journey check this).
+  `Authorization` header is sent (every journey checks this).
 - The model field is the bare model id (for example `lead`), which is how the
   fixture attributes a role.
 - Before each main request, OpenCode sends a tool-less title-generation request.
@@ -401,19 +380,20 @@ These were observed in early observation runs, not as a conformance test:
 - A skill result carries `Base directory for this skill:` followed by the skill's
   directory, when the skill loads.
 
-**Observed in real runs against OpenCode 2.3.0** (with the installed policy; these
-are observations, not a conformance test):
+**Observed in pre-`#261` runs against OpenCode 2.3.0** (with the pre-`#261` installed
+policy; these are historical observations, not a conformance test, and a live/CI
+run of enabled J3 after `#261` is pending):
 
-- Only the `read` (J1) and `shell` (J2) tool calls have executed successfully. J2's
-  shell calls were run by Operator in a child session. The scripted `edit` in J3
-  has never executed, and a successful `skill` load is not demonstrated.
+- In pre-`#261` runs, only the `read` (J1) and `shell` (J2) tool calls executed
+  successfully. J2's shell calls were run by Operator in a child session. The
+  scripted `edit` in J3 had not executed, and a successful `skill` load was not
+  demonstrated because the pre-`#261` policy denied `skill` to Implementer
+  (`permission.rejected` with `Permission denied: skill`).
 - `--auto` approved Operator's `ask` shell rule in the child session (J2): both
   shell calls ran, and the installed agent configuration was in effect for the
   child requests.
 - `shell` is not offered to Lead. The tool result is
   `No tool named "shell" is currently available` (J4a).
-- The deny-all rule blocks the `skill` tool for Implementer. The result is
-  `permission.rejected` with `Permission denied: skill` (J3 and J3a).
 - `glob` returned a `ripgrep execution failed` error and caused a download from
   `github.com:443` (see "No journey uses `glob` or `grep`" under J1).
 - Every run makes `CONNECT models.opencode.ai:443`, which is tolerated (see
@@ -449,11 +429,9 @@ to be that path.
 1. Run `npm run e2e:opencode` without `HARNESS_E2E_OPENCODE`. Every journey is
    reported as skipped, and the command exits 0.
 2. Run it with `HARNESS_E2E_OPENCODE` and `HARNESS_E2E_REQUIRE=1`. The expected
-   result is exit code 0 and **5 passed, 1 todo, 0 failed** across six tests: J1,
-   J2, J3a, and both J4 cases pass; J3 is reported as TODO. Node prints the `todo` J3
-   test under a "failing tests" heading although the summary shows fail 0 and the exit
-   status is 0, so the outcome to check is exit 0 and fail 0. A different count is a
-   finding to report, not a pass.
+   result is exit code 0 and **5 passed, 0 failed** across five tests: J1, J2, J3,
+   and both J4 cases pass. A different count or any failure is a finding to report,
+   not a pass.
 3. Scope a sentinel change to one journey: in `e2e/opencode-journeys.e2e.ts`, change
    the text expected by J4a's second step (`toolResultsInclude`) to a different
    string, and run again. J4a run 1 fails on its assertion that the violation names
@@ -469,8 +447,8 @@ to be that path.
    `lead-reads-repository.json`: `network.unexpectedDestinations` is empty,
    `network.toleratedDestinations` holds at most the tolerated startup destination,
    and `credentialHeaders` is empty. Inspect `implementer-loads-skill-and-edits.json`:
-   `handoffCount` is 1, and the `skillInvocations` entry has `loaded: false`. No
-   `Authorization` value appears in any record.
+   `outcome` is `"pass"`, `handoffCount` is 1, and the `skillInvocations` entry has
+   `loaded: true`. No `Authorization` value appears in any record.
 5. Missing-binary path. Run `npm run e2e:opencode` with `HARNESS_E2E_REQUIRE=1` and
    `HARNESS_E2E_OPENCODE` unset. The expected result is a non-zero exit status. The
    failing test is `OpenCode E2E preflight check`, and its message names the missing
@@ -485,14 +463,18 @@ never start OpenCode.
 The `agent-e2e` job in `.github/workflows/ci.yml` runs on `ubuntu-latest` with a
 20-minute timeout. The timeout covers the worst case of seven OpenCode runs at 150
 seconds each (17.5 minutes), so setup and the download add further time. It is
-**not a required check**. Two runs have passed. Run 43974715793 on PR 262 passed at head
-`172d19e` (before the review fixes). Run 44264679242 passed on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). Observed on that run: Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 0 fail, 1 todo (J3, #261);
-all seven journey records show `enforcement: "netns"`; the only tolerated destination
-was `CONNECT models.opencode.ai:443`; no unexpected destination; no credential-shaped
-header; the sha256 check passed; the executable was found in the archive; and
-`sudo unshare --net` worked on the hosted runner. The current head has a passing run (44264679242), and the earlier run (43974715793) predates the review fixes. The scripted
-`edit` call is still not demonstrated. Local Windows runs are still not hermetic.
-The job runs on the same events as the other CI jobs. The
+**not a required check**. Two pre-`#261` runs have passed: run 43974715793 on PR 262
+at head `172d19e` (before the review fixes) and run 44264679242 on head
+`3a901183d59a85ea8dc0a4871c4105151b1e0684` (Validate, Smoke Ubuntu and Windows,
+Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). Observed on that
+pre-`#261` run: Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 0 fail, 1 todo (J3,
+#261); all seven journey records show `enforcement: "netns"`; the only tolerated
+destination was `CONNECT models.opencode.ai:443`; no unexpected destination; no
+credential-shaped header; the sha256 check passed; the executable was found in the
+archive; and `sudo unshare --net` worked on the hosted runner. After `#261`, the suite
+has five tests (7 OpenCode runs), with J3 enabled and J3a retired; a live/CI OpenCode
+2.3.0 run of enabled J3 is pending and not yet recorded. Local Windows runs are still
+not hermetic. The job runs on the same events as the other CI jobs. The
 decision is recorded in [ADR-0011](adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md).
 
 1. Checkout (without persisted Git credentials), Node.js 24.x, and `npm ci`.

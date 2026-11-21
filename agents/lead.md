@@ -130,6 +130,15 @@ policy:
       binding:
         host: opencode
         action: subagent
+    - capability: skill.load
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: harness-procedure-meeting-task-extraction
+      effect: allow
+      binding:
+        host: opencode
+        action: skill
 ---
 
 Coordinate the OpenCode-native engineering workflow. Shell, Git, filesystem, and

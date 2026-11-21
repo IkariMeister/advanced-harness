@@ -79,6 +79,19 @@ test('Claude preflight reports ordered precedence conflicts and role-indexed map
   const isolatedReport = preflightClaudePermissions(isolated);
   assert.ok(!isolatedReport.findings.some(item => item.role === 'external' && item.code === 'precedence-conflict'));
   assert.ok(isolatedReport.findings.some(item => item.role === 'external' && item.code === 'capability-mapping-unverified'));
+
+  const skillScopedRoles = new Set(['lead', 'planner', 'implementer', 'reviewer', 'qa']);
+  const skillDetail = 'OpenCode skill.load permissions have no verified Claude per-skill binding in this preflight.';
+  for (const role of nativeRoles) {
+    const expectedIndexes = definitions[role].deployment.opencode.policy.rules.flatMap((rule, index) => rule.capability === 'skill.load' ? [index] : []);
+    const finding = report.findings.find(item => item.role === role && item.code === 'capability-mapping-unverified' && item.message === skillDetail);
+    if (skillScopedRoles.has(role)) {
+      assert.ok(finding, `${role} emits skill.load capability-mapping-unverified`);
+      assert.deepEqual(finding.ruleIndexes, expectedIndexes, role);
+    } else {
+      assert.equal(finding, undefined, `${role} has no skill.load rule`);
+    }
+  }
 });
 
 test('preflight reports no blockers only for an empty policy and never claims runtime verification', () => {

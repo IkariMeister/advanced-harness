@@ -182,6 +182,10 @@ export function mapClaudeRolePolicy(role: NativeRole, policy: CapabilityPolicy):
     }
   }
 
+  if (rules.some(rule => rule.capability === 'skill.load' && rule.effect !== 'deny')) {
+    unsupported.push(`${role}: skill.load has no verified Claude per-skill binding; per-role procedure-skill scoping is not mapped (procedure skills follow Claude Code defaults, unverified).`);
+  }
+
   const delegates = rules
     .filter(rule => rule.capability === 'agent.delegate' && rule.effect === 'allow' && rule.resource.kind === 'native-pattern')
     .map(rule => rule.resource.kind === 'native-pattern' ? rule.resource.value : '')
@@ -240,6 +244,7 @@ export function compileClaudeLeadBlock(mappings: Record<NativeRole, ClaudeRoleMa
     `- Never merge pull requests. \`gh pr merge\` is denied in \`${dir}settings.json\`.`,
     '- Do not substitute agents or models silently. Ask the human when a required child capability is missing.',
     '- Not mapped to Claude Code (withheld, not verified): MCP service aliases (Jira, GitHub, Figma, Stitch), Code Mode, and per-role shell scoping. Implementer, Reviewer, and QA have no Bash tool. Operator has Bash for local Git and worktrees; its `git push`, `git pull`, `git clone`, and `gh` denies are advisory, not enforced: route remote Git and GitHub work to External.',
+    '- Per-role procedure-skill scoping (`skill.load`) is not mapped to Claude Code; procedure skills follow Claude Code defaults (unverified).',
     '- Claude Code runtime behavior (agent discovery, `agent: lead`, `Agent(...)` delegation, model aliases) is not runtime-verified by this harness.',
   ];
   return lines.join('\n');

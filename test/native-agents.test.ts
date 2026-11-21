@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadNativeDefinitions } from '../src/native-installer.ts';
+import { loadProcedureSkill } from '../src/procedure-skills.ts';
 import type { PermissionRule } from '../src/permission-reconciliation.ts';
 
 const roles = ['lead', 'operator', 'external', 'researcher', 'planner', 'implementer', 'reviewer', 'qa'] as const;
@@ -421,4 +423,28 @@ test('BH-047: role contracts define ADR-001 documentation ownership and ADR-002 
 
   // No role added or removed; no tool or permission changes
   assert.deepEqual(Object.keys(definitions).sort(), [...roles].sort());
+});
+
+test('OpenCode skill.load allow rules match canonical procedure skills intendedRoles 1:1 without wildcards', () => {
+  const skillsRoot = fileURLToPath(new URL('../skills/', import.meta.url));
+  const skillDirs = readdirSync(skillsRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort();
+  assert.ok(skillDirs.length > 0);
+  const expectedByRole = Object.fromEntries(roles.map(role => [role, [] as string[]])) as Record<typeof roles[number], string[]>;
+  for (const dir of skillDirs) {
+    const skill = loadProcedureSkill(join(skillsRoot, dir));
+    for (const role of skill.intendedRoles) expectedByRole[role].push(skill.name);
+  }
+  for (const role of roles) {
+    const skillRules = permissionRules(role).filter(rule => rule.action === 'skill');
+    assert.ok(!skillRules.some(rule => rule.resource === '*'), `${role} must not allow wildcard skill *`);
+    assert.ok(skillRules.every(rule => rule.effect === 'allow'), `${role} skill rules must be allow`);
+    assert.deepEqual(
+      skillRules.map(rule => rule.resource),
+      expectedByRole[role].slice().sort(),
+      `${role} skill.load allow rules match sorted canonical intendedRoles`
+    );
+  }
 });

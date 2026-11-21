@@ -60,6 +60,33 @@ policy:
       binding:
         host: opencode
         action: external_directory
+    - capability: skill.load
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: harness-procedure-adr-authoring
+      effect: allow
+      binding:
+        host: opencode
+        action: skill
+    - capability: skill.load
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: harness-procedure-documentation-impact
+      effect: allow
+      binding:
+        host: opencode
+        action: skill
+    - capability: skill.load
+      resource:
+        kind: native-pattern
+        host: opencode
+        value: harness-procedure-meeting-task-extraction
+      effect: allow
+      binding:
+        host: opencode
+        action: skill
 ---
 
 Prepare or revise a concrete plan using local read/search and the Jira/design/code

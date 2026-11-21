@@ -1,7 +1,7 @@
 import type { NativeRole } from './native-role-types.ts';
 import type { PermissionRule } from './permission-reconciliation.ts';
 
-export type Capability = 'all' | 'file.read' | 'file.find' | 'file.search' | 'file.edit' | 'directory.external' | 'shell.run' | 'user.question' | 'agent.delegate' | 'web.fetch' | 'web.search' | 'code-mode.execute' | 'mcp.tool';
+export type Capability = 'all' | 'file.read' | 'file.find' | 'file.search' | 'file.edit' | 'directory.external' | 'shell.run' | 'user.question' | 'agent.delegate' | 'web.fetch' | 'web.search' | 'code-mode.execute' | 'mcp.tool' | 'skill.load';
 export type CapabilityEffect = 'allow' | 'ask' | 'deny';
 export type CapabilityResource = { kind: 'all' } | { kind: 'native-pattern'; host: 'opencode'; value: string };
 export interface CapabilityRule { capability: Capability; resource: CapabilityResource; effect: CapabilityEffect; binding: { host: 'opencode'; action: string } }
@@ -13,7 +13,8 @@ const actionCapabilities: Record<string, Capability> = {
   '*': 'all',
   read: 'file.read', glob: 'file.find', grep: 'file.search', edit: 'file.edit',
   external_directory: 'directory.external', shell: 'shell.run', question: 'user.question',
-  subagent: 'agent.delegate', webfetch: 'web.fetch', websearch: 'web.search', execute: 'code-mode.execute'
+  subagent: 'agent.delegate', webfetch: 'web.fetch', websearch: 'web.search', execute: 'code-mode.execute',
+  skill: 'skill.load'
 };
 const mcpAction = /^(?:jira|github|figma|stitch)_\*$/;
 const allowedEffects = ['allow', 'ask', 'deny'] as const;

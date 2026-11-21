@@ -10,20 +10,18 @@
 // journey record.
 //
 // Observed in real runs against OpenCode 2.3.0 (observations, not a conformance test):
-// - Only the `read` (J1) and `shell` (J2) tool calls have executed successfully. The scripted `edit` in J3 has never
-//   executed, and a successful `skill` load is not demonstrated.
+// - Earlier runs (before #261) executed `read` (J1) and `shell` (J2) successfully; J3 was previously `todo` because the
+//   installed policy denied `skill` to Implementer (`Permission denied: skill`), and J3a asserted that denial. #261 adds
+//   per-role `skill.load` allow rules, enables J3, and retires J3a; a live/CI OpenCode 2.3.0 run of enabled J3 (`skill`
+//   and `edit`) has not yet been recorded.
 // - --auto approved Operator's `ask` shell rule in the child session (J2): both shell calls ran.
 // - The installed policy does not offer `shell` to Lead. OpenCode returns `No tool named "shell" is currently
 //   available` as the tool result (J4a).
-// - The installed policy denies the `skill` tool to Implementer (`Permission denied: skill`). This is a separate
-//   product defect (#261): J3 is a `todo` test, J3a asserts the denial as it is today, and no product permission or
-//   agent definition is changed here.
 // - OpenCode 2.3.0 attempts CONNECT models.opencode.ai:443 on every run. That destination is tolerated (see
 //   TOLERATED_STARTUP_DESTINATIONS in e2e/support/opencode-sandbox.ts). The J1 `glob` call also caused
 //   CONNECT github.com:443 (a ripgrep download), which is why no journey uses glob or grep.
 
 import assert from 'node:assert/strict';
-import { isDeepStrictEqual } from 'node:util';
 import test from 'node:test';
 import { createOpenCodeSandbox, currentLoopbackCheck, enforcementOf, INSTALL_COMMIT_SUBJECT, readSandboxFile, resolveOpenCodeBinary, scrubSandbox, SCRATCH_NOTES_SENTINEL, SCRATCH_README_SENTINEL, SENTINEL_COMMIT_SUBJECT, type OpenCodeSandbox } from '../e2e/support/opencode-sandbox.ts';
 import { callTool, defineJourney, finalText, formatJourneyFailure, recordDirectoryOf, runJourney, startJourneyFixture, type JourneyDefinition, type JourneyRun } from '../e2e/support/journey.ts';
@@ -38,8 +36,6 @@ const SKILL_ID = 'harness-procedure-documentation-impact';
 /** A stable line from the compiled documentation-impact procedure body (skills/documentation-impact/SKILL.md). */
 const SKILL_SENTINEL = 'List each affected artifact';
 const NOTES_REPLACEMENT = 'E2E-NOTES-EDITED-7f3a';
-/** The notes.md of the scratch repository as committed, before any journey changes it. */
-const UNEDITED_NOTES = `# Notes\n\n${SCRATCH_NOTES_SENTINEL}\n`;
 /** Present in the tool result of a child delegation the parent has not yet heard back from (observed on 2.3.0). */
 const INTERMEDIATE_MARKER = 'working in the background';
 /** A child report arrives as a user message whose opening tag carries state="completed". */
@@ -51,13 +47,6 @@ const DENIAL = /\b(?:permission (?:was )?(?:denied|rejected)|denied by|rejected 
  * `\"`) because the record's received text is JSON-stringified and tool results can carry JSON.
  */
 const SHELL_NOT_OFFERED = /No tool named (?:\\*")shell(?:\\*") is currently available/;
-/**
- * The observed tool result of the Implementer's `skill` call on OpenCode 2.3.0 (defect #261). J3a asserts exactly this
- * result. If it is ever different, and the skill loads instead, J3a fails and the J3 todo option is to be removed.
- */
-const KNOWN_SKILL_DENIAL = { error: { type: 'permission.rejected', message: 'Permission denied: skill' }, content: [] };
-/** Why J3 is a todo test. Remove the todo option once the installed policy no longer denies the skill tool. */
-const J3_TODO_REASON = 'the installed policy denies the skill tool to Implementer (observed: "Permission denied: skill"), tracked in #261; issue 62 stays open for it';
 const BASE_DIRECTORY = /Base directory for this skill:\s*([^\r\n]+)/;
 const EXCERPT_LENGTH = 200;
 const REPO_FILE_NAMES = /README\.md|notes\.md/;
@@ -95,10 +84,7 @@ const LEAD_DELEGATES_GIT_TO_OPERATOR = defineJourney({
   },
 });
 
-/**
- * J3: Lead delegates to Implementer, which loads the procedure skill and makes one scripted edit. Run once; the todo
- * J3 and J3a both read that one run's result.
- */
+/** J3: Lead delegates to Implementer, which loads the procedure skill and makes one scripted edit. */
 const IMPLEMENTER_LOADS_SKILL_AND_EDITS = defineJourney({
   name: 'implementer-loads-skill-and-edits',
   skillSentinels: { [SKILL_ID]: SKILL_SENTINEL },
@@ -193,17 +179,6 @@ function porcelainLines(sandbox: OpenCodeSandbox): string[] {
   return sandbox.git(['status', '--porcelain']).split(/\r?\n/).filter(line => line !== '');
 }
 
-/** True when the known skill denial text is the tool result, compared as parsed JSON. */
-function isKnownSkillDenial(text: string): boolean {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return false;
-  }
-  return isDeepStrictEqual(parsed, KNOWN_SKILL_DENIAL);
-}
-
 /** The finished run and the value that the check returned for it. */
 interface Completed<T> { run: JourneyRun; value: T }
 
@@ -239,24 +214,6 @@ async function execute<T>(suite: SuiteConfig, definition: JourneyDefinition, mes
   }
 }
 
-/** Memoises a task so that two tests can share one journey run. The task runs at most once. */
-function once<T>(task: () => Promise<T>): () => Promise<T> {
-  let pending: Promise<T> | undefined;
-  return () => {
-    pending ??= task();
-    return pending;
-  };
-}
-
-/** What the J3 and J3a assertions read, captured before the sandbox is removed. */
-interface ImplementerSnapshot {
-  run: JourneyRun;
-  requests: readonly RecordedRequest[];
-  notes: string;
-  porcelain: string[];
-  sandboxRoot: string;
-}
-
 // ---------------------------------------------------------------------------
 // Registration. Skip, error, or run; never a silent pass.
 // ---------------------------------------------------------------------------
@@ -271,8 +228,7 @@ const preflightFailures = [
 const JOURNEY_TITLES = [
   'J1 lead-reads-repository',
   'J2 lead-delegates-git-to-operator',
-  'J3 implementer-loads-skill-and-edits (todo, #261)',
-  'J3a implementer handoff with the known skill denial (#261)',
+  'J3 implementer-loads-skill-and-edits',
   'J4 violations-fail-deterministically (case a: shell not offered to Lead)',
   'J4 violations-fail-deterministically (case b: unscripted request)',
 ];
@@ -329,50 +285,30 @@ if (preflightFailures.length > 0) {
     });
   });
 
-  // One run serves both J3 (todo, full expectations) and J3a (what is true today).
-  const implementerOnce = once(() => execute(suite, IMPLEMENTER_LOADS_SKILL_AND_EDITS, 'Load the documentation-impact procedure and edit notes.md.', ({ sandbox, run, requests }): ImplementerSnapshot => ({
-    run,
-    requests,
-    notes: readSandboxFile(sandbox, 'notes.md'),
-    porcelain: porcelainLines(sandbox),
-    sandboxRoot: sandbox.root,
-  })));
-
-  test(JOURNEY_TITLES[2] ?? 'J3', { timeout: JOURNEY_TIMEOUT_MS, todo: J3_TODO_REASON }, async () => {
-    const { value: snapshot } = await implementerOnce();
-    const { run, requests } = snapshot;
-    const skill = toolResultOf(requests, 'implementer', 'skill');
-    expectOn(run, skill !== undefined, `J3: the Implementer's skill call produced no tool result (the skill tool was not offered or not answered); received ${excerpt(skill)}`);
-    expectOn(run, !(!skill?.includes(SKILL_SENTINEL) && DENIAL.test(skill ?? '')), `skill tool denied by installed policy: ${excerpt(skill)}`);
-    expectOn(run, skill?.includes(SKILL_SENTINEL) === true, `J3: the skill result must contain the skill sentinel "${SKILL_SENTINEL}"; received ${excerpt(skill)}`);
-    const base = BASE_DIRECTORY.exec(skill ?? '')?.[1]?.trim();
-    expectOn(run, base !== undefined && pathInside(base, snapshot.sandboxRoot), `J3: the loaded skill's base directory must be inside the sandbox; received ${base === undefined ? '(none)' : JSON.stringify(scrubSandbox(base, snapshot.sandboxRoot))}`);
-    expectOn(run, run.record.skillInvocations[0]?.loaded === true && run.record.skillInvocations[0]?.skillId === SKILL_ID, `J3: the first skill invocation must load ${SKILL_ID}; received ${JSON.stringify(run.record.skillInvocations)}`);
-    expectOn(run, run.record.outcome === 'pass', 'J3: the journey must pass');
-    expectOn(run, run.record.handoffCount === 1, `J3: handoff count must be 1; received ${run.record.handoffCount}`);
-    expectOn(run, snapshot.notes === `# Notes\n\n${NOTES_REPLACEMENT}\n`, `J3: notes.md must contain exactly the scripted change; received ${JSON.stringify(snapshot.notes)}`);
-    const changed = snapshot.porcelain.map(line => line.slice(3));
-    expectOn(run, JSON.stringify(changed) === JSON.stringify(['notes.md']), `J3: git status must list only notes.md; received ${JSON.stringify(changed)}`);
+  test(JOURNEY_TITLES[2] ?? 'J3', { timeout: JOURNEY_TIMEOUT_MS }, async () => {
+    await execute(suite, IMPLEMENTER_LOADS_SKILL_AND_EDITS, 'Load the documentation-impact procedure and edit notes.md.', ({ sandbox, run, requests, headBefore }) => {
+      const skill = toolResultOf(requests, 'implementer', 'skill');
+      expectOn(run, skill !== undefined, `J3: the Implementer's skill call produced no tool result (the skill tool was not offered or not answered); received ${excerpt(skill)}`);
+      expectOn(run, !(!skill?.includes(SKILL_SENTINEL) && DENIAL.test(skill ?? '')), `skill tool denied by installed policy: ${excerpt(skill)}`);
+      expectOn(run, skill?.includes(SKILL_SENTINEL) === true, `J3: the skill result must contain the skill sentinel "${SKILL_SENTINEL}"; received ${excerpt(skill)}`);
+      const base = BASE_DIRECTORY.exec(skill ?? '')?.[1]?.trim();
+      expectOn(run, base !== undefined && pathInside(base, sandbox.root), `J3: the loaded skill's base directory must be inside the sandbox; received ${base === undefined ? '(none)' : JSON.stringify(scrubSandbox(base, sandbox.root))}`);
+      expectOn(run, run.record.skillInvocations[0]?.loaded === true && run.record.skillInvocations[0]?.skillId === SKILL_ID, `J3: the first skill invocation must load ${SKILL_ID}; received ${JSON.stringify(run.record.skillInvocations)}`);
+      expectOn(run, run.record.outcome === 'pass', 'J3: the journey must pass');
+      expectOn(run, run.record.roleTransitions.some(t => t.from === 'lead' && t.to === 'implementer'), `J3: transitions must include lead to implementer; received ${JSON.stringify(run.record.roleTransitions)}`);
+      expectOn(run, run.record.roleTransitions.some(t => t.from === 'implementer' && t.to === 'lead'), `J3: transitions must include implementer back to lead; received ${JSON.stringify(run.record.roleTransitions)}`);
+      expectOn(run, run.record.handoffCount === 1, `J3: handoff count must be 1; received ${run.record.handoffCount}`);
+      const notes = readSandboxFile(sandbox, 'notes.md');
+      expectOn(run, notes === `# Notes\n\n${NOTES_REPLACEMENT}\n`, `J3: notes.md must contain exactly the scripted change; received ${JSON.stringify(notes)}`);
+      const changed = porcelainLines(sandbox).map(line => line.slice(3));
+      expectOn(run, JSON.stringify(changed) === JSON.stringify(['notes.md']), `J3: git status must list only notes.md; received ${JSON.stringify(changed)}`);
+      expectOn(run, sandbox.git(['rev-parse', 'HEAD']).trim() === headBefore, 'J3: HEAD must be unchanged');
+      expectOn(run, run.record.network.unexpectedDestinations.length === 0, `J3: no unexpected network destination may be attempted; received ${JSON.stringify(run.record.network.unexpectedDestinations)}`);
+      expectOn(run, run.record.credentialHeaders.length === 0, `J3: no request may carry an Authorization or other credential-shaped header; received ${JSON.stringify(run.record.credentialHeaders)}`);
+    });
   });
 
-  test(JOURNEY_TITLES[3] ?? 'J3a', { timeout: JOURNEY_TIMEOUT_MS }, async () => {
-    // Shares the J3 run. Asserts only what is observed today: the handoff completes, the skill call is denied as
-    // known, and nothing leaves the sandbox. The edit and the final text are not asserted here.
-    const { value: snapshot } = await implementerOnce();
-    const { run, requests } = snapshot;
-    expectOn(run, run.record.handoffCount === 1, `J3a: the handoff to Implementer must complete (handoff count 1); received ${run.record.handoffCount}`);
-    expectOn(run, run.record.roleTransitions.some(t => t.from === 'lead' && t.to === 'implementer'), `J3a: transitions must include lead to implementer; received ${JSON.stringify(run.record.roleTransitions)}`);
-    expectOn(run, run.record.roleTransitions.some(t => t.from === 'implementer' && t.to === 'lead'), `J3a: transitions must include implementer back to lead; received ${JSON.stringify(run.record.roleTransitions)}`);
-    const skill = toolResultOf(requests, 'implementer', 'skill');
-    expectOn(run, skill !== undefined, 'J3a: the Implementer\'s skill call must receive a tool result; received (no tool result)');
-    expectOn(run, !skill?.includes(SKILL_SENTINEL), `J3a: the skill loaded (its sentinel "${SKILL_SENTINEL}" is in the result). Defect #261 appears fixed: remove the todo option from J3 and update the docs. Received ${excerpt(skill)}`);
-    expectOn(run, skill !== undefined && isKnownSkillDenial(skill), `J3a: the skill result must be exactly the known denial ${JSON.stringify(KNOWN_SKILL_DENIAL)}; received ${excerpt(skill)}`);
-    expectOn(run, snapshot.notes === UNEDITED_NOTES, `J3a: notes.md must still contain the notes sentinel and be unedited; received ${JSON.stringify(snapshot.notes)}`);
-    expectOn(run, run.record.network.unexpectedDestinations.length === 0, `J3a: no unexpected network destination may be attempted; received ${JSON.stringify(run.record.network.unexpectedDestinations)}`);
-    expectOn(run, run.record.credentialHeaders.length === 0, `J3a: no request may carry an Authorization or other credential-shaped header; received ${JSON.stringify(run.record.credentialHeaders)}`);
-  });
-
-  test(JOURNEY_TITLES[4] ?? 'J4a', { timeout: TWO_RUN_TIMEOUT_MS }, async () => {
+  test(JOURNEY_TITLES[3] ?? 'J4a', { timeout: TWO_RUN_TIMEOUT_MS }, async () => {
     const caseA = (execution: Execution): void => {
       const { run } = execution;
       expectOn(run, run.record.outcome === 'fail', 'J4a: the record must fail');
@@ -387,7 +323,7 @@ if (preflightFailures.length > 0) {
     assert.equal(first.run.serialized, second.run.serialized, `J4a: the two serialised records must be byte-identical.\nfirst:\n${first.run.serialized}\nsecond:\n${second.run.serialized}`);
   });
 
-  test(JOURNEY_TITLES[5] ?? 'J4b', { timeout: TWO_RUN_TIMEOUT_MS }, async () => {
+  test(JOURNEY_TITLES[4] ?? 'J4b', { timeout: TWO_RUN_TIMEOUT_MS }, async () => {
     const caseB = (execution: Execution): void => {
       const { run } = execution;
       expectOn(run, run.record.outcome === 'fail', 'J4b: the record must fail');

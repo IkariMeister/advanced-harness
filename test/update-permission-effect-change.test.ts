@@ -8,6 +8,7 @@ import { planUninstall, readInstallationReceipt } from '../src/installation-rece
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
 import { chooseConfiguration, loadNativeDefinitions, nativeRoles, parseConfiguration, type NativeRole } from '../src/native-installer.ts';
 import { reconcilePermissions, type PermissionRule, type ReconciliationResult } from '../src/permission-reconciliation.ts';
+import { isOpenCodeGuardrailRule } from '../src/security-guardrails.ts';
 
 const definitions = loadNativeDefinitions(join(process.cwd(), 'agents'));
 const released = JSON.parse(readFileSync(join(process.cwd(), 'test', 'fixtures', 'released-operator-permissions.json'), 'utf8')) as Record<string, PermissionRule[]>;
@@ -244,4 +245,52 @@ test('global update through a JSONC alias writes the regular file and keeps the 
   assert.ok(!lstatSync(fixture.config).isSymbolicLink());
   assert.equal(readFileSync(alias, 'utf8'), readFileSync(fixture.config, 'utf8'));
   assert.ok(operatorRules(readFileSync(alias, 'utf8'), alias).some(rule => JSON.stringify(rule) === JSON.stringify(newFetch)));
+});
+
+test('a pre-#261 post-BH-036 v2 install updates to add per-role skill rules before guardrails and uninstalls cleanly', async t => {
+  const root = makeTempRoot('harness-skill-update-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = join(root, 'project');
+  mkdirSync(directory, { recursive: true });
+  const config = join(directory, 'opencode.json');
+  const recovery = join(root, 'recovery');
+  mkdirSync(recovery);
+
+  const pre261 = (role: NativeRole) => (definitions[role].permissions as PermissionRule[]).filter(rule => rule.action !== 'skill');
+  const plans = Object.fromEntries(nativeRoles.map(role => [role, reconcilePermissions({
+    existing: [],
+    desired: pre261(role).map(rule => ({ rule, sources: [`native:${role}`] })),
+  })])) as Record<NativeRole, ReconciliationResult>;
+  const installed = JSON.stringify({
+    agents: Object.fromEntries(nativeRoles.map(role => [role, {
+      description: definitions[role].description,
+      mode: definitions[role].mode,
+      model: 'custom/model#low',
+      system: definitions[role].system,
+      permissions: plans[role].rules,
+    }])),
+  }, null, 2);
+  const chain = discoverReceiptChain(recovery, config, 'opencode');
+  const pending = writePendingSuccessor(chain, createSuccessorReceipt(chain, undefined, installed, plans, undefined, { host: 'opencode' }));
+  writeFileSync(config, installed);
+  finalizeSuccessor(pending, installed);
+
+  const result = await update({ root, directory, config, recovery, installed }, 'update');
+  assert.equal(result.status, 0, result.errors.join('\n'));
+  const saved = readFileSync(config, 'utf8');
+  const parsedAgents = parseConfiguration(saved, config).agents as Record<string, { permissions: PermissionRule[] }>;
+  for (const role of ['lead', 'planner', 'implementer', 'reviewer', 'qa'] as const) {
+    const rules = parsedAgents[role]!.permissions;
+    const firstGuardrail = rules.findIndex(isOpenCodeGuardrailRule);
+    assert.ok(firstGuardrail >= 0 && rules.slice(firstGuardrail).every(isOpenCodeGuardrailRule), `${role} guardrails remain contiguous at the end`);
+    const skillIndexes = rules.flatMap((rule, index) => rule.action === 'skill' ? [index] : []);
+    assert.ok(skillIndexes.length > 0 && skillIndexes.every(index => index < firstGuardrail), `${role} skill rules precede guardrails`);
+  }
+
+  const head = readInstallationReceipt(headPath(recovery, config), config);
+  const restore = planUninstall(head, saved);
+  assert.deepEqual(restore.conflicts, []);
+  for (const role of nativeRoles) {
+    assert.equal((parseConfiguration(restore.updated, config).agents as Record<string, Record<string, unknown>> | undefined)?.[role]?.permissions, undefined, role);
+  }
 });
