@@ -14,6 +14,8 @@ The workflow specification is in [`docs/opencode-native-workflow.md`](docs/openc
 
 Architecture decisions are indexed in [`docs/adr/`](docs/adr/README.md), including the proposed [multi-methodology development architecture](docs/adr/0003-multi-methodology-development-architecture.md). Project terms (for example RDD, ODD, procedure skill, review tier) are defined in the [glossary](docs/glossary.md).
 
+The [Open Knowledge Format (OKF) v0.2 knowledge-bundle contract](docs/knowledge-bundle-contract.md) is a future documentation contract, not a populated bundle or runtime feature.
+
 Antigravity can store per-role **desired model labels** as non-enforcing preferences; see [global defaults and project context](docs/configuration.md#4-antigravity-desired-model-preferences). Labels do not change the runtime tiers (chosen separately per child role) or verify exact model assignment. The separate manual `model: inherit` procedure remains [experimental](docs/antigravity-model-inheritance-experiment.md), with exact child-model binding unverified; neither this preference feature nor the experiment satisfies issue #70 acceptance.
 
 Seven native project commands implement the human-approved task workflows in [task workflows](docs/task-workflows.md): `/start-issue`, `/review-pr`, `/address-pr-feedback`, `/report-defect`, `/assess-debt`, `/grill-me`, and `/document-agents`. Command Markdown is a prompt template, not an independently enforced approval gate. Arguments provide context, never approval. Project commands/arguments override global commands with the same names.
@@ -141,6 +143,8 @@ npm run smoke
 ```
 
 `npm run smoke` runs the real `harness:*` CLIs end to end in an isolated temporary home with a stub OpenCode runtime (no credentials or network); see the [smoke test plan](docs/smoke-test-plan.md). Its answers are piped, so it is not interactive TTY QA.
+
+`npm run e2e:opencode` is the agent E2E suite. It runs the real OpenCode 2.3.0 CLI through scripted journeys against a loopback model fixture, and every journey is skipped unless `HARNESS_E2E_OPENCODE` names that executable. Set `HARNESS_E2E_RECORD_DIR` to an absolute directory to keep a copy of each journey record. It is not part of `npm test` or `npm run smoke`. See the [agent E2E guide](docs/agent-e2e.md) and [ADR-0011](docs/adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md).
 
 Check an installed harness without reinstalling:
 

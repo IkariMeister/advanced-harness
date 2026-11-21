@@ -2,6 +2,7 @@
 
 **Status:** Proposed\
 **Date:** 2026-11-14\
+**Pending:** Left Proposed after review because no usage evidence was available at the 2026-11-15 review. Revisit when recorded use can assess handoff freshness, missing-capability handling, and publication stops against reconsideration criteria.\
 **Project:** Advanced Harness\
 **Decision scope:** Ownership, freshness, and interpretation of preflight evidence and publication handoffs. This does not change preflight JSON identity schema or authorize publication.
 

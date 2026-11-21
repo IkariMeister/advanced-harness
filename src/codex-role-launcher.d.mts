@@ -20,6 +20,7 @@ export function threadBindingsPath(home: string): string;
 export function readThreadBindings(dir: string): Record<string, string>;
 export function assertResumable(bindings: Record<string, string>, threadId: string, role: string): void;
 export function recordThread(dir: string, threadId: string, role: string): void;
+export function boundedStderrTail(text: string | null | undefined): string;
 export function reportRun(options: {
   role: string;
   resumeId?: string | undefined;
@@ -27,7 +28,23 @@ export function reportRun(options: {
   stdout?: string | null | undefined;
   exitCode: number | null;
   resultText?: string | undefined;
+  stderrTail?: string | undefined;
 }): { code: number; report: Record<string, unknown> };
 export function findCodexBinary(env?: NodeJS.ProcessEnv): string;
 export function isEntryPoint(scriptPath: string | undefined, moduleUrl?: string): boolean;
-export function main(argv?: string[], env?: NodeJS.ProcessEnv): number;
+export interface CodexRunOptions {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}
+export interface CodexRunResult {
+  status: number | null;
+  stdout?: string | null | undefined;
+  stderr?: string | null | undefined;
+  error?: Error | undefined;
+}
+export interface CodexRunner {
+  list(codex: string, args: string[], options: CodexRunOptions): string;
+  exec(codex: string, args: string[], options: CodexRunOptions): CodexRunResult;
+}
+export const defaultCodexRunner: CodexRunner;
+export function main(argv?: string[], env?: NodeJS.ProcessEnv, runner?: CodexRunner): number;

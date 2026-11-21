@@ -10,9 +10,13 @@ This directory contains proposed and accepted architecture decisions for Advance
 | [ADR-004](0004-canonical-checkout-remote-updates-only.md) | Keep the Canonical Checkout Read-Only Except for Remote Updates | Accepted | Git ownership of the canonical checkout during task bootstrap |
 | [ADR-005](0005-claude-code-operator-bash.md) | Give Operator Bash on Claude Code With Advisory Remote-Git Denies | Proposed | Claude Code tool mapping for Operator and its shell deny patterns |
 | [ADR-006](0006-codex-operator-external-full-access.md) | Run Codex Operator and External Outside the Sandbox, With Per-Launch Host Permission and Unverified Forbidden Rules | Proposed | Codex sandbox for Operator and External, and what still bounds them |
-| [ADR-007](0007-preflight-scope-and-redaction.md) | Preflight Scope, Redaction, and Secret Scanning | Proposed | Changeset scope, secret scanning, and sanitized findings |
-| [ADR-008](0008-project-guardrail-policy.md) | Project Guardrail Policy in `.harness/preflight.json`, Read From origin/HEAD | Proposed | Preflight check enablement and severity, the policy result, and the trust anchor |
+| [ADR-007](0007-preflight-scope-and-redaction.md) | Preflight Scope, Redaction, and Secret Scanning | Accepted | Changeset scope, secret scanning, and sanitized findings |
+| [ADR-008](0008-project-guardrail-policy.md) | Project Guardrail Policy in `.harness/preflight.json`, Read From origin/HEAD | Accepted | Preflight check enablement and severity, the policy result, and the trust anchor |
 | [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md) | Operator-Owned Preflight Evidence and Human-Approved Publication Handoffs | Proposed | Preflight evidence ownership and publication handoffs |
+| [ADR-010](0010-okf-knowledge-projection-contract.md) | Open Knowledge Format Projection Contract | Proposed | Provenance-backed projection of selected documentation into an OKF v0.2 bundle |
+| [ADR-011](0011-deterministic-agent-e2e-via-loopback-model-fixture.md) | Deterministic Agent E2E via a Loopback Model Fixture | Proposed | Agent E2E suite: pinned OpenCode, loopback model fixture, and CI network bounds |
+
+The November 2026 ADR review took place on 2026-11-15; ADR-004, ADR-007, and ADR-008 were accepted on 2026-11-16.
 
 ## Status lifecycle
 

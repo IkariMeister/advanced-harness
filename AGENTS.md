@@ -28,6 +28,8 @@ Repository settings may auto-delete a merged PR's remote branch and auto-close
 its linked issue. After a merge, verify those states read-only through External
 rather than repeating the writes, and report an unexpected state to the human.
 
+The repository ruleset on `main` requires all pull-request review threads to be resolved before merge, so an unresolved thread blocks merge even when a review is approved. If a thread is unresolved, resolve it through the normal review reply and thread-resolution path, and do not merge while any thread remains unresolved.
+
 ## Publishing text
 
 Commit messages, PR titles and bodies, and issue comments contain only the text the

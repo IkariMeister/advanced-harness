@@ -2,6 +2,7 @@
 
 **Status:** Proposed\
 **Date:** 2026-11-09\
+**Pending:** Left Proposed after review because Claude Code runtime behavior and host enforcement remain unverified. Revisit when an explicitly approved live validation records Operator Bash availability, applicable project-wide denies, and advisory remote-Git limitations.\
 **Project:** Advanced Harness\
 **Decision scope:** The Claude Code tool mapping for Operator and how its shell deny patterns are represented. Other hosts, other roles, and Operator's source policy are out of scope.
 

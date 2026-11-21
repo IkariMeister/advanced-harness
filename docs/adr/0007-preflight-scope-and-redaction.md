@@ -1,7 +1,9 @@
 # ADR: Preflight Scope, Redaction, and Secret Scanning
 
-**Status:** Proposed\
+**Status:** Accepted\
 **Date:** 2026-11-09\
+**Decided:** 2026-11-16\
+**Decision record:** [#263](https://github.com/IkariMeister/advanced-harness/pull/263)\
 **Project:** Advanced Harness\
 **Decision scope:** The preflight changeset and its sensitive-path and secret findings. Publication evidence ownership is addressed separately in [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md).
 
@@ -84,8 +86,8 @@ because the displayed line is a 1-based coordinate in that origin's new-file sna
 The trusted revision is the policy revision authority: the policy is always read from
 local `refs/remotes/origin/HEAD`, with or without `--base`. `--base` selects only the
 changeset comparison revision, and project-context base selection also uses
-`refs/remotes/origin/HEAD`. The root `AGENTS.md` directs maintainers to this policy
-model rather than copying scanner policy into host-neutral instructions. Candidate
+`refs/remotes/origin/HEAD`. This policy remains separate from host-neutral
+instructions. Candidate
 changes to `.harness/preflight.json` or `.harness/preflight-allowlist.json` remain
 blocked until reviewed and included in the trusted base. Policy loading uses typed
 errors so a missing trusted ref is distinguished from malformed or unreadable policy.

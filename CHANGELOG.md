@@ -6,6 +6,15 @@ version between releases.
 
 ## Unreleased
 
+### Added
+
+- Agent E2E suite (BH-034, #62): `npm run e2e:opencode` drives the real OpenCode 2.3.0 CLI through scripted journeys against a loopback model fixture, with the installed harness prompts and policy in a sandbox. The suite has six tests. Journey J3 (skill invocation) is `todo`, because the installed policy denies the `skill` tool to Implementer (tracked in #261; #62 stays open for it); J3a asserts the denial as it is today and fails if the skill loads. `HARNESS_E2E_RECORD_DIR` keeps a copy of each journey record, `HARNESS_E2E_NETNS=1` is checked against the live network interfaces, and every journey fails on a credential-shaped header. A new `agent-e2e` CI job runs the suite in a loopback-only network namespace and uploads the records as an artifact; it is not a required check. Two CI runs have passed: run 43974715793 on PR 262, at head `172d19e` (before the review fixes), and run 44264679242 on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). See [ADR-0011](docs/adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md) (Proposed) and [docs/agent-e2e.md](docs/agent-e2e.md).
+
+### Changed
+
+- Codex role launcher (#256): when a role's `codex exec` run exits non-zero without a status report, the report's `details` now carries the last 4 KB of Codex's stderr as one line, marked Needs your decision, and no thread is recorded when none was started. Codex's stderr is still written to the terminal, but after the run finishes rather than live. Launch arguments are unchanged. The Windows trusted-directory requirement for the `--cd` directory is unverified pending a recorded Codex error (manual case CX-M3). Upgrade: run `npm run harness:update -- --host codex`.
+- Codex role launcher: a failed role run now also reports a spawn or buffer error message (for example ENOBUFS or E2BIG) in its details and on stderr.
+
 ## v0.4.0 — 2026-11-15
 
 ### Changed
