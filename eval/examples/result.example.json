@@ -40,8 +40,8 @@
   "metrics": {
     "handoffCount": 2,
     "roleTransitions": [
-      "lead -> external",
-      "lead -> planner"
+      "lead->external",
+      "lead->planner"
     ],
     "skillsInvoked": [],
     "humanInterventions": 1,

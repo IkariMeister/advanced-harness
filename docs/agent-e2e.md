@@ -77,11 +77,24 @@ HARNESS_E2E_OPENCODE=/absolute/path/to/opencode HARNESS_E2E_REQUIRE=1 npm run e2
 
 To keep the records, add `HARNESS_E2E_RECORD_DIR=/absolute/path/to/records`.
 
-The journeys run one after another, each in a fresh sandbox, with no retries.
-Each journey has a generous per-test timeout. Each OpenCode run has an overall
+The command runs every `e2e/*.e2e.ts` file, which is the journeys file:
+
+- `e2e/opencode-journeys.e2e.ts`: the six journey tests (J1 to J4b), described under
+  [The journeys](#the-journeys).
+
+The runner e2e file is not part of this command or the agent-e2e job. It is at
+`e2e/eval/runner.e2e.ts` and runs only with `npm run eval:opencode:e2e`. It is opt-in and
+run on demand with a real OpenCode 2.3.0 binary. It has three tests: R1 runs the four bound
+development scenarios through the evaluation runner, R2 runs a test-only violation, and R3
+checks the isolation evidence. It runs six OpenCode runs on Linux (five bound runs and one
+violation run) and five on Windows. See [Runner](evaluation.md#runner).
+
+The tests run one after another, each in a fresh sandbox, with no retries.
+Each test has a generous timeout. Each OpenCode run has an overall
 timeout and an idle timeout (no fixture request for 30 seconds once the first
-request has arrived). The suite has six tests and runs OpenCode seven times in
-total: J1 once, J2 once, J3 and J3a together once, J4a twice, and J4b twice.
+request has arrived). The journeys file has six
+tests and runs OpenCode seven times: J1 once, J2 once, J3 and J3a together once, J4a
+twice, and J4b twice.
 
 ## Isolation
 
@@ -298,12 +311,14 @@ Its top-level keys are: `kind` (`harness.opencode-journey-record`), `version` (`
 `requests`, `toolCalls`, `roleTransitions`, `handoffCount`, `skillInvocations`,
 `network`, and `credentialHeaders`.
 
+Repeat comparison in the evaluation runner (see [Runner](evaluation.md#runner)) compares normalized evaluation results, not journey records: run IDs, durations, and the run-directory prefix of artifact paths are removed first. That is a different comparison from the byte-identical comparison of two serialised journey records described under [Determinism rules](#determinism-rules).
+
 The record is a suite-level artifact at `version: 1`, not an evaluation result. Issue
 #225's evaluation contracts are merged, but they define an evaluation result
 (`eval/schemas/result.schema.json`, `src/eval-contracts.ts`), not this record.
-Mapping the record into an evaluation result belongs to the runner (#226). The
-same concepts have different shapes in the two artefacts, and no field is renamed
-for that mapping:
+The evaluation runner maps the record into an evaluation result for each bound
+scenario (see [Runner](evaluation.md#runner)). The same concepts have different
+shapes in the two artefacts, and no field is renamed for that mapping:
 
 - the record's `roleTransitions` are `{seq, from, to}` objects, and its
   `skillInvocations` are objects (`{seq, role, skillId, loaded}`);
@@ -484,8 +499,10 @@ never start OpenCode.
 
 The `agent-e2e` job in `.github/workflows/ci.yml` runs on `ubuntu-latest` with a
 20-minute timeout. The timeout covers the worst case of seven OpenCode runs at 150
-seconds each (17.5 minutes), so setup and the download add further time. It is
-**not a required check**. Two runs have passed. Run 43974715793 on PR 262 passed at head
+seconds each (17.5 minutes), so setup and the download add further time. That
+sizing covers the journeys file only. The runner e2e file is not run by this job. It is
+kept out of CI for feedback-loop cost and runs on demand (`npm run eval:opencode:e2e`).
+`.github/workflows/ci.yml` is not changed for this. The job is **not a required check**. Two runs have passed. Run 43974715793 on PR 262 passed at head
 `172d19e` (before the review fixes). Run 44264679242 passed on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). Observed on that run: Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 0 fail, 1 todo (J3, #261);
 all seven journey records show `enforcement: "netns"`; the only tolerated destination
 was `CONNECT models.opencode.ai:443`; no unexpected destination; no credential-shaped
