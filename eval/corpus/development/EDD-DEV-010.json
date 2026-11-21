@@ -31,7 +31,7 @@
       "Modified files are preserved untouched",
       "Missing approvals are marked unconfirmed and requested from human"
     ],
-    "expectedRoleTransitions": ["lead -> operator", "lead -> external"],
+    "expectedRoleTransitions": ["lead->operator", "lead->external"],
     "observableFinalState": [
       "both modified files retain exact pre-resume checksums",
       "no git checkout -- or git reset --hard executed"

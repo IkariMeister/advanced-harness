@@ -9,6 +9,7 @@ import { assertSafeFilesystemPath } from './installation-receipt.ts';
 import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, recoverFailedSuccessor, revalidatePendingSuccessor, writePendingSuccessor } from './receipt-lineage.ts';
 import type { ReconciliationResult } from './permission-reconciliation.ts';
 import { finishGitExclude, previewGitExclude } from './git-exclude.ts';
+import { finishCanonicalHook, promptCanonicalHook } from './canonical-git-hook.ts';
 import { formatVersionStamp, readSourceVersion, toVersionStamp, type Runner } from './harness-version.ts';
 
 import { parseHostSelection, HOST_CAPABILITIES, describeBlockedHost, describeModelSupport, getHostAdapter, isCodexOnly, selectNativeHost, type HostId } from './host-registry.ts';
@@ -270,11 +271,13 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (original !== undefined && configChanged) output(`A private configuration backup will be created under ${backupParent}. It may contain existing secrets; keep it local.`);
   output('After writing, runtime verification may start the OpenCode service. It will not restart/reload it or send paid model requests.');
   const exclude = previewGitExclude(project, 'opencode', output);
+  const canonicalHook = await promptCanonicalHook(project, 'opencode', ask, output);
   output(`Harness version: ${formatVersionStamp(stamp)}`);
   if (await ask('Type install to apply these changes', 'cancel') !== 'install') { output('Cancelled. No files were changed.'); return 0; }
   if (!receipt && !configChanged && !commandsChanged && !skillsChanged) {
     output('Configuration and workflow commands already match; no configuration, backup, or receipt writes are needed.');
     finishGitExclude(exclude, output, errorOutput);
+    if (!finishCanonicalHook(canonicalHook, output, errorOutput)) return 1;
     return 0;
   }
   const pending = (deps.writePending ?? writePendingSuccessor)(history, receipt!);
@@ -328,6 +331,7 @@ export async function runInstallerFlow(options: InstallerFlowOptions, deps: Inst
   if (backup) output(`Backup: ${backup}`);
   output(`Private uninstall receipt retained at ${receiptPath}`);
   finishGitExclude(exclude, output, errorOutput);
+  if (!finishCanonicalHook(canonicalHook, output, errorOutput)) return 1;
   const directory = project ?? cwd;
   try {
     const saved = parseConfiguration(finalText, target);

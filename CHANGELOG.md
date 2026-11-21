@@ -13,6 +13,12 @@ version between releases.
 ### Added
 
 - Agent E2E suite (BH-034, #62): `npm run e2e:opencode` drives the real OpenCode 2.3.0 CLI through scripted journeys against a loopback model fixture, with the installed harness prompts and policy in a sandbox. The suite has five tests (7 OpenCode runs): J1, J2, J3 (enabled in #261, retiring J3a), and both J4 determinism cases. `HARNESS_E2E_RECORD_DIR` keeps a copy of each journey record, `HARNESS_E2E_NETNS=1` is checked against the live network interfaces, and every journey fails on a credential-shaped header. A new `agent-e2e` CI job runs the suite in a loopback-only network namespace and uploads the records as an artifact; it is not a required check. CI `agent-e2e` run `44845273743` for head `99c18069` passed 5/5 on PR merge ref `7276d92f` (following two pre-`#261` runs: `43974715793` and `44264679242`); live OpenCode / interactive TTY spot-checks remain **waived**, not passed. See [ADR-0011](docs/adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md) (Proposed) and [docs/agent-e2e.md](docs/agent-e2e.md).
+- Evaluation runner (#226): `npm run eval:opencode` runs the development scenarios that have a deterministic binding through the agent E2E harness and writes run manifests, evaluation results, and a run summary. It applies a deterministic outcome model, binds four development scenarios (EDD-DEV-003, EDD-DEV-004, EDD-DEV-008, and EDD-DEV-010), and offers an opt-in on-demand OpenCode end-to-end run (`npm run eval:opencode:e2e`) that is not part of CI. Live mode is documented only: the runner rejects `--mode live`, and no LLM judge or live runner is implemented. See [docs/evaluation.md](docs/evaluation.md#runner) and [ADR-0012](docs/adr/0012-evaluation-runner-bindings-and-outcome-model.md) (Proposed).
+
+### Changed
+
+- Codex role launcher (#256): when a role's `codex exec` run exits non-zero without a status report, the report's `details` now carries the last 4 KB of Codex's stderr as one line, marked Needs your decision, and no thread is recorded when none was started. Codex's stderr is still written to the terminal, but after the run finishes rather than live. Launch arguments are unchanged. The Windows trusted-directory requirement for the `--cd` directory is unverified pending a recorded Codex error (manual case CX-M3). Upgrade: run `npm run harness:update -- --host codex`.
+- Codex role launcher: a failed role run now also reports a spawn or buffer error message (for example ENOBUFS or E2BIG) in its details and on stderr.
 
 ## v0.4.0 — 2026-11-15
 

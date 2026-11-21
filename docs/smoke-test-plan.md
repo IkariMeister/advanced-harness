@@ -144,6 +144,8 @@ project. Record who ran it, the Codex version, and the result on #45.
 
 **Manual case CX-M2 (Operator and External, `danger-full-access`): WAIVED for #218.** The human waived this case for the #218 change. It is not run, not passed, and not runtime evidence. When it is run on a real machine, after CX-04: ask Lead to launch `operator` in a disposable task worktree to create one file, then `external` for one web lookup. Expected: each launch shows its host permission prompt with the role and task visible; Operator's launch is not limited by a sandbox; Operator's `git push`, `git pull`, `git clone`, and `gh` requests are declined by its instructions only (not enforced by a rule). Record whether Codex blocks a direct `git push --force` from Operator as observed, not assumed. Record who ran it, the Codex version, and the result on #218.
 
+**Manual case CX-M3 (human, Windows, Codex trusted directory; status pending):** this is a human test, not something agents can run. On a Windows machine, after `npm run harness:update -- --host codex`, start a role launch through `~/.codex/advanced-harness/codex-role.mjs` with a `--cd` directory that Codex may not trust, for a role launch expected to fail, such as operator in #256. Record the exact Codex trust error text from stderr, the `--cd` value used, the failing phase (the MCP listing, which stops before any role starts, or the role run itself), the Codex binary path, the Codex version, and the relevant sanitized `[projects...]` trust entries from `~/.codex/config.toml`, with no secrets. Expected, to be confirmed by this run: a role run that fails with no status report prints the Codex stderr to the terminal and shows its last 4 KB (plus any spawn or buffer error message) in the report's `details`, marked Needs your decision, with no thread recorded when none was started; an MCP listing failure names the role and Codex's reason and starts nothing. Until this case is run, the Windows trusted-directory requirement for the `--cd` directory stays unverified. Record who ran it and the result on #256.
+
 ### SMK-PS / SMK-PI: project context (`smoke/project-context.smoke.ts`)
 
 | ID | Case | Expected |
@@ -206,7 +208,7 @@ interactive TTY spot-checks remain **waived**, not passed. See
 
 Codex Windows/macOS TTY validation remains pending; the human waived this manual
 test for this pass only. The Operator/External full-access manual case (CX-M2) is
-waived for #218 as well, and no run of it is recorded. Codex Desktop validation also remains pending and out of
+waived for #218 as well, and no run of it is recorded. CX-M3 is pending: a human Windows test that agents cannot run. Codex Desktop validation also remains pending and out of
 scope. Automated smoke is non-TTY and is not TTY/Desktop runtime evidence.
 Multiline config arrays remain deliberately unsupported and fail closed before any
 prompt or write; role TOML parse failures are instead preserved unless explicit
