@@ -134,14 +134,15 @@ jobs:
       - name: Run sandboxed CLI smoke suite
         run: npm run smoke
 
-  # Not a required check yet (BH-034, ADR-0011). Two runs have passed. Run 43974715793 on PR 262 passed at head 172d19e
-  # (before the review fixes; Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 1 todo). Run 44264679242 passed on the
-  # current head 3a901183d59a85ea8dc0a4871c4105151b1e0684 (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). J3 is still todo (#261), and no journey yet demonstrates the edit tool. Its outbound-call
-  # guarantee comes from the loopback-only network namespace below.
+  # Not a required check yet (BH-034, ADR-0011). Two pre-#261 runs passed (43974715793 on PR 262 at head 172d19e, and
+  # 44264679242 on head 3a901183d59a85ea8dc0a4871c4105151b1e0684; 6 tests: 5 pass, 1 todo). After #261 added per-role
+  # skill.load allow rules, enabled J3, and retired J3a (5 tests, 7 OpenCode runs), CI run 44845273743 for head 99c18069
+  # passed 5/5 on PR merge ref 7276d92f; live OpenCode / interactive TTY spot-checks remain waived, not passed.
+  # Its outbound-call guarantee comes from the loopback-only network namespace below.
   agent-e2e:
     name: Agent E2E (Ubuntu / Node 24 / OpenCode 2.3.0)
     runs-on: ubuntu-latest
-    # Worst case: 7 OpenCode runs (J1 1, J2 1, J3 and J3a 1 shared, J4a 2, J4b 2) x 150 s = 17.5 minutes, before
+    # Worst case: 7 OpenCode runs (J1 1, J2 1, J3 1, J4a 2, J4b 2) x 150 s = 17.5 minutes, before
     # checkout, npm ci, and the download. 20 minutes is the smallest value that covers the runs; setup adds more.
     timeout-minutes: 20
     env:

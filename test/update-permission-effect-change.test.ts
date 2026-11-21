@@ -5,9 +5,10 @@ import { join } from 'node:path';
 import { makeTempRoot } from './temp-directory.ts';
 import { runUpdateFlow, type UpdateFlowDependencies } from '../src/update-cli-flow.ts';
 import { planUninstall, readInstallationReceipt } from '../src/installation-receipt.ts';
-import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
+import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, receiptReconciliationOptions, writePendingSuccessor } from '../src/receipt-lineage.ts';
 import { chooseConfiguration, loadNativeDefinitions, nativeRoles, parseConfiguration, type NativeRole } from '../src/native-installer.ts';
 import { reconcilePermissions, type PermissionRule, type ReconciliationResult } from '../src/permission-reconciliation.ts';
+import { isOpenCodeGuardrailRule } from '../src/security-guardrails.ts';
 
 const definitions = loadNativeDefinitions(join(process.cwd(), 'agents'));
 const released = JSON.parse(readFileSync(join(process.cwd(), 'test', 'fixtures', 'released-operator-permissions.json'), 'utf8')) as Record<string, PermissionRule[]>;
@@ -44,7 +45,7 @@ function v2Install(t: test.TestContext, operator: readonly PermissionRule[], con
 }
 
 type Fixture = ReturnType<typeof v2Install>;
-async function update(fixture: Fixture, final: string, options: { global?: boolean } = {}) {
+async function update(fixture: Fixture, final: string, options: { global?: boolean; agentsDirectory?: string } = {}) {
   const questions: string[] = [], output: string[] = [], errors: string[] = [];
   const deps: UpdateFlowDependencies = {
     ask: async question => {
@@ -57,7 +58,8 @@ async function update(fixture: Fixture, final: string, options: { global?: boole
     home: fixture.root, recoveryDirectory: fixture.recovery,
     runCommand: (_cmd, args) => args[0] === 'rev-parse' ? '1111222233334444' : '',
     verify: async () => ({ ok: true, checks: [] } as never), printReport: () => {},
-    ...(options.global ? { xdgConfigHome: join(fixture.root, 'xdg') } : {})
+    ...(options.global ? { xdgConfigHome: join(fixture.root, 'xdg') } : {}),
+    ...(options.agentsDirectory ? { agentsDirectory: options.agentsDirectory } : {})
   };
   const status = await runUpdateFlow(options.global ? { scope: 'global', checkRemote: false } : { scope: 'project', project: fixture.directory, checkRemote: false }, deps);
   return { status, questions, output, errors };
@@ -244,4 +246,110 @@ test('global update through a JSONC alias writes the regular file and keeps the 
   assert.ok(!lstatSync(fixture.config).isSymbolicLink());
   assert.equal(readFileSync(alias, 'utf8'), readFileSync(fixture.config, 'utf8'));
   assert.ok(operatorRules(readFileSync(alias, 'utf8'), alias).some(rule => JSON.stringify(rule) === JSON.stringify(newFetch)));
+});
+
+function seedV2Install(t: test.TestContext, prefix: string, rulesFor: (role: NativeRole) => readonly PermissionRule[]) {
+  const root = makeTempRoot(prefix);
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const directory = join(root, 'project');
+  mkdirSync(directory, { recursive: true });
+  const config = join(directory, 'opencode.json');
+  const recovery = join(root, 'recovery');
+  mkdirSync(recovery);
+  const plans = Object.fromEntries(nativeRoles.map(role => [role, reconcilePermissions({
+    existing: [],
+    desired: rulesFor(role).map(rule => ({ rule, sources: [`native:${role}`] })),
+  })])) as Record<NativeRole, ReconciliationResult>;
+  const installed = JSON.stringify({
+    agents: Object.fromEntries(nativeRoles.map(role => [role, {
+      description: definitions[role].description,
+      mode: definitions[role].mode,
+      model: 'custom/model#low',
+      system: definitions[role].system,
+      permissions: plans[role].rules,
+    }])),
+  }, null, 2);
+  const chain = discoverReceiptChain(recovery, config, 'opencode');
+  const pending = writePendingSuccessor(chain, createSuccessorReceipt(chain, undefined, installed, plans, undefined, { host: 'opencode' }));
+  writeFileSync(config, installed);
+  finalizeSuccessor(pending, installed);
+  return { root, directory, config, recovery, installed };
+}
+
+test('a pre-#261 post-BH-036 v2 install updates to add per-role skill rules before guardrails and uninstalls cleanly', async t => {
+  const pre261 = (role: NativeRole) => (definitions[role].permissions as PermissionRule[]).filter(rule => rule.action !== 'skill');
+  const fixture = seedV2Install(t, 'harness-skill-update-', pre261);
+
+  const result = await update(fixture, 'update');
+  assert.equal(result.status, 0, result.errors.join('\n'));
+  const saved = readFileSync(fixture.config, 'utf8');
+  const parsedAgents = parseConfiguration(saved, fixture.config).agents as Record<string, { permissions: PermissionRule[] }>;
+  for (const role of ['lead', 'planner', 'implementer', 'reviewer', 'qa'] as const) {
+    const rules = parsedAgents[role]!.permissions;
+    const firstGuardrail = rules.findIndex(isOpenCodeGuardrailRule);
+    assert.ok(firstGuardrail >= 0 && rules.slice(firstGuardrail).every(isOpenCodeGuardrailRule), `${role} guardrails remain contiguous at the end`);
+    const skillIndexes = rules.flatMap((rule, index) => rule.action === 'skill' ? [index] : []);
+    assert.ok(skillIndexes.length > 0 && skillIndexes.every(index => index < firstGuardrail), `${role} skill rules precede guardrails`);
+  }
+
+  const head = readInstallationReceipt(headPath(fixture.recovery, fixture.config), fixture.config);
+  const restore = planUninstall(head, saved);
+  assert.deepEqual(restore.conflicts, []);
+  for (const role of nativeRoles) {
+    assert.equal((parseConfiguration(restore.updated, fixture.config).agents as Record<string, Record<string, unknown>> | undefined)?.[role]?.permissions, undefined, role);
+  }
+});
+
+test('cancelling the update that adds per-role skill rules writes no config, backups, or receipts', async t => {
+  const pre261 = (role: NativeRole) => (definitions[role].permissions as PermissionRule[]).filter(rule => rule.action !== 'skill');
+  const fixture = seedV2Install(t, 'harness-skill-cancel-', pre261);
+  const beforeRecovery = snapshotFiles(fixture.recovery);
+
+  const result = await update(fixture, 'cancel');
+  assert.equal(result.status, 0, result.errors.join('\n'));
+  assert.ok(result.output.some(line => line.includes('"action":"skill","resource":"harness-procedure-documentation-impact"')), result.output.join('\n'));
+  assert.ok(result.output.includes('Update cancelled. No files or receipts were modified.'));
+  assert.equal(readFileSync(fixture.config, 'utf8'), fixture.installed);
+  assert.deepEqual(snapshotFiles(fixture.recovery), beforeRecovery);
+  assert.equal(existsSync(join(fixture.directory, '.opencode', 'commands')), false);
+});
+
+test('retiring a previously owned skill rule when intendedRoles changes handles update retention and explicit removal cleanly', async t => {
+  const fixture = seedV2Install(t, 'harness-skill-retire-', role => definitions[role].permissions as PermissionRule[]);
+  const modifiedAgents = join(fixture.root, 'agents-modified');
+  mkdirSync(modifiedAgents);
+  const sourceAgents = join(process.cwd(), 'agents');
+  const retiredRule = { action: 'skill', resource: 'harness-procedure-unit-tests', effect: 'allow' as const };
+  for (const role of nativeRoles) {
+    let text = readFileSync(join(sourceAgents, `${role}.md`), 'utf8');
+    if (role === 'implementer') {
+      text = text.replace(
+        /\n    - capability: skill\.load\r?\n      resource:\r?\n        kind: native-pattern\r?\n        host: opencode\r?\n        value: harness-procedure-unit-tests\r?\n      effect: allow\r?\n      binding:\r?\n        host: opencode\r?\n        action: skill/,
+        ''
+      );
+    }
+    writeFileSync(join(modifiedAgents, `${role}.md`), text);
+  }
+
+  const retained = await update(fixture, 'update', { agentsDirectory: modifiedAgents });
+  assert.equal(retained.status, 0, retained.errors.join('\n'));
+  assert.ok(retained.output.includes(`    = retained obsolete ${JSON.stringify({ rule: retiredRule, sources: [] })}`), retained.output.join('\n'));
+  const head = readInstallationReceipt(headPath(fixture.recovery, fixture.config), fixture.config);
+  assert.equal(head.version, 2);
+  const implementerEvidence = head.version === 2 ? head.permissions.find(p => p.path[1] === 'implementer')! : undefined;
+  assert.deepEqual(implementerEvidence?.owned.find(item => JSON.stringify(item.rule) === JSON.stringify(retiredRule)), { rule: retiredRule, sources: [] });
+
+  const savedConfig = readFileSync(fixture.config, 'utf8');
+  const currentImplementer = (parseConfiguration(savedConfig, fixture.config).agents as Record<string, { permissions: PermissionRule[] }>).implementer!.permissions;
+  const remaining = (definitions.implementer.permissions as PermissionRule[]).filter(rule => JSON.stringify(rule) !== JSON.stringify(retiredRule));
+  const receiptOptions = receiptReconciliationOptions(discoverReceiptChain(fixture.recovery, fixture.config, 'opencode')).permissions!.implementer!;
+  const removalPlan = reconcilePermissions({
+    existing: currentImplementer,
+    ...receiptOptions,
+    desired: remaining.map(rule => ({ rule, sources: ['native:implementer'] })),
+    removeObsolete: [retiredRule],
+  });
+  assert.deepEqual(removalPlan.preview.conflicts, []);
+  assert.deepEqual(removalPlan.preview.removals, [retiredRule]);
+  assert.equal(removalPlan.rules.some(rule => JSON.stringify(rule) === JSON.stringify(retiredRule)), false);
 });

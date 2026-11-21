@@ -106,6 +106,7 @@ test('Lead block states the Operator advisory denies and the roles without Bash'
   assert.ok(block.includes('Implementer, Reviewer, and QA have no Bash tool'));
   assert.ok(!block.includes('Operator, Implementer, Reviewer, and QA have no Bash'));
   assert.ok(block.includes('its `git push`, `git pull`, `git clone`, and `gh` denies are advisory, not enforced'));
+  assert.ok(block.includes('Per-role procedure-skill scoping (`skill.load`) is not mapped to Claude Code; procedure skills follow Claude Code defaults (unverified), and the absence of `skill.load` grants on `operator`, `external`, and `researcher` is not enforced.'));
   assert.ok(block.includes('| `operator` | `haiku` | Read, Glob, Grep, Edit, Write, Bash |'));
 });
 
@@ -209,4 +210,23 @@ test('mapping is a pure function of the policy and never mutates role definition
   const before = JSON.stringify(definitions);
   for (const role of nativeRoles) mapClaudeRolePolicy(role, definitions[role].deployment.opencode.policy);
   assert.equal(JSON.stringify(definitions), before);
+});
+
+test('skill.load does not alter tools or disallowedTools and adds a dedicated unsupported disclosure on the five scoped roles only', () => {
+  const skillScopedRoles = new Set(['lead', 'planner', 'implementer', 'reviewer', 'qa']);
+  for (const role of nativeRoles) {
+    const policy = definitions[role].deployment.opencode.policy;
+    const withoutSkills: CapabilityPolicy = { ...policy, rules: policy.rules.filter(rule => rule.capability !== 'skill.load') };
+    const mappedWith = mappings[role];
+    const mappedWithout = mapClaudeRolePolicy(role, withoutSkills);
+    assert.deepEqual(mappedWith.tools, mappedWithout.tools, role);
+    assert.deepEqual(mappedWith.disallowedTools, mappedWithout.disallowedTools, role);
+    const expectedLine = `${role}: skill.load has no verified Claude per-skill binding; per-role procedure-skill scoping is not mapped (procedure skills follow Claude Code defaults, unverified).`;
+    if (skillScopedRoles.has(role)) {
+      assert.ok(mappedWith.unsupported.includes(expectedLine), role);
+      assert.ok(claudeDisclosures(mappings).includes(expectedLine), role);
+    } else {
+      assert.ok(!mappedWith.unsupported.some(line => line.includes('skill.load')), role);
+    }
+  }
 });

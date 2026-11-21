@@ -179,12 +179,12 @@ Prerequisites for AE-02 to AE-04: Node.js 24.x, `npm ci` at the repository root,
 | ID | Case | Expected |
 | --- | --- | --- |
 | AE-01 | `npm run e2e:opencode` with `HARNESS_E2E_OPENCODE` unset | Every journey is SKIPPED with its reason; exit code 0 (a skip is not a pass) |
-| AE-02 | `npm run e2e:opencode` with `HARNESS_E2E_OPENCODE` set to the OpenCode 2.3.0 executable and `HARNESS_E2E_REQUIRE=1` | Exit code 0. Six tests: **5 pass, 1 todo, 0 fail**. J1, J2, J3a, and both J4 cases pass; J3 is reported as TODO (#261). Node prints the `todo` J3 test under a "failing tests" heading although the summary shows fail 0 and the exit status is 0, so the outcome to check is exit 0 and fail 0. A different count is a finding to report |
+| AE-02 | `npm run e2e:opencode` with `HARNESS_E2E_OPENCODE` set to the OpenCode 2.3.0 executable and `HARNESS_E2E_REQUIRE=1` | Exit code 0. Five tests: **5 pass, 0 fail** (J1, J2, J3, and both J4 cases pass; J3a was retired when `#261` enabled J3). A different count or any failure is a finding to report. CI `agent-e2e` run `44845273743` for head `99c18069` passed 5/5 on PR merge ref `7276d92f`; live OpenCode / interactive TTY spot-checks remain **waived**, not passed |
 | AE-03 | Scope a sentinel change to one journey: change the text expected by J4a's second step to another string, and run again | J4a run 1 fails on its assertion that the violation names the commit-subject sentinel (`J4a: the violation must name the commit-subject sentinel`), so the suite exits non-zero. Run 2 is never executed, and no `.run2.json` is written. With `HARNESS_E2E_RECORD_DIR` set, only `violations-fail-deterministically-case-a.run1.json` is written. It has one violation at step 1 whose `expected` names the new string and whose `received` is the shell tool result. Revert the change afterwards. J4b has no expectation to change (its only scripted step has none), so this check does not apply to it |
-| AE-04 | Run with `HARNESS_E2E_RECORD_DIR` set to an absolute directory, then inspect the retained records | `lead-reads-repository.json`: `network.unexpectedDestinations` is empty, `network.toleratedDestinations` holds at most `CONNECT models.opencode.ai:443`, and `credentialHeaders` is empty. `implementer-loads-skill-and-edits.json`: `handoffCount` is 1 and the `skillInvocations` entry has `loaded: false`. No `Authorization` value appears in any file |
+| AE-04 | Run with `HARNESS_E2E_RECORD_DIR` set to an absolute directory, then inspect the retained records | `lead-reads-repository.json`: `network.unexpectedDestinations` is empty, `network.toleratedDestinations` holds at most `CONNECT models.opencode.ai:443`, and `credentialHeaders` is empty. `implementer-loads-skill-and-edits.json`: `outcome` is `"pass"`, `handoffCount` is 1, and the `skillInvocations` entry has `loaded: true`. No `Authorization` value appears in any file |
 | AE-05 | `npm run e2e:opencode` with `HARNESS_E2E_REQUIRE=1` and `HARNESS_E2E_OPENCODE` unset (missing-binary path) | Exit code is non-zero. The failing test is `OpenCode E2E preflight check`, and its message names the missing binary setting (`HARNESS_E2E_REQUIRE=1 but HARNESS_E2E_OPENCODE is not set`) |
 
-The CI job that runs this suite is described under [Continuous integration](#continuous-integration). It is not a required check. Two runs have passed. Run 43974715793 on PR 262 passed at head `172d19e` (before the review fixes; 6 tests: 5 pass, 1 todo). Run 44264679242 passed on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0).
+The CI job that runs this suite is described under [Continuous integration](#continuous-integration). It is not a required check. Two pre-`#261` runs passed (run `43974715793` on PR 262 at head `172d19e`, and run `44264679242` on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, with 6 tests: 5 pass, 1 todo). After `#261` enabled J3 and retired J3a (5 tests, 7 OpenCode runs), CI `agent-e2e` run `44845273743` for head `99c18069` passed 5/5 on PR merge ref `7276d92f`; live OpenCode / interactive TTY spot-checks remain **waived**, not passed.
 
 ## Known gaps found by the suite
 
@@ -198,9 +198,13 @@ automated global role-process install/update/uninstall coverage; this is not
 interactive TTY or Codex Desktop runtime validation.
 
 The agent E2E suite's journey J3 (`implementer` loads the documentation-impact
-skill) is `todo`: the installed policy denies the `skill` tool to Implementer, tracked
-in #261. J3a asserts the denial as it is today and fails if the skill loads. See
-[agent E2E guide](agent-e2e.md), journeys J3 and J3a.
+skill and edits `notes.md`) was previously `todo` because Implementer lacked a
+`skill.load` allow rule (#261), while J3a asserted the denial. `#261` added per-role
+`skill.load` allow rules, removed J3's `todo`, and retired J3a (leaving 5 tests / 7
+OpenCode runs); CI `agent-e2e` run `44845273743` for head `99c18069` passed 5/5 on
+PR merge ref `7276d92f` against the loopback fixture, while live OpenCode /
+interactive TTY spot-checks remain **waived**, not passed. See
+[agent E2E guide](agent-e2e.md), journey J3.
 
 Codex Windows/macOS TTY validation remains pending; the human waived this manual
 test for this pass only. The Operator/External full-access manual case (CX-M2) is
@@ -238,7 +242,7 @@ the job.
 
 The `agent-e2e` job in the same file runs `npm run e2e:opencode` on `ubuntu-latest` against
 the pinned OpenCode 2.3.0 release asset, after a sha256 check, inside a loopback-only
-network namespace. It is not a required check. Two runs have passed: run 43974715793 on PR 262 at head `172d19e` (before the review fixes), and run 44264679242 on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). The details are in the guide. The steps are in
+network namespace. It is not a required check. Two pre-`#261` runs passed (run `43974715793` on PR 262 at head `172d19e`, and run `44264679242` on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`), and after `#261` enabled J3 and retired J3a, CI `agent-e2e` run `44845273743` for head `99c18069` passed 5/5 on PR merge ref `7276d92f`; live OpenCode / interactive TTY spot-checks remain **waived**, not passed. The details are in the guide. The steps are in
 [agent E2E guide](agent-e2e.md#continuous-integration).
 
 # Issue #134 project rigor setup and workflow smoke

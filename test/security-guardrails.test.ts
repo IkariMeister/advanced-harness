@@ -84,6 +84,28 @@ test('updating a first BH-036 install adds separator-agnostic paths and four-let
   }
 });
 
+test('updating a pre-#261 post-BH-036 install inserts skill rules before guardrails and keeps guardrails contiguous at the end', () => {
+  for (const role of nativeRoles) {
+    const desired = definitions[role].permissions as PermissionRule[];
+    const old = desired.filter(rule => rule.action !== 'skill');
+    const plan = reconcilePermissions({
+      existing: old,
+      prior: old.map(rule => ({ rule, sources: [`native:${role}`] })),
+      previousOrder: old,
+      desired: desired.map(rule => ({ rule, sources: [`native:${role}`] })),
+      retiringSources: [`native:${role}`],
+    });
+    assert.deepEqual(plan.preview.conflicts, [], role);
+    const guards = plan.rules.map(isOpenCodeGuardrailRule);
+    const firstGuard = guards.indexOf(true);
+    assert.ok(firstGuard >= 0 && guards.slice(firstGuard).every(Boolean), `${role} keeps guardrails contiguous at the end`);
+    for (const [index, rule] of plan.rules.entries()) {
+      if (rule.action === 'skill') assert.ok(index < firstGuard, `${role} skill rule ${rule.resource} precedes guardrails`);
+    }
+    for (const path of sensitiveSamples) assert.equal(effect(plan.rules, 'read', path), 'deny', `${role} read ${path}`);
+  }
+});
+
 test('later setup rules land before guardrails, and a later override of a guardrail fails closed', () => {
   const guard = r('shell', 'git push --force *', 'deny');
   const added = reconcilePermissions({ existing: [r('shell', '*', 'ask'), guard], desired: [{ rule: r('shell', 'git push *', 'allow'), sources: ['integration'] }] });
