@@ -7,9 +7,9 @@
 
 ## Context
 
-Issue #225 merged the EDD v1 evaluation contracts: scenario, rubric, run manifest, and evaluation result schemas, with TypeScript validators. No runner exists yet. Issue #226 is expected to deliver it.
+Issue #225 merged the EDD v1 evaluation contracts: scenario, rubric, run manifest, and evaluation result schemas, with TypeScript validators. Issue #226 delivers the runner that this decision describes; this ADR stays Proposed until it is accepted.
 
-Issue #62 delivers a deterministic agent E2E suite. It runs the real OpenCode 2.3.0 CLI against a loopback model fixture and writes a journey record. The journey record is a suite-level artifact, not an evaluation result. [ADR-011](0011-deterministic-agent-e2e-via-loopback-model-fixture.md) defers the mapping from journey records to evaluation results to #226.
+Issue #62 delivers a deterministic agent E2E suite. It runs the real OpenCode 2.3.0 CLI against a loopback model fixture and writes a journey record. The journey record is a suite-level artifact, not an evaluation result. [ADR-0011](0011-deterministic-agent-e2e-via-loopback-model-fixture.md) defers the mapping from journey records to evaluation results to #226.
 
 The term `inconclusive` has two meanings in the project. A scenario's `expectedOutcome.status` can be `inconclusive`, meaning the run must stop without claiming success. An evaluation result's `outcome` can also be `inconclusive`, meaning the run finished but its evidence cannot decide. The contracts do not separate the two, so a result can be recorded that contradicts its own expectation.
 
@@ -19,7 +19,7 @@ Scenario stimuli are free text. A scenario's `stimulus.userPrompt` and `stimulus
 
 1. Repeatable deterministic verdicts, with no secrets, no live model, and no network access.
 2. Honest outcomes: a run that did not execute is never a pass.
-3. Scenario contracts are unchanged. The scenario schema and the scenario corpus do not change for the runner.
+3. Scenario contracts are unchanged. The scenario schema does not change for the runner. The scenario corpus changes only in the `expectedRoleTransitions` format, as recorded in the Amendment below; no scenario version changes.
 4. The holdout is preserved. The runner does not tune against `EDD-VAL-*` scenarios, and bindings are not written from them.
 5. Scripted replies cannot prove prompt behaviour. A result must say what it does and does not show.
 
@@ -33,7 +33,7 @@ Scenario stimuli are free text. A scenario's `stimulus.userPrompt` and `stimulus
 
 ### B. Outcome recording
 
-1. **No schema change** (chosen). The expected status and the observed status are recorded in the first `observableStateChecks` entry (`observed status <x> matches expected <y>`) and in `reason`. Metrics that were not observed are zero, and the `reason` says `metrics not observed`. This entry is present only for completed runs (`pass`, `fail`, and `inconclusive` results); skipped and infrastructure_error results have no checks and record the status in reason.
+1. **No schema change** (chosen). The expected status and the observed status are recorded in the first `observableStateChecks` entry (`observed status <x> matches expected <y>`) and in `reason`. Metrics that were not observed are zero, and the `reason` says `metrics not observed`. This entry is present only for completed runs (`pass`, `fail`, and `inconclusive` results). Skipped results, and infrastructure_error results other than a terminated run, have no checks and record the status in reason. A terminated run keeps its recorded violations as failing checks.
 2. **New result fields** for the observed status and for whether metrics were observed. This is clearer, but it changes the result contract, which #225 merged. Deferred; see Reconsideration.
 
 ### C. Runtime
@@ -49,7 +49,7 @@ Scenario stimuli are free text. A scenario's `stimulus.userPrompt` and `stimulus
    - `fail`: the observed behaviour contradicts the expectation.
    - `inconclusive`: the run finished but the evidence cannot decide.
    - `skipped`: deliberately not executed.
-   - `infrastructure_error`: the runner, fixture, binary, sandbox, or binding failed, or isolation was breached. Not valid evidence.
+   - `infrastructure_error`: the runner, fixture, binary, sandbox, or binding failed, isolation was breached, or the OpenCode run did not complete cleanly (its status was `timed-out` or `idle-timeout`, it exited non-zero, or it was ended by a signal). Not valid evidence.
 
    The expected status is recorded as described in Option B.1.
 3. **Metrics and artifact gating.** For `skipped`, `infrastructure_error`, and `inconclusive`, metrics are zero or empty, and the reason says `metrics not observed`. A missing `requiredArtifacts` entry gives `inconclusive`. The journey-record mapping copies `handoffCount`, maps role transitions to `from->to` strings, and lists loaded skills; other counters are not observed and are recorded as zero.
@@ -59,7 +59,7 @@ Scenario stimuli are free text. A scenario's `stimulus.userPrompt` and `stimulus
 
 ## Consequences
 
-**Positive:** Deterministic verdicts repeat, and a run that did not execute cannot pass. The scenario contract and corpus are unchanged. A binding cannot silently run against a changed scenario.
+**Positive:** Deterministic verdicts repeat, and a run that did not execute cannot pass. The scenario contract is unchanged, and the corpus change is limited to the `expectedRoleTransitions` format (see the Amendment). A binding cannot silently run against a changed scenario.
 
 **Negative:** In deterministic mode, many scenarios will be `skipped`, because only the scenarios with bindings run. The zero metrics of non-decided results are meaningful only through the `metrics not observed` convention, which consumers must read. Windows runs are not hermetic and are not authoritative for isolation. The evidence for real-run results is produced on demand by `npm run eval:opencode:e2e` with a real OpenCode 2.3.0 binary. It is not part of CI. The `agent-e2e` job covers only the journeys file. Neither is a required check.
 
@@ -67,9 +67,20 @@ Scenario stimuli are free text. A scenario's `stimulus.userPrompt` and `stimulus
 
 ## Adoption
 
-Accepting this ADR does not change tooling, roles, permissions, defaults, or CI. It does not make the `agent-e2e` job, `npm run eval:opencode:e2e`, the evaluation runner, or any evaluation check a required check. The runner, its bindings, the outcome and normalization helpers, the deterministic rubric, and the documentation are delivered by separately approved implementation units under issue #226. Each unit needs its own scoped plan and human approval.
+Accepting this ADR does not change tooling, roles, permissions, defaults, or CI. It does not make the `agent-e2e` job, `npm run eval:opencode:e2e`, the evaluation runner, or any evaluation check a required check. Issue #226 delivers the runner, its bindings, the outcome and normalization helpers, the deterministic rubric, and the documentation. That work is split into implementation units, and each unit needs its own scoped plan and human approval.
 
-Rollback removes the runner, the bindings, the helpers, the deterministic rubric, and the documentation sections added for this decision. It does not modify machine configuration, the scenario corpus, or the result schema.
+Rollback removes the runner, the bindings, the helpers, the deterministic rubric, and the documentation sections added for this decision. It does not modify machine configuration or the result schema. The `expectedRoleTransitions` format change in the scenario corpus is recorded in the Amendment and is reverted separately if this decision is rolled back.
+
+## Amendment: scenario corpus role-transition format
+
+Approved by the human during implementation review of issue #226. The `expectedRoleTransitions` field of four scenario files was normalized to the `from->to` format that the journey-record mapping uses (for example `lead->external`):
+
+- `eval/corpus/development/EDD-DEV-001.json`
+- `eval/corpus/development/EDD-DEV-003.json`
+- `eval/corpus/development/EDD-DEV-010.json`
+- `eval/examples/scenario.example.json`
+
+No scenario version was bumped, and the scenario schema and the result schema are unchanged. The change is recorded here rather than as a version bump because `expectedRoleTransitions` is not machine-judged: no validator or evaluator compares it to observed transitions. `checkBoundScenarioVersion` compares only scenario versions, so it cannot detect this change by design. Bindings keep working against the same version.
 
 ## Reconsideration
 
@@ -86,7 +97,7 @@ This ADR is reviewed at each milestone close.
 ## References
 
 - [Evaluation: outcome model](../evaluation.md#outcome-model)
-- [ADR-011: Deterministic Agent E2E via a Loopback Model Fixture](0011-deterministic-agent-e2e-via-loopback-model-fixture.md)
+- [ADR-0011: Deterministic Agent E2E via a Loopback Model Fixture](0011-deterministic-agent-e2e-via-loopback-model-fixture.md)
 - [Agent E2E suite guide](../agent-e2e.md)
 - [Glossary: Evaluation](../glossary.md#evaluation-edd)
 - Issues #225 (evaluation contracts), #62 (agent E2E suite), #226 (evaluation runner), and #261 (skill journey defect)

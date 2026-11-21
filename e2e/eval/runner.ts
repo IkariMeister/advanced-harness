@@ -30,6 +30,7 @@ import {
   isolationEvidence,
   metricsFromJourneyRecord,
   type EvaluationFacts,
+  isolationBreach,
   type EvidenceEntry,
   type FieldDifference,
   type ObservedViolation,
@@ -44,6 +45,7 @@ import {
   resolveOpenCodeBinary,
   type BinaryResolution,
   type NetnsCheck,
+  type OpenCodeRunResult,
   type OpenCodeSandbox,
 } from '../support/opencode-sandbox.ts';
 import { findBinding } from './bindings/index.ts';
@@ -67,6 +69,11 @@ export type OpenCodeStatus =
   | { status: 'error'; reason: string }
   | { status: 'ready'; version: string };
 
+/** A repeatability difference, tagged with the 1-based number of the later repeat that differs from repeat 1. */
+export interface RepeatDifference extends FieldDifference {
+  repeat: number;
+}
+
 export interface ScenarioSummary {
   scenarioId: string;
   scenarioVersion: string;
@@ -76,8 +83,8 @@ export interface ScenarioSummary {
   /** The first repeat's reason, for reading the run. */
   reason: string;
   repeatable: boolean;
-  /** Differences between the first repeat and each later repeat, after normalization. Empty when repeatable. */
-  differences: FieldDifference[];
+  /** Differences between the first repeat and each later repeat, after normalization, each tagged with its repeat number. Empty when repeatable. */
+  differences: RepeatDifference[];
 }
 
 export interface EvaluationSummary {
@@ -187,12 +194,18 @@ export function exitStatusOf(scenarios: readonly Pick<ScenarioSummary, 'outcomes
   return blocked ? 1 : 0;
 }
 
-/** The selected scenarios: every scenario of the set, or the named ones. An unknown ID is an error. */
+/**
+ * A usage error: a bad option or request, not a failed run. The command line exits 2 for it (run.ts); any other thrown
+ * error exits 1.
+ */
+export class UsageError extends Error {}
+
+/** The selected scenarios: every scenario of the set, or the named ones. An unknown ID (or one from the other set) is a usage error. */
 export function selectScenarios(pool: readonly EvalScenario[], set: ScenarioSet, ids: readonly string[]): EvalScenario[] {
   if (ids.length === 0) return [...pool];
   const wanted = [...new Set(ids)];
   const missing = wanted.filter(id => !pool.some(scenario => scenario.id === id));
-  if (missing.length > 0) throw new Error(`No ${set} scenario has the ID ${missing.join(', ')}.`);
+  if (missing.length > 0) throw new UsageError(`No ${set} scenario has the ID ${missing.join(', ')}.`);
   return pool.filter(scenario => wanted.includes(scenario.id));
 }
 
@@ -204,10 +217,21 @@ export function observedViolationsOf(violations: readonly JourneyViolation[]): O
   }));
 }
 
+/** The role prefix buildJourneyRecord() adds to a role's violation text (e2e/support/journey.ts). */
+const ROLE_PREFIX = /^role [^:]+:\s*/;
+/** One `tool "<name>" offered` clause, as checkExpectation() writes it when a requested tool was not offered. */
+const UNOFFERED_TOOL_CLAUSE = /^tool "[^"]+" offered$/;
+
+/**
+ * The kind of a recorded violation, from its expected text. The role prefix is removed first. A violation whose text is
+ * several clauses joined by '; ' is an unoffered-tool violation only when one of its clauses is a `tool "<name>" offered`
+ * clause; `tool results containing ...` and `tool calls ...` clauses do not count.
+ */
 function violationKind(expected: string): ObservedViolation['kind'] {
-  if (expected.startsWith('no connection through') || expected.startsWith('no request carries')) return 'forbidden-action';
-  if (expected.startsWith('a scripted step')) return 'unscripted-request';
-  if (expected.startsWith('tool ')) return 'unoffered-tool';
+  const text = expected.replace(ROLE_PREFIX, '');
+  if (text.startsWith('no connection through') || text.startsWith('no request carries')) return 'forbidden-action';
+  if (text.startsWith('a scripted step')) return 'unscripted-request';
+  if (text.split('; ').some(clause => UNOFFERED_TOOL_CLAUSE.test(clause))) return 'unoffered-tool';
   return 'expectation-mismatch';
 }
 
@@ -243,8 +267,12 @@ function resultWithoutRun(scenario: EvalScenario, plan: Exclude<Plan, { kind: 'r
     : evaluateScenario({ kind: 'infrastructure_error', ...base, detail: plan.detail });
 }
 
-/** Judges one finished run. A run that did not complete cleanly (timeout, idle timeout, non-zero exit) is inconclusive. */
-function evaluateExecution(
+/**
+ * Judges one finished run. A run that did not complete cleanly (status other than completed, a non-zero exit, a
+ * signal) is an infrastructure_error: it is not judged, its status, signal, and exit code are recorded, and the
+ * violations the journey recorded are kept. Exported for tests; the runner calls it once per repeat.
+ */
+export function evaluateExecution(
   scenario: EvalScenario,
   binding: ScenarioBinding,
   runId: string,
@@ -254,17 +282,20 @@ function evaluateExecution(
 ): EvalResult {
   const { run } = context;
   const completedCleanly = run.run.status === 'completed' && run.run.exitCode === 0;
-  const judged: BindingJudgement = completedCleanly
-    ? binding.judge(context)
-    : { observedStatus: 'inconclusive', finalStateChecks: [], violations: [] };
   const breached = run.record.network.unexpectedDestinations.length > 0 || run.record.credentialHeaders.length > 0;
+  const terminated = completedCleanly ? undefined : describeTermination(run.run);
+  const judged: BindingJudgement | undefined = completedCleanly ? binding.judge(context) : undefined;
+  const breach = isolationBreach({
+    unexpectedDestinations: run.record.network.unexpectedDestinations,
+    credentialHeaders: run.record.credentialHeaders,
+  });
   const evidence: EvidenceEntry[] = [
     {
       schemaVersion: 1,
       check: { name: `${scenario.id} scripted journey`, category: 'e2e' },
       execution: {
-        command: judged.note === undefined ? EXECUTION_COMMAND : `${EXECUTION_COMMAND}; ${judged.note}`,
-        exitStatus: run.run.exitCode ?? 1,
+        command: commandText(terminated, judged?.note),
+        exitStatus: completedCleanly ? 0 : terminatedExitStatus(run.run),
         durationMs: run.run.durationMs,
         basis: 're-run',
       },
@@ -277,6 +308,18 @@ function evaluateExecution(
       durationMs: run.run.durationMs,
     }),
   ];
+  if (judged === undefined) {
+    const notJudged = `OpenCode did not complete cleanly (${describeTermination(run.run)}); the run is not judged`;
+    return evaluateScenario({
+      kind: 'infrastructure_error',
+      runId,
+      scenario,
+      durationMs: run.run.durationMs,
+      detail: breach === undefined ? notJudged : `${notJudged}; ${breach}`,
+      evidence,
+      violations: observedViolationsOf(run.record.violations),
+    });
+  }
   const facts: EvaluationFacts = {
     kind: 'completed',
     runId,
@@ -284,7 +327,7 @@ function evaluateExecution(
     durationMs: run.run.durationMs,
     observedStatus: judged.observedStatus,
     finalStateChecks: judged.finalStateChecks,
-    violations: completedCleanly ? [...observedViolationsOf(run.record.violations), ...judged.violations] : [],
+    violations: [...observedViolationsOf(run.record.violations), ...judged.violations],
     evidence,
     metrics: metricsFromJourneyRecord(run.record),
     isolation: {
@@ -293,6 +336,22 @@ function evaluateExecution(
     },
   };
   return evaluateScenario(facts);
+}
+
+/** The run's status, signal, and exit code, for evidence and the reason. */
+function describeTermination(run: OpenCodeRunResult): string {
+  return `run ${run.status}, signal ${run.signal ?? 'none'}, exit code ${run.exitCode === null ? 'none' : String(run.exitCode)}`;
+}
+
+/** A terminated run never records exit status 0, even when the process reported one. */
+function terminatedExitStatus(run: OpenCodeRunResult): number {
+  return run.exitCode === null || run.exitCode === 0 ? 1 : run.exitCode;
+}
+
+/** The execution command text: the scripted journey, then the termination (non-clean runs only), then the judge's note. */
+function commandText(termination: string | undefined, note: string | undefined): string {
+  const parts = [EXECUTION_COMMAND, termination, note].filter((part): part is string => part !== undefined);
+  return parts.join('; ');
 }
 
 interface Execution {
@@ -311,6 +370,7 @@ async function executeBound(scenario: EvalScenario, plan: Extract<Plan, { kind: 
   const definition = defineJourney({ name: scenario.id.toLowerCase(), steps: binding.steps });
   let fixture: LoopbackModel | undefined;
   let sandbox: OpenCodeSandbox | undefined;
+  let execution: Execution;
   try {
     fixture = await startJourneyFixture(definition);
     sandbox = createOpenCodeSandbox(definition.name, { baseURL: fixture.baseURL });
@@ -323,20 +383,47 @@ async function executeBound(scenario: EvalScenario, plan: Extract<Plan, { kind: 
       auto: true,
       enforcement: plan.enforcement,
     });
-    const context: BindingContext = { sandbox, run, prepared, headBefore };
+    const context: BindingContext = { sandbox, run, prepared, headBefore, requests: fixture.requests };
     const artifacts = new Map<string, string>([[LOOPBACK_TRANSCRIPT, run.serialized]]);
     for (const [name, produce] of Object.entries(binding.artifacts)) artifacts.set(name, produce(context));
     const result = evaluateExecution(scenario, binding, runId, context, plan.enforcement, [...artifacts.keys()]);
-    return { result, artifacts };
+    execution = { result, artifacts };
   } catch (error) {
-    return {
+    execution = {
       result: evaluateScenario({ kind: 'infrastructure_error', runId, scenario, durationMs: Date.now() - started, detail: `runner failure: ${errorMessage(error)}` }),
       artifacts: new Map<string, string>(),
     };
   } finally {
-    if (fixture !== undefined) await fixture.close();
-    sandbox?.dispose();
+    const cleanupFailure = await closeAndDispose(fixture, sandbox);
+    if (cleanupFailure !== undefined) {
+      execution = {
+        result: evaluateScenario({ kind: 'infrastructure_error', runId, scenario, durationMs: Date.now() - started, detail: `cleanup failed: ${cleanupFailure}` }),
+        artifacts: new Map<string, string>(),
+      };
+    }
   }
+  return execution;
+}
+
+/**
+ * Closes the fixture, then disposes the sandbox even when the close failed. Never throws: every failure is returned as
+ * text (both messages when both fail), so the scenario records an infrastructure_error and later scenarios still run.
+ * Exported for tests.
+ */
+export async function closeAndDispose(fixture: LoopbackModel | undefined, sandbox: OpenCodeSandbox | undefined): Promise<string | undefined> {
+  const failures: string[] = [];
+  try {
+    if (fixture !== undefined) await fixture.close();
+  } catch (error) {
+    failures.push(`fixture close failed: ${errorMessage(error)}`);
+  } finally {
+    try {
+      sandbox?.dispose();
+    } catch (error) {
+      failures.push(`sandbox dispose failed: ${errorMessage(error)}`);
+    }
+  }
+  return failures.length === 0 ? undefined : failures.join('; ');
 }
 
 function writeRepeat(directory: string, manifest: EvalRunManifest, result: EvalResult, artifacts: ReadonlyMap<string, string>): void {
@@ -350,15 +437,15 @@ function writeRepeat(directory: string, manifest: EvalRunManifest, result: EvalR
 }
 
 /**
- * Runs the selected scenarios and writes the run. Repeats run one after another. Throws only for a usage or corpus
- * error (a bad repeat count, a relative output directory, an unknown scenario ID); every scenario-level problem is
- * recorded as a result instead.
+ * Runs the selected scenarios and writes the run. Repeats run one after another. Throws a UsageError for a usage error
+ * (a bad repeat count, a relative output directory, an unknown scenario ID), and another error for a corpus error.
+ * Every scenario-level problem is recorded as a result instead.
  */
 export async function runEvaluation(options: EvaluationOptions): Promise<EvaluationSummary> {
   const env = options.env ?? process.env;
   const repeat = options.repeat ?? DEFAULT_REPEAT;
-  if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`Repeat count must be a positive integer: ${String(repeat)}.`);
-  if (!isAbsolute(options.outDirectory)) throw new Error('The output directory must be an absolute path.');
+  if (!Number.isSafeInteger(repeat) || repeat < 1) throw new UsageError(`Repeat count must be a positive integer: ${String(repeat)}.`);
+  if (!isAbsolute(options.outDirectory)) throw new UsageError('The output directory must be an absolute path.');
   const corpus = loadScenarioCorpus(CORPUS_DIRECTORY);
   const pool = options.set === 'development' ? corpus.development : corpus.validation;
   const selected = selectScenarios(pool, options.set, options.scenarioIds ?? []);
@@ -395,7 +482,8 @@ export async function runEvaluation(options: EvaluationOptions): Promise<Evaluat
       outcomes: results.map(result => result.outcome),
       reason: first.reason,
       repeatable: comparisons.every(comparison => comparison.repeatable),
-      differences: comparisons.flatMap(comparison => comparison.differences),
+      // comparisons[i] compares repeat 1 with repeat i + 2 (1-based).
+      differences: comparisons.flatMap((comparison, index) => comparison.differences.map(difference => ({ ...difference, repeat: index + 2 }))),
     });
   }
 

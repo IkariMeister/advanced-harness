@@ -4,7 +4,7 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { SCENARIO_SETS, type ScenarioSet } from '../../src/eval-contracts.ts';
-import { DEFAULT_REPEAT, runEvaluation, type EvaluationOptions, type EvaluationSummary } from './runner.ts';
+import { DEFAULT_REPEAT, runEvaluation, UsageError, type EvaluationOptions, type EvaluationSummary } from './runner.ts';
 
 export interface CliArguments {
   set: ScenarioSet;
@@ -61,8 +61,11 @@ export function parseArguments(args: readonly string[]): ParsedCli {
       set = value as ScenarioSet;
     } else if (flag === '--repeat') {
       if (repeat !== undefined) return { kind: 'error', message: 'Duplicate option: --repeat' };
-      if (!/^[0-9]+$/.test(value) || Number(value) < 1) return { kind: 'error', message: '--repeat must be a positive integer.' };
-      repeat = Number(value);
+      const count = Number(value);
+      if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(count) || count < 1) {
+        return { kind: 'error', message: '--repeat must be a positive safe integer.' };
+      }
+      repeat = count;
     } else if (flag === '--out') {
       if (outDirectory !== undefined) return { kind: 'error', message: 'Duplicate option: --out' };
       if (value.trim() === '') return { kind: 'error', message: '--out requires a directory.' };
@@ -96,7 +99,7 @@ export function formatSummary(summary: EvaluationSummary): string {
     const suffix = scenario.repeatable ? '' : ' (NOT repeatable)';
     lines.push(`${scenario.scenarioId} ${scenario.scenarioVersion}: ${scenario.outcomes.join(', ')}${suffix}`);
     lines.push(`  ${scenario.reason}`);
-    for (const difference of scenario.differences) lines.push(`  difference at ${difference.path}`);
+    for (const difference of scenario.differences) lines.push(`  repeat ${difference.repeat}: difference at ${difference.path}`);
   }
   lines.push(`Executed ${summary.executed} of ${summary.scenarios.length} scenario(s); repeatable: ${summary.repeatable ? 'yes' : 'no'}; exit status ${summary.exitCode}.`);
   return lines.join('\n');
@@ -114,7 +117,10 @@ const defaultDeps: CliDeps = {
   error: message => console.error(message),
 };
 
-/** Runs the command and returns its exit status: 0, 1 (a run failure), or 2 (a usage error). */
+/**
+ * Runs the command and returns its exit status: 0, 1 (a run failure or a corpus error), or 2 (a usage error: a bad
+ * option, an unknown scenario ID, or a scenario ID outside the chosen set).
+ */
 export async function runCli(args: readonly string[], deps: CliDeps = defaultDeps): Promise<0 | 1 | 2> {
   const parsed = parseArguments(args);
   if (parsed.kind === 'help') {
@@ -136,6 +142,10 @@ export async function runCli(args: readonly string[], deps: CliDeps = defaultDep
     deps.output(formatSummary(summary));
     return summary.exitCode;
   } catch (error) {
+    if (error instanceof UsageError) {
+      deps.error(`${error.message}\n\n${usage}`);
+      return 2;
+    }
     deps.error(`Evaluation failed: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }

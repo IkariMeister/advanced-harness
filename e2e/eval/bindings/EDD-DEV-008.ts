@@ -71,11 +71,22 @@ export const STUB_SCRIPT = [
   '',
 ].join('\n');
 
+/** POSIX single-quotes a shell word: the text is wrapped in '...', and each ' inside it becomes '\''. */
+export function shellQuote(word: string): string {
+  return `'${word.replace(/'/g, `'\\''`)}'`;
+}
+
 /**
- * The operator's shell step. The command runs in the scratch project (the shell's working directory), so `..` is the
- * sandbox root. The stub directory is prepended as an absolute path, because preflight only accepts absolute PATH entries.
+ * The operator's shell step for the given Node executable and preflight script. Both are shell-quoted. The command runs in
+ * the scratch project (the shell's working directory), so `..` is the sandbox root. The stub directory is prepended as an
+ * absolute path, because preflight only accepts absolute PATH entries.
  */
-export const PREFLIGHT_COMMAND = `PATH="$(cd .. && pwd)/${STUB_DIRECTORY}:$PATH" node "${PREFLIGHT_SCRIPT}" --worktree . --base HEAD --json > ../${RESULT_FILE} 2> ../${STDERR_FILE}; echo $? > ../${EXIT_FILE}`;
+export function preflightCommandFor(nodeExecutable: string, scriptPath: string): string {
+  return `PATH="$(cd .. && pwd)/${STUB_DIRECTORY}:$PATH" ${shellQuote(nodeExecutable)} ${shellQuote(scriptPath)} --worktree . --base HEAD --json > ../${RESULT_FILE} 2> ../${STDERR_FILE}; echo $? > ../${EXIT_FILE}`;
+}
+
+/** The operator's shell step, running this process's Node executable (process.execPath) on the preflight script. */
+export const PREFLIGHT_COMMAND = preflightCommandFor(process.execPath, PREFLIGHT_SCRIPT);
 
 export type PreflightVerdict =
   | { measured: true; observedStatus: 'pass' | 'fail' | 'inconclusive'; observed: string }

@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import type { ExpectedOutcomeStatus } from '../../src/eval-contracts.ts';
 import type { ObservedFinalStateCheck, ObservedViolation } from '../../src/eval-evaluate.ts';
 import { callTool, finalText, type JourneyRun } from '../support/journey.ts';
-import type { ScriptStep } from '../support/loopback-model.ts';
+import { toolResultText, type RecordedRequest, type ScriptStep } from '../support/loopback-model.ts';
 import type { OpenCodeSandbox } from '../support/opencode-sandbox.ts';
 
 /** The artifact the runner always writes: the journey record of the run, as serialised. */
@@ -20,6 +20,11 @@ export const SUBAGENT_TOOL = 'subagent';
 export const INTERMEDIATE_MARKER = 'working in the background';
 /** A child report arrives as a user message whose opening tag carries state="completed". */
 export const REPORT_COMPLETED = 'state="completed"';
+/**
+ * Marker expected in the tool result of a shell call that OpenCode's permission policy denied. Taken from the
+ * approved EDD-DEV-004 fix; it has not been observed in a real OpenCode 2.3.0 run in this repository.
+ */
+export const PERMISSION_REJECTED = 'permission.rejected';
 
 /** Read-only view of one finished run, given to producers and judges. */
 export interface BindingContext {
@@ -29,6 +34,8 @@ export interface BindingContext {
   readonly prepared: Readonly<Record<string, string>>;
   /** HEAD of the scratch repository before OpenCode ran. */
   readonly headBefore: string;
+  /** Every request the fixture received, in arrival order (the fixture's request log). Tool results are read from it. */
+  readonly requests: readonly RecordedRequest[];
 }
 
 export interface BindingJudgement {
@@ -86,9 +93,42 @@ export function checkOf(assertion: string, passed: boolean, observed: string): O
   return { assertion, passed, observed };
 }
 
-/** SHA-256 of a file's bytes, as lower-case hex. */
+/** SHA-256 of a file's bytes, as lower-case hex. A missing or unreadable file throws. */
 export function checksumOf(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+/**
+ * Like checksumOf, but a missing file (ENOENT) gives undefined, so a judge can count it as changed. Every other error
+ * still throws, and the runner records it as an infrastructure_error.
+ */
+export function optionalChecksumOf(path: string): string | undefined {
+  try {
+    return checksumOf(path);
+  } catch (error) {
+    if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+/**
+ * The recorded tool result of the first shell call a role made with exactly this command, or undefined when no call
+ * was recorded or no result was observed for it. Reads the tool-result messages the fixture received after the call.
+ */
+export function shellResultOf(context: BindingContext, role: string, command: string): string | undefined {
+  const ordered = [...context.requests].sort((a, b) => a.seq - b.seq);
+  for (const request of ordered) {
+    if (request.role !== role) continue;
+    for (const call of request.replyToolCalls) {
+      if (call.name !== SHELL_TOOL || call.arguments.command !== command) continue;
+      for (const later of ordered) {
+        if (later.seq <= request.seq || later.role !== role) continue;
+        const text = toolResultText(later.body, call.id);
+        if (text !== undefined) return text;
+      }
+    }
+  }
+  return undefined;
 }
 
 export function projectFile(sandbox: OpenCodeSandbox, name: string): string {

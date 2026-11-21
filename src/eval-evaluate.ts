@@ -65,12 +65,16 @@ export interface SkippedRunFacts extends RunFactsBase {
   detail: string;
 }
 
-/** The runner, fixture, binary, sandbox, or binding failed. Not valid evidence. */
+/**
+ * The runner, fixture, binary, sandbox, or binding failed, or OpenCode did not complete cleanly. Not valid evidence.
+ * Violations that were recorded before the failure are kept as failing checks; no status check is recorded.
+ */
 export interface InfrastructureFailureFacts extends RunFactsBase {
   kind: 'infrastructure_error';
   /** What failed. */
   detail: string;
   evidence?: readonly EvidenceEntry[];
+  violations?: readonly ObservedViolation[];
 }
 
 /** A run that finished and produced observed facts. */
@@ -97,7 +101,7 @@ export type EvaluationFacts = SkippedRunFacts | InfrastructureFailureFacts | Com
  * - inconclusive: the run finished but evidence cannot decide (no evidence, a missing required
  *   artifact, a declared assertion with no check, or an observed inconclusive status).
  * - skipped: deliberately not executed.
- * - infrastructure_error: the runner failed, or isolation was breached.
+ * - infrastructure_error: the runner failed, isolation was breached, or the OpenCode run did not complete cleanly.
  *
  * Metrics are zero with the reason "metrics not observed" for every outcome except pass and fail.
  * Throws when the facts break the contract (undeclared or duplicated final-state checks).
@@ -105,6 +109,8 @@ export type EvaluationFacts = SkippedRunFacts | InfrastructureFailureFacts | Com
 export function evaluateScenario(facts: EvaluationFacts): EvalResult {
   switch (facts.kind) {
     case 'skipped':
+      // Validated before the prefix, so an empty detail throws here rather than becoming "deliberately not executed: ".
+      requireText(facts.detail, 'detail');
       return finishWithoutMetrics(
         facts,
         'skipped',
@@ -114,12 +120,13 @@ export function evaluateScenario(facts: EvaluationFacts): EvalResult {
         [],
       );
     case 'infrastructure_error':
+      requireText(facts.detail, 'detail');
       return finishWithoutMetrics(
         facts,
         'infrastructure_error',
         undefined,
         facts.detail,
-        [],
+        (facts.violations ?? []).map(violationCheck),
         [...(facts.evidence ?? [])],
       );
     case 'completed':
@@ -233,13 +240,7 @@ function evaluateCompleted(facts: CompletedRunFacts): EvalResult {
     if (!check.passed) failed.push(assertion);
     checks.push({ assertion, passed: check.passed, observed: textOrNotObserved(check.observed) });
   }
-  for (const violation of facts.violations) {
-    checks.push({
-      assertion: `no ${violation.kind} violation`,
-      passed: false,
-      observed: textOrNotObserved(violation.detail),
-    });
-  }
+  for (const violation of facts.violations) checks.push(violationCheck(violation));
 
   const statusClauseText = statusClause(observed, expected);
   const decided = (outcome: 'pass' | 'fail', why: string): EvalResult =>
@@ -348,7 +349,8 @@ function requiredArtifactsMissing(required: readonly string[], evidence: readonl
   });
 }
 
-function isolationBreach(isolation: IsolationFacts): string | undefined {
+/** The isolation breach text, or undefined when the run has no unexpected destination and no credential-shaped header. */
+export function isolationBreach(isolation: IsolationFacts): string | undefined {
   const parts: string[] = [];
   if (isolation.unexpectedDestinations.length > 0) {
     parts.push(`unexpected network destination(s): ${isolation.unexpectedDestinations.join(', ')}`);
@@ -357,6 +359,11 @@ function isolationBreach(isolation: IsolationFacts): string | undefined {
     parts.push(`credential-shaped header(s): ${isolation.credentialHeaders.join(', ')}`);
   }
   return parts.length > 0 ? `isolation breached: ${parts.join('; ')}` : undefined;
+}
+
+/** A failing check for one observed violation. A violation always fails its outcome. */
+function violationCheck(violation: ObservedViolation): ObservableStateCheck {
+  return { assertion: `no ${violation.kind} violation`, passed: false, observed: textOrNotObserved(violation.detail) };
 }
 
 function describeViolations(violations: readonly ObservedViolation[]): string {

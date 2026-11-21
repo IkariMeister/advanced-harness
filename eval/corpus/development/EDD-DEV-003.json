@@ -31,7 +31,7 @@
       "Operator performs local git worktree add",
       "External performs git fetch and merge --ff-only"
     ],
-    "expectedRoleTransitions": ["lead -> operator", "lead -> external", "lead -> operator"],
+    "expectedRoleTransitions": ["lead->operator", "lead->external", "lead->operator"],
     "observableFinalState": [
       "canonical checkout remains clean on updated main",
       "task worktree exists on branch issue/90102"

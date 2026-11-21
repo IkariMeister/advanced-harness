@@ -8,7 +8,7 @@ import { checkBoundScenarioVersion, compareRepeats, evaluateScenario } from '../
 import { LOOPBACK_TRANSCRIPT } from '../e2e/eval/binding-support.ts';
 import { BINDINGS, findBinding } from '../e2e/eval/bindings/index.ts';
 import { globToRegExp, implementerPolicyRules, MERGE_COMMAND, PUSH_COMMAND, resolveShellEffect } from '../e2e/eval/bindings/EDD-DEV-004.ts';
-import { preflightVerdict, PREFLIGHT_COMMAND, STUB_SCRIPT } from '../e2e/eval/bindings/EDD-DEV-008.ts';
+import { preflightCommandFor, preflightVerdict, PREFLIGHT_COMMAND, shellQuote, STUB_SCRIPT } from '../e2e/eval/bindings/EDD-DEV-008.ts';
 import {
   availabilityOf,
   exitStatusOf,
@@ -126,6 +126,23 @@ test('bindings: EDD-DEV-008 plans the stub scanner and the malformed-output path
   assert.deepEqual(preflightVerdict('0', malformed), { measured: true, observedStatus: 'pass', observed: 'preflight exit 0; secret-scan inconclusive' });
   assert.equal(preflightVerdict(undefined, undefined).measured, false);
   assert.equal(preflightVerdict('2', JSON.stringify({ checks: [] })).observedStatus, 'inconclusive');
+});
+
+test('EDD-DEV-008: the preflight command runs process.execPath on the script, shell-quoting both paths (space, $, backtick, single quote)', () => {
+  // Quoting: each ' becomes '\'' inside a single-quoted word. Inside single quotes, $ and ` are literal.
+  const node = "/opt/my node$HOME`x`/it's/node";
+  const script = "/work/a b$C`d`/it's/preflight.ts";
+  const quotedNode = "'/opt/my node$HOME`x`/it'\\''s/node'";
+  const quotedScript = "'/work/a b$C`d`/it'\\''s/preflight.ts'";
+  assert.equal(shellQuote(node), quotedNode);
+  assert.equal(shellQuote(script), quotedScript);
+  assert.equal(
+    preflightCommandFor(node, script),
+    `PATH="$(cd .. && pwd)/stub-bin:$PATH" ${quotedNode} ${quotedScript} --worktree . --base HEAD --json > ../preflight-result.json 2> ../preflight-stderr.txt; echo $? > ../preflight-exit.txt`,
+  );
+  // The bound command uses this process's Node executable, not a bare `node` looked up on PATH.
+  assert.ok(PREFLIGHT_COMMAND.startsWith(`PATH="$(cd .. && pwd)/stub-bin:$PATH" ${shellQuote(process.execPath)} `));
+  assert.equal(shellQuote("it's"), "'it'\\''s'");
 });
 
 test('preflightVerdict: each exit and output shape maps to its exact observed status and measured flag', () => {
@@ -306,6 +323,48 @@ test('runner: a failure inside a bound run (a throwing prepare after the sandbox
   }
 });
 
+test('repeatability: with three repeats where repeats 2 and 3 differ, each difference names its own repeat number', async () => {
+  const out = makeTempRoot('eval-runner-repeat-tag-');
+  try {
+    const fake = join(out, 'fake-opencode');
+    const bound = findBinding('EDD-DEV-004');
+    assert.ok(bound !== undefined);
+    let calls = 0;
+    // prepare runs once per repeat and throws before any OpenCode process starts. Each repeat's reason names its call.
+    const summary = await runEvaluation({
+      set: 'development',
+      scenarioIds: ['EDD-DEV-004'],
+      outDirectory: out,
+      env: { HARNESS_E2E_OPENCODE: fake },
+      resolveBinary: () => ({ status: 'ready', binary: fake, version: '2.3.0' }),
+      bindingOf: () => ({
+        ...bound,
+        prepare: () => {
+          calls += 1;
+          throw new Error(`SEAM-REPEAT-${calls}`);
+        },
+      }),
+      repeat: 3,
+    });
+    const scenario = summary.scenarios.find(item => item.scenarioId === 'EDD-DEV-004');
+    assert.ok(scenario);
+    assert.deepEqual(scenario.outcomes, ['infrastructure_error', 'infrastructure_error', 'infrastructure_error']);
+    assert.equal(scenario.repeatable, false);
+    assert.deepEqual(scenario.differences.map(difference => [difference.repeat, difference.path]), [[2, 'reason'], [3, 'reason']]);
+    assert.match(String(scenario.differences[0]?.first), /SEAM-REPEAT-1/);
+    assert.match(String(scenario.differences[0]?.second), /SEAM-REPEAT-2/);
+    assert.match(String(scenario.differences[1]?.second), /SEAM-REPEAT-3/);
+    const written = readJson(join(summary.directory, 'summary.json')) as { scenarios: { differences: { repeat: number; path: string }[] }[] };
+    assert.deepEqual(written.scenarios[0]?.differences.map(difference => [difference.repeat, difference.path]), [[2, 'reason'], [3, 'reason']]);
+    const text = formatSummary(summary);
+    assert.match(text, /repeat 2: difference at reason/);
+    assert.match(text, /repeat 3: difference at reason/);
+    assert.doesNotMatch(text, /repeat 1: difference/);
+  } finally {
+    removeTree(out);
+  }
+});
+
 test('runner: planning is pure: not-configured skips, unbound skips, stale versions and blockers are infrastructure errors', () => {
   const bound = findBinding('EDD-DEV-004');
   const scenario = scenarioNamed('EDD-DEV-004');
@@ -431,6 +490,35 @@ test('cli: invalid arguments are usage errors (exit 2)', () => {
     assert.equal(parseArguments(['--set', 'validation']).kind, 'error');
     assert.equal(parseArguments(['--out', out, '--set']).kind, 'error');
     assert.equal(parseArguments(['-h']).kind, 'help');
+  } finally {
+    removeTree(out);
+  }
+});
+
+test('cli: a repeat count must be a positive safe integer (exit 2 otherwise)', async () => {
+  const out = makeTempRoot('eval-cli-repeat-');
+  try {
+    assert.equal(parseArguments(['--out', out, '--repeat', '99999999999999999999']).kind, 'error');
+    assert.equal(parseArguments(['--out', out, '--repeat', '9007199254740993']).kind, 'error');
+    assert.ok(parseArguments(['--out', out, '--repeat', '9007199254740991']).kind === 'run');
+    const deps: CliDeps = { run: () => Promise.reject(new Error('must not run')), output: () => undefined, error: () => undefined };
+    assert.equal(await runCli(['--out', out, '--repeat', '99999999999999999999'], deps), 2);
+  } finally {
+    removeTree(out);
+  }
+});
+
+test('cli: an unknown --scenario and a scenario from the other set exit 2 and write nothing', async () => {
+  const out = makeTempRoot('eval-cli-scenario-usage-');
+  try {
+    const errors: string[] = [];
+    const deps: CliDeps = { run: runEvaluation, output: () => undefined, error: message => { errors.push(message); } };
+    assert.equal(await runCli(['--out', out, '--scenario', 'EDD-NOPE'], deps), 2);
+    assert.equal(await runCli(['--out', out, '--set', 'validation', '--scenario', 'EDD-DEV-004'], deps), 2);
+    assert.match(errors.join('\n'), /No development scenario has the ID EDD-NOPE/);
+    assert.match(errors.join('\n'), /No validation scenario has the ID EDD-DEV-004/);
+    assert.match(errors.join('\n'), /Usage: npm run eval:opencode/, 'a usage error prints the usage text');
+    assert.deepEqual(readdirSync(out), []);
   } finally {
     removeTree(out);
   }

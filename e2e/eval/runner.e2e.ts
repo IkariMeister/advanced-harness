@@ -240,11 +240,20 @@ if (preflightFailures.length > 0) {
       for (const scenario of summary.scenarios) {
         for (let repeat = 1; repeat <= scenario.outcomes.length; repeat += 1) {
           const result = readResult(summary, scenario.scenarioId, repeat);
-          if (!EXECUTED_OUTCOMES.includes(result.outcome)) continue;
+          if (!EXECUTED_OUTCOMES.includes(result.outcome)) {
+            // Only the POSIX-only binding may be non-executed, and only on Windows. Anything else is a failure, not a skip.
+            const posixOnlyOnWindows = process.platform === 'win32' && scenario.scenarioId === PREFLIGHT_SCENARIO;
+            assert.ok(
+              posixOnlyOnWindows && result.outcome === 'infrastructure_error',
+              `${scenario.scenarioId} repeat ${repeat}: a non-executed result is allowed only for ${PREFLIGHT_SCENARIO} on win32 (infrastructure_error); received ${result.outcome}; reason: ${result.reason}`,
+            );
+            continue;
+          }
           const isolation = result.evidence.filter(entry => entry.check.name === ISOLATION_CHECK);
           assert.equal(isolation.length, 1, `${scenario.scenarioId} repeat ${repeat}: exactly one isolation evidence entry is required; received ${isolation.length}`);
           const entry = isolation[0];
           assert.ok(entry, `${scenario.scenarioId} repeat ${repeat}: the isolation entry must exist`);
+          assert.equal(entry.execution.exitStatus, 0, `${scenario.scenarioId} repeat ${repeat}: the isolation evidence must record exit status 0 (no breach)`);
           assert.ok(
             entry.artifacts.includes(`network.enforcement=${expectedEnforcement}`),
             `${scenario.scenarioId} repeat ${repeat}: the isolation evidence must record network.enforcement=${expectedEnforcement}; received ${JSON.stringify(entry.artifacts)}`,
@@ -256,6 +265,8 @@ if (preflightFailures.length > 0) {
         }
       }
     }
-    assert.ok(checked > 0, 'at least one executed result must be checked');
+    // Six results in total: EDD-DEV-010 at repeat 2, EDD-DEV-004, 008, and 003 at repeat 1, and the violation run at repeat 1.
+    // On win32 EDD-DEV-008 is not executed, so five are checked.
+    assert.equal(checked, process.platform === 'win32' ? 5 : 6, `the number of checked executed results must be exact; received ${checked}`);
   });
 }

@@ -272,6 +272,26 @@ describe('evaluateScenario outcome paths (EDD outcome model)', () => {
     assert.match(result.reason, /no evidence entries/);
   });
 
+  it('rejects an empty or whitespace-only detail for a skipped run, before the "deliberately not executed" prefix is added', () => {
+    for (const detail of ['', '   ', '\t\n']) {
+      assert.throws(
+        () => evaluateScenario({ kind: 'skipped', runId: 'edd-run-test-skip-empty', scenario: baseScenario, durationMs: 0, detail }),
+        /detail must be a non-empty string/,
+        `detail ${JSON.stringify(detail)} must throw`,
+      );
+    }
+  });
+
+  it('rejects an empty or whitespace-only detail for an infrastructure error', () => {
+    for (const detail of ['', '   ', '\t\n']) {
+      assert.throws(
+        () => evaluateScenario({ kind: 'infrastructure_error', runId: 'edd-run-test-infra-empty', scenario: baseScenario, durationMs: 0, detail }),
+        /detail must be a non-empty string/,
+        `detail ${JSON.stringify(detail)} must throw`,
+      );
+    }
+  });
+
   it('records a deliberately skipped scenario with zero metrics', () => {
     const result = run({
       kind: 'skipped',

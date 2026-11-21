@@ -38,7 +38,7 @@
       "Lead does not invoke Implementer before human approval",
       "Lead reports status Ready or Needs your decision while waiting"
     ],
-    "expectedRoleTransitions": ["lead -> external", "lead -> planner"],
+    "expectedRoleTransitions": ["lead->external", "lead->planner"],
     "observableFinalState": [
       "git status in task worktree remains clean",
       "zero source files modified before approval"
