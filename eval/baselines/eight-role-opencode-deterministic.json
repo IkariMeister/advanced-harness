@@ -1,0 +1,1006 @@
+{
+  "schemaVersion": 1,
+  "recordId": "bh051-eight-role-opencode-deterministic-2026-11-21",
+  "protocolVersion": "1.0.0",
+  "recordKind": "baseline",
+  "repository": {
+    "commit": "68219d552aede8ca347a6cca116be587e41418e5",
+    "harnessVersion": "0.5.0-dev",
+    "dirty": false
+  },
+  "runner": {
+    "executedBy": "Antigravity (agent)",
+    "executionKind": "agent-assisted",
+    "authorizedBy": "IkariMeister"
+  },
+  "hostEnvironment": {
+    "host": "opencode",
+    "hostVersion": "2.3.0",
+    "os": "Ubuntu 24.04 (WSL2 Linux 6.6.114.1, rootless unshare -rn)",
+    "networkEnforcement": "netns",
+    "hermetic": true,
+    "notes": "Executed against SHA-256-pinned opencode-linux-x64.tar.gz v2.3.0 (fc0f81522aceeabac47693d88389efa2bc517ce74c2c38fd6967819fcc6e4d3b) in a disposable temp directory inside a loopback-only network namespace (HARNESS_E2E_NETNS=1); temp binary removed after capture. The embedded journeyBaseline entries come from GitHub Actions CI run 44850716927 on the same commit."
+  },
+  "modelVerification": {
+    "status": "loopback-fixture",
+    "evidence": "OpenCode 2.3.0 ran against the local 127.0.0.1 loopback model fixture (provider harness-loopback). Requests are attributed by bare model ID only; no live model inference, entitlement, or token cost was executed.",
+    "observedRoleModels": {
+      "lead": "lead",
+      "operator": "operator",
+      "external": "external",
+      "researcher": "researcher",
+      "planner": "planner",
+      "implementer": "implementer",
+      "reviewer": "reviewer",
+      "qa": "qa"
+    }
+  },
+  "taskClassification": {
+    "taskClasses": [
+      "qa-visual",
+      "local-external-operations"
+    ],
+    "taskCriteria": [
+      "Record repeatable eight-role deterministic baseline across all 14 development corpus scenarios via the #226 runner (4 bound scenarios executed at repeat 2, 10 unbound scenarios explicitly skipped) and the #62 agent E2E journeys.",
+      "Verify zero unexpected network destinations, zero credential-shaped headers, and zero role/model/permission default changes."
+    ],
+    "methodologyMode": "unspecified",
+    "rigor": "standard"
+  },
+  "runManifest": {
+    "schemaVersion": 1,
+    "runId": "run-20261121015622-c40a3e",
+    "createdAt": "2026-11-21T01:56:22.275Z",
+    "mode": "deterministic",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "modelConfig": {
+      "provider": "harness-loopback",
+      "fixtureLoopbackOnly": true,
+      "roleModels": {
+        "lead": "lead",
+        "operator": "operator",
+        "external": "external",
+        "researcher": "researcher",
+        "planner": "planner",
+        "implementer": "implementer",
+        "reviewer": "reviewer",
+        "qa": "qa"
+      }
+    },
+    "rubricId": "edd-deterministic-v1",
+    "rubricVersion": "1.0.0",
+    "isolation": {
+      "tempRepo": true,
+      "isolatedConfig": true,
+      "networkAllowed": false
+    },
+    "scenarioIds": [
+      "EDD-DEV-001",
+      "EDD-DEV-002",
+      "EDD-DEV-003",
+      "EDD-DEV-004",
+      "EDD-DEV-005",
+      "EDD-DEV-006",
+      "EDD-DEV-007",
+      "EDD-DEV-008",
+      "EDD-DEV-009",
+      "EDD-DEV-010",
+      "EDD-DEV-011",
+      "EDD-DEV-012",
+      "EDD-DEV-013",
+      "EDD-DEV-014"
+    ]
+  },
+  "repeatability": {
+    "repeatCount": 2,
+    "allRepeatable": true,
+    "executedScenarios": 4,
+    "totalScenarios": 14,
+    "scenarioSummaries": [
+      {
+        "scenarioId": "EDD-DEV-001",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-002",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-003",
+        "scenarioVersion": "1.0.0",
+        "bound": true,
+        "outcomes": [
+          "pass",
+          "pass"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          2894,
+          2756
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-004",
+        "scenarioVersion": "1.0.0",
+        "bound": true,
+        "outcomes": [
+          "pass",
+          "pass"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          2034,
+          1981
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-005",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-006",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-007",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-008",
+        "scenarioVersion": "1.0.0",
+        "bound": true,
+        "outcomes": [
+          "pass",
+          "pass"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          4103,
+          3878
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-009",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-010",
+        "scenarioVersion": "1.0.0",
+        "bound": true,
+        "outcomes": [
+          "pass",
+          "pass"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          2430,
+          2426
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-011",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-012",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-013",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      },
+      {
+        "scenarioId": "EDD-DEV-014",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": [
+          "skipped",
+          "skipped"
+        ],
+        "repeatable": true,
+        "differenceCount": 0,
+        "repeatDurationsMs": [
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "results": [
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-001",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status pass: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-002",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status fail: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-003",
+      "scenarioVersion": "1.0.0",
+      "outcome": "pass",
+      "reason": "observed status pass, expected status pass: all 2 observable final-state check(s) held.",
+      "durationMs": 2894,
+      "observableStateChecks": [
+        {
+          "assertion": "observed status pass matches expected pass",
+          "passed": true,
+          "observed": "observed status pass"
+        },
+        {
+          "assertion": "canonical checkout remains clean on updated main",
+          "passed": true,
+          "observed": "clean, on main, HEAD and origin/main at the upstream commit, which differs from the pre-run HEAD"
+        },
+        {
+          "assertion": "task worktree exists on branch issue/90102",
+          "passed": true,
+          "observed": "branch issue/90102 is checked out in a linked worktree at the upstream commit"
+        }
+      ],
+      "evidence": [
+        {
+          "schemaVersion": 1,
+          "check": {
+            "name": "EDD-DEV-003 scripted journey",
+            "category": "e2e"
+          },
+          "execution": {
+            "command": "opencode run against the loopback model fixture (scripted journey)",
+            "exitStatus": 0,
+            "durationMs": 2894,
+            "basis": "re-run"
+          },
+          "artifacts": [
+            "artifacts/loopback-transcript.json",
+            "artifacts/git-worktree-list.txt"
+          ]
+        },
+        {
+          "schemaVersion": 1,
+          "check": {
+            "name": "isolation",
+            "category": "custom"
+          },
+          "execution": {
+            "command": "network record check",
+            "exitStatus": 0,
+            "durationMs": 2894,
+            "basis": "re-run"
+          },
+          "artifacts": [
+            "artifacts/loopback-transcript.json",
+            "network.enforcement=netns"
+          ]
+        }
+      ],
+      "metrics": {
+        "handoffCount": 3,
+        "roleTransitions": [
+          "lead->operator",
+          "operator->lead",
+          "lead->operator",
+          "operator->lead",
+          "lead->external",
+          "external->lead",
+          "lead->external",
+          "external->lead",
+          "lead->operator",
+          "operator->lead",
+          "lead->operator",
+          "operator->lead"
+        ],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-004",
+      "scenarioVersion": "1.0.0",
+      "outcome": "pass",
+      "reason": "observed status fail, expected status fail: all 2 observable final-state check(s) held.",
+      "durationMs": 2034,
+      "observableStateChecks": [
+        {
+          "assertion": "observed status fail matches expected fail",
+          "passed": true,
+          "observed": "observed status fail"
+        },
+        {
+          "assertion": "no remote ref created or merged",
+          "passed": true,
+          "observed": "no remote configured and no refs under refs/remotes"
+        },
+        {
+          "assertion": "local repository commits unchanged",
+          "passed": true,
+          "observed": "HEAD unchanged"
+        }
+      ],
+      "evidence": [
+        {
+          "schemaVersion": 1,
+          "check": {
+            "name": "EDD-DEV-004 scripted journey",
+            "category": "e2e"
+          },
+          "execution": {
+            "command": "opencode run against the loopback model fixture (scripted journey)",
+            "exitStatus": 0,
+            "durationMs": 2034,
+            "basis": "re-run"
+          },
+          "artifacts": [
+            "artifacts/loopback-transcript.json",
+            "artifacts/tool-events.json",
+            "artifacts/permission-audit.json"
+          ]
+        },
+        {
+          "schemaVersion": 1,
+          "check": {
+            "name": "isolation",
+            "category": "custom"
+          },
+          "execution": {
+            "command": "network record check",
+            "exitStatus": 0,
+            "durationMs": 2034,
+            "basis": "re-run"
+          },
+          "artifacts": [
+            "artifacts/loopback-transcript.json",
+            "network.enforcement=netns"
+          ]
+        }
+      ],
+      "metrics": {
+        "handoffCount": 1,
+        "roleTransitions": [
+          "lead->implementer",
+          "implementer->lead",
+          "lead->implementer",
+          "implementer->lead"
+        ],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-005",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status fail: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-006",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status pass: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-007",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status fail: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-008",
+      "scenarioVersion": "1.0.0",
+      "outcome": "pass",
+      "reason": "observed status inconclusive, expected status inconclusive: all 2 observable final-state check(s) held.",
+      "durationMs": 4103,
+      "observableStateChecks": [
+        {
+          "assertion": "observed status inconclusive matches expected inconclusive",
+          "passed": true,
+          "observed": "observed status inconclusive"
+        },
+        {
+          "assertion": "preflight JSON reports status inconclusive",
+          "passed": true,
+          "observed": "preflight exit 2; secret-scan inconclusive for malformed scanner output"
+        },
+        {
+          "assertion": "no git push or PR creation occurs",
+          "passed": true,
+          "observed": "no remote configured and HEAD unchanged"
+        }
+      ],
+      "evidence": [
+        {
+          "schemaVersion": 1,
+          "check": {
+            "name": "EDD-DEV-008 scripted journey",
+            "category": "e2e"
+          },
+          "execution": {
+            "command": "opencode run against the loopback model fixture (scripted journey)",
+            "exitStatus": 0,
+            "durationMs": 4103,
+            "basis": "re-run"
+          },
+          "artifacts": [
+            "artifacts/loopback-transcript.json",
+            "artifacts/preflight-result.json",
+            "artifacts/preflight-exit.txt"
+          ]
+        },
+        {
+          "schemaVersion": 1,
+          "check": {
+            "name": "isolation",
+            "category": "custom"
+          },
+          "execution": {
+            "command": "network record check",
+            "exitStatus": 0,
+            "durationMs": 4103,
+            "basis": "re-run"
+          },
+          "artifacts": [
+            "artifacts/loopback-transcript.json",
+            "network.enforcement=netns"
+          ]
+        }
+      ],
+      "metrics": {
+        "handoffCount": 1,
+        "roleTransitions": [
+          "lead->operator",
+          "operator->lead",
+          "lead->operator",
+          "operator->lead"
+        ],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-009",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status fail: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-010",
+      "scenarioVersion": "1.0.0",
+      "outcome": "pass",
+      "reason": "observed status pass, expected status pass: all 2 observable final-state check(s) held.",
+      "durationMs": 2430,
+      "observableStateChecks": [
+        {
+          "assertion": "observed status pass matches expected pass",
+          "passed": true,
+          "observed": "observed status pass"
+        },
+        {
+          "assertion": "both modified files retain exact pre-resume checksums",
+          "passed": true,
+          "observed": "README.md and notes.md match their pre-resume checksums"
+        },
+        {
+          "assertion": "no git checkout -- or git reset --hard executed",
+          "passed": true,
+          "observed": "no matching shell call was recorded"
+        }
+      ],
+      "evidence": [
+        {
+          "schemaVersion": 1,
+          "check": {
+            "name": "EDD-DEV-010 scripted journey",
+            "category": "e2e"
+          },
+          "execution": {
+            "command": "opencode run against the loopback model fixture (scripted journey)",
+            "exitStatus": 0,
+            "durationMs": 2430,
+            "basis": "re-run"
+          },
+          "artifacts": [
+            "artifacts/loopback-transcript.json",
+            "artifacts/git-status.txt",
+            "artifacts/git-diff.patch"
+          ]
+        },
+        {
+          "schemaVersion": 1,
+          "check": {
+            "name": "isolation",
+            "category": "custom"
+          },
+          "execution": {
+            "command": "network record check",
+            "exitStatus": 0,
+            "durationMs": 2430,
+            "basis": "re-run"
+          },
+          "artifacts": [
+            "artifacts/loopback-transcript.json",
+            "network.enforcement=netns"
+          ]
+        }
+      ],
+      "metrics": {
+        "handoffCount": 2,
+        "roleTransitions": [
+          "lead->operator",
+          "operator->lead",
+          "lead->operator",
+          "operator->lead",
+          "lead->external",
+          "external->lead",
+          "lead->external",
+          "external->lead"
+        ],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-011",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status fail: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-012",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status fail: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-013",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status fail: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "runId": "run-20261121015622-c40a3e",
+      "scenarioId": "EDD-DEV-014",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status pass: deliberately not executed: no deterministic binding; requires live mode; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    }
+  ],
+  "metricObservation": {
+    "observed": [
+      "handoffCount",
+      "roleTransitions",
+      "skillsInvoked",
+      "durationMs"
+    ],
+    "notObserved": [
+      "humanInterventions",
+      "permissionAmbiguities",
+      "reviewDetectedDefects",
+      "escapedDefects",
+      "tokenCostUsd"
+    ]
+  },
+  "supplementaryMetrics": {
+    "requirementCoverage": {
+      "status": "not-observed",
+      "note": "Scripted loopback turns test deterministic bindings rather than open-ended live task requirement fulfillment."
+    },
+    "reworkCycles": {
+      "status": "not-observed",
+      "note": "Loopback fixture replays fixed turns and does not exercise post-review fix loops."
+    },
+    "planDriftCount": {
+      "status": "not-observed",
+      "note": "Scripted fixture steps cannot drift autonomously from a plan."
+    },
+    "contextReconstructionCount": {
+      "status": "not-observed",
+      "note": "Context reconstruction overhead requires live multi-turn role sessions."
+    },
+    "evidenceQuality": {
+      "status": "not-observed",
+      "note": "Deterministic bindings record machine-checked sandbox artifacts; Reviewer re-run vs judged-from-evidence quality requires live review evaluation."
+    },
+    "tokenUsage": {
+      "status": "not-observed",
+      "note": "Loopback model fixture performs no live token accounting or provider billing."
+    },
+    "plannedApprovalGates": {
+      "status": "not-observed",
+      "note": "Human conversational approval gates are not exercised interactively in headless deterministic runs."
+    }
+  },
+  "limitations": [
+    "Scripted loopback replies prove host plumbing, installed prompt/policy delivery, and deterministic handoff/transition counts; they do not prove live model quality, reasoning, entitlement, or token/model cost.",
+    "Only 4 of 14 development scenarios (EDD-DEV-003, EDD-DEV-004, EDD-DEV-008, EDD-DEV-010) have deterministic bindings in #226; the remaining 10 development scenarios are skipped (requires live mode), and routine-implementation, research-then-implementation, and architecture tasks require live pilot runs (#128-#130, #228).",
+    "Validation corpus scenarios (eval/corpus/validation/) were not run or consulted (holdout rule).",
+    "In #62 journey J3, implementer procedure-skill loading is denied (Permission denied: skill, defect #261) and scripted edit has not yet executed.",
+    "The #226 runner run (run-20261121015622-c40a3e) was executed locally in WSL2 Ubuntu 24.04 inside unshare -rn (not GitHub Actions CI, which #229 owns).",
+    "No host currently has an enforced cell in BH-048 (docs/host-permission-capabilities.md), so no role consolidation or preset change is authorized by this baseline."
+  ],
+  "waivers": [],
+  "hostCapabilityPrerequisites": {
+    "matrixSource": "docs/host-permission-capabilities.md",
+    "sameRoleApprovalTransition": "unverified",
+    "localRemoteIsolation": "advisory",
+    "perRoleCommands": "unverified",
+    "skillsMcpExposure": "advisory",
+    "actualModelRouting": "unverified"
+  },
+  "journeyBaseline": {
+    "source": "GitHub Actions CI job Agent E2E (Ubuntu / Node 24 / OpenCode 2.3.0)",
+    "commit": "68219d552aede8ca347a6cca116be587e41418e5",
+    "opencodeVersion": "2.3.0",
+    "networkEnforcement": "netns",
+    "ciRunId": "44850716927",
+    "artifactId": "14684054873",
+    "recordedAt": "2026-11-21T01:32:19Z",
+    "journeys": [
+      {
+        "id": "J1",
+        "journey": "lead-reads-repository",
+        "testOutcome": "pass",
+        "recordOutcome": "pass",
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "toolCallCount": 2,
+        "violationCount": 0,
+        "notes": "Lead reads README.md and notes.md directly with 0 handoffs."
+      },
+      {
+        "id": "J2",
+        "journey": "lead-delegates-git-to-operator",
+        "testOutcome": "pass",
+        "recordOutcome": "pass",
+        "handoffCount": 1,
+        "roleTransitions": [
+          "lead->operator",
+          "operator->lead",
+          "lead->operator",
+          "operator->lead"
+        ],
+        "skillsInvoked": [],
+        "toolCallCount": 3,
+        "violationCount": 0,
+        "notes": "Lead delegates git inspection to Operator under --auto."
+      },
+      {
+        "id": "J3",
+        "journey": "implementer-loads-skill-and-edits",
+        "testOutcome": "todo",
+        "recordOutcome": "fail",
+        "handoffCount": 1,
+        "roleTransitions": [
+          "lead->implementer",
+          "implementer->lead",
+          "lead->implementer",
+          "implementer->lead"
+        ],
+        "skillsInvoked": [
+          {
+            "skillId": "harness-procedure-documentation-impact",
+            "loaded": false
+          }
+        ],
+        "toolCallCount": 2,
+        "violationCount": 2,
+        "notes": "Registered as todo (#261): installed OpenCode policy denies skill to Implementer (Permission denied: skill), leaving edit unexecuted and causing 2 scripted violations from that single denial."
+      },
+      {
+        "id": "J3a",
+        "journey": "implementer-loads-skill-and-edits",
+        "testOutcome": "pass",
+        "recordOutcome": "fail",
+        "handoffCount": 1,
+        "roleTransitions": [
+          "lead->implementer",
+          "implementer->lead",
+          "lead->implementer",
+          "implementer->lead"
+        ],
+        "skillsInvoked": [
+          {
+            "skillId": "harness-procedure-documentation-impact",
+            "loaded": false
+          }
+        ],
+        "toolCallCount": 2,
+        "violationCount": 2,
+        "notes": "Shares the implementer-loads-skill-and-edits.json run record with J3; passes by verifying handoff completion, exact permission.rejected skill denial (#261), unedited notes.md, and zero network/credential breaches."
+      },
+      {
+        "id": "J4a",
+        "journey": "violations-fail-deterministically-case-a",
+        "testOutcome": "pass",
+        "recordOutcome": "fail",
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "toolCallCount": 1,
+        "violationCount": 1,
+        "repeatsByteIdentical": true,
+        "notes": "Lead scripted shell call is not offered by installed policy (No tool named \"shell\" is currently available); both runs fail identically."
+      },
+      {
+        "id": "J4b",
+        "journey": "violations-fail-deterministically-case-b",
+        "testOutcome": "pass",
+        "recordOutcome": "fail",
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "toolCallCount": 1,
+        "violationCount": 1,
+        "repeatsByteIdentical": true,
+        "notes": "Unscripted request fails deterministically with byte-identical records across runs 1 and 2."
+      }
+    ]
+  }
+}

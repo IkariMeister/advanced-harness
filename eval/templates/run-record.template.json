@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "recordId": "template-run-record-0001",
+  "protocolVersion": "1.0.0",
+  "recordKind": "template",
+  "repository": {
+    "commit": "0000000000000000000000000000000000000000",
+    "harnessVersion": "0.5.0-dev",
+    "dirty": false
+  },
+  "runner": {
+    "executedBy": "template-author",
+    "executionKind": "human-interactive"
+  },
+  "hostEnvironment": {
+    "host": "opencode",
+    "hostVersion": "0.0.0",
+    "os": "template-os",
+    "networkEnforcement": "none",
+    "hermetic": false,
+    "notes": "Template placeholder; replace with actual host version, OS, network enforcement, and hermeticity details."
+  },
+  "modelVerification": {
+    "status": "loopback-fixture",
+    "evidence": "Template placeholder; for live runs, record runtime model evidence if verified or set status to unverified and omit observedRoleModels.",
+    "observedRoleModels": {
+      "lead": "loopback/mock-lead",
+      "implementer": "loopback/mock-implementer"
+    }
+  },
+  "hostCapabilityPrerequisites": {
+    "matrixSource": "docs/host-permission-capabilities.md",
+    "sameRoleApprovalTransition": "unverified",
+    "localRemoteIsolation": "advisory",
+    "perRoleCommands": "unverified",
+    "skillsMcpExposure": "advisory",
+    "actualModelRouting": "unverified"
+  },
+  "taskClassification": {
+    "taskClasses": ["routine-implementation"],
+    "taskCriteria": [
+      "Replace with explicit task or scenario acceptance criteria."
+    ],
+    "methodologyMode": "RDD",
+    "rigor": "standard"
+  },
+  "runManifest": {
+    "schemaVersion": 1,
+    "runId": "template-run-001",
+    "createdAt": "2026-11-21T00:00:00Z",
+    "mode": "deterministic",
+    "host": "opencode",
+    "roleSetup": "eight-role",
+    "modelConfig": {
+      "provider": "loopback-fixture",
+      "fixtureLoopbackOnly": true,
+      "roleModels": {
+        "lead": "loopback/mock-lead",
+        "implementer": "loopback/mock-implementer"
+      }
+    },
+    "rubricId": "edd-deterministic-v1",
+    "rubricVersion": "1.0.0",
+    "isolation": {
+      "tempRepo": true,
+      "isolatedConfig": true,
+      "networkAllowed": false
+    },
+    "scenarioIds": ["EDD-DEV-001"]
+  },
+  "repeatability": {
+    "repeatCount": 1,
+    "allRepeatable": true,
+    "executedScenarios": 0,
+    "totalScenarios": 1,
+    "scenarioSummaries": [
+      {
+        "scenarioId": "EDD-DEV-001",
+        "scenarioVersion": "1.0.0",
+        "bound": false,
+        "outcomes": ["skipped"],
+        "repeatable": true,
+        "differenceCount": 0
+      }
+    ]
+  },
+  "results": [
+    {
+      "schemaVersion": 1,
+      "runId": "template-run-001",
+      "scenarioId": "EDD-DEV-001",
+      "scenarioVersion": "1.0.0",
+      "outcome": "skipped",
+      "reason": "observed status not observed, expected status pass: deliberately not executed: template placeholder; metrics not observed.",
+      "durationMs": 0,
+      "observableStateChecks": [],
+      "evidence": [],
+      "metrics": {
+        "handoffCount": 0,
+        "roleTransitions": [],
+        "skillsInvoked": [],
+        "humanInterventions": 0,
+        "permissionAmbiguities": 0,
+        "reviewDetectedDefects": 0,
+        "escapedDefects": 0
+      }
+    }
+  ],
+  "metricObservation": {
+    "observed": [],
+    "notObserved": [
+      "handoffCount",
+      "roleTransitions",
+      "skillsInvoked",
+      "humanInterventions",
+      "permissionAmbiguities",
+      "reviewDetectedDefects",
+      "escapedDefects",
+      "tokenCostUsd",
+      "durationMs"
+    ]
+  },
+  "supplementaryMetrics": {
+    "requirementCoverage": {
+      "status": "not-observed",
+      "note": "Populate with met/total acceptance criteria once observed."
+    },
+    "reworkCycles": {
+      "status": "not-observed",
+      "note": "Count post-review fix cycles once observed."
+    },
+    "planDriftCount": {
+      "status": "not-observed",
+      "note": "Count material scope or plan deviations once observed."
+    },
+    "contextReconstructionCount": {
+      "status": "not-observed",
+      "note": "Count re-discovery or context-rebuilding handoffs once observed."
+    },
+    "evidenceQuality": {
+      "status": "not-observed",
+      "note": "Summarize checks re-run vs judged from evidence only and missing artifacts once observed."
+    },
+    "tokenUsage": {
+      "status": "unknown",
+      "note": "Record input/output tokens and estimated cost when provider telemetry is available; keep unknown otherwise."
+    },
+    "plannedApprovalGates": {
+      "status": "not-observed",
+      "note": "Count expected conversational approval gates separately from unplanned humanInterventions."
+    }
+  },
+  "limitations": [
+    "Template placeholder only; not observed evaluation evidence."
+  ],
+  "waivers": []
+}
