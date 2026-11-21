@@ -1,12 +1,15 @@
-# Future knowledge-bundle contract (OKF v0.2)
+# Proposed knowledge-bundle profile (OKF v0.2)
 
-**Status:** Future documentation contract; no populated knowledge directory or runtime implementation.
+**Status:** Historical proposed profile; ADR-0010 remains Proposed. Issue #206 now generates the populated bundle; runtime OKF support is not implemented.
 
-This document describes a proposed small repository knowledge bundle using the
-upstream Open Knowledge Format (OKF) v0.2. It is not an implementation plan,
-approval of ADR-003, or a claim that a bundle currently exists. Its purpose is to
-make any later bundle's boundaries, metadata, provenance, and review expectations
-explicit. The authoritative format source is the upstream
+This document describes the earlier proposed profile for a small repository
+knowledge bundle using the upstream Open Knowledge Format (OKF) v0.2. Issue #206
+subsequently implemented generation under the separate [projection contract](adr/0010-okf-knowledge-projection-contract.md)
+and [generation guide](knowledge-bundle-generation.md). The current generator uses
+only that contract's three mappings and metadata rules; the candidate layout,
+types, statuses, IDs, and broader requirements below remain historical proposals
+and are not the generated bundle's specification. This document is not an
+implementation plan, approval of ADR-003, or evidence of runtime OKF support. The authoritative format source is the upstream
 [OKF v0.2 specification](https://raw.githubusercontent.com/GoogleCloudPlatform/open-knowledge-format/main/SPEC.md);
 this contract is a project-specific profile and summary, not a replacement for it.
 This URL points to the upstream `main` branch and is therefore an unpinned v0.2
@@ -22,9 +25,9 @@ operational memory. The following are out of scope: runtime instructions,
 credentials, configuration snapshots, and operational evidence. Do not copy these
 into a knowledge bundle merely because they are Markdown or useful context.
 
-This contract reserves a possible `knowledge/` layout for a later, separately
-approved implementation. The paths below describe that future layout only; they
-are not current links or claims that these files exist:
+The paths and mappings below were candidates in this earlier profile. They differ
+from the three resources actually generated under ADR-0010 and must not be used as
+current output paths:
 
 | Future bundle path | Source | Type | Contract status |
 | --- | --- | --- | --- |
@@ -32,7 +35,7 @@ are not current links or claims that these files exist:
 | `knowledge/decisions/adr-0003.md` | `docs/adr/0003-multi-methodology-development-architecture.md` | `decision` | Explicitly `draft`; source ADR remains Proposed pending its pilot |
 | `knowledge/guides/native-workflow.md` | `docs/opencode-native-workflow.md` | `guide` | `stable` representation |
 
-These are candidate representations, not a direction to duplicate files now.
+These were candidate representations, not the current generated projections.
 Source documents remain authoritative. A summary may condense a source but must not
 strengthen, broaden, or change its claims. In particular, the ADR representation
 must preserve its Proposed status and pending-pilot qualification; OKF `verified`
@@ -74,9 +77,10 @@ The above summarizes only the cited upstream v0.2 source and project profile.
 Resolve any discrepancy against the authoritative specification; do not treat
 project-specific requirements as universal OKF requirements.
 
-## Acceptance criteria for a future bundle
+## Historical acceptance criteria for a future bundle
 
-A future proposal to populate this bundle is acceptable only when:
+These criteria described the earlier proposed bundle; issue #206 generation is
+specified by ADR-0010 and its implementation guide above:
 
 1. A separately approved scope identifies the selected source documents and
    confirms exclusions; no runtime changes or ADR status changes are implied.
@@ -104,7 +108,9 @@ change an ADR's lifecycle status through representation or metadata.
 
 ## Manual smoke prerequisites and procedure
 
-This is a future manual smoke plan, not a completed validation result. Prerequisites:
+This is a historical future manual smoke plan, not a completed validation result.
+The issue #206 generator has since been implemented; its scoped checks are described
+in the generation guide. This section's former prerequisites:
 an approved implementation scope, an actual bundle root with the listed candidate
 files and root `index.md`, access to the authoritative upstream v0.2 specification,
 and a human reviewer able to inspect sources and links. Until those prerequisites

@@ -148,13 +148,13 @@ To add or change a term, edit this file in the same change that first uses the n
 | **live evaluation run** | An evaluation run in `mode: live` that uses a rubric with an [LLM judge](#evaluation-edd) and its own output directory. It runs separately from the deterministic [evaluation runner](#evaluation-edd), is never part of CI or the deterministic gate, and is not implemented yet. See [evaluation](evaluation.md#live-model-evaluation). | Deterministic evaluation run; [agent E2E suite](agent-e2e.md) run; a [repeat run](#evaluation-edd). |
 | **LLM judge** | A model that scores a live evaluation run against a versioned [rubric](#evaluation-edd), pinned by `modelId` and `rubricVersion` in the rubric's `judge` block and calibrated against human-reviewed examples kept outside the validation set (a procedure, not enforced by tooling). It is not implemented yet. | [Scenario binding](#evaluation-edd) judge (the deterministic check in `e2e/eval/bindings/`); [Reviewer](#roles-and-agents) review. |
 
-## Knowledge format (future contract)
+## Knowledge format
 
 | Term | Meaning in this project | Not to be confused with |
 | --- | --- | --- |
-| **OKF** | Open Knowledge Format, referring here to the upstream Open Knowledge Format specification version 0.2 and this project's documented future bundle contract. | An implemented harness feature or populated knowledge bundle. |
-| **knowledge bundle** | A future, repository-relative collection of Markdown knowledge documents and optional supporting files organized under the documented OKF v0.2 contract. No populated bundle or runtime support is established by this definition. | Repository-wide documentation; operational memory. |
-| **OKF concept** | A non-reserved Markdown knowledge document in a bundle, identified by its bundle-relative path without the `.md` suffix. | A concept in general usage; an implemented harness entity. |
+| **OKF** | Open Knowledge Format, referring here to upstream specification version 0.2 and this project's generated knowledge bundle. The bundle is documentation output; no runtime OKF support is implemented. | An implemented runtime feature. |
+| **knowledge bundle** | The populated, repository-relative collection of generated Markdown projections organized under the documented OKF v0.2 contract. Canonical source documents remain authoritative, and generated draft status does not accept or alter Proposed governance. | Repository-wide documentation; operational memory. |
+| **OKF concept** | A non-reserved Markdown knowledge document in the bundle, identified by its bundle-relative path without the `.md` suffix. | A concept in general usage; an implemented harness entity. |
 | **concept ID** | The OKF concept's path relative to its bundle, with the `.md` suffix removed. | A repository path or globally unique identifier. |
 | **OKF status** | A project's explicit `draft`, `stable`, or `deprecated` lifecycle value for a concept. OKF's default when status is absent is `stable`; this project requires explicit status, and `verified` is not approval. | Human approval, verification evidence, or upstream-required universal metadata. |
 
