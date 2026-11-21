@@ -9,14 +9,14 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 /** Comment line marking the one role (External) that may use the MCP servers selected at install. Codex ignores comments. */
 export const mcpMarker = /^# advanced-harness: mcp=allowed\r?$/m;
 
 /** Keys re-applied on every invocation. developer_instructions stays in the thread history on resume. */
-export const securityKeys = ['sandbox_mode', 'approval_policy', 'sandbox_workspace_write.network_access', 'model', 'model_reasoning_effort'];
+export const securityKeys = ['sandbox_mode', 'approval_policy', 'sandbox_workspace_write.network_access', 'sandbox_workspace_write.writable_roots', 'model', 'model_reasoning_effort'];
 
 /**
  * Reads the harness-generated profile subset: `[table]` headers and single-line `key = value` entries.
@@ -40,16 +40,26 @@ export function parseProfile(text) {
 const tomlKey = name => /^[A-Za-z0-9_-]+$/.test(name) ? name : JSON.stringify(name);
 
 /** Builds the codex argument list for one role launch or resume. Pure, for tests. */
-export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed, mcpSelected = [], resumeId, task, schemaPath, resultPath }) {
+export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed, mcpSelected = [], resumeId, task, schemaPath, resultPath, workspaceRoot }) {
   if (!/^[a-z][a-z0-9_-]{0,63}$/.test(role) || role === 'lead') throw new Error(`Not a launchable role: ${role}`);
   if (!task || !task.trim()) throw new Error('A task is required.');
   // Codex reads a lone "-" prompt from stdin, which the launcher closes: it would run with no task.
   if (task.trim() === '-') throw new Error('The task cannot be "-".');
   const profile = parseProfile(profileText);
+  if (!profile.has('sandbox_workspace_write.writable_roots')) throw new Error(`Role profile for ${role} lacks sandbox_workspace_write.writable_roots; reinstall the harness.`);
+  const baselineRoots = profile.get('sandbox_workspace_write.writable_roots');
+  if (baselineRoots !== '[]') throw new Error(`Role profile for ${role} has an incompatible writable_roots baseline; reinstall the harness.`);
   const overrides = [];
   for (const key of securityKeys) {
     if (!profile.has(key)) throw new Error(`Role profile for ${role} lacks ${key}; reinstall the harness.`);
-    overrides.push('-c', `${key}=${profile.get(key)}`);
+    let value = profile.get(key);
+    if (key === 'sandbox_workspace_write.writable_roots') {
+      if (role === 'implementer') {
+        if (!isAbsolute(workspaceRoot ?? '')) throw new Error('Implementer requires a validated absolute workspace root.');
+        value = `[${JSON.stringify(workspaceRoot)}]`;
+      } else value = '[]';
+    }
+    overrides.push('-c', `${key}=${value}`);
   }
   // Fail closed: every MCP server the effective config knows about is switched off, except the servers
   // selected at install for the role that owns MCP. Selected servers stay disabled in the base config, so
@@ -63,6 +73,12 @@ export function buildRoleInvocation({ role, profileText, mcpServers, mcpAllowed,
     ? ['exec', 'resume', '--disable', 'plugins', ...overrides, ...output, '--', resumeId, task]
     : ['-p', `harness-${role}`, '--disable', 'plugins', 'exec', ...overrides, ...output, '--', task];
 }
+
+/** Codex subprocess boundary, injectable for launcher-entry regression tests. */
+export const launcherRuntime = {
+  execFileSync: (file, args, options) => execFileSync(file, args, options),
+  spawnSync: (file, args, options) => spawnSync(file, args, options),
+};
 
 /**
  * Discovery call for a role's MCP servers, run with Codex plugins disabled so only servers defined in config.toml are listed.
@@ -112,9 +128,21 @@ export function readThreadBindings(dir) {
   const bindings = Object.create(null);
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
-    if (!threadIdPattern.test(name) || !statSync(path).isFile()) throw malformed(`unexpected entry ${name}`);
-    const role = readFileSync(path, 'utf8').trim();
-    if (!rolePattern.test(role)) throw malformed(`${name} does not name a role`);
+    let info;
+    try { info = statSync(path); } catch { throw malformed(`unreadable entry ${name}`); }
+    if (!threadIdPattern.test(name) || !info.isFile()) throw malformed(`unexpected entry ${name}`);
+    let role;
+    let contents;
+    try { contents = readFileSync(path, 'utf8'); } catch { throw malformed(`unreadable entry ${name}`); }
+    try { role = JSON.parse(contents); } catch { role = contents.trim(); }
+    if (typeof role === 'string') {
+      if (!rolePattern.test(role)) throw malformed(`${name} does not name a role`);
+    } else if (!role || typeof role !== 'object' || Array.isArray(role) || !rolePattern.test(role.role ?? '')
+      || (role.role === 'implementer'
+        ? Object.keys(role).sort().join(',') !== 'commonDir,gitDir,role,worktree' || !validateGitIdentity({ top: role.worktree, gitDir: role.gitDir, commonDir: role.commonDir })
+        : Object.keys(role).join(',') !== 'role')) {
+      throw malformed(`${name} does not name a role binding`);
+    }
     bindings[name] = role;
   }
   return bindings;
@@ -125,18 +153,28 @@ export function assertResumable(bindings, threadId, role) {
   if (!threadIdPattern.test(threadId)) throw new Error(`Invalid thread ID "${threadId}".`);
   const owner = Object.prototype.hasOwnProperty.call(bindings, threadId) ? bindings[threadId] : undefined;
   if (owner === undefined) throw new Error(`Unknown thread ${threadId}: only threads started by the role launcher can be resumed.`);
-  if (owner !== role) throw new Error(`Thread ${threadId} belongs to ${owner}; it cannot be resumed as ${role}.`);
+  const ownerRole = typeof owner === 'object' ? owner.role : owner;
+  if (ownerRole !== role) throw new Error(`Thread ${threadId} belongs to ${ownerRole}; it cannot be resumed as ${role}.`);
 }
 
 /** Creates this thread's binding file exclusively; an existing binding is accepted only if it names the same role. */
-export function recordThread(dir, threadId, role) {
+export function recordThread(dir, threadId, role, identity) {
   if (!threadIdPattern.test(threadId)) throw new Error(`Invalid thread ID "${threadId}".`);
+  if (role === 'implementer' && !validateGitIdentity(identity)) {
+    throw new Error('Cannot record Implementer thread without complete Git worktree identity.');
+  }
   mkdirSync(dir, { recursive: true });
-  try { writeFileSync(join(dir, threadId), `${role}\n`, { flag: 'wx', mode: 0o600 }); }
+  const value = role === 'implementer'
+    ? { role, worktree: identity.top, gitDir: identity.gitDir, commonDir: identity.commonDir }
+    : role;
+  try { writeFileSync(join(dir, threadId), `${JSON.stringify(value)}\n`, { flag: 'wx', mode: 0o600 }); }
   catch (error) {
     if (error?.code !== 'EEXIST') throw error;
-    const owner = readFileSync(join(dir, threadId), 'utf8').trim();
-    if (owner !== role) throw new Error(`Thread ${threadId} is already bound to ${owner}.`);
+    const owner = readThreadBindings(dir)[threadId];
+    if ((typeof owner === 'string' ? owner : owner.role) !== role) throw new Error(`Thread ${threadId} is already bound to ${typeof owner === 'string' ? owner : owner.role}.`);
+    if (role === 'implementer' && (typeof owner === 'string' || owner.worktree !== identity.top || owner.gitDir !== identity.gitDir || owner.commonDir !== identity.commonDir)) {
+      throw new Error(`Thread ${threadId} is already bound to a different Implementer worktree.`);
+    }
   }
 }
 
@@ -145,7 +183,7 @@ export function recordThread(dir, threadId, role) {
  * recorded is reported, never thrown: the child has already done its work, so its thread ID, exit status
  * and result are kept and the outcome needs a human decision rather than a blind retry.
  */
-export function reportRun({ role, resumeId, bindingsPath, stdout, exitCode, resultText }) {
+export function reportRun({ role, resumeId, bindingsPath, stdout, exitCode, resultText, identity }) {
   const startedId = (stdout ?? '').split(/\r?\n/).map(line => { try { return JSON.parse(line); } catch { return undefined; } })
     .find(event => event?.type === 'thread.started')?.thread_id;
   let result;
@@ -153,7 +191,7 @@ export function reportRun({ role, resumeId, bindingsPath, stdout, exitCode, resu
   catch { result = { status: 'Needs your decision', summary: 'The role ended without a parseable status report.', details: '' }; }
   const threadId = startedId ?? resumeId;
   if (resumeId === undefined && typeof startedId === 'string' && threadIdPattern.test(startedId)) {
-    try { recordThread(bindingsPath, startedId, role); }
+    try { recordThread(bindingsPath, startedId, role, identity); }
     catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       return {
@@ -195,6 +233,40 @@ function parseArgs(argv) {
   return options;
 }
 
+function gitIdentity(cwd, env) {
+  const git = findGitBinary(env);
+  const run = args => launcherRuntime.execFileSync(git, args, {
+    cwd, env: cleanGitEnvironment(env), encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 5000, maxBuffer: 64 * 1024,
+  }).trim();
+  const normalize = path => {
+    const absolute = isAbsolute(path) ? path : resolve(cwd, path);
+    const actual = realpathSync(absolute);
+    return process.platform === 'win32' ? actual.toLowerCase() : actual;
+  };
+  const top = normalize(run(['rev-parse', '--show-toplevel']));
+  const gitDir = normalize(run(['rev-parse', '--absolute-git-dir']));
+  const commonDirRaw = run(['rev-parse', '--git-common-dir']);
+  const commonDir = normalize(commonDirRaw);
+  const gitDirRaw = run(['rev-parse', '--git-dir']);
+  const linked = normalize(gitDirRaw) !== commonDir;
+  if (!linked) throw new Error('Implementer requires a linked Git worktree; no child was launched.');
+  return { top, gitDir, commonDir };
+}
+
+function findGitBinary(env) {
+  if (env.GIT_BIN) return env.GIT_BIN;
+  return process.platform === 'win32' ? 'git.exe' : 'git';
+}
+
+function cleanGitEnvironment(env) {
+  const cleaned = { ...env };
+  for (const key of Object.keys(cleaned)) {
+    if (/^GIT_/i.test(key)) delete cleaned[key];
+  }
+  return cleaned;
+}
+
 export function main(argv = process.argv.slice(2), env = process.env) {
   const options = parseArgs(argv);
   const home = env.CODEX_HOME || join(homedir(), '.codex');
@@ -205,27 +277,59 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   const bindingsPath = threadBindingsPath(home);
   // Checked before anything runs: malformed bindings, or an unknown or other-role thread, never start a child.
   const bindings = readThreadBindings(bindingsPath);
-  if (options['--resume'] !== undefined) assertResumable(bindings, options['--resume'], options.role);
   const profileText = readFileSync(profilePath, 'utf8');
+  const profile = parseProfile(profileText);
+  if (!profile.has('sandbox_workspace_write.writable_roots')) throw new Error(`Role profile for ${options.role} lacks sandbox_workspace_write.writable_roots; reinstall the harness.`);
+  if (profile.get('sandbox_workspace_write.writable_roots') !== '[]') throw new Error(`Role profile for ${options.role} has an incompatible writable_roots baseline; reinstall the harness.`);
   const mcpAllowed = mcpMarker.test(profileText);
   const codex = findCodexBinary(env);
   const cwd = options['--cd'] ?? process.cwd();
+  if (options.role === 'implementer' && (!options['--cd'] || !isAbsolute(options['--cd']))) {
+    throw new Error('Implementer requires an explicit absolute --cd linked worktree root; no child was launched.');
+  }
+  const canonicalCwd = realpathSync(cwd);
+  if (options.role === 'implementer' && canonicalCwd !== resolve(options['--cd'])) {
+    throw new Error('Implementer --cd must be the canonical linked worktree path, not a path alias; no child was launched.');
+  }
+  let identity;
+  if (options.role === 'implementer') {
+    const found = gitIdentity(canonicalCwd, env);
+    const samePath = (left, right) => process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+    if (!samePath(found.top, canonicalCwd)) throw new Error('Implementer --cd must be exactly the canonical linked worktree root; no child was launched.');
+    identity = found;
+  }
+  if (options['--resume'] !== undefined) {
+    assertResumable(bindings, options['--resume'], options.role);
+    if (options.role === 'implementer') {
+      const binding = bindings[options['--resume']];
+      if (typeof binding !== 'object' || !binding || binding.worktree !== identity.top || binding.gitDir !== identity.gitDir || binding.commonDir !== identity.commonDir) {
+        throw new Error(`Implementer thread ${options['--resume']} is legacy or belongs to a different worktree; no child was launched.`);
+      }
+    }
+  }
+  if (options.role === 'implementer' && !validateGitIdentity(identity)) {
+    throw new Error('Implementer Git worktree identity is incomplete; no child was launched.');
+  }
   const mcpSelected = mcpAllowed ? readSelectedMcpServers(home) : [];
   // A failed listing aborts the launch rather than starting a role with unknown MCP servers enabled.
-  const mcpServers = listMcpServers(options.role, args => execFileSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true }));
+  const mcpServers = listMcpServers(options.role, args => launcherRuntime.execFileSync(codex, args, { cwd: canonicalCwd, env, encoding: 'utf8', windowsHide: true }));
   const outputDir = join(tmpdir(), 'advanced-harness-codex');
   mkdirSync(outputDir, { recursive: true });
   const resultPath = join(outputDir, `${options.role}-${Date.now()}.json`);
   const args = buildRoleInvocation({
     role: options.role, profileText, mcpServers, mcpAllowed, mcpSelected, resumeId: options['--resume'], task: options['--task'],
-    schemaPath: join(home, 'advanced-harness', 'role-status.schema.json'), resultPath,
+    schemaPath: join(home, 'advanced-harness', 'role-status.schema.json'), resultPath, workspaceRoot: options.role === 'implementer' ? canonicalCwd : undefined,
   });
-  const run = spawnSync(codex, args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
+  const run = launcherRuntime.spawnSync(codex, args, { cwd: canonicalCwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
   let resultText;
   try { resultText = readFileSync(resultPath, 'utf8'); } catch { resultText = undefined; }
-  const { code, report } = reportRun({ role: options.role, resumeId: options['--resume'], bindingsPath, stdout: run.stdout, exitCode: run.status, resultText });
+  const { code, report } = reportRun({ role: options.role, resumeId: options['--resume'], bindingsPath, stdout: run.stdout, exitCode: run.status, resultText, identity });
   console.log(JSON.stringify(report, null, 2));
   return code;
+}
+
+export function validateGitIdentity(identity) {
+  return Boolean(identity && ['top', 'gitDir', 'commonDir'].every(key => typeof identity[key] === 'string' && identity[key].length > 0));
 }
 
 /**

@@ -18,6 +18,7 @@ function sandbox(t: { after(fn: () => void): void }) {
   return { root, home, codex: join(home, '.codex'), recovery: join(root, 'recovery'), output: [] as string[], errors: [] as string[] };
 }
 type Box = ReturnType<typeof sandbox>;
+const fixtureIdentity = { top: 'C:/fixture/worktree', gitDir: 'C:/fixture/repo/.git/worktrees/wt', commonDir: 'C:/fixture/repo/.git' };
 
 const install = async (box: Box, mcp = '', tools = '') => {
   const ask = async (question: string) => question.startsWith('Existing Codex MCP server') ? mcp
@@ -71,6 +72,30 @@ test('Codex uninstall restores a pre-existing config.toml and AGENTS.md byte for
   assert.equal(readFileSync(join(box.codex, 'AGENTS.md'), 'utf8'), '# Personal Codex notes\n');
   assert.deepEqual(readdirSync(box.codex).sort(), ['AGENTS.md', 'config.toml'], 'profiles, launcher, schema, rules and state are removed');
   assert.equal(existsSync(join(box.home, '.agents', 'skills')), false, 'installer-created skill directories are pruned');
+});
+
+test('Codex uninstall backs up recognized legacy/new thread records and preserves unexpected entries', async t => {
+  const box = sandbox(t);
+  await install(box);
+  const threads = join(box.codex, 'advanced-harness', 'role-threads');
+  mkdirSync(threads, { recursive: true });
+  writeFileSync(join(threads, 'thread-old'), 'reviewer\n');
+  writeFileSync(join(threads, 'thread-new'), JSON.stringify({ role: 'implementer', worktree: 'C:/w', gitDir: 'C:/g/wt', commonDir: 'C:/g' }) + '\n');
+  writeFileSync(join(threads, 'thread-ambiguous'), JSON.stringify({ role: 'reviewer', note: 'user data' }) + '\n');
+  writeFileSync(join(threads, 'notes.txt'), 'preserve me');
+  assert.equal(await uninstall(box), 0, box.errors.join('\n'));
+  assert.equal(existsSync(join(threads, 'notes.txt')), true);
+  assert.equal(readFileSync(join(threads, 'notes.txt'), 'utf8'), 'preserve me');
+  assert.equal(readFileSync(join(threads, 'thread-ambiguous'), 'utf8'), JSON.stringify({ role: 'reviewer', note: 'user data' }) + '\n');
+  const backupRoot = readdirSync(box.recovery).map(name => join(box.recovery, name));
+  const backed = backupRoot.flatMap(path => {
+    try { return readdirSync(path).map(file => join(path, file)); } catch { return []; }
+  });
+  const recordBackups = backed.flatMap(path => {
+    try { return readdirSync(path).map(file => join(path, file)); } catch { return []; }
+  });
+  assert.ok(recordBackups.some(path => readFileSync(path, 'utf8') === 'reviewer\n'));
+  assert.ok(recordBackups.some(path => readFileSync(path, 'utf8').includes('"worktree":"C:/w"')));
 });
 
 test('MCP servers named like Object.prototype members keep their own records through update and uninstall', async t => {
@@ -154,7 +179,7 @@ test('Codex uninstall also removes the launcher thread bindings and their empty 
   const box = sandbox(t);
   await install(box);
   const bindings = join(box.codex, 'advanced-harness', 'role-threads');
-  recordThread(bindings, 'thread-1', 'implementer');
+  recordThread(bindings, 'thread-1', 'implementer', fixtureIdentity);
   recordThread(bindings, 'thread-2', 'reviewer');
   assert.equal(await uninstall(box), 0, box.errors.join('\n'));
   assert.equal(existsSync(bindings), false);
@@ -184,7 +209,7 @@ test('Codex uninstall keeps and reports files in the bindings directory that are
   const box = sandbox(t);
   await install(box);
   const bindings = join(box.codex, 'advanced-harness', 'role-threads');
-  recordThread(bindings, 'thread-1', 'implementer');
+  recordThread(bindings, 'thread-1', 'implementer', fixtureIdentity);
   writeFileSync(join(bindings, 'notes.txt'), 'mine\n');
   writeFileSync(join(bindings, 'thread-2'), 'not-a-role\n');
   assert.equal(await uninstall(box), 0, box.errors.join('\n'));
@@ -202,7 +227,7 @@ test('a binding changed after review stops the Codex step before any write', asy
   await install(box);
   const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
   const bindings = join(box.codex, 'advanced-harness', 'role-threads');
-  recordThread(bindings, 'thread-1', 'implementer');
+  recordThread(bindings, 'thread-1', 'implementer', fixtureIdentity);
   const step = planCodexUninstall(target, box.recovery);
   writeFileSync(join(bindings, 'thread-1'), 'reviewer\n');
   const config = readFileSync(join(box.codex, 'config.toml'), 'utf8');
@@ -217,7 +242,7 @@ test('a failed Codex step keeps the state manifest, reports completed work and b
   await install(box);
   const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
   const bindings = join(box.codex, 'advanced-harness', 'role-threads');
-  recordThread(bindings, 'thread-1', 'implementer');
+  recordThread(bindings, 'thread-1', 'implementer', fixtureIdentity);
   recordThread(bindings, 'thread-2', 'reviewer');
   const config = readFileSync(join(box.codex, 'config.toml'), 'utf8');
   let calls = 0;
@@ -514,7 +539,7 @@ test('a binding directory replaced by a link is refused, leaving its destination
   await install(box);
   const target = selectUninstallTarget({ host: 'codex', scope: 'global', home: box.home, cwd: box.root });
   const threads = join(box.codex, 'advanced-harness', 'role-threads');
-  recordThread(threads, 'thread-1', 'implementer');
+  recordThread(threads, 'thread-1', 'implementer', fixtureIdentity);
   const step = planCodexUninstall(target, box.recovery);
   const outside = join(box.root, 'outside-threads');
   mkdirSync(outside);

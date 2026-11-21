@@ -15,6 +15,7 @@ This directory contains proposed and accepted architecture decisions for Advance
 | [ADR-009](0009-operator-owned-preflight-evidence-and-human-approved-publication-handoffs.md) | Operator-Owned Preflight Evidence and Human-Approved Publication Handoffs | Proposed | Preflight evidence ownership and publication handoffs |
 | [ADR-010](0010-okf-knowledge-projection-contract.md) | Open Knowledge Format Projection Contract | Proposed | Provenance-backed projection of selected documentation into an OKF v0.2 bundle |
 | [ADR-011](0011-deterministic-agent-e2e-via-loopback-model-fixture.md) | Deterministic Agent E2E via a Loopback Model Fixture | Proposed | Agent E2E suite: pinned OpenCode, loopback model fixture, and CI network bounds |
+| [ADR-012](0012-codex-implementer-linked-worktree-boundary.md) | Bind Codex Implementer to a Linked Worktree | Proposed | Implementer launch directory and resume identity boundary |
 
 The November 2026 ADR review took place on 2026-11-15; ADR-004, ADR-007, and ADR-008 were accepted on 2026-11-16.
 

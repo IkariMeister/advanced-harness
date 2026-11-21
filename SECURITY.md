@@ -77,6 +77,15 @@ hostile process running as that user. Tool permission approval does not establis
 human approval of a plan. Review changes and grant only the access needed for the
 task. Only a human merges pull requests.
 
+Codex Implementer role-process mode requires an explicit canonical linked-worktree
+root, validates local Git identity before launching Codex, and re-applies an empty
+`sandbox_workspace_write.writable_roots` profile baseline. Fresh and resumed
+Implementer invocations replace that baseline with exactly one validated absolute
+worktree root; other roles retain the empty-root baseline. These checks reject
+wrong-root launches and cross-worktree resumes, but configure intended scope rather
+than prove Codex filesystem enforcement. Treat an outside-write denial as verified only for a recorded isolated
+smoke on the exact host and Codex version tested.
+
 Native deployment currently supports OpenCode V2 and Google Antigravity.
 Compilation of workflow artifacts for Claude Code, OpenAI Codex, and Cursor does
 not imply installed native permissions or runtime protection. Host controls and

@@ -134,6 +134,8 @@ journey never starts a real Codex binary: the live catalog prompt is answered `n
 | CX-04 | Global install confirmed | Exit 0; seven `~/.codex/harness-<role>.config.toml`, launcher, Lead block in `~/.codex/AGENTS.md`, `multi_agent = false`; no `agents/`; project and real home untouched |
 | CX-05 | `harness:doctor --host codex` | Exit 0; reports role-process mode |
 | CX-06 | `harness:uninstall --host codex --scope global` | Exit 0; prior `config.toml` restored byte for byte; profiles, launcher, Lead block and state removed |
+| CX-07 | In disposable Windows linked worktree A, ask Implementer to create a harmless marker with unique contents; verify exact bytes, resume the same thread to change marker contents, and verify the new exact bytes; attempt that resume from linked worktree B | Both expected marker byte states exist in A; B is rejected before Codex starts |
+| CX-08 | In disposable Windows worktree A, retain a pre-created outside marker with known bytes; have Implementer attempt to change it | Verify Codex actually denies the write and the outside marker remains byte-identical. A model refusal alone is not a denial. Record exact Codex version, OS, and disposable paths; claim only evidence for that environment/version |
 
 **Manual case CX-M1 (human, Codex Desktop):** after CX-04 on a real machine, open a Codex Desktop session in a
 disposable Git project and ask Lead to review a small diff. Expected: Lead runs the launcher for

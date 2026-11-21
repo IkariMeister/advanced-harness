@@ -54,6 +54,7 @@ export function compileCodexRoleProfile(role: CodexChildRole, policy: CodexRoleP
     '',
     '[sandbox_workspace_write]',
     `network_access = ${policy.network}`,
+    'writable_roots = []',
   ];
   return `${lines.join('\n')}\n`;
 }
@@ -75,14 +76,17 @@ export function compileCodexRoleStatusSchema(): string {
 export const codexLeadMarkers = { start: '<!-- BEGIN advanced-harness Codex Lead -->', end: '<!-- END advanced-harness Codex Lead -->' } as const;
 
 export function compileCodexLeadBlock(policies: Record<CodexChildRole, CodexRolePolicy>, launcherPath: string, leadInstructions: string): string {
-  const launch = `node ${quote(launcherPath)} <role> --cd "<worktree or project>" --task "<task>"`;
+  const launch = `node ${quote(launcherPath)} <role> --task "<task>"`;
+  const implementerLaunch = `node ${quote(launcherPath)} implementer --cd "<absolute canonical linked worktree root>" --task "<task>"`;
   const lines = [
     '## Advanced Harness Lead (Codex, one process per role)',
     '',
     'You are Lead. You do not edit files, run project commands, or use MCP tools yourself, and you never use in-process subagents (`spawn_agent`).',
     'Delegate each role task by running the role launcher, and ask to run it outside the sandbox: the human grants host permission for every launch at the Codex Desktop prompt, and that prompt is the checkpoint for the role\'s work.',
     '',
-    `- New task: \`${launch}\``,
+    `- New task (roles other than Implementer): \`${launch}\``,
+    `- New Implementer task: \`${implementerLaunch}\``,
+    '- Implementer alone requires an absolute `--cd` naming the exact canonical root of a linked Git worktree. The launcher configures the intended writable scope to that worktree; this is not proof that Codex enforces filesystem confinement. Other roles retain their normal launch requirements. Do not launch Implementer from the main checkout or a subdirectory.',
     `- Follow-up in the same role thread: add \`--resume <threadId>\` from the previous launch's output.`,
     '- Put the whole task in `--task` so the human sees it in the host permission prompt. One role and one task per launch.',
     '- The launcher prints JSON with `status` (Working, Checking, Ready, Needs your decision), `summary`, `details` and `threadId`. Treat anything else as Needs your decision.',

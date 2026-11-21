@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { codexForbiddenPrefixes, compileCodexMergeRule, diagnoseCodex, disableMultiAgent, installCodex, validateCodexToml } from '../src/codex-adapter.ts';
+import { createSuccessorReceipt, discoverReceiptChain, finalizeSuccessor, writePendingSuccessor } from '../src/receipt-lineage.ts';
 import { codexChildRoles, codexRoleLauncherSource, codexRolePolicies, compileCodexRoleProfile, compileCodexRoleStatusSchema, mergeCodexLeadBlock } from '../src/codex-role-processes.ts';
-import { assertResumable, buildRoleInvocation, isEntryPoint, listMcpServers, main as launcherMain, parseProfile, readSelectedMcpServers, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
+import { assertResumable, buildRoleInvocation, isEntryPoint, launcherRuntime, listMcpServers, main as launcherMain, parseProfile, readSelectedMcpServers, readThreadBindings, recordThread, reportRun, securityKeys, threadBindingsPath } from '../src/codex-role-launcher.mjs';
 import { loadRoleDefinitions } from '../src/role-definitions.ts';
 
 const definitions = loadRoleDefinitions(fileURLToPath(new URL('../agents/', import.meta.url)));
@@ -38,6 +39,7 @@ test('role sandbox, network and MCP are derived from the role sources (#45, #218
 });
 
 test('danger-full-access profiles say network is not restricted, and launch and resume both override the sandbox (#218)', () => {
+  const windowsRoot = resolve(join(tmpdir(), 'work tree'));
   const profile = compileCodexRoleProfile('operator', policies.operator, 'gpt-example', 'high', 'Operate.');
   validateCodexToml(profile, 'operator profile');
   assert.match(profile, /^# danger-full-access: network is not restricted under this sandbox mode/m);
@@ -53,6 +55,13 @@ test('danger-full-access profiles say network is not restricted, and launch and 
   const resume = buildRoleInvocation({ ...base, resumeId: 'thread-1', task: 'Continue' });
   assert.ok(resume.includes('sandbox_mode="danger-full-access"'), 'resume overrides the sandbox');
   assert.ok(!resume.includes('sandbox_mode="workspace-write"'));
+  const implementerProfile = compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x');
+  const implLaunch = buildRoleInvocation({ ...base, role: 'implementer', profileText: implementerProfile, workspaceRoot: windowsRoot });
+  const implResume = buildRoleInvocation({ ...base, role: 'implementer', profileText: implementerProfile, workspaceRoot: windowsRoot, resumeId: 'thread-1' });
+  assert.ok(implLaunch.includes(`sandbox_workspace_write.writable_roots=${JSON.stringify([windowsRoot])}`));
+  assert.ok(implResume.includes(`sandbox_workspace_write.writable_roots=${JSON.stringify([windowsRoot])}`));
+  assert.throws(() => buildRoleInvocation({ ...base, role: 'implementer', profileText: implementerProfile }), /validated absolute workspace root/);
+  assert.throws(() => buildRoleInvocation({ ...base, role: 'implementer', profileText: implementerProfile.replace('writable_roots = []', 'writable_roots = ["C:\\\\outside"]'), workspaceRoot: windowsRoot }), /incompatible writable_roots baseline/);
 });
 
 test('role profiles are valid TOML that the launcher can re-apply key by key', () => {
@@ -63,6 +72,7 @@ test('role profiles are valid TOML that the launcher can re-apply key by key', (
     for (const key of securityKeys) assert.ok(parsed.has(key), `${role}: ${key}`);
     assert.equal(parsed.get('approval_policy'), '"never"');
     assert.equal(parsed.get('sandbox_mode'), JSON.stringify(policies[role].sandbox));
+    assert.equal(parsed.get('sandbox_workspace_write.writable_roots'), '[]');
   }
 });
 
@@ -74,6 +84,7 @@ test('launcher re-applies role settings on launch and resume and switches MCP of
   assert.ok(launch.includes('sandbox_mode="read-only"'));
   assert.ok(launch.includes('approval_policy="never"'));
   assert.ok(launch.includes('sandbox_workspace_write.network_access=false'));
+  assert.ok(launch.includes('sandbox_workspace_write.writable_roots=[]'));
   assert.ok(launch.includes('mcp_servers.github.enabled=false'));
   assert.ok(launch.includes('mcp_servers."my server".enabled=false'));
   assert.deepEqual(launch.slice(-1), ['Review the diff']);
@@ -101,7 +112,7 @@ test('launcher refuses Lead, empty tasks, incomplete profiles and unknown roles'
   const base = { role: 'qa', profileText, mcpServers: [], mcpAllowed: false, task: 't', schemaPath: 's', resultPath: 'r' };
   assert.throws(() => buildRoleInvocation({ ...base, role: 'lead' }), /Not a launchable role/);
   assert.throws(() => buildRoleInvocation({ ...base, task: '  ' }), /task is required/);
-  assert.throws(() => buildRoleInvocation({ ...base, profileText: 'model = "m"\n' }), /lacks sandbox_mode/);
+  assert.throws(() => buildRoleInvocation({ ...base, profileText: 'model = "m"\n' }), /lacks sandbox_workspace_write\.writable_roots/);
   assert.throws(() => launcherMain(['implementer', '--task', 't'], { CODEX_HOME: join(tmpdir(), 'no-such-codex-home') }), /Unknown role "implementer"/);
   assert.throws(() => launcherMain(['qa', '--bogus', 'x'], {}), /Unknown, duplicate, or incomplete option/);
 });
@@ -168,10 +179,67 @@ test('role-process install writes profiles, launcher, schema and Lead block, and
   const before = receipts();
   assert.equal(await run(home, answers('gpt-example')), 0);
   assert.equal(receipts(), before, 'repeated identical install writes no new receipt');
+
+  const statePath = join(codex, '.advanced-harness-state.json');
+  const stateBefore = readFileSync(statePath, 'utf8');
+  const state = JSON.parse(stateBefore) as { managed: Array<{ path: string; after: unknown }> };
+  const receiptChain = discoverReceiptChain(join(home, 'Projects', 'advanced-harness-backups'), statePath, 'codex');
+  assert.ok(receiptChain.head?.receipt.version === 2 && receiptChain.head.receipt.managedFiles);
+  const legacyContents = new Map<string, string>();
+  for (const role of codexChildRoles) {
+    const path = join(codex, `harness-${role}.config.toml`);
+    legacyContents.set(path, readFileSync(path, 'utf8').replace('writable_roots = []\n', ''));
+  }
+  const oldLauncher = 'legacy managed role launcher\n';
+  const launcherPath = join(codex, 'advanced-harness', 'codex-role.mjs');
+  legacyContents.set(launcherPath, oldLauncher);
+  for (const [path, content] of legacyContents) {
+    writeFileSync(path, content);
+    const managed = state.managed.find(entry => entry.path === path);
+    assert.ok(managed, `state manifest tracks ${path}`);
+    managed.after = { content };
+  }
+  const legacyManagedFiles = structuredClone(receiptChain.head.receipt.managedFiles);
+  for (const item of legacyManagedFiles) {
+    const content = legacyContents.get(item.path);
+    if (content !== undefined) item.after = { content };
+  }
+  const stateAfter = JSON.stringify(state, null, 2) + '\n';
+  const legacyReceipt = createSuccessorReceipt(receiptChain, stateBefore, stateAfter, {}, undefined, { host: 'codex', managedFiles: legacyManagedFiles });
+  const pendingLegacy = writePendingSuccessor(receiptChain, legacyReceipt);
+  writeFileSync(statePath, stateAfter);
+  finalizeSuccessor(pendingLegacy, stateAfter);
+  mkdirSync(threadBindingsPath(codex), { recursive: true });
+  writeFileSync(join(threadBindingsPath(codex), 'thread-legacy-reviewer'), 'reviewer\n');
+  assert.throws(() => launcherMain(['reviewer', '--task', 'pre-upgrade'], { CODEX_HOME: codex, CODEX_BIN: 'codex-must-not-run' }), /lacks sandbox_workspace_write\.writable_roots/);
+  assert.throws(() => launcherMain(['reviewer', '--resume', 'thread-legacy-reviewer', '--task', 'pre-upgrade'], { CODEX_HOME: codex, CODEX_BIN: 'codex-must-not-run' }), /lacks sandbox_workspace_write\.writable_roots/);
+  assert.equal(await run(home, answers('gpt-example')), 0, 'managed update upgrades the matching historical profiles and launcher');
+  for (const role of codexChildRoles) assert.equal(parseProfile(readFileSync(join(codex, `harness-${role}.config.toml`), 'utf8')).get('sandbox_workspace_write.writable_roots'), '[]');
+  assert.equal(readFileSync(join(codex, 'advanced-harness', 'codex-role.mjs'), 'utf8'), codexRoleLauncherSource());
+  assert.equal((await diagnoseCodex({ home })).ok, true);
+  const oldExec = launcherRuntime.execFileSync, oldSpawn = launcherRuntime.spawnSync, oldLog = console.log;
+  const calls: Array<{ binary: string; args: string[]; cwd: string }> = [];
+  t.after(() => { launcherRuntime.execFileSync = oldExec; launcherRuntime.spawnSync = oldSpawn; console.log = oldLog; });
+  launcherRuntime.execFileSync = ((binary: string, args: string[], options: { cwd: string }) => {
+    calls.push({ binary, args, cwd: options.cwd });
+    if (args.at(-1) === '--json') return '[]';
+    throw new Error('unexpected subprocess');
+  }) as typeof launcherRuntime.execFileSync;
+  launcherRuntime.spawnSync = ((binary: string, args: string[], options: { cwd: string }) => {
+    calls.push({ binary, args, cwd: options.cwd });
+    return { status: 0, stdout: '{"type":"thread.started","thread_id":"thread-review-fresh"}\n', stderr: '' };
+  }) as typeof launcherRuntime.spawnSync;
+  console.log = () => {};
+  assert.equal(launcherMain(['reviewer', '--task', 'review'], { CODEX_HOME: codex, CODEX_BIN: 'codex-update-stub' }), 0);
+  assert.ok(calls.some(call => call.binary === 'codex-update-stub' && call.args.includes('exec')));
+  calls.length = 0;
+  assert.equal(launcherMain(['reviewer', '--resume', 'thread-legacy-reviewer', '--task', 'continue review'], { CODEX_HOME: codex, CODEX_BIN: 'codex-update-stub' }), 0);
+  assert.ok(calls.some(call => call.binary === 'codex-update-stub' && call.args.includes('resume')));
 });
 
 test('doctor reports a widened role profile and re-enabled multi_agent', async t => {
   const { home, codex } = sandbox(t);
+  mkdirSync(codex);
   assert.equal(await run(home, answers('gpt-example')), 0);
   const reviewer = join(codex, 'harness-reviewer.config.toml');
   writeFileSync(reviewer, readFileSync(reviewer, 'utf8').replace('sandbox_mode = "read-only"', 'sandbox_mode = "workspace-write"'));
@@ -181,6 +249,25 @@ test('doctor reports a widened role profile and re-enabled multi_agent', async t
   assert.equal(doctor.ok, false);
   assert.match(doctor.issues.join('\n'), /reviewer sandbox_mode is not read-only/);
   assert.match(doctor.issues.join('\n'), /multi_agent is not false/);
+});
+
+test('doctor rejects absent, malformed and widened writable_roots without rewriting profiles', async t => {
+  const { home, codex } = sandbox(t);
+  assert.equal(await run(home, answers('gpt-example')), 0);
+  const path = join(codex, 'harness-implementer.config.toml');
+  const original = readFileSync(path, 'utf8');
+  for (const [replacement, expected] of [
+    ['', /writable_roots is not an empty array/],
+    ['writable_roots = "outside"', /writable_roots is not an empty array/],
+    ['writable_roots = ["C:\\\\outside"]', /writable_roots is not an empty array/],
+  ] as const) {
+    const text = replacement ? original.replace('writable_roots = []', replacement) : original.replace('writable_roots = []\n', '');
+    writeFileSync(path, text);
+    const doctor = await diagnoseCodex({ home });
+    assert.equal(doctor.ok, false);
+    assert.match(doctor.issues.join('\n'), expected);
+    assert.equal(readFileSync(path, 'utf8'), text);
+  }
 });
 
 test('doctor flags an Operator profile left on workspace-write, and a widened Lead sandbox, with no writes (#218)', async t => {
@@ -219,13 +306,23 @@ test('the managed merge rule keeps its gh pr merge prefix and one rule per forbi
 });
 
 test('resume is bound to the role that started the thread; unknown or other-role threads never run', t => {
-  const { codex } = sandbox(t);
+  const { root, codex } = sandbox(t);
+  const repository = join(root, 'repo'); mkdirSync(repository);
+  const worktree = join(root, 'linked worktree'); mkdirSync(worktree);
+  const git = process.platform === 'win32' ? 'git.exe' : 'git';
+  const gitRun = (args: string[]) => spawnSync(git, args, { cwd: repository, encoding: 'utf8' });
+  assert.equal(gitRun(['init']).status, 0);
+  writeFileSync(join(repository, 'tracked'), 'x');
+  assert.equal(gitRun(['add', 'tracked']).status, 0);
+  assert.equal(gitRun(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'initial']).status, 0);
+  assert.equal(gitRun(['worktree', 'add', '--detach', worktree]).status, 0);
   const bindings = threadBindingsPath(codex);
-  recordThread(bindings, 'thread-impl-1', 'implementer');
+  const identity = { top: 'C:/task/worktree', gitDir: 'C:/task/repo/.git/worktrees/wt', commonDir: 'C:/task/repo/.git' };
+  recordThread(bindings, 'thread-impl-1', 'implementer', identity);
   recordThread(bindings, 'thread-review-1', 'reviewer');
-  assert.doesNotThrow(() => recordThread(bindings, 'thread-impl-1', 'implementer'), 'recording the same binding twice is harmless');
+  assert.doesNotThrow(() => recordThread(bindings, 'thread-impl-1', 'implementer', identity), 'recording the same binding twice is harmless');
   assert.throws(() => recordThread(bindings, 'thread-impl-1', 'reviewer'), /already bound to implementer/);
-  assert.deepEqual({ ...readThreadBindings(bindings) }, { 'thread-impl-1': 'implementer', 'thread-review-1': 'reviewer' });
+  assert.deepEqual({ ...readThreadBindings(bindings) }, { 'thread-impl-1': { role: 'implementer', worktree: identity.top, gitDir: identity.gitDir, commonDir: identity.commonDir }, 'thread-review-1': 'reviewer' });
   assert.doesNotThrow(() => assertResumable(readThreadBindings(bindings), 'thread-impl-1', 'implementer'));
   assert.throws(() => assertResumable(readThreadBindings(bindings), 'thread-review-1', 'implementer'), /belongs to reviewer; it cannot be resumed as implementer/);
   assert.throws(() => assertResumable(readThreadBindings(bindings), 'thread-unknown', 'implementer'), /Unknown thread thread-unknown/);
@@ -235,8 +332,178 @@ test('resume is bound to the role that started the thread; unknown or other-role
   // Through main(): rejected before the Codex binary (a missing path here) is ever called.
   writeFileSync(join(codex, 'harness-implementer.config.toml'), compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x'));
   const env = { CODEX_HOME: codex, CODEX_BIN: join(codex, 'no-such-codex') };
-  assert.throws(() => launcherMain(['implementer', '--resume', 'thread-review-1', '--task', 'continue'], env), /belongs to reviewer/);
-  assert.throws(() => launcherMain(['implementer', '--resume', 'thread-unknown', '--task', 'continue'], env), /Unknown thread/);
+  assert.throws(() => launcherMain(['implementer', '--cd', worktree, '--resume', 'thread-review-1', '--task', 'continue'], env), /belongs to reviewer/);
+  assert.throws(() => launcherMain(['implementer', '--cd', worktree, '--resume', 'thread-unknown', '--task', 'continue'], env), /Unknown thread/);
+  writeFileSync(join(codex, 'harness-reviewer.config.toml'), compileCodexRoleProfile('reviewer', policies.reviewer, 'm', 'low', 'x'));
+  const reviewerBinding = join(bindings, 'thread-legacy-reviewer');
+  writeFileSync(reviewerBinding, 'reviewer\n');
+  assert.doesNotThrow(() => assertResumable(readThreadBindings(bindings), 'thread-legacy-reviewer', 'reviewer'), 'legacy role-only non-Implementer records remain resumable');
+});
+
+test('Implementer requires exact linked-worktree root and binds resume to Git worktree identity', t => {
+  const { root, codex } = sandbox(t);
+  const mainRepo = join(root, 'repo'); mkdirSync(mainRepo);
+  const worktree = join(root, 'work tree'); mkdirSync(worktree);
+  const git = process.platform === 'win32' ? 'git.exe' : 'git';
+  const gitEnv = { ...process.env };
+  const runGit = (cwd: string, args: string[]) => spawnSync(git, args, { cwd, env: gitEnv, encoding: 'utf8' });
+  const gitIdentity = (cwd: string, args: string[]) => {
+    const result = runGit(cwd, args);
+    assert.equal(result.status, 0, result.stderr);
+    const raw = result.stdout.trim();
+    return raw.match(/^(?:[A-Za-z]:[\\/]|\/)/) ? raw : join(cwd, raw);
+  };
+  assert.equal(runGit(mainRepo, ['init']).status, 0);
+  writeFileSync(join(mainRepo, 'tracked.txt'), 'x');
+  assert.equal(runGit(mainRepo, ['add', 'tracked.txt']).status, 0);
+  assert.equal(runGit(mainRepo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'initial']).status, 0);
+  assert.equal(runGit(mainRepo, ['worktree', 'add', '--detach', worktree]).status, 0);
+  mkdirSync(join(worktree, 'subdir'));
+  mkdirSync(codex);
+  writeFileSync(join(codex, 'harness-implementer.config.toml'), compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x'));
+  const noBinary = join(codex, 'no-such-codex');
+  const env = { CODEX_HOME: codex, CODEX_BIN: noBinary };
+  assert.throws(() => launcherMain(['implementer', '--cd', 'relative/path', '--task', 'x'], env), /explicit absolute --cd/);
+  assert.throws(() => launcherMain(['implementer', '--cd', mainRepo, '--task', 'x'], env), /linked Git worktree/);
+  assert.throws(() => launcherMain(['implementer', '--cd', join(worktree, 'subdir'), '--task', 'x'], env), /canonical linked worktree root/);
+  assert.throws(() => launcherMain(['implementer', '--task', 'x'], env), /explicit absolute --cd/);
+  mkdirSync(threadBindingsPath(codex), { recursive: true });
+  writeFileSync(join(threadBindingsPath(codex), 'thread-legacy'), 'implementer\n');
+  assert.throws(() => launcherMain(['implementer', '--cd', worktree, '--resume', 'thread-legacy', '--task', 'x'], env), /legacy or belongs to a different worktree/);
+  assert.throws(() => launcherMain(['implementer', '--cd', worktree, '--resume', 'thread-legacy', '--task', 'x'], { ...env, GIT_DIR: mainRepo }), /legacy or belongs to a different worktree/);
+});
+
+test('launcher entry runs fresh and resumed Implementer in the exact space-containing root and refuses wrong identities before Codex', t => {
+  const { root, home, codex } = sandbox(t);
+  const mainRepo = join(root, 'repo'); mkdirSync(mainRepo);
+  const worktree = join(root, 'linked worktree'); mkdirSync(worktree);
+  const other = join(root, 'other worktree'); mkdirSync(other);
+  const git = process.platform === 'win32' ? 'git.exe' : 'git';
+  const runGit = (cwd: string, args: string[]) => spawnSync(git, args, { cwd, env: process.env, encoding: 'utf8' });
+  const gitPath = (cwd: string, args: string[]) => {
+    const result = runGit(cwd, args);
+    assert.equal(result.status, 0, result.stderr);
+    const value = result.stdout.trim();
+    const absolute = value.match(/^(?:[A-Za-z]:[\\/]|\/)/) ? value : join(cwd, value);
+    return process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+  };
+  assert.equal(runGit(mainRepo, ['init']).status, 0);
+  writeFileSync(join(mainRepo, 'tracked.txt'), 'x');
+  assert.equal(runGit(mainRepo, ['add', 'tracked.txt']).status, 0);
+  assert.equal(runGit(mainRepo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'initial']).status, 0);
+  assert.equal(runGit(mainRepo, ['worktree', 'add', '--detach', worktree]).status, 0);
+  assert.equal(runGit(mainRepo, ['worktree', 'add', '--detach', other]).status, 0);
+  const expectedIdentity = {
+    worktree,
+    gitDir: gitPath(worktree, ['rev-parse', '--absolute-git-dir']),
+    commonDir: gitPath(worktree, ['rev-parse', '--git-common-dir']),
+  };
+  const otherIdentity = {
+    worktree: other,
+    gitDir: gitPath(other, ['rev-parse', '--absolute-git-dir']),
+    commonDir: gitPath(other, ['rev-parse', '--git-common-dir']),
+  };
+  mkdirSync(codex);
+  writeFileSync(join(codex, 'harness-implementer.config.toml'), compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x'));
+  const bindingRoot = threadBindingsPath(codex);
+  const codexPath = 'codex-stub';
+  const originals = { exec: launcherRuntime.execFileSync, spawn: launcherRuntime.spawnSync };
+  t.after(() => { launcherRuntime.execFileSync = originals.exec; launcherRuntime.spawnSync = originals.spawn; });
+  const calls: Array<{ binary: string; args: string[]; cwd: string }> = [];
+  launcherRuntime.execFileSync = ((binary: string, args: string[], options: { cwd: string }) => {
+    calls.push({ binary, args, cwd: options.cwd });
+    if (args[0] === 'rev-parse') {
+      const identity = options.cwd === other ? otherIdentity : expectedIdentity;
+      const outputs: Record<string, string> = {
+        '--show-toplevel': identity.worktree,
+        '--absolute-git-dir': identity.gitDir,
+        '--git-common-dir': identity.commonDir,
+        '--git-dir': identity.gitDir,
+      };
+      const key = args[1];
+      if (key === undefined || !Object.hasOwn(outputs, key)) throw new Error(`unexpected rev-parse selector: ${String(key)}`);
+      const value = outputs[key];
+      if (value === undefined) throw new Error(`missing rev-parse fixture value: ${key}`);
+      return value;
+    }
+    if (binary === codexPath && args.at(-1) === '--json') return '[]';
+    throw new Error('unexpected git call');
+  }) as typeof launcherRuntime.execFileSync;
+  launcherRuntime.spawnSync = ((binary: string, args: string[], options: { cwd: string }) => {
+    calls.push({ binary, args, cwd: options.cwd });
+    return { status: 0, stdout: '{"type":"thread.started","thread_id":"thread-fresh"}\n', stderr: '' };
+  }) as typeof launcherRuntime.spawnSync;
+  const originalLog = console.log;
+  console.log = () => {};
+  t.after(() => { console.log = originalLog; });
+  assert.equal(launcherMain(['implementer', '--cd', worktree, '--task', 'write file'], { CODEX_HOME: codex, CODEX_BIN: codexPath }), 0);
+  const firstSpawn = calls.find(call => call.args.includes('exec'));
+  assert.ok(firstSpawn);
+  assert.equal(firstSpawn.cwd, worktree);
+  assert.ok(firstSpawn.args.includes(`sandbox_workspace_write.writable_roots=[${JSON.stringify(worktree)}]`));
+  const saved = readThreadBindings(bindingRoot)['thread-fresh'];
+  assert.ok(typeof saved === 'object' && saved !== null);
+  assert.equal(saved.role, 'implementer');
+  const savedWorktree = saved.worktree;
+  const savedGitDir = saved.gitDir;
+  const savedCommonDir = saved.commonDir;
+  assert.equal(typeof savedWorktree, 'string', 'record contains a worktree path');
+  assert.equal(typeof savedGitDir, 'string', 'record contains a Git directory path');
+  assert.equal(typeof savedCommonDir, 'string', 'record contains a Git common directory path');
+  if (typeof savedWorktree !== 'string' || typeof savedGitDir !== 'string' || typeof savedCommonDir !== 'string') {
+    throw new Error('Implementer thread record is missing its physical Git identity paths.');
+  }
+  const physical = (path: string) => {
+    const normalized = path.replace(/[\\/]+/g, '/');
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  assert.equal(physical(savedWorktree), physical(expectedIdentity.worktree));
+  assert.equal(physical(savedGitDir), physical(expectedIdentity.gitDir));
+  assert.equal(physical(savedCommonDir), physical(expectedIdentity.commonDir));
+  calls.length = 0;
+  launcherRuntime.spawnSync = ((binary: string, args: string[], options: { cwd: string }) => {
+    calls.push({ binary, args, cwd: options.cwd });
+    return { status: 0, stdout: '', stderr: '' };
+  }) as typeof launcherRuntime.spawnSync;
+  assert.equal(launcherMain(['implementer', '--cd', worktree, '--resume', 'thread-fresh', '--task', 'continue'], { CODEX_HOME: codex, CODEX_BIN: codexPath }), 0);
+  const resume = calls.find(call => call.args.includes('resume'));
+  assert.ok(resume);
+  assert.equal(resume.cwd, worktree);
+  assert.ok(resume.args.includes(`sandbox_workspace_write.writable_roots=[${JSON.stringify(worktree)}]`));
+  calls.length = 0;
+  assert.throws(() => launcherMain(['implementer', '--cd', other, '--resume', 'thread-fresh', '--task', 'wrong'], { CODEX_HOME: codex, CODEX_BIN: codexPath }), /different worktree/);
+  assert.equal(calls.filter(call => call.binary === codexPath).length, 0, 'no Codex subprocess occurs for mismatched resume');
+  writeFileSync(join(bindingRoot, 'thread-malformed'), '{bad');
+  assert.throws(() => launcherMain(['implementer', '--cd', worktree, '--task', 'x'], { CODEX_HOME: codex, CODEX_BIN: codexPath }), /Malformed role thread bindings/);
+  assert.equal(calls.filter(call => call.binary === codexPath).length, 0);
+  assert.notEqual(home, '');
+});
+
+test('launcher refuses absent, malformed and widened writable-roots profiles before any Codex subprocess', t => {
+  const { root, codex } = sandbox(t);
+  mkdirSync(codex);
+  const project = join(root, 'project'); mkdirSync(project);
+  const impl = join(codex, 'harness-implementer.config.toml');
+  const reviewer = join(codex, 'harness-reviewer.config.toml');
+  const validImpl = compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x');
+  const codexPath = 'codex-should-not-run';
+  const originals = launcherRuntime.execFileSync;
+  t.after(() => { launcherRuntime.execFileSync = originals; });
+  const codexCalls: string[] = [];
+  launcherRuntime.execFileSync = ((binary: string, args: string[]) => {
+    if (binary === codexPath) codexCalls.push(args.join(' '));
+    throw new Error('unexpected subprocess');
+  }) as typeof launcherRuntime.execFileSync;
+  for (const profile of [
+    validImpl.replace('writable_roots = []\n', ''),
+    validImpl.replace('writable_roots = []', 'writable_roots = "bad"'),
+    validImpl.replace('writable_roots = []', 'writable_roots = ["/outside"]'),
+  ]) {
+    writeFileSync(impl, profile);
+    assert.throws(() => launcherMain(['implementer', '--cd', project, '--task', 'x'], { CODEX_HOME: codex, CODEX_BIN: codexPath }), /writable_roots/);
+    assert.throws(() => launcherMain(['implementer', '--cd', project, '--resume', 'thread-invalid', '--task', 'x'], { CODEX_HOME: codex, CODEX_BIN: codexPath }), /writable_roots/);
+    assert.equal(codexCalls.length, 0);
+  }
 });
 
 test('concurrent launchers recording different threads keep every binding', async t => {
@@ -247,7 +514,7 @@ test('concurrent launchers recording different threads keep every binding', asyn
   // Separate processes, started together, each record their own threads into the same store.
   const script = `import { recordThread } from ${JSON.stringify(launcher)};
 const [dir, writer, count] = process.argv.slice(1);
-for (let index = 0; index < Number(count); index++) recordThread(dir, \`thread-\${writer}-\${index}\`, writer % 2 ? 'reviewer' : 'implementer');`;
+for (let index = 0; index < Number(count); index++) recordThread(dir, \`thread-\${writer}-\${index}\`, writer % 2 ? 'reviewer' : 'implementer', { top: '/fixture/worktree', gitDir: '/fixture/.git/worktrees/wt', commonDir: '/fixture/.git' });`;
   const exits = await Promise.all(Array.from({ length: writers }, (_, writer) => new Promise<number | null>(resolve => {
     const child = spawn(process.execPath, ['--input-type=module', '-e', script, bindings, String(writer), String(perWriter)], { stdio: ['ignore', 'ignore', 'inherit'] });
     child.on('exit', resolve);
@@ -256,26 +523,42 @@ for (let index = 0; index < Number(count); index++) recordThread(dir, \`thread-\
   const recorded = readThreadBindings(bindings);
   assert.equal(Object.keys(recorded).length, writers * perWriter);
   for (let writer = 0; writer < writers; writer++) {
-    for (let index = 0; index < perWriter; index++) assert.equal(recorded[`thread-${writer}-${index}`], writer % 2 ? 'reviewer' : 'implementer');
+    for (let index = 0; index < perWriter; index++) {
+      const binding = recorded[`thread-${writer}-${index}`];
+      assert.ok(binding !== undefined, `writer ${writer}, item ${index} was recorded`);
+      const actualRole = typeof binding === 'string' ? binding : binding.role;
+      assert.equal(actualRole, writer % 2 ? 'reviewer' : 'implementer');
+    }
   }
 });
 
 test('malformed thread bindings stop a new launch or resume before any child starts', t => {
-  const { codex } = sandbox(t);
+  const { root, codex } = sandbox(t);
+  const repo = join(root, 'repo'); mkdirSync(repo);
+  const worktree = join(root, 'linked worktree'); mkdirSync(worktree);
+  const git = process.platform === 'win32' ? 'git.exe' : 'git';
+  const gitRun = (args: string[]) => spawnSync(git, args, { cwd: repo, encoding: 'utf8' });
+  assert.equal(gitRun(['init']).status, 0);
+  writeFileSync(join(repo, 'tracked'), 'x');
+  assert.equal(gitRun(['add', 'tracked']).status, 0);
+  assert.equal(gitRun(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'initial']).status, 0);
+  assert.equal(gitRun(['worktree', 'add', '--detach', worktree]).status, 0);
+  mkdirSync(codex);
   mkdirSync(join(codex, 'advanced-harness'), { recursive: true });
   writeFileSync(join(codex, 'harness-implementer.config.toml'), compileCodexRoleProfile('implementer', policies.implementer, 'm', 'low', 'x'));
   const bindings = threadBindingsPath(codex);
   // A missing binary would fail with ENOENT if the launcher got as far as calling Codex.
   const env = { CODEX_HOME: codex, CODEX_BIN: join(codex, 'no-such-codex') };
-  const launch = () => launcherMain(['implementer', '--task', 'new work'], env);
-  const resume = () => launcherMain(['implementer', '--resume', 'thread-impl-1', '--task', 'continue'], env);
+  const launch = () => launcherMain(['implementer', '--cd', worktree, '--task', 'new work'], env);
+  const resume = () => launcherMain(['implementer', '--cd', worktree, '--resume', 'thread-impl-1', '--task', 'continue'], env);
 
   writeFileSync(bindings, '{ "thread-impl-1": "implementer" }');
   assert.throws(launch, /Malformed role thread bindings .*not a directory/);
   assert.throws(resume, /Malformed role thread bindings .*not a directory/);
   rmSync(bindings);
 
-  recordThread(bindings, 'thread-impl-1', 'implementer');
+  mkdirSync(bindings, { recursive: true });
+  writeFileSync(join(bindings, 'thread-impl-1'), 'implementer\n');
   writeFileSync(join(bindings, 'thread-broken'), '');
   assert.throws(launch, /thread-broken does not name a role/);
   assert.throws(resume, /thread-broken does not name a role/);
@@ -289,15 +572,16 @@ test('a finished run whose thread cannot be recorded is reported for a decision,
   const bindings = threadBindingsPath(codex);
   const stdout = ['{"type":"thread.started","thread_id":"thread-new-1"}', '{"type":"turn.completed"}'].join('\n');
   const resultText = JSON.stringify({ status: 'Ready', summary: 'Implemented the change.', details: 'Edited src/a.ts' });
+  const identity = { top: 'C:/work tree', gitDir: 'C:/repo/.git/worktrees/wt', commonDir: 'C:/repo/.git' };
 
-  const ok = reportRun({ role: 'implementer', bindingsPath: bindings, stdout, exitCode: 0, resultText });
+  const ok = reportRun({ role: 'implementer', bindingsPath: bindings, stdout, exitCode: 0, resultText, identity });
   assert.equal(ok.code, 0);
   assert.deepEqual(ok.report, { role: 'implementer', threadId: 'thread-new-1', exitCode: 0, status: 'Ready', summary: 'Implemented the change.', details: 'Edited src/a.ts' });
-  assert.equal(readThreadBindings(bindings)['thread-new-1'], 'implementer');
+  assert.deepEqual(readThreadBindings(bindings)['thread-new-1'], { role: 'implementer', worktree: identity.top, gitDir: identity.gitDir, commonDir: identity.commonDir });
 
   // The thread ID is already bound to another role: recording fails after the child did its work.
   recordThread(bindings, 'thread-new-2', 'reviewer');
-  const conflict = reportRun({ role: 'implementer', bindingsPath: bindings, stdout: stdout.replace('thread-new-1', 'thread-new-2'), exitCode: 0, resultText });
+  const conflict = reportRun({ role: 'implementer', bindingsPath: bindings, stdout: stdout.replace('thread-new-1', 'thread-new-2'), exitCode: 0, resultText, identity });
   assert.equal(conflict.code, 2);
   assert.equal(conflict.report.status, 'Needs your decision');
   assert.equal(conflict.report.threadId, 'thread-new-2');
@@ -310,7 +594,7 @@ test('a finished run whose thread cannot be recorded is reported for a decision,
   // The store cannot be written at all (a file where the directory should be).
   const blocked = join(codex, 'blocked');
   writeFileSync(blocked, '');
-  const unwritable = reportRun({ role: 'implementer', bindingsPath: join(blocked, 'role-threads'), stdout, exitCode: 1, resultText: undefined });
+  const unwritable = reportRun({ role: 'implementer', bindingsPath: join(blocked, 'role-threads'), stdout, exitCode: 1, resultText: undefined, identity });
   assert.equal(unwritable.code, 2);
   assert.equal(unwritable.report.threadId, 'thread-new-1');
   assert.equal(unwritable.report.exitCode, 1);

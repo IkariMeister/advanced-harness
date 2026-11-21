@@ -1065,6 +1065,8 @@ function diagnoseCodexRoleProcesses(root: string, config: CodexTomlDocument): st
       if (value([], 'sandbox_mode') !== policy.sandbox) issues.push(`Codex role ${role} sandbox_mode is not ${policy.sandbox}: ${path}`);
       if (value([], 'approval_policy') !== 'never') issues.push(`Codex role ${role} approval_policy is not never (children cannot prompt): ${path}`);
       if (value(['sandbox_workspace_write'], 'network_access') !== policy.network) issues.push(`Codex role ${role} network_access is not ${policy.network}: ${path}`);
+      const writableRoots = value(['sandbox_workspace_write'], 'writable_roots');
+      if (!Array.isArray(writableRoots) || writableRoots.length !== 0) issues.push(`Codex role ${role} writable_roots is not an empty array: ${path}`);
       if (/^# advanced-harness: mcp=allowed\r?$/m.test(text) !== policy.mcp) issues.push(`Codex role ${role} MCP marker does not match its source policy: ${path}`);
       for (const key of ['model', 'developer_instructions']) if (typeof value([], key) !== 'string' || !value([], key)) issues.push(`Codex role ${role} lacks required explicit ${key}: ${path}`);
       if (!(CODEX_REASONING_EFFORTS as readonly unknown[]).includes(value([], 'model_reasoning_effort'))) issues.push(`Codex role ${role} has unsupported model_reasoning_effort: ${path}`);
@@ -1123,7 +1125,15 @@ export function planCodexUninstall(statePath: string, backupParent: string, remo
     else for (const name of readdirSync(threadsPath)) {
       const path = join(threadsPath, name);
       const content = lstatSync(path).isFile() ? readFileSync(path, 'utf8') : undefined;
-      if (content !== undefined && threadIdPattern.test(name) && (codexChildRoles as readonly string[]).includes(content.trim())) bindings.push({ path, content });
+      let binding: unknown;
+      try { binding = JSON.parse(content ?? ''); } catch { binding = content?.trim(); }
+      const recognized = typeof binding === 'string'
+        ? (codexChildRoles as readonly string[]).includes(binding)
+        : Boolean(binding && typeof binding === 'object' && !Array.isArray(binding)
+          && (binding as { role?: string }).role === 'implementer'
+          && Object.keys(binding).sort().join(',') === 'commonDir,gitDir,role,worktree'
+          && ['worktree', 'gitDir', 'commonDir'].every(key => typeof (binding as Record<string, unknown>)[key] === 'string' && Boolean((binding as Record<string, string>)[key])));
+      if (content !== undefined && threadIdPattern.test(name) && recognized) bindings.push({ path, content });
       else unexpected.push(path);
     }
   }
