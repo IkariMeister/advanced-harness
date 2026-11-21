@@ -10,6 +10,7 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "docs:check": "node scripts/check-documentation.ts",
+    "knowledge:generate": "node scripts/generate-knowledge.ts",
     "smoke": "node --test --test-concurrency=1 smoke/*.smoke.ts",
     "e2e:opencode": "node --test --test-concurrency=1 e2e/*.e2e.ts",
     "eval:opencode:e2e": "node --test --test-concurrency=1 e2e/eval/runner.e2e.ts",
