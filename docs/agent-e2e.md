@@ -93,14 +93,8 @@ violation run) and five on Windows. See [Runner](evaluation.md#runner).
 The tests run one after another, each in a fresh sandbox, with no retries.
 Each test has a generous timeout. Each OpenCode run has an overall
 timeout and an idle timeout (no fixture request for 30 seconds once the first
-<<<<<<< HEAD
 request has arrived). The suite has five tests and runs OpenCode seven times in
 total: J1 once, J2 once, J3 once, J4a twice, and J4b twice.
-=======
-request has arrived). The journeys file has six
-tests and runs OpenCode seven times: J1 once, J2 once, J3 and J3a together once, J4a
-twice, and J4b twice.
->>>>>>> origin/main
 
 ## Isolation
 
@@ -490,9 +484,10 @@ never start OpenCode.
 
 The `agent-e2e` job in `.github/workflows/ci.yml` runs on `ubuntu-latest` with a
 20-minute timeout. The timeout covers the worst case of seven OpenCode runs at 150
-<<<<<<< HEAD
-seconds each (17.5 minutes), so setup and the download add further time. It is
-**not a required check**. Two pre-`#261` runs passed (`43974715793` on PR 262 at head
+seconds each (17.5 minutes), so setup and the download add further time. That
+sizing covers the journeys file only. The runner e2e file is not run by this job. It is
+kept out of CI for feedback-loop cost and runs on demand (`npm run eval:opencode:e2e`).
+It is **not a required check**. Two pre-`#261` runs passed (`43974715793` on PR 262 at head
 `172d19e`, and `44264679242` on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, with
 6 tests: 5 pass, 0 fail, 1 todo for J3). After `#261` added per-role `skill.load`
 allow rules, enabled J3, and retired J3a, CI `agent-e2e` run `44845273743` for head
@@ -500,15 +495,6 @@ allow rules, enabled J3, and retired J3a, CI `agent-e2e` run `44845273743` for h
 2.3.0; 5 tests across 7 OpenCode runs; all seven journey records show
 `enforcement: "netns"`; the only tolerated destination was
 `CONNECT models.opencode.ai:443`; no unexpected destination; no credential-shaped
-=======
-seconds each (17.5 minutes), so setup and the download add further time. That
-sizing covers the journeys file only. The runner e2e file is not run by this job. It is
-kept out of CI for feedback-loop cost and runs on demand (`npm run eval:opencode:e2e`).
-`.github/workflows/ci.yml` is not changed for this. The job is **not a required check**. Two runs have passed. Run 43974715793 on PR 262 passed at head
-`172d19e` (before the review fixes). Run 44264679242 passed on head `3a901183d59a85ea8dc0a4871c4105151b1e0684`, the current head (Validate, Smoke Ubuntu and Windows, Preflight scanner, and Agent E2E on Ubuntu/Node 24/OpenCode 2.3.0). Observed on that run: Ubuntu, Node 24, OpenCode 2.3.0; 6 tests, 5 pass, 0 fail, 1 todo (J3, #261);
-all seven journey records show `enforcement: "netns"`; the only tolerated destination
-was `CONNECT models.opencode.ai:443`; no unexpected destination; no credential-shaped
->>>>>>> origin/main
 header; the sha256 check passed; the executable was found in the archive; and
 `sudo unshare --net` worked on the hosted runner). Live OpenCode and interactive TTY
 spot-checks remain **waived**, not passed, and local Windows runs remain non-hermetic.

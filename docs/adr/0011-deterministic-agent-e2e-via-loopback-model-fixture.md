@@ -88,14 +88,8 @@ Reopen this decision when one of these is observed:
 
 - the `agent-e2e` job cannot create the loopback-only namespace on hosted Ubuntu runners, or it fails for reasons that are not in the suite;
 - a re-pin changes the tolerated startup destinations, or OpenCode stops contacting `models.opencode.ai:443` at startup, so the tolerated list needs to change;
-<<<<<<< HEAD
 - enabled J3 fails on live/CI OpenCode 2.3.0 or a procedure-skill permission change alters expected `skill` behavior;
-- the journey record is mapped into the evaluation result contract under #226, or its version 1 changes, which changes the record contract.
-=======
-- the installed policy's denial of `skill` to Implementer is fixed (remove J3's `todo` option) or is found to be intended (then J3's acceptance criterion needs a new decision);
-- the journey record is mapped into the evaluation result contract under #226, or its version 1 changes, which changes the record contract (the proposed mapping is in [ADR-012](0012-evaluation-runner-bindings-and-outcome-model.md));
-- the observed `skill` result changes so that the skill loads (J3a fails with a message saying defect #261 appears fixed).
->>>>>>> origin/main
+- the journey record is mapped into the evaluation result contract under #226, or its version 1 changes, which changes the record contract (the proposed mapping is in [ADR-012](0012-evaluation-runner-bindings-and-outcome-model.md)).
 
 This ADR is reviewed at each milestone close.
 
