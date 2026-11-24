@@ -2,7 +2,7 @@
 
 Use this template for live pilot runs, Android workflow runs, and manual evaluations under [the role-consolidation evaluation protocol](../../docs/role-consolidation-evaluation.md). Store structured companion data using [the run-record schema](../schemas/run-record.schema.json) and [the JSON template](run-record.template.json).
 
-Never mark an unexecuted, waived, or telemetry-unavailable metric as observed `0`; record `not-observed` or `unknown` in `metricObservation` and `supplementaryMetrics` (while keeping any `#225`-required `result.metrics` fields at schema placeholder `0`/`[]` when a scenario is non-decided or a metric is `not-observed`). Never treat a configured model label as verified runtime model usage.
+A measured `0` is a valid observed value. For unobserved, waived, or telemetry-unavailable metrics, record `not-observed` or `unknown` in `metricObservation` and `supplementaryMetrics`, while keeping `#225`-required `result.metrics` fields at placeholder `0` or `[]`. Use `recordKind: "template"` only for unfilled templates, and never treat a configured model label as verified runtime model usage.
 
 ## 1. Run Identification & Attribution
 

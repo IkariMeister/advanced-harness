@@ -236,27 +236,64 @@ export interface EvalRunRecord {
 }
 
 const COMMIT_SHA_RE = /^[0-9a-f]{7,40}$/;
-const MAX_RUN_RECORD_BYTES = 10 * 1024 * 1024;
+export const MAX_RUN_RECORD_BYTES = 10 * 1024 * 1024;
 const FORBIDDEN_PROTOTYPE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-const FORBIDDEN_FREE_TEXT_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
-  { label: 'machine-local Unix path', pattern: /(?:^|[\s"'`(=])\/(?:mnt|home|Users|tmp)\// },
+
+/**
+ * Best-effort hygiene patterns rejecting common machine-local paths and credential shapes.
+ * Patterns avoid matching benign hyphenated prose (e.g. "task-force", "risk-based").
+ */
+export const FORBIDDEN_FREE_TEXT_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  {
+    label: 'machine-local Unix path',
+    pattern: /(?:^|[\s"'`(=:\[])(?:\/(?:mnt|home|Users|tmp|root|var|private|opt)\/|~\/)/,
+  },
   { label: 'file URI', pattern: /file:\/\//i },
-  { label: 'machine-local Windows path', pattern: /[A-Za-z]:(?:\\|\/)Users(?:\\|\/)/i },
-  { label: 'GitHub token', pattern: /\b(?:ghp|gho)_[A-Za-z0-9]{20,}\b/ },
+  {
+    label: 'machine-local Windows or UNC path',
+    pattern: /(?:^|[\s"'`(=:\[])(?:[A-Za-z]:(?:\\|\/)|\\\\[^\\\/\s]+\\[^\\\/\s]+)/,
+  },
+  { label: 'GitHub token', pattern: /\b(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}\b/ },
   { label: 'GitHub fine-grained PAT', pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
   { label: 'Bearer authorization header', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/ },
   { label: 'Authorization header', pattern: /\bAuthorization:\s*\S+/i },
-  { label: 'API secret key', pattern: /\bsk-[A-Za-z0-9]{16,}\b/ },
+  { label: 'API secret key', pattern: /\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}\b/ },
+  { label: 'AWS access key', pattern: /\bAKIA[0-9A-Z]{16}\b/ },
+  { label: 'Slack token', pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  { label: 'Google API key', pattern: /\bAIza[0-9A-Za-z_-]{30,}\b/ },
 ];
 
-function assertSafeFreeText(value: unknown, path: string): string {
-  const s = assertNonEmptyString(value, path);
+function checkForbiddenPatterns(value: string, path: string): void {
   for (const { label, pattern } of FORBIDDEN_FREE_TEXT_PATTERNS) {
-    if (pattern.test(s)) {
+    if (pattern.test(value)) {
       throw new Error(`${path} must not contain a ${label}.`);
     }
   }
+}
+
+function assertSafeFreeText(value: unknown, path: string): string {
+  const s = assertNonEmptyString(value, path);
+  checkForbiddenPatterns(s, path);
   return s;
+}
+
+/** Recursively applies best-effort path and credential hygiene checks to every string value. */
+function assertAllStringsSafe(value: unknown, path: string): void {
+  if (typeof value === 'string') {
+    checkForbiddenPatterns(value, path);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      assertAllStringsSafe(value[i], `${path}[${i}]`);
+    }
+    return;
+  }
+  if (typeof value === 'object' && value !== null) {
+    for (const [key, entry] of Object.entries(value)) {
+      assertAllStringsSafe(entry, `${path}.${key}`);
+    }
+  }
 }
 
 function assertSafeFreeTextArray(value: unknown, path: string, minItems = 0): string[] {
@@ -505,6 +542,19 @@ function validateJourneyBaseline(
         `${jPath} has recordOutcome "pass" and must have violationCount 0 (found ${entry.violationCount}).`,
       );
     }
+    // testOutcome and recordOutcome are intentionally independent: negative journeys (e.g. J3a,
+    // J4a, J4b) pass their test assertion (testOutcome: "pass") while asserting a failed record
+    // (recordOutcome: "fail"). handoffCount counts logical handoffs rather than raw
+    // roleTransitions entries (one handoff can record multiple transitions), but zero handoffs
+    // must correspond to zero transitions.
+    if (
+      (entry.handoffCount === 0 && entry.roleTransitions.length > 0) ||
+      (entry.handoffCount > 0 && entry.roleTransitions.length === 0)
+    ) {
+      throw new Error(
+        `${jPath}.handoffCount (${entry.handoffCount}) and roleTransitions (${entry.roleTransitions.length}) must both be zero or both be non-zero.`,
+      );
+    }
     if (j.repeatsByteIdentical !== undefined) {
       entry.repeatsByteIdentical = assertBoolean(
         j.repeatsByteIdentical,
@@ -585,6 +635,7 @@ function assertNonObservedResultHasZeroMetrics(result: EvalResult, path: string)
  */
 export function validateRunRecord(input: unknown, path = 'runRecord'): EvalRunRecord {
   const obj = assertObject(input, path);
+  assertAllStringsSafe(obj, path);
   assertAllowedKeys(
     obj,
     [

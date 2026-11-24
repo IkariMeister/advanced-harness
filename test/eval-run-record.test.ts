@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import Ajv2020Import from 'ajv/dist/2020.js';
@@ -10,14 +10,17 @@ import {
   validateResult,
   validateRunManifest,
 } from '../src/eval-contracts.ts';
+import { isValidIso8601Timestamp } from '../src/eval-validation-helpers.ts';
 import {
   CAPABILITY_STATUSES,
   CORE_METRIC_NAMES,
   EXECUTION_KINDS,
+  FORBIDDEN_FREE_TEXT_PATTERNS,
   JOURNEY_NETWORK_ENFORCEMENTS,
   JOURNEY_RECORD_OUTCOMES,
   JOURNEY_TEST_OUTCOMES,
   loadRunRecord,
+  MAX_RUN_RECORD_BYTES,
   METHODOLOGY_MODES,
   MODEL_VERIFICATION_STATUSES,
   NETWORK_ENFORCEMENTS,
@@ -82,6 +85,32 @@ function collectJsonStrings(value: unknown, path = '$', out: Array<{ path: strin
     }
   }
   return out;
+}
+
+function makeJourneyBaseline(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    source: 'CI Agent E2E',
+    commit: '68219d552aede8ca347a6cca116be587e41418e5',
+    opencodeVersion: '2.3.0',
+    networkEnforcement: 'netns',
+    ciRunId: '44850716927',
+    artifactId: '14684054873',
+    recordedAt: '2026-11-21T01:32:19Z',
+    journeys: [
+      {
+        id: 'J1',
+        journey: 'lead-reads-repository',
+        testOutcome: 'pass',
+        recordOutcome: 'pass',
+        handoffCount: 0,
+        roleTransitions: [],
+        skillsInvoked: [],
+        toolCallCount: 2,
+        violationCount: 0,
+      },
+    ],
+    ...overrides,
+  };
 }
 
 /**
@@ -189,23 +218,13 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
   });
 
   it('keeps committed template and baseline JSON free of machine-local paths and credentials', () => {
-    const forbiddenPatterns: ReadonlyArray<{ label: string; pattern: RegExp }> = [
-      { label: 'Unix local path', pattern: /(?:^|[\s"'`(=])\/(?:mnt|home|Users|tmp)\// },
-      { label: 'file URI', pattern: /file:\/\//i },
-      { label: 'Windows local path', pattern: /[A-Za-z]:(?:\\|\/)Users(?:\\|\/)/i },
-      { label: 'GitHub token', pattern: /\b(?:ghp|gho)_[A-Za-z0-9]{20,}\b/ },
-      { label: 'GitHub PAT', pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
-      { label: 'Bearer header', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/ },
-      { label: 'Authorization header', pattern: /\bAuthorization:\s*\S+/i },
-      { label: 'API secret key', pattern: /\bsk-[A-Za-z0-9]{16,}\b/ },
-    ];
     for (const relPath of [
       'eval/templates/run-record.template.json',
       'eval/baselines/eight-role-opencode-deterministic.json',
     ]) {
       const parsed = readJson(relPath);
       for (const { path, text } of collectJsonStrings(parsed)) {
-        for (const { label, pattern } of forbiddenPatterns) {
+        for (const { label, pattern } of FORBIDDEN_FREE_TEXT_PATTERNS) {
           assert.equal(
             pattern.test(text),
             false,
@@ -214,6 +233,65 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
         }
       }
     }
+  });
+
+  it('enforces FORBIDDEN_FREE_TEXT_PATTERNS across all string fields while allowing benign prose', () => {
+    const base = structuredClone(readJson('eval/templates/run-record.template.json')) as Record<
+      string,
+      unknown
+    >;
+
+    const samplesByLabel = new Map<string, string>([
+      ['machine-local Unix path', 'path:[/var/log/run.txt]'],
+      ['file URI', 'see file://localhost/tmp/out.json'],
+      ['machine-local Windows or UNC path', 'copy from D:\\work\\repo or \\\\server\\share\\file'],
+      ['GitHub token', ['ghs', 'abcdefghijklmnopqrstuvwxyz123456'].join('_')],
+      ['GitHub fine-grained PAT', ['github', 'pat', 'abcdefghijklmnopqrstuvwxyz123456'].join('_')],
+      ['Bearer authorization header', ['Bearer', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'].join(' ')],
+      ['Authorization header', ['Authorization:', 'Basic', 'dXNlcjpwYXNz'].join(' ')],
+      ['API secret key', ['sk', 'proj', 'abcdefghijklmnopqrstuvwxyz123456'].join('-')],
+      ['AWS access key', ['AKIA', 'IOSFODNN7EXAMPLE'].join('')],
+      ['Slack token', ['xoxb', '123456789012', 'abcdefghij'].join('-')],
+      ['Google API key', ['AIza', 'SyDaGmWKa4JsXZ', '1234567890abcdefghij'].join('')],
+    ]);
+
+    for (const { label } of FORBIDDEN_FREE_TEXT_PATTERNS) {
+      const sample = samplesByLabel.get(label);
+      assert.ok(sample, `Missing negative sample for FORBIDDEN_FREE_TEXT_PATTERNS label "${label}"`);
+      const doc = structuredClone(base);
+      (doc.hostEnvironment as Record<string, unknown>).notes = sample;
+      assert.throws(
+        () => validateRunRecord(doc),
+        new RegExp(`must not contain a ${label}`),
+        `Should reject ${label}`,
+      );
+    }
+
+    // Previously unguarded fields: results[].reason and runManifest.runId
+    const reasonLeak = structuredClone(base);
+    (reasonLeak.results as Array<Record<string, unknown>>)[0]!.reason = 'read ~/secret/key';
+    assert.throws(() => validateRunRecord(reasonLeak), /must not contain a machine-local Unix path/);
+
+    const manifestLeak = structuredClone(base);
+    (manifestLeak.runManifest as Record<string, unknown>).runId = 'run-opt:[/opt/runner/id]';
+    assert.throws(() => validateRunRecord(manifestLeak), /must not contain a machine-local Unix path/);
+
+    // Benign hyphenated prose must pass
+    const benign = structuredClone(base);
+    (benign.hostEnvironment as Record<string, unknown>).notes =
+      'Evaluated task-force workflow with risk-based checks.';
+    assert.doesNotThrow(() => validateRunRecord(benign));
+  });
+
+  it('validates ISO 8601 timestamps directly including calendar and offset edge cases', () => {
+    assert.equal(isValidIso8601Timestamp('2024-02-29T23:59:59Z'), true);
+    assert.equal(isValidIso8601Timestamp('2026-11-21T01:32:19+23:59'), true);
+    assert.equal(isValidIso8601Timestamp('2026-11-21T01:32:19-23:59'), true);
+    assert.equal(isValidIso8601Timestamp('2025-02-29T00:00:00Z'), false);
+    assert.equal(isValidIso8601Timestamp('2026-11-21T24:00:00Z'), false);
+    assert.equal(isValidIso8601Timestamp('2026-11-21T01:32:19+24:00'), false);
+    assert.equal(isValidIso8601Timestamp('2026-11-21T01:32:19+00:60'), false);
+    assert.equal(isValidIso8601Timestamp('2026-11-21T01:32:19+99:99'), false);
   });
 
   it('keeps TypeScript enum constants aligned with run-record.schema.json', () => {
@@ -351,14 +429,7 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
         reference: '#126',
       },
     ];
-    candidate.journeyBaseline = {
-      source: 'CI Agent E2E',
-      commit: '68219d552aede8ca347a6cca116be587e41418e5',
-      opencodeVersion: '2.3.0',
-      networkEnforcement: 'netns',
-      ciRunId: '44850716927',
-      artifactId: '14684054873',
-      recordedAt: '2026-11-21T01:32:19Z',
+    candidate.journeyBaseline = makeJourneyBaseline({
       journeys: [
         {
           id: 'J1',
@@ -374,7 +445,7 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
           notes: 'Deterministic baseline journey.',
         },
       ],
-    };
+    });
 
     assertSchemaValid(candidate, 'positive candidate live record');
     const validated = validateRunRecord(candidate, 'positive candidate live record');
@@ -606,24 +677,17 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
         pattern: /is not declared in runManifest\.modelConfig\.roleModels/,
       },
       {
-        label: 'observedRoleModels prototype-pollution key',
+        label: 'observedRoleModels prototype-pollution key via JSON.parse',
         mutate: (doc) => {
           const mv = doc.modelVerification as Record<string, unknown>;
-          mv.observedRoleModels = { constructor: 'loopback/mock' };
+          mv.observedRoleModels = JSON.parse('{"__proto__":"loopback/mock"}');
         },
-        pattern: /contains forbidden key "constructor"/,
+        pattern: /contains forbidden key "__proto__"/,
       },
       {
         label: 'journeyBaseline duplicate journey ids',
         mutate: (doc) => {
-          doc.journeyBaseline = {
-            source: 'CI',
-            commit: '68219d552aede8ca347a6cca116be587e41418e5',
-            opencodeVersion: '2.3.0',
-            networkEnforcement: 'netns',
-            ciRunId: '1',
-            artifactId: '2',
-            recordedAt: '2026-11-21T01:32:19Z',
+          doc.journeyBaseline = makeJourneyBaseline({
             journeys: [
               {
                 id: 'J1',
@@ -648,21 +712,14 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
                 violationCount: 0,
               },
             ],
-          };
+          });
         },
         pattern: /journeys contains duplicate id "J1"/,
       },
       {
         label: 'journeyBaseline pass with non-zero violationCount',
         mutate: (doc) => {
-          doc.journeyBaseline = {
-            source: 'CI',
-            commit: '68219d552aede8ca347a6cca116be587e41418e5',
-            opencodeVersion: '2.3.0',
-            networkEnforcement: 'netns',
-            ciRunId: '1',
-            artifactId: '2',
-            recordedAt: '2026-11-21T01:32:19Z',
+          doc.journeyBaseline = makeJourneyBaseline({
             journeys: [
               {
                 id: 'J1',
@@ -676,21 +733,23 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
                 violationCount: 1,
               },
             ],
-          };
+          });
         },
         pattern: /recordOutcome "pass" and must have violationCount 0/,
       },
       {
         label: 'journeyBaseline invalid calendar date in recordedAt',
         mutate: (doc) => {
-          doc.journeyBaseline = {
-            source: 'CI',
-            commit: '68219d552aede8ca347a6cca116be587e41418e5',
-            opencodeVersion: '2.3.0',
-            networkEnforcement: 'netns',
-            ciRunId: '1',
-            artifactId: '2',
+          doc.journeyBaseline = makeJourneyBaseline({
             recordedAt: '2026-02-30T00:00:00Z',
+          });
+        },
+        pattern: /recordedAt must be a valid ISO 8601 timestamp/,
+      },
+      {
+        label: 'journeyBaseline handoffCount zero with non-empty roleTransitions',
+        mutate: (doc) => {
+          doc.journeyBaseline = makeJourneyBaseline({
             journeys: [
               {
                 id: 'J1',
@@ -698,15 +757,15 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
                 testOutcome: 'pass',
                 recordOutcome: 'pass',
                 handoffCount: 0,
-                roleTransitions: [],
+                roleTransitions: ['lead->operator'],
                 skillsInvoked: [],
                 toolCallCount: 1,
                 violationCount: 0,
               },
             ],
-          };
+          });
         },
-        pattern: /recordedAt must be a valid ISO 8601 timestamp/,
+        pattern: /must both be zero or both be non-zero/,
       },
     ];
 
@@ -730,6 +789,14 @@ describe('EDD v1 / BH-051 run records and eight-role deterministic baseline', ()
       assert.throws(
         () => loadRunRecord(badJsonPath),
         new RegExp(`Invalid JSON in run record ${badJsonPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+      );
+
+      const oversizedPath = join(tmpDir, 'oversized-record.json');
+      writeFileSync(oversizedPath, '{}', 'utf8');
+      truncateSync(oversizedPath, MAX_RUN_RECORD_BYTES + 1);
+      assert.throws(
+        () => loadRunRecord(oversizedPath),
+        /exceeds maximum allowed/,
       );
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
