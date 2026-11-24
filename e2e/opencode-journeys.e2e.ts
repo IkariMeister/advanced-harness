@@ -12,9 +12,8 @@
 // Observed in real runs against OpenCode 2.3.0 (observations, not a conformance test):
 // - Earlier pre-#261 runs executed `read` (J1) and `shell` (J2) while J3 was `todo` and J3a observed
 //   `Permission denied: skill`. #261 added per-role `skill.load` allow rules, enabled J3, and retired J3a (5 tests,
-//   7 OpenCode runs); post-#261 CI verification is pending the workflow run (see
-//   docs/agent-e2e.md#continuous-integration for recorded pre-#261 CI runs). Live OpenCode / interactive TTY
-//   spot-checks remain waived, not passed.
+//   7 OpenCode runs); see docs/agent-e2e.md#continuous-integration for CI runs and current CI status. Live OpenCode /
+//   interactive TTY spot-checks remain waived, not passed.
 // - --auto approved Operator's `ask` shell rule in the child session (J2): both shell calls ran.
 // - The installed policy does not offer `shell` to Lead. OpenCode returns `No tool named "shell" is currently
 //   available` as the tool result (J4a).

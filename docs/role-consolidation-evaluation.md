@@ -17,7 +17,7 @@ Equivalence comparisons in `#227` and `#228` evaluate baseline vs. candidate set
 
 | Task class (`taskClasses[]`) | Representative scope & task criteria | Eight-role baseline path | Conditional target (`ADR-002`) | Deterministic `#62` / `#226` coverage today |
 | --- | --- | --- | --- | --- |
-| `routine-implementation` | Bounded code/test/doc change with clear criteria, unit/static checks, and review | `Lead -> Implementer -> Reviewer -> Operator/External` | `Lead -> Engineer -> Reviewer -> Operations` | Partial/blocked in `#62` (`J3`/`J3a`: `implementer` procedure-skill load + edit, currently blocked by `#261`); unbound in `#226` (`skipped`, requires live pilot or new binding after `#261`) |
+| `routine-implementation` | Bounded code/test/doc change with clear criteria, unit/static checks, and review | `Lead -> Implementer -> Reviewer -> Operator/External` | `Lead -> Engineer -> Reviewer -> Operations` | Pre-`#261` baseline blocked in `#62` (`J3` `todo` / `J3a` denied); `#261` enables `J3` (`implementer` procedure-skill load + `edit`) and retires `J3a` (see [Continuous integration](agent-e2e.md#continuous-integration)); still unbound in `#226` (`skipped`, requires live pilot or a separate `#226` scenario binding) |
 | `research-then-implementation` | Codebase discovery feeding planning before approved implementation and verification | `Lead -> Researcher -> Planner -> Implementer -> Reviewer` | `Lead -> Engineer (read-only discovery) -> Planner -> Engineer (approved edit) -> Reviewer` | Unbound (`skipped`, requires live pilot `#128` / `#228`) |
 | `architecture` | Multi-option design evaluation, ADR authoring/review, or contract changes | `Lead -> Researcher -> Planner -> Reviewer -> Human` | `Lead -> Engineer (discovery) -> Planner -> Reviewer -> Human` | Unbound (`skipped`, requires live pilot `#228`) |
 | `qa-visual` | Build, unit/static checks, visual/UI regression or E2E evidence collection, and preflight | `Lead -> Implementer/Operator -> QA -> Reviewer` | `Lead -> Engineer/Reviewer` using shared [validation skills](glossary.md#skills-and-commands) (`#131`) | Partial proxy/non-visual plumbing & negative checks only: `EDD-DEV-008` (preflight scanner tool-error handling), `J4a`, `J4b` (deterministic violation checks); visual/UI regression stays unmeasured until live/Android pilots (`#131`) |
@@ -96,14 +96,14 @@ Agent-executed by Antigravity under `IkariMeister`'s authorization (not a human 
 
 ### Part 2 — `#62` Agent E2E Journey Baseline (CI Run `44850716927`)
 
-Recorded from GitHub Actions `Agent E2E (Ubuntu / Node 24 / OpenCode 2.3.0)` on the same commit `68219d552aede8ca347a6cca116be587e41418e5` (artifact `14684054873`, `5 pass, 1 todo, 0 fail`, `network.enforcement: "netns"`, zero unexpected destinations or credential-shaped headers):
+Recorded from GitHub Actions `Agent E2E (Ubuntu / Node 24 / OpenCode 2.3.0)` on the same pre-`#261` commit `68219d552aede8ca347a6cca116be587e41418e5` (before `#261` enabled `J3` and retired `J3a`; artifact `14684054873`, `5 pass, 1 todo, 0 fail`, `network.enforcement: "netns"`, zero unexpected destinations or credential-shaped headers):
 
 | Journey | Journey ID | Test outcome | Record outcome | Handoffs | Role transitions | Skills invoked | Tool calls | Violations |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `J1` | `lead-reads-repository` | `pass` | `pass` | `0` | `0` | `[]` | `2` | `0` |
 | `J2` | `lead-delegates-git-to-operator` | `pass` | `pass` | `1` | 4 (`lead<->operator` x2) | `[]` | `3` | `0` |
-| `J3` | `implementer-loads-skill-and-edits` | `todo` (`#261`) | `fail` | `1` | 4 (`lead<->implementer` x2) | `harness-procedure-documentation-impact` (`loaded: false`) | `2` | `2` (from denied `skill` call; `edit` unreached) |
-| `J3a` | `implementer-loads-skill-and-edits` (shares `J3` run) | `pass` | `fail` | `1` | 4 (`lead<->implementer` x2) | `harness-procedure-documentation-impact` (`loaded: false`) | `2` | `2` (asserts known `#261` denial & unedited `notes.md`) |
+| `J3` | `implementer-loads-skill-and-edits` | `todo` (pre-`#261`) | `fail` | `1` | 4 (`lead<->implementer` x2) | `harness-procedure-documentation-impact` (`loaded: false`, pre-`#261`) | `2` | `2` (from pre-`#261` denied `skill` call; `edit` unreached) |
+| `J3a` | `implementer-loads-skill-and-edits` (shares `J3` run) | `pass` | `fail` | `1` | 4 (`lead<->implementer` x2) | `harness-procedure-documentation-impact` (`loaded: false`, pre-`#261`) | `2` | `2` (asserts pre-`#261` denial & unedited `notes.md`; retired in `#261`) |
 | `J4a` | `violations-fail-deterministically-case-a` | `pass` | `fail` | `0` | `0` | `[]` | `1` | `1` (byte-identical across runs 1 & 2) |
 | `J4b` | `violations-fail-deterministically-case-b` | `pass` | `fail` | `0` | `0` | `[]` | `1` | `1` (byte-identical across runs 1 & 2) |
 
@@ -112,7 +112,7 @@ Recorded from GitHub Actions `Agent E2E (Ubuntu / Node 24 / OpenCode 2.3.0)` on 
 - Only 4 of 14 development scenarios have deterministic bindings; the remaining 10 `skipped` scenarios carry `#225` placeholder-zero metrics (not measured zeroes), and `routine-implementation`, `research-then-implementation`, and `architecture` remain unmeasured until live pilots (`#128`–`#130`, `#228`).
 - `hostEnvironment.networkEnforcement: "netns"` and `hostEnvironment.hermetic: true` are operator-declared (`HARNESS_E2E_NETNS=1` under `unshare -rn`), because the evaluation suite cannot independently verify kernel network-namespace isolation.
 - Unbound counters (`humanInterventions`, `permissionAmbiguities`, `reviewDetectedDefects`, `escapedDefects`, `tokenCostUsd`, and `supplementaryMetrics`) are `not-observed`, never measured zeroes.
-- `J3` remains `todo` pending `#261`, and `edit` has not executed in `#62` or `#226` deterministic runs yet.
+- In that pre-`#261` baseline, `J3` was `todo` (`#261`) and `edit` had not executed; `#261` enables `J3` (`skill` load + `edit`) and retires `J3a` (see [Continuous integration](agent-e2e.md#continuous-integration) for CI runs and status), while `edit`/`skill` scenario bindings remain unadded in `#226`.
 - Validation scenarios (`eval/corpus/validation/`) stay held out.
 
 ## 7. Reproducing and Checking

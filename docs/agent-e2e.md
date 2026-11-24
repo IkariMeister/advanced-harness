@@ -29,10 +29,9 @@ It proves:
 - child-role tool calls execute: the scripted `read` (J1) and `shell` (J2, run by
   Operator in a child session) calls ran in pre-`#261` OpenCode 2.3.0 runs, and
   their results are real OpenCode results against the loopback fixture; `#261` added
-  per-role `skill.load` allow rules and enabled J3 (`skill` load + `edit`), with
-  post-`#261` CI verification pending (see
-  [Continuous integration](#continuous-integration); live OpenCode / interactive TTY
-  spot-checks remain **waived**, not passed);
+  per-role `skill.load` allow rules and enabled J3 (`skill` load + `edit`) (see
+  [Continuous integration](#continuous-integration) for CI runs and status; live
+  OpenCode / interactive TTY spot-checks remain **waived**, not passed);
 - a violation (an unscripted request, a mismatched expectation, a tool call the
   installed policy does not offer, an unexpected network destination, or a
   credential-shaped header) fails the journey with a precise, repeatable record.
@@ -405,8 +404,8 @@ and interactive TTY spot-checks remain **waived**, not passed):
 
 - In pre-`#261` runs, `read` (J1) and `shell` (J2) executed successfully, and J3a
   observed `Permission denied: skill`. `#261` added per-role `skill.load` allow
-  rules and enabled J3, with post-`#261` CI verification pending (see
-  [Continuous integration](#continuous-integration)).
+  rules and enabled J3 (see [Continuous integration](#continuous-integration) for CI
+  runs and status).
 - `--auto` approved Operator's `ask` shell rule in the child session (J2): both
   shell calls ran, and the installed agent configuration was in effect for the
   child requests.
