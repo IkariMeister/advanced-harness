@@ -106,7 +106,7 @@ test('Lead block states the Operator advisory denies and the roles without Bash'
   assert.ok(block.includes('Implementer, Reviewer, and QA have no Bash tool'));
   assert.ok(!block.includes('Operator, Implementer, Reviewer, and QA have no Bash'));
   assert.ok(block.includes('its `git push`, `git pull`, `git clone`, and `gh` denies are advisory, not enforced'));
-  assert.ok(block.includes('Per-role procedure-skill scoping (`skill.load`) is not mapped to Claude Code; procedure skills follow Claude Code defaults (unverified), and the absence of `skill.load` grants on `operator`, `external`, and `researcher` is not enforced.'));
+  assert.ok(block.includes('Per-role procedure-skill scoping (`skill.load`) is not mapped to Claude Code; procedure skills follow Claude Code defaults (unverified), and Claude Code does not restrict skill loading for operator, external and researcher.'));
   assert.ok(block.includes('| `operator` | `haiku` | Read, Glob, Grep, Edit, Write, Bash |'));
 });
 

@@ -407,7 +407,12 @@ deny is replaced by the current allow. The preview marks this `! effect change`,
 can widen access, and nothing is written until the final `update` confirmation. These
 still block: a rule with no receipt ownership, an edited or moved owned rule, a rule
 another active source still needs, a required denial (`gh pr merge` or a security
-guardrail), and any existing restriction the new rule would override.
+guardrail), and any existing restriction the new rule would override. When reconciling
+updates, attributable `native:` non-guardrail rules (such as per-role `skill` allow
+rules) insert before the trailing [security guardrails](../SECURITY.md#security-guardrails)
+and abort with a `last-match` conflict if an overlapping custom rule placed after the
+guardrails would be overridden (except broad `ask` fallbacks), while `integration:`
+rules preserve append order.
 
 ### If Lead is missing
 

@@ -10,10 +10,10 @@
 // journey record.
 //
 // Observed in real runs against OpenCode 2.3.0 (observations, not a conformance test):
-// - Earlier pre-#261 runs executed `read` (J1) and `shell` (J2) while J3 was `todo` (`Permission denied: skill`) and
-//   J3a asserted that denial. #261 added per-role `skill.load` allow rules, enabled J3, and retired J3a; CI `agent-e2e`
-//   run 44845273743 for head 99c18069 passed 5/5 on PR merge ref 7276d92f (demonstrating `read`, `shell`, `skill` load,
-//   and `edit` against the loopback fixture). Live OpenCode / interactive TTY spot-checks remain waived, not passed.
+// - Earlier pre-#261 runs executed `read` (J1) and `shell` (J2) while J3 was `todo` and J3a observed
+//   `Permission denied: skill`. #261 added per-role `skill.load` allow rules, enabled J3, and retired J3a; the
+//   5-test suite passed 5/5 in CI (see docs/agent-e2e.md#continuous-integration). Live OpenCode / interactive TTY
+//   spot-checks remain waived, not passed.
 // - --auto approved Operator's `ask` shell rule in the child session (J2): both shell calls ran.
 // - The installed policy does not offer `shell` to Lead. OpenCode returns `No tool named "shell" is currently
 //   available` as the tool result (J4a).
@@ -285,6 +285,9 @@ if (preflightFailures.length > 0) {
     });
   });
 
+  // Negative skill.load scoping (unintended/third-party skills and non-scoped roles) is tested in
+  // test/role-definitions.test.ts; an extra live negative E2E journey is omitted here because HARNESS_E2E_OPENCODE is
+  // not available locally to verify the host error shape and the suite is sized for 5 tests / 7 runs.
   test(JOURNEY_TITLES[2] ?? 'J3', { timeout: JOURNEY_TIMEOUT_MS }, async () => {
     await execute(suite, IMPLEMENTER_LOADS_SKILL_AND_EDITS, 'Load the documentation-impact procedure and edit notes.md.', ({ sandbox, run, requests, headBefore }) => {
       const skill = toolResultOf(requests, 'implementer', 'skill');

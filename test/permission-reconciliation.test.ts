@@ -228,3 +228,63 @@ test('non-skill native additions respect custom post-guardrail rules and conflic
   assert.ok(shellFallback.rules.findIndex(rule => rule.action === 'shell' && rule.resource === 'git *' && rule.effect === 'ask') < shellFallback.rules.findIndex(isOpenCodeGuardrailRule));
   assert.deepEqual(shellFallback.rules.at(-1), postShellAllow);
 });
+
+test('integration rules conflict when overriding or shadowed by post-guardrail user rules unless broad ask fallback', () => {
+  const base = [r('*', '*', 'deny'), r('shell', '*', 'ask')];
+  const guardrails = openCodeGuardrailRules(base);
+  const existing = [...base, ...guardrails];
+  const prior = existing.map(rule => ({ rule, sources: ['native:external'] }));
+
+  // Non-guardrail-overlapping integration rule lands at rules.length, after the post-guardrail user deny: fails closed with last-match.
+  const userGhDeny = r('shell', 'gh *', 'deny');
+  const blockedAppended = reconcilePermissions({
+    existing: [...existing, userGhDeny],
+    prior,
+    previousOrder: [...existing, userGhDeny],
+    desired: [{ rule: r('shell', 'gh pr view', 'allow'), sources: ['integration:gh'] }],
+  });
+  assert.ok(blockedAppended.preview.conflicts.some(conflict => conflict.code === 'last-match'));
+  assert.deepEqual(blockedAppended.rules, [...existing, userGhDeny]);
+
+  // Guardrail-overlapping integration allow lands before guardrails and before a post-guardrail user deny/ask: fails closed with last-match.
+  for (const userRule of [r('shell', 'git push origin main', 'deny'), r('shell', 'git push origin main', 'ask')]) {
+    const blockedBeforeGuard = reconcilePermissions({
+      existing: [...existing, userRule],
+      prior,
+      previousOrder: [...existing, userRule],
+      desired: [{ rule: r('shell', 'git push *', 'allow'), sources: ['integration:git'] }],
+    });
+    assert.ok(blockedBeforeGuard.preview.conflicts.some(conflict => conflict.code === 'last-match'), userRule.effect);
+    assert.deepEqual(blockedBeforeGuard.rules, [...existing, userRule]);
+  }
+
+  // Broad integration ask fallback before a narrower post-guardrail allow succeeds and keeps the narrower allow last.
+  const userNarrowAllow = r('shell', 'gh pr view', 'allow');
+  const fallback = r('shell', 'gh *', 'ask');
+  const allowedFallback = reconcilePermissions({
+    existing: [...existing, userNarrowAllow],
+    prior,
+    previousOrder: [...existing, userNarrowAllow],
+    desired: [{ rule: fallback, sources: ['integration:gh'] }],
+  });
+  assert.deepEqual(allowedFallback.preview.conflicts, []);
+  assert.deepEqual(allowedFallback.rules.slice(-2), [fallback, userNarrowAllow]);
+});
+
+test('covering rule at or after insertion point does not exempt an earlier restriction', () => {
+  const guard = r('shell', 'git reset --hard', 'deny');
+  const earlierDeny = r('shell', '*', 'deny');
+  const laterCoveringAllow = r('shell', '*', 'allow');
+  const existing = [earlierDeny, guard, laterCoveringAllow];
+  const result = reconcilePermissions({
+    existing,
+    prior: [
+      { rule: earlierDeny, sources: ['custom:user'] },
+      { rule: guard, sources: ['native:implementer'] },
+    ],
+    previousOrder: existing,
+    desired: [{ rule: r('shell', 'git status', 'allow'), sources: ['native:implementer'] }],
+  });
+  assert.ok(result.preview.conflicts.some(conflict => conflict.code === 'last-match'));
+  assert.deepEqual(result.rules, existing);
+});

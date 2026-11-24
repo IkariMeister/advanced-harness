@@ -128,12 +128,15 @@ export function reconcilePermissions(options: ReconcileOptions): ReconciliationR
     const bounds = [firstOverlappingGuardrail, firstGuardrail].filter(index => index >= 0);
     const bound = bounds.length ? Math.min(...bounds) : rules.length;
     const isFallbackFor = (r: PermissionRule) =>
-      req.rule.effect === 'ask' && (req.rule.resource === '*' && r.resource !== '*' || req.rule.resource.endsWith(' *')
-        && r.resource.startsWith(req.rule.resource.slice(0, -1)));
+      req.rule.effect === 'ask' &&
+      ((req.rule.resource === '*' && r.resource !== '*') ||
+        (req.rule.resource.endsWith(' *') && r.resource.startsWith(req.rule.resource.slice(0, -1))));
+    // Pass 1 passes end = bound and Pass 2 passes end = insertAt: exemption stops at the insertion point
+    // so a covering rule placed at or after insertAt cannot exempt an earlier restriction that req.rule would override.
     const isExemptBefore = (index: number, end: number, r: PermissionRule) =>
-      rules.slice(index + 1, end).some(later => covers(later, req.rule))
+      rules.slice(index + 1, end).some(later => covers(later, req.rule)) ||
       // Only attributable native universal defaults can be refined by later setup.
-      || r.action === '*' && r.resource === '*' && prior.some(p => same(p.rule, r) && p.sources.some(s => s.startsWith('native:')));
+      (r.action === '*' && r.resource === '*' && prior.some(p => same(p.rule, r) && p.sources.some(s => s.startsWith('native:'))));
     const conflictingRelation = (r: PermissionRule): boolean | 'unknown' => {
       // A single new policy batch has an explicitly reviewed internal order.
       if (additions.some(a => same(a, r))) return false;
@@ -158,10 +161,11 @@ export function reconcilePermissions(options: ReconcileOptions): ReconciliationR
       if (relation !== true) continue;
       if (index < insertAt) {
         if (isExemptBefore(index, insertAt, r)) continue;
-        if (!isFallbackFor(r) && (req.rule.effect !== 'deny' && r.effect === 'deny' || req.rule.effect === 'allow' && r.effect === 'ask' && !covers(r, req.rule))) {
+        if (!isFallbackFor(r) && ((req.rule.effect !== 'deny' && r.effect === 'deny') || (req.rule.effect === 'allow' && r.effect === 'ask' && !covers(r, req.rule)))) {
           conflict('last-match', `Cannot override existing restriction ${r.action} ${r.resource}.`);
         }
       } else if (!isFallbackFor(r)) {
+        // Applies to both native: and integration: insertions whenever a non-fallback rule lands before an overlapping custom post-guardrail rule.
         conflict('last-match', `Cannot insert ${req.rule.action} ${req.rule.resource} before overlapping rule ${r.action} ${r.resource}.`);
       }
     }

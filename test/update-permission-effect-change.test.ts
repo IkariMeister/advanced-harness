@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeTempRoot } from './temp-directory.ts';
 import { runUpdateFlow, type UpdateFlowDependencies } from '../src/update-cli-flow.ts';
 import { planUninstall, readInstallationReceipt } from '../src/installation-receipt.ts';
@@ -10,8 +11,9 @@ import { chooseConfiguration, loadNativeDefinitions, nativeRoles, parseConfigura
 import { reconcilePermissions, type PermissionRule, type ReconciliationResult } from '../src/permission-reconciliation.ts';
 import { isOpenCodeGuardrailRule } from '../src/security-guardrails.ts';
 
-const definitions = loadNativeDefinitions(join(process.cwd(), 'agents'));
-const released = JSON.parse(readFileSync(join(process.cwd(), 'test', 'fixtures', 'released-operator-permissions.json'), 'utf8')) as Record<string, PermissionRule[]>;
+const agentsDirectory = fileURLToPath(new URL('../agents', import.meta.url));
+const definitions = loadNativeDefinitions(agentsDirectory);
+const released = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/released-operator-permissions.json', import.meta.url)), 'utf8')) as Record<string, PermissionRule[]>;
 const shell = (resource: string, effect: PermissionRule['effect']): PermissionRule => ({ action: 'shell', resource, effect });
 const oldFetch = shell('git fetch *', 'deny');
 const newFetch = shell('git fetch *', 'allow');
@@ -314,14 +316,13 @@ test('cancelling the update that adds per-role skill rules writes no config, bac
   assert.equal(existsSync(join(fixture.directory, '.opencode', 'commands')), false);
 });
 
-test('retiring a previously owned skill rule when intendedRoles changes handles update retention and explicit removal cleanly', async t => {
+test('retiring a previously owned skill rule when intendedRoles changes handles update retention cleanly (reconcilePermissions direct removal)', async t => {
   const fixture = seedV2Install(t, 'harness-skill-retire-', role => definitions[role].permissions as PermissionRule[]);
   const modifiedAgents = join(fixture.root, 'agents-modified');
   mkdirSync(modifiedAgents);
-  const sourceAgents = join(process.cwd(), 'agents');
   const retiredRule = { action: 'skill', resource: 'harness-procedure-unit-tests', effect: 'allow' as const };
   for (const role of nativeRoles) {
-    let text = readFileSync(join(sourceAgents, `${role}.md`), 'utf8');
+    let text = readFileSync(join(agentsDirectory, `${role}.md`), 'utf8');
     if (role === 'implementer') {
       text = text.replace(
         /\n    - capability: skill\.load\r?\n      resource:\r?\n        kind: native-pattern\r?\n        host: opencode\r?\n        value: harness-procedure-unit-tests\r?\n      effect: allow\r?\n      binding:\r?\n        host: opencode\r?\n        action: skill/,
