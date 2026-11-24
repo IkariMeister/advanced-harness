@@ -11,7 +11,7 @@ version between releases.
 - Per-role procedure-skill (`skill.load`) OpenCode permissions (#261):
   - Added `skill.load` (`action: skill`) allow rules matching canonical `skills/*/SKILL.md` `intendedRoles` on `lead`, `planner`, `implementer`, `reviewer`, and `qa` (no `skill *` wildcard; `operator`, `external`, and `researcher` keep none).
   - Disclosed `skill.load` as unmapped/unverified on Claude Code (`tools`/`disallowedTools` unchanged, `roleExposure` remains `advisory`).
-  - Updated OpenCode permission reconciliation so `native:` non-guardrail rules insert before security guardrails while checking post-guardrail conflicts (see [installation](docs/installation.md#safe-harness-update-workflow) and [SECURITY.md](SECURITY.md#security-guardrails)); upgrade existing installs with `npm run harness:update`.
+  - Updated OpenCode permission reconciliation so `native:` non-guardrail rules insert before security guardrails; overlapping non-fallback custom rules placed after guardrails (or in `[insertAt, bound)`) now fail closed with a `last-match` conflict on update until removed, narrowed, or placed before guardrails where compatible (see [installation](docs/installation.md#safe-harness-update-workflow) and [SECURITY.md](SECURITY.md#security-guardrails)); upgrade existing installs with `npm run harness:update`.
   - Enabled Agent E2E journey J3 and retired J3a in `e2e/opencode-journeys.e2e.ts` (see [docs/agent-e2e.md](docs/agent-e2e.md)).
 
 ### Added

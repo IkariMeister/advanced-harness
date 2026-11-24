@@ -165,8 +165,8 @@ export function reconcilePermissions(options: ReconcileOptions): ReconciliationR
           conflict('last-match', `Cannot override existing restriction ${r.action} ${r.resource}.`);
         }
       } else if (!isFallbackFor(r)) {
-        // Applies to both native: and integration: insertions whenever a non-fallback rule lands before an overlapping custom post-guardrail rule.
-        conflict('last-match', `Cannot insert ${req.rule.action} ${req.rule.resource} before overlapping rule ${r.action} ${r.resource}.`);
+        // Applies to both native: and integration: insertions whenever a non-fallback rule lands before an overlapping custom rule (at/after insertAt, including post-guardrail rules).
+        conflict('last-match', `Cannot insert ${req.rule.action} ${req.rule.resource} before overlapping rule ${r.action} ${r.resource}. See docs/installation.md#safe-harness-update-workflow.`);
       }
     }
     rules.splice(insertAt, 0, { ...req.rule });

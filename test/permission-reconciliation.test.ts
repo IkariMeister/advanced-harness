@@ -302,17 +302,20 @@ test('lowered insertAt inserts before narrow pre-guardrail allow and rejects non
   assert.deepEqual(lowered.preview.conflicts, []);
   assert.deepEqual(lowered.rules, [fallback, preGuardNarrowAllow, guard]);
 
-  // A custom overlapping non-fallback allow between lowered insertAt (0) and guard (2) does not cover `git *`
-  // (so Pass 1 still lowers insertAt to 0), would not fail in the pre-insertAt branch (ask vs allow is not an override),
-  // and fails only in the post-insertAt `else if (!isFallbackFor)` branch.
-  const preGuardOverlappingAllow = r('shell', '* status', 'allow');
-  const existing = [preGuardNarrowAllow, preGuardOverlappingAllow, guard];
-  const result = reconcilePermissions({
-    existing,
-    prior: [{ rule: guard, sources: ['native:implementer'] }],
-    previousOrder: existing,
-    desired: [{ rule: fallback, sources: ['native:implementer'] }],
-  });
-  assert.ok(result.preview.conflicts.some(conflict => conflict.code === 'last-match' && conflict.message.startsWith('Cannot insert ')));
-  assert.deepEqual(result.rules, existing);
+  // A custom overlapping non-fallback rule in [insertAt, bound) (index 1, between lowered insertAt = 0 and bound = 2):
+  // assumes `overlap()` treats `git *` and `* status` as overlapping (both match `git status`) while `covers()` and `isFallbackFor()` are false
+  // (so Pass 1 still lowers insertAt to 0). Both allow and deny fail here in the post-insertAt `else if (!isFallbackFor)` branch with `Cannot insert ...`
+  // (whereas pre-insertAt would allow ask-over-allow or emit `Cannot override ...` for deny).
+  for (const effect of ['allow', 'deny'] as const) {
+    const preGuardOverlapping = r('shell', '* status', effect);
+    const existing = [preGuardNarrowAllow, preGuardOverlapping, guard];
+    const result = reconcilePermissions({
+      existing,
+      prior: [{ rule: guard, sources: ['native:implementer'] }],
+      previousOrder: existing,
+      desired: [{ rule: fallback, sources: ['native:implementer'] }],
+    });
+    assert.ok(result.preview.conflicts.some(conflict => conflict.code === 'last-match' && conflict.message.startsWith('Cannot insert ')), effect);
+    assert.deepEqual(result.rules, existing, effect);
+  }
 });
