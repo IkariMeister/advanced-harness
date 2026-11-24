@@ -61,16 +61,6 @@ function normalizeMarkdownLinks(markdown: string, source: string, commit: string
   });
 }
 
-function requireRelativePath(from: string, to: string): string {
-  const fromParts = from.replaceAll("\\", "/").split("/").filter(Boolean);
-  const toParts = to.replaceAll("\\", "/").split("/").filter(Boolean);
-  while (fromParts.length && toParts.length && fromParts[0] === toParts[0]) {
-    fromParts.shift();
-    toParts.shift();
-  }
-  return `${"../".repeat(fromParts.length)}${toParts.join("/")}`;
-}
-
 async function generate(): Promise<void> {
   const projected: { output: string; content: string }[] = [];
   for (const item of sources) {
