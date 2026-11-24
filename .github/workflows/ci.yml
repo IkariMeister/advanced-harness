@@ -134,9 +134,10 @@ jobs:
       - name: Run sandboxed CLI smoke suite
         run: npm run smoke
 
-  # Not a required check yet (BH-034, ADR-0011). After #261 added per-role skill.load allow rules, enabled J3, and
-  # retired J3a (5 tests, 7 OpenCode runs), the suite passed 5/5 in CI (see docs/agent-e2e.md#continuous-integration for
-  # recorded run IDs); live OpenCode / interactive TTY spot-checks remain waived, not passed.
+  # Not a required check yet (BH-034, ADR-0011). #261 added per-role skill.load allow rules, enabled J3, and retired
+  # J3a (5 tests, 7 OpenCode runs); post-#261 CI verification of the enabled 5-test suite is pending the workflow run
+  # (see docs/agent-e2e.md#continuous-integration for recorded pre-#261 CI runs). Live OpenCode / interactive TTY
+  # spot-checks remain waived, not passed.
   # Its outbound-call guarantee comes from the loopback-only network namespace below.
   agent-e2e:
     name: Agent E2E (Ubuntu / Node 24 / OpenCode 2.3.0)

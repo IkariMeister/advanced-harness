@@ -415,9 +415,10 @@ conflict if an overlapping custom rule placed after the guardrails would be over
 (except broad `ask` fallbacks), while non-overlapping `integration:` rules append after
 the guardrails. If `harness:update` stops with a `last-match` conflict naming a
 post-guardrail custom rule, open the reported `opencode.json` / `opencode.jsonc` file,
-inspect that role's rules, remove or narrow the overlapping custom post-guardrail rule
-(or back up and remove it before updating, then re-apply any intentional non-guardrail
-override deliberately afterward knowing OpenCode's last-match order), and re-run
+inspect that role's rules, and either remove the overlapping custom post-guardrail rule,
+narrow it so it no longer overlaps the harness rule, or keep any compatible intentional
+non-guardrail rule before the guardrails (leaving an overlapping non-fallback custom
+rule after the guardrails would trigger the same conflict on future updates), then re-run
 `npm run harness:update`.
 
 ### If Lead is missing
