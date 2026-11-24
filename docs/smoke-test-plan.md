@@ -184,7 +184,7 @@ Prerequisites for AE-02 to AE-04: Node.js 24.x, `npm ci` at the repository root,
 | AE-04 | Run with `HARNESS_E2E_RECORD_DIR` set to an absolute directory, then inspect the retained records | `lead-reads-repository.json`: `network.unexpectedDestinations` is empty, `network.toleratedDestinations` holds at most `CONNECT models.opencode.ai:443`, and `credentialHeaders` is empty. `implementer-loads-skill-and-edits.json`: `outcome` is `"pass"`, `handoffCount` is 1, and the `skillInvocations` entry has `loaded: true`. No `Authorization` value appears in any file |
 | AE-05 | `npm run e2e:opencode` with `HARNESS_E2E_REQUIRE=1` and `HARNESS_E2E_OPENCODE` unset (missing-binary path) | Exit code is non-zero. The failing test is `OpenCode E2E preflight check`, and its message names the missing binary setting (`HARNESS_E2E_REQUIRE=1 but HARNESS_E2E_OPENCODE is not set`) |
 
-The CI job that runs this suite is described under [Continuous integration](#continuous-integration). It is not a required check; see [agent E2E guide](agent-e2e.md#continuous-integration) for recorded pre- and post-`#261` CI runs. Live OpenCode / interactive TTY spot-checks remain **waived**, not passed.
+The CI job that runs this suite is described under [Continuous integration](#continuous-integration). It is not a required check; see [agent E2E guide](agent-e2e.md#continuous-integration) for recorded CI runs. Live OpenCode / interactive TTY spot-checks remain **waived**, not passed.
 
 ## Known gaps found by the suite
 
@@ -241,7 +241,7 @@ the job.
 
 The `agent-e2e` job in the same file runs `npm run e2e:opencode` on `ubuntu-latest` against
 the pinned OpenCode 2.3.0 release asset, after a sha256 check, inside a loopback-only
-network namespace. It is not a required check; see [agent E2E guide](agent-e2e.md#continuous-integration) for recorded pre- and post-`#261` CI runs (live OpenCode / interactive TTY spot-checks remain **waived**, not passed). The details are in the guide. The steps are in
+network namespace. It is not a required check; see [agent E2E guide](agent-e2e.md#continuous-integration) for recorded CI runs (live OpenCode / interactive TTY spot-checks remain **waived**, not passed). The details are in the guide. The steps are in
 [agent E2E guide](agent-e2e.md#continuous-integration).
 
 # Issue #134 project rigor setup and workflow smoke

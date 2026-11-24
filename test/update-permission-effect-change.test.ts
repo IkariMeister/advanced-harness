@@ -316,6 +316,8 @@ test('cancelling the update that adds per-role skill rules writes no config, bac
   assert.equal(existsSync(join(fixture.directory, '.opencode', 'commands')), false);
 });
 
+// Limit: `harness:update` currently retains retired skill rules (`sources: []`) rather than deleting them automatically;
+// actual removal is exercised via `reconcilePermissions(..., { removeObsolete })` below (and `uninstall` removes the footprint via receipt).
 test('retiring a previously owned skill rule when intendedRoles changes handles update retention cleanly (reconcilePermissions direct removal)', async t => {
   const fixture = seedV2Install(t, 'harness-skill-retire-', role => definitions[role].permissions as PermissionRule[]);
   const modifiedAgents = join(fixture.root, 'agents-modified');
@@ -344,6 +346,8 @@ test('retiring a previously owned skill rule when intendedRoles changes handles 
   const currentImplementer = (parseConfiguration(savedConfig, fixture.config).agents as Record<string, { permissions: PermissionRule[] }>).implementer!.permissions;
   const remaining = (definitions.implementer.permissions as PermissionRule[]).filter(rule => JSON.stringify(rule) !== JSON.stringify(retiredRule));
   const receiptOptions = receiptReconciliationOptions(discoverReceiptChain(fixture.recovery, fixture.config, 'opencode')).permissions!.implementer!;
+  // Direct `reconcilePermissions` check: `harness:update` does not yet wire `removeObsolete` removal prompts,
+  // so this verifies receipt provenance satisfies `removeObsolete` directly (`harness:uninstall` removes via receipt lineage).
   const removalPlan = reconcilePermissions({
     existing: currentImplementer,
     ...receiptOptions,

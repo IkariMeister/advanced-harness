@@ -288,3 +288,18 @@ test('covering rule at or after insertion point does not exempt an earlier restr
   assert.ok(result.preview.conflicts.some(conflict => conflict.code === 'last-match'));
   assert.deepEqual(result.rules, existing);
 });
+
+test('lowered insertAt still rejects non-fallback overlapping restrictions in [insertAt, bound)', () => {
+  const guard = r('shell', 'git reset --hard', 'deny');
+  const preGuardNarrowAllow = r('shell', 'git status', 'allow');
+  const preGuardBroadDeny = r('shell', '*', 'deny');
+  const existing = [preGuardNarrowAllow, preGuardBroadDeny, guard];
+  const result = reconcilePermissions({
+    existing,
+    prior: [{ rule: guard, sources: ['native:implementer'] }],
+    previousOrder: existing,
+    desired: [{ rule: r('shell', 'git *', 'ask'), sources: ['native:implementer'] }],
+  });
+  assert.ok(result.preview.conflicts.some(conflict => conflict.code === 'last-match'));
+  assert.deepEqual(result.rules, existing);
+});

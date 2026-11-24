@@ -409,10 +409,16 @@ still block: a rule with no receipt ownership, an edited or moved owned rule, a 
 another active source still needs, a required denial (`gh pr merge` or a security
 guardrail), and any existing restriction the new rule would override. When reconciling
 updates, attributable `native:` non-guardrail rules (such as per-role `skill` allow
-rules) insert before the trailing [security guardrails](../SECURITY.md#security-guardrails)
-and abort with a `last-match` conflict if an overlapping custom rule placed after the
-guardrails would be overridden (except broad `ask` fallbacks), while `integration:`
-rules preserve append order.
+rules) and guardrail-overlapping rules insert before the role's
+[security guardrails](../SECURITY.md#security-guardrails) and abort with a `last-match`
+conflict if an overlapping custom rule placed after the guardrails would be overridden
+(except broad `ask` fallbacks), while non-overlapping `integration:` rules append after
+the guardrails. If `harness:update` stops with a `last-match` conflict naming a
+post-guardrail custom rule, open the reported `opencode.json` / `opencode.jsonc` file,
+inspect that role's rules, remove or narrow the overlapping custom post-guardrail rule
+(or back up and remove it before updating, then re-apply any intentional non-guardrail
+override deliberately afterward knowing OpenCode's last-match order), and re-run
+`npm run harness:update`.
 
 ### If Lead is missing
 

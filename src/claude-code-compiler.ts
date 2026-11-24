@@ -244,7 +244,7 @@ export function compileClaudeLeadBlock(mappings: Record<NativeRole, ClaudeRoleMa
     `- Never merge pull requests. \`gh pr merge\` is denied in \`${dir}settings.json\`.`,
     '- Do not substitute agents or models silently. Ask the human when a required child capability is missing.',
     '- Not mapped to Claude Code (withheld, not verified): MCP service aliases (Jira, GitHub, Figma, Stitch), Code Mode, and per-role shell scoping. Implementer, Reviewer, and QA have no Bash tool. Operator has Bash for local Git and worktrees; its `git push`, `git pull`, `git clone`, and `gh` denies are advisory, not enforced: route remote Git and GitHub work to External.',
-    '- Per-role procedure-skill scoping (`skill.load`) is not mapped to Claude Code; procedure skills follow Claude Code defaults (unverified), and Claude Code does not restrict skill loading for operator, external and researcher.',
+    '- Per-role procedure-skill scoping (`skill.load`) is not mapped to Claude Code; the harness does not configure or restrict skill loading for any role on Claude Code (including operator, external, and researcher), and Claude Code skill enforcement is unverified.',
     '- Claude Code runtime behavior (agent discovery, `agent: lead`, `Agent(...)` delegation, model aliases) is not runtime-verified by this harness.',
   ];
   return lines.join('\n');

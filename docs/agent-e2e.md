@@ -488,13 +488,13 @@ It is **not a required check**. Two pre-`#261` runs passed (`43974715793` on PR 
 showed `enforcement: "netns"`, `CONNECT models.opencode.ai:443` was the only tolerated
 destination, there were no unexpected destinations or credential-shaped headers, the
 sha256 check passed, the executable was found in the archive, and `sudo unshare --net`
-worked on the hosted runner). After `#261` added per-role `skill.load` allow rules,
-enabled J3, and retired J3a, CI `agent-e2e` run `44845273743` for superseded head
-`99c18069` passed **5/5** on PR merge ref `7276d92f` (Ubuntu, Node 24, OpenCode 2.3.0;
-per-artifact details beyond the 5/5 pass status are not independently cited). Live
-OpenCode and interactive TTY spot-checks remain **waived**, not passed, and local Windows
-runs remain non-hermetic. The job runs on the same events as the other CI jobs. The
-decision is recorded in [ADR-0011](adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md).
+worked on the hosted runner). `#261` added per-role `skill.load` allow rules, enabled
+J3, and retired J3a (leaving 5 tests / 7 OpenCode runs); CI `agent-e2e` verification of
+the enabled 5-test suite on the current PR head is pending the workflow run on Ubuntu
+(Node 24, OpenCode 2.3.0). Live OpenCode and interactive TTY spot-checks remain
+**waived**, not passed, and local Windows runs remain non-hermetic. The job runs on the
+same events as the other CI jobs. The decision is recorded in
+[ADR-0011](adr/0011-deterministic-agent-e2e-via-loopback-model-fixture.md).
 
 1. Checkout (without persisted Git credentials), Node.js 24.x, and `npm ci`.
    Dependencies are installed before the network namespace is entered.
