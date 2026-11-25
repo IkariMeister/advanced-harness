@@ -334,7 +334,7 @@ test('capability normalization round-trips ordered OpenCode rules without changi
   assert.ok(externalRules.some(rule => rule.capability === 'shell.run' && rule.binding.action === 'shell' && rule.effect === 'ask'));
   assert.ok(externalRules.some(rule => rule.binding.action === 'shell' && rule.resource.kind === 'native-pattern' && rule.resource.value === 'gh.exe pr merge' && rule.effect === 'deny'));
   assert.ok(externalRules.some(rule => rule.capability === 'code-mode.execute' && rule.binding.action === 'execute'));
-  for (const action of ['jira_*', 'github_*', 'figma_*', 'stitch_*']) assert.ok(externalRules.some(rule => rule.capability === 'mcp.tool' && rule.binding.action === action));
+  for (const action of ['jira*', 'github*', 'figma*', 'stitch*']) assert.ok(externalRules.some(rule => rule.capability === 'mcp.tool' && rule.binding.action === action));
 });
 
 test('v2 role sources reject unsupported versions, duplicate authorities, malformed nested policy, and mismatches', () => {
@@ -441,10 +441,11 @@ test('skill.load normalizes, lowers, rejects mismatched bindings, and scopes ski
   ];
   for (const role of nativeRoles) {
     const allowed = new Set(expectedRoleSkills[role] ?? []);
+    const fallback = role === 'external' ? 'ask' : 'deny';
     for (const skillId of allSkills) {
-      assert.equal(skillEffect(role, skillId), allowed.has(skillId) ? 'allow' : 'deny', `${role} ${skillId}`);
+      assert.equal(skillEffect(role, skillId), allowed.has(skillId) ? 'allow' : fallback, `${role} ${skillId}`);
     }
-    assert.equal(skillEffect(role, 'third-party-skill'), 'deny', `${role} third-party-skill`);
-    assert.equal(skillEffect(role, '*'), 'deny', `${role} wildcard`);
+    assert.equal(skillEffect(role, 'third-party-skill'), fallback, `${role} third-party-skill`);
+    assert.equal(skillEffect(role, '*'), fallback, `${role} wildcard`);
   }
 });

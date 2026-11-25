@@ -32,7 +32,7 @@ test('native roles preserve fixed model variants and deny before native exceptio
     const assigned = expectedAssignments[role];
     assert.ok(text.includes(`model: ${assigned.model}#${assigned.reasoning}\n`), role);
     assert.ok(text.includes(`mode: ${role === 'lead' ? 'primary' : 'subagent'}\n`), role);
-    assert.deepEqual(permissionRules(role)[0], { action: '*', resource: '*', effect: 'deny' });
+    assert.deepEqual(permissionRules(role)[0], { action: '*', resource: '*', effect: role === 'external' ? 'ask' : 'deny' });
     assert.ok(!text.includes('harness_status') && !text.includes('harness_action'), role);
     assert.ok(hasRule(role, 'read', '*', 'allow'), role);
   }
@@ -80,7 +80,8 @@ test('native operational roles expose shell and keep edit defaults role-scoped',
   for (const command of ['npm test', 'npm run typecheck', 'git push', 'git pull', 'git clone']) {
     assert.ok(!permissionRules('operator').some(rule => rule.action === 'shell' && rule.effect === 'allow' && rule.resource === command), command);
   }
-  for (const role of ['external', 'reviewer', 'qa'] as const) assert.ok(!permissionRules(role).some(rule => rule.action === 'edit'), role);
+  for (const role of ['reviewer', 'qa'] as const) assert.ok(!permissionRules(role).some(rule => rule.action === 'edit'), role);
+  assert.ok(hasRule('external', 'edit', '*', 'deny'));
 });
 
 test('External source permission exceptions are narrowly scoped and merge stays denied', () => {
@@ -121,7 +122,7 @@ test('Lead and External require evidence for missing native tools without broade
 
 test('native MCP and web permissions belong only to External and do not imply connections', () => {
   for (const role of roles) {
-    const externalLines = permissionRules(role).filter(rule => ['execute', 'webfetch', 'websearch'].includes(rule.action) || /^(jira|github|figma|stitch)_\*$/.test(rule.action));
+    const externalLines = permissionRules(role).filter(rule => ['execute', 'webfetch', 'websearch'].includes(rule.action) || /^(jira|github|figma|stitch)\*$/.test(rule.action));
     assert.equal(externalLines.length, role === 'external' ? 7 : 0, role);
   }
 });

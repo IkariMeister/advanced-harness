@@ -676,6 +676,11 @@
         {
           "action": "*",
           "resource": "*",
+          "effect": "ask"
+        },
+        {
+          "action": "edit",
+          "resource": "*",
           "effect": "deny"
         },
         {
@@ -979,22 +984,22 @@
           "effect": "allow"
         },
         {
-          "action": "jira_*",
+          "action": "jira*",
           "resource": "*",
           "effect": "ask"
         },
         {
-          "action": "github_*",
+          "action": "github*",
           "resource": "*",
           "effect": "ask"
         },
         {
-          "action": "figma_*",
+          "action": "figma*",
           "resource": "*",
           "effect": "ask"
         },
         {
-          "action": "stitch_*",
+          "action": "stitch*",
           "resource": "*",
           "effect": "ask"
         },
@@ -1075,6 +1080,86 @@
         },
         {
           "action": "read",
+          "resource": "*\\.config\\gh\\hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*.jks",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*.keystore",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*local.properties",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*google-services.json",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*signing.properties",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*.pem",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*.key",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "~/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*/.ssh/*",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*\\.ssh\\*",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "~/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*/.aws/credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*\\.aws\\credentials",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "~/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*/.config/gh/hosts.yml",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
           "resource": "*\\.config\\gh\\hosts.yml",
           "effect": "deny"
         },

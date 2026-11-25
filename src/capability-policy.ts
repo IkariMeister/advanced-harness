@@ -16,7 +16,7 @@ const actionCapabilities: Record<string, Capability> = {
   subagent: 'agent.delegate', webfetch: 'web.fetch', websearch: 'web.search', execute: 'code-mode.execute',
   skill: 'skill.load'
 };
-const mcpAction = /^(?:jira|github|figma|stitch)_\*$/;
+const mcpAction = /^[a-zA-Z0-9._-]+\*$/;
 const allowedEffects = ['allow', 'ask', 'deny'] as const;
 function mappedCapability(action: string): Capability | undefined {
   return Object.hasOwn(actionCapabilities, action)
