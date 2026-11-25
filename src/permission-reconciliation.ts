@@ -166,7 +166,7 @@ export function reconcilePermissions(options: ReconcileOptions): ReconciliationR
         }
       } else if (!isFallbackFor(r)) {
         // Applies to both native: and integration: insertions whenever a non-fallback rule lands before an overlapping custom rule (at/after insertAt, including post-guardrail rules).
-        conflict('last-match', `Cannot insert ${req.rule.action} ${req.rule.resource} before overlapping rule ${r.action} ${r.resource}. See docs/installation.md#safe-harness-update-workflow.`);
+        conflict('last-match', `Cannot insert ${req.rule.action} ${req.rule.resource} before overlapping rule ${r.action} ${r.resource}.`);
       }
     }
     rules.splice(insertAt, 0, { ...req.rule });

@@ -315,7 +315,7 @@ test('lowered insertAt inserts before narrow pre-guardrail allow and rejects non
       previousOrder: existing,
       desired: [{ rule: fallback, sources: ['native:implementer'] }],
     });
-    assert.ok(result.preview.conflicts.some(conflict => conflict.code === 'last-match' && conflict.message.startsWith('Cannot insert ')), effect);
+    assert.ok(result.preview.conflicts.some(conflict => conflict.code === 'last-match' && conflict.message === 'Cannot insert shell git * before overlapping rule shell * status.'), effect);
     assert.deepEqual(result.rules, existing, effect);
   }
 });
