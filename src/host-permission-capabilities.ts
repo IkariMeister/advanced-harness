@@ -56,8 +56,8 @@ export const hostPermissionMatrix: Readonly<Record<HostId, HostPermissionRow>> =
       },
       roleExposure: {
         status: 'advisory',
-        scope: 'MCP rules are role-specific, but procedure-skill intendedRoles is advisory discovery guidance; the combined exposure boundary is not enforced.',
-        evidence: [doc('skills/README.md'), regression('test/procedure-skills.test.ts')],
+        scope: 'MCP rules and OpenCode skill.load allow rules are compiled per role, but SKILL.md intendedRoles remains advisory discovery guidance and runtime enforcement across skills and MCP tools is not established; the combined exposure boundary is not enforced.',
+        evidence: [doc('skills/README.md'), regression('test/procedure-skills.test.ts'), regression('test/native-agents.test.ts')],
       },
       modelRouting: {
         status: 'unverified',
@@ -86,8 +86,8 @@ export const hostPermissionMatrix: Readonly<Record<HostId, HostPermissionRow>> =
       },
       roleExposure: {
         status: 'advisory',
-        scope: 'Tools use allowlists, but MCP alias identities are unverified and procedure-skill intended-role guidance does not enforce discovery.',
-        evidence: [regression('test/claude-permission-preflight.test.ts'), doc('skills/README.md')],
+        scope: 'Tools use allowlists, but MCP alias identities are unverified, OpenCode skill.load per-role scoping has no verified Claude per-skill binding (unmapped; procedure skills follow Claude Code defaults, unverified), and procedure-skill intended-role guidance does not enforce discovery.',
+        evidence: [regression('test/claude-permission-preflight.test.ts'), regression('test/claude-code-compiler.test.ts'), doc('skills/README.md')],
       },
       modelRouting: {
         status: 'unverified',

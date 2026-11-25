@@ -77,8 +77,8 @@ Malformed or unloadable trusted policy makes the policy-dependent checks inconcl
 
 | Host | Canonical compilation | Native procedure-skill deployment | Doctor static validation | Runtime / exposure and permissions |
 | --- | --- | --- | --- | --- |
-| OpenCode V2 | Supported | Supported | Canonical + expected installed artifact | Runtime agent/catalog check is separate; skill exposure does not grant tool permissions. |
-| Claude Code | Supported | Supported | Canonical + expected installed artifact | Runtime behavior unverified; skills do not establish tool permissions. |
+| OpenCode V2 | Supported | Supported | Canonical + expected installed artifact | Role policies compile exact per-role `skill.load` allow rules matching canonical `intendedRoles` (no `skill *` wildcard); runtime agent/catalog check is separate, and `intendedRoles` metadata grants no other tool permissions. |
+| Claude Code | Supported | Supported | Canonical + expected installed artifact | Runtime behavior unverified; OpenCode `skill.load` per-role scoping has no verified Claude per-skill binding (disclosed as unmapped; procedure skills follow Claude Code defaults, unverified). |
 | Antigravity | Supported | Supported | Canonical + expected installed artifact | Runtime skill exposure and enforcement are not proven by static checks. |
 | OpenAI Codex | Supported | Unsupported (compilation only) | Canonical source only | No native procedure skill deployment by this lifecycle; skill metadata does not grant tools. |
 | Cursor IDE | Supported | Unsupported (manual artifact compilation only) | Canonical source only | No native installation/runtime verification; no permissions are inferred. |

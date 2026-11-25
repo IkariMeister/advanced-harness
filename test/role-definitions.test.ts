@@ -9,7 +9,7 @@ import { loadNativeDefinitions, nativeRoles, type NativeDefinition } from '../sr
 import { loadRoleDefinition, loadRoleDefinitions } from '../src/role-definitions.ts';
 import { compileOpenCodeRole, compileOpenCodeRoles } from '../src/opencode-role-compiler.ts';
 import { isOpenCodeGuardrailRule, openCodeGuardrailRules } from '../src/security-guardrails.ts';
-import { lowerOpenCodePolicy, type CapabilityPolicy } from '../src/capability-policy.ts';
+import { lowerOpenCodePolicy, normalizeOpenCodePolicy, type CapabilityPolicy } from '../src/capability-policy.ts';
 import type { PermissionRule } from '../src/permission-reconciliation.ts';
 import { operatorAdvisoryLines, operatorFallbackLines } from './operator-claude-wording.ts';
 
@@ -187,7 +187,26 @@ function withExternalPreflightHandoff(definitions: Record<typeof nativeRoles[num
   return definitions;
 }
 
-const currentNormalizedDefinitions = () => withExternalPreflightHandoff(withExternalReviewPayload(withExternalBootstrap(withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions()))))));
+// #261: per-role OpenCode skill.load allow rules matching canonical procedure skills' intendedRoles.
+const expectedRoleSkills: Partial<Record<typeof nativeRoles[number], readonly string[]>> = {
+  lead: ['harness-procedure-meeting-task-extraction'],
+  planner: ['harness-procedure-adr-authoring', 'harness-procedure-documentation-impact', 'harness-procedure-meeting-task-extraction'],
+  implementer: ['harness-procedure-documentation-impact', 'harness-procedure-documentation-validation', 'harness-procedure-evidence-collection', 'harness-procedure-static-analysis', 'harness-procedure-technical-documentation', 'harness-procedure-unit-tests'],
+  reviewer: ['harness-procedure-documentation-review', 'harness-procedure-documentation-validation', 'harness-procedure-evidence-collection', 'harness-procedure-static-analysis', 'harness-procedure-unit-tests'],
+  qa: ['harness-procedure-evidence-collection', 'harness-procedure-static-analysis', 'harness-procedure-unit-tests'],
+};
+
+function withProcedureSkills(definitions: Record<typeof nativeRoles[number], NativeDefinition>): Record<typeof nativeRoles[number], NativeDefinition> {
+  for (const [role, skills] of Object.entries(expectedRoleSkills) as Array<[typeof nativeRoles[number], readonly string[]]>) {
+    const permissions = definitions[role].permissions as PermissionRule[];
+    const firstGuardrail = permissions.findIndex(rule => isOpenCodeGuardrailRule(rule));
+    const insertAt = firstGuardrail < 0 ? permissions.length : firstGuardrail;
+    permissions.splice(insertAt, 0, ...skills.map(value => ({ action: 'skill', resource: value, effect: 'allow' as const })));
+  }
+  return definitions;
+}
+
+const currentNormalizedDefinitions = () => withProcedureSkills(withExternalPreflightHandoff(withExternalReviewPayload(withExternalBootstrap(withQaGitContext(withOperatorFetch(structuredClone(legacyNormalizedDefinitions())))))));
 
 test('strict role source compiler preserves current normalized OpenCode definitions for all roles', () => {
   const baseline = legacyNormalizedDefinitions();
@@ -371,4 +390,61 @@ test('unsupported capability actions and invalid internal bindings/selectors pro
 
   const unknownPrecedence = lowerOpenCodePolicy('lead', { schemaVersion: 1, rules: undefined } as unknown as CapabilityPolicy);
   assert.ok(unknownPrecedence.diagnostics.some(item => item.code === 'unresolved-precedence'));
+});
+
+test('skill.load normalizes, lowers, rejects mismatched bindings, and scopes skill access last-match per role', () => {
+  const normalized = normalizeOpenCodePolicy('implementer', [{ action: 'skill', resource: 'harness-procedure-documentation-impact', effect: 'allow' }]);
+  assert.deepEqual(normalized.diagnostics, []);
+  assert.deepEqual(normalized.policy.rules, [{
+    capability: 'skill.load',
+    resource: { kind: 'native-pattern', host: 'opencode', value: 'harness-procedure-documentation-impact' },
+    effect: 'allow',
+    binding: { host: 'opencode', action: 'skill' },
+  }]);
+  const lowered = lowerOpenCodePolicy('implementer', normalized.policy);
+  assert.deepEqual(lowered.diagnostics, []);
+  assert.deepEqual(lowered.permissions, [{ action: 'skill', resource: 'harness-procedure-documentation-impact', effect: 'allow' }]);
+
+  const mismatchedSkill = lowerOpenCodePolicy('implementer', {
+    schemaVersion: 1,
+    resolution: 'ordered-last-match',
+    rules: [{ capability: 'skill.load', resource: { kind: 'native-pattern', host: 'opencode', value: 'harness-procedure-unit-tests' }, effect: 'allow', binding: { host: 'opencode', action: 'read' } }],
+  });
+  assert.equal(mismatchedSkill.permissions, undefined);
+  assert.ok(mismatchedSkill.diagnostics.some(item => item.code === 'invalid-binding'));
+
+  const mismatchedAction = lowerOpenCodePolicy('implementer', {
+    schemaVersion: 1,
+    resolution: 'ordered-last-match',
+    rules: [{ capability: 'file.read', resource: { kind: 'native-pattern', host: 'opencode', value: 'harness-procedure-unit-tests' }, effect: 'allow', binding: { host: 'opencode', action: 'skill' } }],
+  });
+  assert.equal(mismatchedAction.permissions, undefined);
+  assert.ok(mismatchedAction.diagnostics.some(item => item.code === 'invalid-binding'));
+
+  const definitions = loadNativeDefinitions(fileURLToPath(agents));
+  const wildcard = (pattern: string) => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 's');
+  const skillEffect = (role: typeof nativeRoles[number], skillId: string) =>
+    (definitions[role].permissions as PermissionRule[])
+      .filter(rule => (rule.action === 'skill' || rule.action === '*') && wildcard(rule.resource).test(skillId))
+      .at(-1)?.effect;
+
+  const allSkills = [
+    'harness-procedure-adr-authoring',
+    'harness-procedure-documentation-impact',
+    'harness-procedure-documentation-review',
+    'harness-procedure-documentation-validation',
+    'harness-procedure-evidence-collection',
+    'harness-procedure-meeting-task-extraction',
+    'harness-procedure-static-analysis',
+    'harness-procedure-technical-documentation',
+    'harness-procedure-unit-tests',
+  ];
+  for (const role of nativeRoles) {
+    const allowed = new Set(expectedRoleSkills[role] ?? []);
+    for (const skillId of allSkills) {
+      assert.equal(skillEffect(role, skillId), allowed.has(skillId) ? 'allow' : 'deny', `${role} ${skillId}`);
+    }
+    assert.equal(skillEffect(role, 'third-party-skill'), 'deny', `${role} third-party-skill`);
+    assert.equal(skillEffect(role, '*'), 'deny', `${role} wildcard`);
+  }
 });

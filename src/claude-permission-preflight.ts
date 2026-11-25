@@ -86,7 +86,7 @@ export function preflightClaudePermissions(definitions: Record<NativeRole, RoleD
 
     const uncertain = new Map<Capability, number[]>();
     for (const [index, rule] of rules.entries()) {
-      if (!['all', 'directory.external', 'user.question', 'agent.delegate', 'web.fetch', 'web.search', 'code-mode.execute', 'mcp.tool'].includes(rule.capability)) continue;
+      if (!['all', 'directory.external', 'user.question', 'agent.delegate', 'web.fetch', 'web.search', 'code-mode.execute', 'mcp.tool', 'skill.load'].includes(rule.capability)) continue;
       const list = uncertain.get(rule.capability) ?? [];
       list.push(index); uncertain.set(rule.capability, list);
     }
@@ -98,7 +98,9 @@ export function preflightClaudePermissions(definitions: Record<NativeRole, RoleD
           ? 'OpenCode jira/github/figma/stitch action aliases do not establish a Claude MCP server/tool identity.'
           : capability === 'agent.delegate'
             ? 'Claude Agent(name) is a documented candidate only; full OpenCode subagent capability equivalence is unverified.'
-            : `Capability ${capability} has no verified Claude permission binding in this preflight.`;
+            : capability === 'skill.load'
+              ? 'OpenCode skill.load permissions have no verified Claude per-skill binding in this preflight.'
+              : `Capability ${capability} has no verified Claude permission binding in this preflight.`;
       addGrouped(findings, 'capability-mapping-unverified', 'unverified-mapping', role, indexes, detail, refs);
     }
   }
