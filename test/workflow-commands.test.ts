@@ -24,6 +24,7 @@ for (const name of commands) {
 test('workflow commands require explicit human disposition at consequential gates', async () => {
   const startIssue = await readFile(new URL('start-issue.md', root), 'utf8');
   assert.match(startIssue, /waits for explicit conversational human approval before implementation/i);
+  assert.match(startIssue, /scoping, design, or configuration clarifications never supply plan approval/i);
   assert.match(startIssue, /accept\/discard decisions before fixing/i);
   const review = await readFile(new URL('review-pr.md', root), 'utf8');
   assert.match(review, /choose exactly one disposition: Approve, Just Comment, or Request changes/i);
