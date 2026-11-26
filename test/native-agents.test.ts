@@ -32,7 +32,7 @@ test('native roles preserve fixed model variants and deny before native exceptio
     const assigned = expectedAssignments[role];
     assert.ok(text.includes(`model: ${assigned.model}#${assigned.reasoning}\n`), role);
     assert.ok(text.includes(`mode: ${role === 'lead' ? 'primary' : 'subagent'}\n`), role);
-    assert.deepEqual(permissionRules(role)[0], { action: '*', resource: '*', effect: 'deny' });
+    assert.deepEqual(permissionRules(role)[0], { action: '*', resource: '*', effect: role === 'external' ? 'ask' : 'deny' });
     assert.ok(!text.includes('harness_status') && !text.includes('harness_action'), role);
     assert.ok(hasRule(role, 'read', '*', 'allow'), role);
   }
@@ -46,7 +46,7 @@ test('native Lead delegates only to named roles and owns conversational approval
   assert.match(text, /missing, ask again/);
   assert.match(text, /Evidence capture\/publication is optional/);
   assert.ok(!permissionRules('lead').some(rule => ['shell', 'edit', 'execute', 'webfetch', 'websearch'].includes(rule.action)));
-  for (const role of roles.filter(role => role !== 'lead')) assert.ok(!permissionRules(role).some(rule => rule.action === 'subagent'), role);
+  for (const role of roles.filter(role => role !== 'lead')) assert.ok(!permissionRules(role).some(rule => rule.action === 'subagent' && rule.effect !== 'deny'), role);
 });
 
 test('native operational roles expose shell and keep edit defaults role-scoped', () => {
@@ -80,7 +80,11 @@ test('native operational roles expose shell and keep edit defaults role-scoped',
   for (const command of ['npm test', 'npm run typecheck', 'git push', 'git pull', 'git clone']) {
     assert.ok(!permissionRules('operator').some(rule => rule.action === 'shell' && rule.effect === 'allow' && rule.resource === command), command);
   }
-  for (const role of ['external', 'reviewer', 'qa'] as const) assert.ok(!permissionRules(role).some(rule => rule.action === 'edit'), role);
+  for (const role of ['reviewer', 'qa'] as const) assert.ok(!permissionRules(role).some(rule => rule.action === 'edit'), role);
+  assert.ok(hasRule('external', 'edit', '*', 'deny'));
+  assert.ok(!permissionRules('external').some(rule => rule.action === 'edit' && rule.effect !== 'deny'), 'no later rule may re-allow edit for external');
+  const figmaRule = permissionRules('external').findLast(rule => globMatch(rule.action, 'figma-dev-mode-mcp-server_get_code'));
+  assert.equal(figmaRule?.effect, 'ask', 'hyphenated figma-dev-mode-mcp-server tool resolves to ask');
 });
 
 test('External source permission exceptions are narrowly scoped and merge stays denied', () => {
@@ -121,7 +125,7 @@ test('Lead and External require evidence for missing native tools without broade
 
 test('native MCP and web permissions belong only to External and do not imply connections', () => {
   for (const role of roles) {
-    const externalLines = permissionRules(role).filter(rule => ['execute', 'webfetch', 'websearch'].includes(rule.action) || /^(jira|github|figma|stitch)_\*$/.test(rule.action));
+    const externalLines = permissionRules(role).filter(rule => ['execute', 'webfetch', 'websearch'].includes(rule.action) || /^(jira|github|figma|stitch)\*$/.test(rule.action));
     assert.equal(externalLines.length, role === 'external' ? 7 : 0, role);
   }
 });
@@ -439,10 +443,10 @@ test('OpenCode skill.load allow rules match canonical procedure skills intendedR
   }
   for (const role of roles) {
     const skillRules = permissionRules(role).filter(rule => rule.action === 'skill');
-    assert.ok(!skillRules.some(rule => rule.resource === '*'), `${role} must not allow wildcard skill *`);
-    assert.ok(skillRules.every(rule => rule.effect === 'allow'), `${role} skill rules must be allow`);
+    assert.ok(!skillRules.some(rule => rule.resource === '*' && rule.effect === 'allow'), `${role} must not allow wildcard skill *`);
+    assert.ok(skillRules.filter(rule => rule.resource !== '*').every(rule => rule.effect === 'allow'), `${role} skill rules must be allow`);
     assert.deepEqual(
-      skillRules.map(rule => rule.resource),
+      skillRules.filter(rule => rule.resource !== '*').map(rule => rule.resource),
       expectedByRole[role].slice().sort(),
       `${role} skill.load allow rules match sorted canonical intendedRoles`
     );

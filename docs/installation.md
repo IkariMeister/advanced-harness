@@ -432,7 +432,7 @@ rule after the guardrails would trigger the same conflict on future updates), th
 
 1. Run `harness:doctor` in the intended project and resolve failed/inconclusive checks.
 2. Start a new Lead session; verify its model and reasoning variant and every child role's model access. No entitlement validation is implied by installation.
-3. Confirm actual MCP server aliases/tool actions. External's source permissions use `jira_*`, `github_*`, `figma_*`, and `stitch_*`; adapt them to configured names. The installer preserves MCP configuration, does not authenticate services, and does not change permission patterns to guess server capabilities.
+3. Confirm actual MCP server aliases/tool actions. External's source permissions use `jira*`, `github*`, `figma*`, and `stitch*`; adapt them to configured names. The installer preserves MCP configuration, does not authenticate services, and does not change permission patterns to guess server capabilities.
 4. Agree project/worktree/memory paths and build/test/device/E2E commands.
 5. Pilot plan approval in the Lead conversation, implementation, review/QA, finding decisions, final approval, and publishing. OpenCode permission prompts remain tool authorization, not plan approval.
 

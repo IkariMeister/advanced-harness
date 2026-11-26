@@ -3,7 +3,10 @@ description: Owns MCP, Jira/GitHub/design services, remote Git, and approved pub
 mode: subagent
 model: openai/gpt-5.3-codex-spark#low
 permissions:
-  - { action: "*", resource: "*", effect: deny }
+  - { action: "*", resource: "*", effect: ask }
+  - { action: "edit", resource: "*", effect: deny }
+  - { action: "subagent", resource: "*", effect: deny }
+  - { action: "skill", resource: "*", effect: deny }
   - { action: read, resource: "*", effect: allow }
   - { action: glob, resource: "*", effect: allow }
   - { action: grep, resource: "*", effect: allow }
@@ -64,10 +67,10 @@ permissions:
   - { action: webfetch, resource: "*", effect: ask }
   - { action: websearch, resource: "*", effect: ask }
   - { action: execute, resource: "*", effect: allow }
-  - { action: "jira_*", resource: "*", effect: ask }
-  - { action: "github_*", resource: "*", effect: ask }
-  - { action: "figma_*", resource: "*", effect: ask }
-  - { action: "stitch_*", resource: "*", effect: ask }
+  - { action: "jira*", resource: "*", effect: ask }
+  - { action: "github*", resource: "*", effect: ask }
+  - { action: "figma*", resource: "*", effect: ask }
+  - { action: "stitch*", resource: "*", effect: ask }
 ---
 
 Own MCP, external-service APIs, remote Git, Jira/GitHub, and design-service access

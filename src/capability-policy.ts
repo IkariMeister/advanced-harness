@@ -16,19 +16,19 @@ const actionCapabilities: Record<string, Capability> = {
   subagent: 'agent.delegate', webfetch: 'web.fetch', websearch: 'web.search', execute: 'code-mode.execute',
   skill: 'skill.load'
 };
-const mcpAction = /^(?:jira|github|figma|stitch)_\*$/;
+const mcpAction = /^[a-zA-Z0-9][a-zA-Z0-9._-]*\*$/;
 const allowedEffects = ['allow', 'ask', 'deny'] as const;
-function mappedCapability(action: string): Capability | undefined {
+function mappedCapability(role: NativeRole, action: string): Capability | undefined {
   return Object.hasOwn(actionCapabilities, action)
     ? actionCapabilities[action]
-    : mcpAction.test(action) ? 'mcp.tool' : undefined;
+    : role === 'external' && mcpAction.test(action) ? 'mcp.tool' : undefined;
 }
 
 export function normalizeOpenCodePolicy(role: NativeRole, permissions: readonly PermissionRule[]): { policy: CapabilityPolicy; diagnostics: CapabilityDiagnostic[] } {
   const rules: CapabilityRule[] = [];
   const diagnostics: CapabilityDiagnostic[] = [];
   permissions.forEach((rule, index) => {
-    const capability = mappedCapability(rule.action);
+    const capability = mappedCapability(role, rule.action);
     if (!capability) {
       diagnostics.push({ code: 'unknown-capability', role, ruleIndex: index, host: 'opencode', message: `OpenCode action ${JSON.stringify(rule.action)} has no approved capability mapping.` });
       return;
@@ -60,7 +60,7 @@ export function lowerOpenCodePolicy(role: NativeRole, policy: CapabilityPolicy):
       diagnostics.push({ code: 'invalid-binding', role, ruleIndex: index, ...(typeof rule.binding?.host === 'string' ? { host: rule.binding.host } : {}), message: `Capability rule ${index} has no valid OpenCode action binding.` });
       return;
     }
-    const expected = mappedCapability(rule.binding.action);
+    const expected = mappedCapability(role, rule.binding.action);
     if (!expected) {
       diagnostics.push({ code: 'unknown-capability', role, ruleIndex: index, host: 'opencode', message: `OpenCode action ${JSON.stringify(rule.binding.action)} has no approved capability mapping.` });
       return;

@@ -334,7 +334,7 @@ test('capability normalization round-trips ordered OpenCode rules without changi
   assert.ok(externalRules.some(rule => rule.capability === 'shell.run' && rule.binding.action === 'shell' && rule.effect === 'ask'));
   assert.ok(externalRules.some(rule => rule.binding.action === 'shell' && rule.resource.kind === 'native-pattern' && rule.resource.value === 'gh.exe pr merge' && rule.effect === 'deny'));
   assert.ok(externalRules.some(rule => rule.capability === 'code-mode.execute' && rule.binding.action === 'execute'));
-  for (const action of ['jira_*', 'github_*', 'figma_*', 'stitch_*']) assert.ok(externalRules.some(rule => rule.capability === 'mcp.tool' && rule.binding.action === action));
+  for (const action of ['jira*', 'github*', 'figma*', 'stitch*']) assert.ok(externalRules.some(rule => rule.capability === 'mcp.tool' && rule.binding.action === action));
 });
 
 test('v2 role sources reject unsupported versions, duplicate authorities, malformed nested policy, and mismatches', () => {
@@ -447,4 +447,15 @@ test('skill.load normalizes, lowers, rejects mismatched bindings, and scopes ski
     assert.equal(skillEffect(role, 'third-party-skill'), 'deny', `${role} third-party-skill`);
     assert.equal(skillEffect(role, '*'), 'deny', `${role} wildcard`);
   }
+});
+
+test('mcp.tool capability mapping is restricted to external and rejects malformed patterns', () => {
+  for (const bad of ['_*', 'a*b', '']) {
+    const res = normalizeOpenCodePolicy('external', [{ action: bad, resource: '*', effect: 'ask' }]);
+    assert.equal(res.diagnostics[0]?.code, 'unknown-capability', `expected unknown-capability for ${JSON.stringify(bad)}`);
+  }
+  const star = normalizeOpenCodePolicy('external', [{ action: '*', resource: '*', effect: 'ask' }]);
+  assert.equal(star.policy.rules[0]?.capability, 'all');
+  const nonExternal = normalizeOpenCodePolicy('lead', [{ action: 'figma*', resource: '*', effect: 'ask' }]);
+  assert.equal(nonExternal.diagnostics[0]?.code, 'unknown-capability');
 });

@@ -10,10 +10,31 @@ policy:
     - capability: all
       resource:
         kind: all
-      effect: deny
+      effect: ask
       binding:
         host: opencode
         action: "*"
+    - capability: file.edit
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: edit
+    - capability: agent.delegate
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: subagent
+    - capability: skill.load
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: skill
     - capability: file.read
       resource:
         kind: all
@@ -544,28 +565,28 @@ policy:
       effect: ask
       binding:
         host: opencode
-        action: jira_*
+        action: jira*
     - capability: mcp.tool
       resource:
         kind: all
       effect: ask
       binding:
         host: opencode
-        action: github_*
+        action: github*
     - capability: mcp.tool
       resource:
         kind: all
       effect: ask
       binding:
         host: opencode
-        action: figma_*
+        action: figma*
     - capability: mcp.tool
       resource:
         kind: all
       effect: ask
       binding:
         host: opencode
-        action: stitch_*
+        action: stitch*
 ---
 
 Own MCP, external-service APIs, remote Git, Jira/GitHub, and design-service access
