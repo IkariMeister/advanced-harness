@@ -684,6 +684,16 @@
           "effect": "deny"
         },
         {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "skill",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
           "action": "read",
           "resource": "*",
           "effect": "allow"

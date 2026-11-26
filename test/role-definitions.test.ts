@@ -441,11 +441,21 @@ test('skill.load normalizes, lowers, rejects mismatched bindings, and scopes ski
   ];
   for (const role of nativeRoles) {
     const allowed = new Set(expectedRoleSkills[role] ?? []);
-    const fallback = role === 'external' ? 'ask' : 'deny';
     for (const skillId of allSkills) {
-      assert.equal(skillEffect(role, skillId), allowed.has(skillId) ? 'allow' : fallback, `${role} ${skillId}`);
+      assert.equal(skillEffect(role, skillId), allowed.has(skillId) ? 'allow' : 'deny', `${role} ${skillId}`);
     }
-    assert.equal(skillEffect(role, 'third-party-skill'), fallback, `${role} third-party-skill`);
-    assert.equal(skillEffect(role, '*'), fallback, `${role} wildcard`);
+    assert.equal(skillEffect(role, 'third-party-skill'), 'deny', `${role} third-party-skill`);
+    assert.equal(skillEffect(role, '*'), 'deny', `${role} wildcard`);
   }
+});
+
+test('mcp.tool capability mapping is restricted to external and rejects malformed patterns', () => {
+  for (const bad of ['_*', 'a*b', '']) {
+    const res = normalizeOpenCodePolicy('external', [{ action: bad, resource: '*', effect: 'ask' }]);
+    assert.equal(res.diagnostics[0]?.code, 'unknown-capability', `expected unknown-capability for ${JSON.stringify(bad)}`);
+  }
+  const star = normalizeOpenCodePolicy('external', [{ action: '*', resource: '*', effect: 'ask' }]);
+  assert.equal(star.policy.rules[0]?.capability, 'all');
+  const nonExternal = normalizeOpenCodePolicy('lead', [{ action: 'figma*', resource: '*', effect: 'ask' }]);
+  assert.equal(nonExternal.diagnostics[0]?.code, 'unknown-capability');
 });

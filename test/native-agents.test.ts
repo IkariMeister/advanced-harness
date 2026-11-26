@@ -46,7 +46,7 @@ test('native Lead delegates only to named roles and owns conversational approval
   assert.match(text, /missing, ask again/);
   assert.match(text, /Evidence capture\/publication is optional/);
   assert.ok(!permissionRules('lead').some(rule => ['shell', 'edit', 'execute', 'webfetch', 'websearch'].includes(rule.action)));
-  for (const role of roles.filter(role => role !== 'lead')) assert.ok(!permissionRules(role).some(rule => rule.action === 'subagent'), role);
+  for (const role of roles.filter(role => role !== 'lead')) assert.ok(!permissionRules(role).some(rule => rule.action === 'subagent' && rule.effect !== 'deny'), role);
 });
 
 test('native operational roles expose shell and keep edit defaults role-scoped', () => {
@@ -82,6 +82,9 @@ test('native operational roles expose shell and keep edit defaults role-scoped',
   }
   for (const role of ['reviewer', 'qa'] as const) assert.ok(!permissionRules(role).some(rule => rule.action === 'edit'), role);
   assert.ok(hasRule('external', 'edit', '*', 'deny'));
+  assert.ok(!permissionRules('external').some(rule => rule.action === 'edit' && rule.effect !== 'deny'), 'no later rule may re-allow edit for external');
+  const figmaRule = permissionRules('external').findLast(rule => globMatch(rule.action, 'figma-dev-mode-mcp-server_get_code'));
+  assert.equal(figmaRule?.effect, 'ask', 'hyphenated figma-dev-mode-mcp-server tool resolves to ask');
 });
 
 test('External source permission exceptions are narrowly scoped and merge stays denied', () => {
@@ -440,10 +443,10 @@ test('OpenCode skill.load allow rules match canonical procedure skills intendedR
   }
   for (const role of roles) {
     const skillRules = permissionRules(role).filter(rule => rule.action === 'skill');
-    assert.ok(!skillRules.some(rule => rule.resource === '*'), `${role} must not allow wildcard skill *`);
-    assert.ok(skillRules.every(rule => rule.effect === 'allow'), `${role} skill rules must be allow`);
+    assert.ok(!skillRules.some(rule => rule.resource === '*' && rule.effect === 'allow'), `${role} must not allow wildcard skill *`);
+    assert.ok(skillRules.filter(rule => rule.resource !== '*').every(rule => rule.effect === 'allow'), `${role} skill rules must be allow`);
     assert.deepEqual(
-      skillRules.map(rule => rule.resource),
+      skillRules.filter(rule => rule.resource !== '*').map(rule => rule.resource),
       expectedByRole[role].slice().sort(),
       `${role} skill.load allow rules match sorted canonical intendedRoles`
     );

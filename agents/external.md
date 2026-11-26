@@ -21,6 +21,20 @@ policy:
       binding:
         host: opencode
         action: edit
+    - capability: agent.delegate
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: subagent
+    - capability: skill.load
+      resource:
+        kind: all
+      effect: deny
+      binding:
+        host: opencode
+        action: skill
     - capability: file.read
       resource:
         kind: all

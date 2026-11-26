@@ -5,6 +5,8 @@ model: openai/gpt-5.3-codex-spark#low
 permissions:
   - { action: "*", resource: "*", effect: ask }
   - { action: "edit", resource: "*", effect: deny }
+  - { action: "subagent", resource: "*", effect: deny }
+  - { action: "skill", resource: "*", effect: deny }
   - { action: read, resource: "*", effect: allow }
   - { action: glob, resource: "*", effect: allow }
   - { action: grep, resource: "*", effect: allow }
